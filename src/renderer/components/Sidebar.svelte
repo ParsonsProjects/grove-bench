@@ -52,9 +52,8 @@
   }
 
   const statusColor: Record<string, string> = {
-    running: 'bg-green-500',
-    starting: 'bg-yellow-500',
-    stopped: 'bg-neutral-500',
+    idle: 'bg-neutral-500',
+    busy: 'bg-green-500 animate-pulse',
     error: 'bg-red-500',
   };
 </script>

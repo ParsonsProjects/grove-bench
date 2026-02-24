@@ -16,8 +16,8 @@
         errs.push(`Git version too old (${status.git.version}). Need 2.17+.`);
       }
 
-      if (!status.claudeCode.available) {
-        errs.push('Claude Code not found. Install with: npm install -g @anthropic-ai/claude-code');
+      if (!status.auth.available) {
+        errs.push('No Claude authentication found. Either set ANTHROPIC_API_KEY or run "claude login" to use your Claude subscription.');
       }
 
       errors = errs;

@@ -29,7 +29,7 @@ export interface CreateSessionOpts {
   useExisting?: boolean;
 }
 
-export type SessionStatus = 'starting' | 'running' | 'stopped' | 'error';
+export type SessionStatus = 'idle' | 'busy' | 'error';
 
 export interface SessionInfo {
   id: string;
@@ -41,6 +41,22 @@ export interface SessionInfo {
   createdAt: number;
 }
 
+// ─── Claude Events ───
+
+export interface ClaudeEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+// ─── Permission ───
+
+export interface PermissionRequest {
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}
+
 // ─── Prerequisites ───
 
 export interface PrerequisiteStatus {
@@ -49,9 +65,9 @@ export interface PrerequisiteStatus {
     version?: string;
     meetsMinimum?: boolean;
   };
-  claudeCode: {
+  auth: {
     available: boolean;
-    path?: string;
+    method?: 'api-key' | 'claude-login' | 'cloud-provider';
   };
 }
 
@@ -74,11 +90,14 @@ export interface GroveBenchAPI {
   // Branch operations
   listBranches(repoPath: string): Promise<string[]>;
 
-  // Terminal I/O
-  termWrite(sessionId: string, data: string): void;
-  termResize(sessionId: string, cols: number, rows: number): void;
-  onTermData(sessionId: string, callback: (data: string) => void): () => void;
-  offTermData(sessionId: string): void;
+  // Chat I/O
+  sendMessage(sessionId: string, message: string): Promise<void>;
+  onClaudeEvent(sessionId: string, callback: (event: ClaudeEvent) => void): () => void;
+  offClaudeEvent(sessionId: string): void;
+
+  // Permission handling
+  respondPermission(requestId: string, allowed: boolean): void;
+  onPermissionRequest(callback: (request: PermissionRequest) => void): () => void;
 
   // Prerequisites
   checkPrerequisites(): Promise<PrerequisiteStatus>;
@@ -102,9 +121,10 @@ export const IPC = {
   WORKTREE_LIST: 'worktree:list',
   BRANCH_LIST: 'branch:list',
   PREREQUISITES_CHECK: 'prerequisites:check',
-  TERM_WRITE: 'term:write',
-  TERM_RESIZE: 'term:resize',
-  TERM_DATA: 'term:data',       // term:data:{sessionId}
+  SEND_MESSAGE: 'claude:send',
+  CLAUDE_EVENT: 'claude:event',       // claude:event:{sessionId}
+  PERMISSION_REQUEST: 'permission:request',
+  PERMISSION_RESPONSE: 'permission:response',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
 } as const;

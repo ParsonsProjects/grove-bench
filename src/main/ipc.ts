@@ -59,12 +59,10 @@ export function registerHandlers() {
     const exists = await branchExists(opts.repoPath, opts.branchName);
 
     if (opts.useExisting) {
-      // Existing branch mode: require the branch exists
       if (!exists) {
         throw new Error(`Branch "${opts.branchName}" does not exist`);
       }
     } else {
-      // New branch mode: validate name, reject if exists
       const validName = await validateBranchName(opts.branchName);
       if (!validName) {
         throw new Error(`Invalid branch name: "${opts.branchName}"`);
@@ -95,8 +93,11 @@ export function registerHandlers() {
       logger.warn('Failed to copy untracked files:', e);
     }
 
-    // Spawn PTY in the worktree
-    const session = await sessionManager.createSession({
+    // Generate claude settings (deny rules only, no MCP config needed)
+    await worktreeManager.generateClaudeSettings(worktree.path);
+
+    // Create session (starts idle — no process spawned)
+    const session = sessionManager.createSession({
       id: worktree.id,
       branch: worktree.branch,
       cwd: worktree.path,
@@ -144,13 +145,34 @@ export function registerHandlers() {
     return checkAllPrerequisites();
   });
 
-  // ─── Terminal I/O ───
+  // ─── Chat I/O ───
 
-  ipcMain.on(IPC.TERM_WRITE, (_event, sessionId: string, data: string) => {
-    sessionManager.write(sessionId, data);
+  ipcMain.handle(IPC.SEND_MESSAGE, async (event, sessionId: string, message: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+
+    // Lazily register session if it was restored from a worktree on disk
+    if (!sessionManager.getSession(sessionId)) {
+      const wt = worktreeManager.getWorktree(sessionId);
+      if (!wt) throw new Error(`Session ${sessionId} not found and no matching worktree`);
+      const claudeSessionId = await worktreeManager.getClaudeSessionId(sessionId);
+      sessionManager.createSession({
+        id: wt.id,
+        branch: wt.branch,
+        cwd: wt.path,
+        repoPath: wt.repoPath,
+        window: win,
+        claudeSessionId,
+      });
+      logger.info(`Lazily registered session ${sessionId} from restored worktree (resume=${!!claudeSessionId})`);
+    }
+
+    await sessionManager.sendMessage(sessionId, message, win);
   });
 
-  ipcMain.on(IPC.TERM_RESIZE, (_event, sessionId: string, cols: number, rows: number) => {
-    sessionManager.resize(sessionId, cols, rows);
+  // ─── Permissions ───
+
+  ipcMain.on(IPC.PERMISSION_RESPONSE, (_event, requestId: string, allowed: boolean) => {
+    sessionManager.respondPermission(requestId, allowed);
   });
 }

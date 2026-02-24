@@ -63,7 +63,9 @@ function createWindow() {
   logger.info('Grove Bench started');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   app.quit();

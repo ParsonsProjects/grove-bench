@@ -23,20 +23,30 @@ export async function checkGit(): Promise<PrerequisiteStatus['git']> {
   };
 }
 
-export async function findClaudeCode(): Promise<PrerequisiteStatus['claudeCode']> {
+export async function checkAuth(): Promise<PrerequisiteStatus['auth']> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return { available: true, method: 'api-key' };
+  }
+
+  if (process.env.CLAUDE_CODE_USE_BEDROCK === '1' ||
+      process.env.CLAUDE_CODE_USE_VERTEX === '1' ||
+      process.env.CLAUDE_CODE_USE_FOUNDRY === '1') {
+    return { available: true, method: 'cloud-provider' };
+  }
+
+  // Check if Claude CLI is installed (user may have logged in via `claude login`)
   try {
-    const { stdout } = await execFileAsync('where.exe', ['claude']);
-    const firstMatch = stdout.trim().split('\n')[0];
-    return { available: true, path: firstMatch };
+    await execFileAsync('where.exe', ['claude']);
+    return { available: true, method: 'claude-login' };
   } catch {
     return { available: false };
   }
 }
 
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
-  const [gitStatus, claudeCode] = await Promise.all([
+  const [gitStatus, auth] = await Promise.all([
     checkGit(),
-    findClaudeCode(),
+    checkAuth(),
   ]);
-  return { git: gitStatus, claudeCode };
+  return { git: gitStatus, auth };
 }

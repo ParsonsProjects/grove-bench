@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, ClaudeEvent, PermissionRequest, SessionStatus } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -21,30 +21,44 @@ const api: GroveBenchAPI = {
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
 
-  // Terminal I/O
-  termWrite: (sessionId: string, data: string) =>
-    ipcRenderer.send(IPC.TERM_WRITE, sessionId, data),
-  termResize: (sessionId: string, cols: number, rows: number) =>
-    ipcRenderer.send(IPC.TERM_RESIZE, sessionId, cols, rows),
-  onTermData: (sessionId: string, callback: (data: string) => void) => {
-    const channel = `${IPC.TERM_DATA}:${sessionId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: string) =>
-      callback(data);
+  // Chat I/O
+  sendMessage: (sessionId: string, message: string) =>
+    ipcRenderer.invoke(IPC.SEND_MESSAGE, sessionId, message),
+
+  onClaudeEvent: (sessionId: string, callback: (event: ClaudeEvent) => void) => {
+    const channel = `${IPC.CLAUDE_EVENT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, event: ClaudeEvent) =>
+      callback(event);
     ipcRenderer.on(channel, handler);
     return () => {
       ipcRenderer.removeListener(channel, handler);
     };
   },
-  offTermData: (sessionId: string) => {
-    ipcRenderer.removeAllListeners(`${IPC.TERM_DATA}:${sessionId}`);
+
+  offClaudeEvent: (sessionId: string) => {
+    ipcRenderer.removeAllListeners(`${IPC.CLAUDE_EVENT}:${sessionId}`);
+  },
+
+  // Permission handling
+  respondPermission: (requestId: string, allowed: boolean) => {
+    ipcRenderer.send(IPC.PERMISSION_RESPONSE, requestId, allowed);
+  },
+
+  onPermissionRequest: (callback: (request: PermissionRequest) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: PermissionRequest) =>
+      callback(request);
+    ipcRenderer.on(IPC.PERMISSION_REQUEST, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.PERMISSION_REQUEST, handler);
+    };
   },
 
   // Prerequisites
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
 
   // Session status updates
-  onSessionStatus: (callback: (sessionId: string, status: import('../shared/types.js').SessionStatus) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, status: import('../shared/types.js').SessionStatus) =>
+  onSessionStatus: (callback: (sessionId: string, status: SessionStatus) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, status: SessionStatus) =>
       callback(sessionId, status);
     ipcRenderer.on(IPC.SESSION_STATUS, handler);
     return () => {

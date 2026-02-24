@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
-  import TerminalPane from './components/TerminalPane.svelte';
+  import ChatPane from './components/ChatPane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
 
@@ -22,7 +22,7 @@
               id: wt.id,
               branch: wt.branch,
               repoPath: repo,
-              status: 'stopped',
+              status: 'idle',
             });
           }
         }
@@ -47,7 +47,7 @@
 <div class="flex h-screen bg-neutral-950 text-neutral-100">
   <Sidebar />
 
-  <!-- Terminal area -->
+  <!-- Chat area -->
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
     {#if store.sessions.length === 0}
       <div class="flex-1 flex items-center justify-center text-neutral-600">
@@ -65,7 +65,7 @@
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-neutral-800 last:border-r-0 transition-colors
               {store.activeSessionId === session.id ? 'bg-neutral-950 text-neutral-200' : 'bg-neutral-900 text-neutral-500 hover:text-neutral-300'}"
           >
-            <span class="w-1.5 h-1.5 rounded-full {session.status === 'running' ? 'bg-green-500' : session.status === 'error' ? 'bg-red-500' : 'bg-neutral-500'} shrink-0"></span>
+            <span class="w-1.5 h-1.5 rounded-full {session.status === 'busy' ? 'bg-green-500 animate-pulse' : session.status === 'error' ? 'bg-red-500' : 'bg-neutral-500'} shrink-0"></span>
             {#if store.repos.length > 1}
               <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
               <span class="text-neutral-600">/</span>
@@ -74,10 +74,10 @@
           </button>
         {/each}
       </div>
-      <!-- Active terminal -->
+      <!-- Active chat -->
       {#each store.sessions as session (session.id)}
         <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-          <TerminalPane sessionId={session.id} />
+          <ChatPane sessionId={session.id} />
         </div>
       {/each}
     {/if}

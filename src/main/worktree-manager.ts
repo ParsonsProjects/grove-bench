@@ -14,6 +14,7 @@ interface ManifestEntry {
   repoPath: string;
   branch: string;
   createdAt: number;
+  claudeSessionId?: string;
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -271,6 +272,22 @@ export class WorktreeManager {
     }
   }
 
+  /** Persist the Claude session ID so --resume works across app restarts. */
+  async setClaudeSessionId(worktreeId: string, sessionId: string): Promise<void> {
+    await this.withManifest((manifest) => {
+      const entry = manifest[worktreeId];
+      if (entry) {
+        entry.claudeSessionId = sessionId;
+      }
+    });
+  }
+
+  /** Read the persisted Claude session ID for a worktree. */
+  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
+    const manifest = await this.loadManifest();
+    return manifest[worktreeId]?.claudeSessionId;
+  }
+
   /**
    * Detect orphan worktrees in the manifest that are no longer valid.
    * Called on startup to clean up after crashes.
@@ -382,23 +399,19 @@ export class WorktreeManager {
     );
   }
 
-  private async generateClaudeSettings(wtPath: string): Promise<void> {
+  async generateClaudeSettings(wtPath: string): Promise<void> {
     const claudeDir = path.join(wtPath, '.claude');
     const settingsPath = path.join(claudeDir, 'settings.local.json');
 
     await fs.mkdir(claudeDir, { recursive: true });
-    await fs.writeFile(
-      settingsPath,
-      JSON.stringify(
-        {
-          permissions: {
-            deny: ['Read(../../**)', 'Edit(../../**)'],
-          },
-        },
-        null,
-        2
-      )
-    );
+
+    const settings = {
+      permissions: {
+        deny: ['Read(../../**)', 'Edit(../../**)'],
+      },
+    };
+
+    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
   }
 }
 

@@ -1,2 +1,68 @@
 @import "tailwindcss";
-@import "@xterm/xterm/css/xterm.css";
+@import "highlight.js/styles/github-dark.css";
+
+/* Prose overrides for dark theme */
+.prose {
+  color: #e5e5e5;
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  color: #fafafa;
+}
+
+.prose strong {
+  color: #fafafa;
+}
+
+.prose a {
+  color: #60a5fa;
+}
+
+.prose code {
+  color: #e5e5e5;
+  background: #262626;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+}
+
+.prose pre {
+  background: #171717;
+  border: 1px solid #404040;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+
+.prose pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.8em;
+}
+
+.prose blockquote {
+  border-left-color: #525252;
+  color: #a3a3a3;
+}
+
+.prose ul, .prose ol {
+  color: #d4d4d4;
+}
+
+.prose hr {
+  border-color: #404040;
+}
+
+.prose table th {
+  color: #fafafa;
+}
+
+.prose table td, .prose table th {
+  border-color: #404040;
+  padding: 0.5rem 0.75rem;
+}
+
+.prose img {
+  border-radius: 0.5rem;
+}

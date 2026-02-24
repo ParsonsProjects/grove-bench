@@ -68,7 +68,7 @@
         : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
 
       const result = await window.groveBench.createSession(opts);
-      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: 'running' });
+      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: 'idle' });
       onclose();
     } catch (e: any) {
       dialogError = e.message || String(e);
