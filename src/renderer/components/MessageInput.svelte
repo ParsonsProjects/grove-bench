@@ -1,5 +1,6 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   let { sessionId, disabled = false }: { sessionId: string; disabled?: boolean } = $props();
 
@@ -18,7 +19,6 @@
     window.groveBench.sendMessage(sessionId, text);
     value = '';
 
-    // Reset textarea height
     if (textarea) {
       textarea.style.height = 'auto';
     }
@@ -43,19 +43,16 @@
   }
 </script>
 
-<div class="border-t border-neutral-800 bg-neutral-900 px-4 py-3">
+<div class="border-t border-border bg-card px-4 py-3">
   {#if isRunning}
     <div class="flex items-center justify-between mb-2">
-      <div class="flex items-center gap-2 text-xs text-neutral-400">
-        <span class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+        <span class="w-2 h-2 bg-primary animate-pulse"></span>
         Claude is working...
       </div>
-      <button
-        onclick={handleStop}
-        class="px-2 py-1 text-xs bg-neutral-700 hover:bg-neutral-600 rounded text-neutral-300 transition-colors"
-      >
+      <Button variant="secondary" size="sm" onclick={handleStop}>
         Stop
-      </button>
+      </Button>
     </div>
   {/if}
 
@@ -68,17 +65,16 @@
       disabled={disabled}
       placeholder={isRunning ? 'Waiting for Claude...' : 'Send a message... (Enter to send, Shift+Enter for newline)'}
       rows="1"
-      class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200
-        placeholder:text-neutral-500 resize-none focus:outline-none focus:border-blue-500
+      class="flex-1 bg-secondary border border-input px-3 py-2 text-sm text-foreground
+        placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
         disabled:opacity-50 disabled:cursor-not-allowed"
     ></textarea>
-    <button
+    <Button
       onclick={handleSubmit}
       disabled={!value.trim() || !canSend}
-      class="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-700 disabled:text-neutral-500
-        rounded-lg text-sm transition-colors shrink-0"
+      size="sm"
     >
       Send
-    </button>
+    </Button>
   </div>
 </div>

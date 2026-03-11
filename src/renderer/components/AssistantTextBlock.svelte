@@ -4,6 +4,6 @@
   let { content }: { content: string } = $props();
 </script>
 
-<div class="py-1 text-sm text-neutral-200">
+<div class="py-1 text-sm text-foreground">
   <MarkdownBlock {content} />
 </div>

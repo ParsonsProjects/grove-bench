@@ -8,7 +8,6 @@
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
 
   async function restoreWorktrees() {
-    // Get actual running sessions from main process so we don't mark them as stopped
     const runningSessions = await window.groveBench.listSessions();
     const runningIds = new Set(runningSessions.filter((s) => s.status === 'running').map((s) => s.id));
 
@@ -62,7 +61,6 @@
     }
   }
 
-  // Lazy resume: start an agent session when a stopped session becomes the active tab
   let resumingId: string | null = null;
 
   $effect(() => {
@@ -103,19 +101,19 @@
 
 <PrerequisiteCheck />
 
-<div class="flex h-screen bg-neutral-950 text-neutral-100 font-mono">
+<div class="flex h-screen bg-background text-foreground font-mono">
   <Sidebar />
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
     {#if store.sessions.length === 0}
-      <div class="flex-1 flex items-center justify-center text-neutral-600">
+      <div class="flex-1 flex items-center justify-center text-muted-foreground">
         <div class="text-center">
           <p class="text-sm mb-2">No active agents</p>
           <p class="text-xs">Add a repository and create an agent to get started.</p>
         </div>
       </div>
     {:else if !store.activeSession}
-      <div class="flex-1 flex items-center justify-center text-neutral-600">
+      <div class="flex-1 flex items-center justify-center text-muted-foreground">
         <div class="text-center">
           <p class="text-sm mb-2">No open sessions</p>
           <p class="text-xs">Click a session in the sidebar to open it.</p>
@@ -125,19 +123,19 @@
       <!-- Tab bar -->
       {@const openSessions = store.sessions.filter((s) => s.status === 'running')}
       {#if openSessions.length > 0}
-        <div class="flex items-center bg-neutral-900 border-b border-neutral-800 shrink-0">
+        <div class="flex items-center bg-card border-b border-border shrink-0">
           {#each openSessions as session (session.id)}
             {@const isActive = store.activeSessionId === session.id}
             {@const running = messageStore.getIsRunning(session.id)}
             <button
               onclick={() => store.activeSessionId = session.id}
-              class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-neutral-800 last:border-r-0 transition-colors group/tab
-                {isActive ? 'bg-neutral-950 text-neutral-200 border-b-2 border-b-blue-400' : 'bg-neutral-900 text-neutral-500 hover:text-neutral-300 border-b-2 border-b-transparent'}"
+              class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab
+                {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}"
             >
-              <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-blue-400 animate-pulse' : 'bg-green-500'}"></span>
+              <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
               {#if store.repos.length > 1}
                 <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
-                <span class="text-neutral-600">/</span>
+                <span class="text-muted-foreground/40">/</span>
               {/if}
               <span class="truncate">{session.branch}</span>
               <span
@@ -145,7 +143,7 @@
                 tabindex="-1"
                 onclick={(e) => { e.stopPropagation(); closeTab(session.id); }}
                 onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); closeTab(session.id); } }}
-                class="ml-1 text-neutral-600 hover:text-neutral-300 opacity-0 group-hover/tab:opacity-100 transition-opacity cursor-pointer"
+                class="ml-1 text-muted-foreground/40 hover:text-foreground opacity-0 group-hover/tab:opacity-100 transition-opacity cursor-pointer"
               >&times;</span>
             </button>
           {/each}
@@ -158,8 +156,8 @@
           {#if session.status === 'running'}
             <WorkspacePane sessionId={session.id} />
           {:else}
-            <div class="flex items-center justify-center h-full text-neutral-500">
-              <div class="w-5 h-5 border-2 border-neutral-600 border-t-transparent animate-spin"></div>
+            <div class="flex items-center justify-center h-full text-muted-foreground">
+              <div class="w-5 h-5 border-2 border-border border-t-transparent animate-spin"></div>
               <span class="ml-3 text-sm">Starting agent...</span>
             </div>
           {/if}

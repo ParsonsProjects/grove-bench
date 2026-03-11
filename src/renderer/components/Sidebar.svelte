@@ -3,6 +3,10 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import NewAgentDialog from './NewAgentDialog.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Separator } from '$lib/components/ui/separator/index.js';
 
   let showNewAgent = $state(false);
   let newAgentDefaultRepo = $state('');
@@ -60,17 +64,17 @@
   };
 </script>
 
-<aside class="w-60 border-r border-neutral-800 flex flex-col bg-neutral-950 shrink-0">
+<aside class="w-60 border-r border-sidebar-border flex flex-col bg-sidebar shrink-0">
   <!-- Header -->
-  <div class="px-4 py-3 border-b border-neutral-800">
-    <h1 class="text-sm font-bold tracking-wide text-neutral-300">GROVE BENCH</h1>
+  <div class="px-4 py-3 border-b border-sidebar-border">
+    <h1 class="text-sm font-bold tracking-wide text-sidebar-foreground">GROVE BENCH</h1>
   </div>
 
   <!-- Repo-grouped sessions -->
   <div class="flex-1 overflow-auto px-3 py-3">
     <div class="flex items-center justify-between mb-2">
-      <span class="text-xs text-neutral-500 uppercase tracking-wide">Repositories</span>
-      <span class="text-xs text-neutral-600">{store.count} {store.count === 1 ? 'agent' : 'agents'}</span>
+      <span class="text-xs text-muted-foreground uppercase tracking-wide">Repositories</span>
+      <span class="text-xs text-muted-foreground/60">{store.count} {store.count === 1 ? 'agent' : 'agents'}</span>
     </div>
 
     {#each store.repos as repo (repo)}
@@ -79,21 +83,21 @@
       <div class="mb-3">
         <!-- Repo header -->
         <div class="flex items-center justify-between group px-1 py-1">
-          <span class="text-xs font-medium text-neutral-400 truncate" title={repo}>
+          <span class="text-xs font-medium text-muted-foreground truncate" title={repo}>
             {store.repoDisplayName(repo)}
           </span>
           <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {#if store.canCreate}
               <button
                 onclick={() => openNewAgent(repo)}
-                class="text-neutral-500 hover:text-blue-400 text-xs px-1"
+                class="text-muted-foreground hover:text-primary text-xs px-1"
                 title="New agent in this repo"
               >+</button>
             {/if}
             <button
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
-              class="text-neutral-500 hover:text-red-400 disabled:text-neutral-700 disabled:cursor-not-allowed text-xs px-1"
+              class="text-muted-foreground hover:text-destructive disabled:text-muted-foreground/30 disabled:cursor-not-allowed text-xs px-1"
               title={canRemove ? 'Remove repository' : 'Destroy all sessions first'}
             >&times;</button>
           </div>
@@ -103,14 +107,14 @@
         {#each repoSessions as session (session.id)}
           <button
             onclick={() => focusSession(session.id)}
-            class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 rounded text-left group/session transition-colors
-              {store.activeSessionId === session.id ? 'bg-neutral-800' : 'hover:bg-neutral-800/50'}"
+            class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
+              {store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
           >
             <div class="flex items-center gap-2 min-w-0">
               {#if destroying === session.id}
-                <span class="w-2 h-2 border border-neutral-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
+                <span class="w-2 h-2 border border-muted-foreground border-t-transparent rounded-full animate-spin shrink-0"></span>
               {:else}
-                <span class="w-2 h-2 rounded-full {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
+                <span class="w-2 h-2 {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
               {/if}
               <span class="text-sm truncate">{session.branch}</span>
             </div>
@@ -119,7 +123,7 @@
               tabindex="-1"
               onclick={(e) => { e.stopPropagation(); requestDestroy(session.id); }}
               onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') requestDestroy(session.id); }}
-              class="text-neutral-600 hover:text-red-400 opacity-0 group-hover/session:opacity-100 text-xs cursor-pointer"
+              class="text-muted-foreground/40 hover:text-destructive opacity-0 group-hover/session:opacity-100 text-xs cursor-pointer"
             >
               &times;
             </span>
@@ -127,26 +131,27 @@
         {/each}
 
         {#if repoSessions.length === 0}
-          <p class="text-xs text-neutral-600 pl-4 py-1">No agents</p>
+          <p class="text-xs text-muted-foreground/50 pl-4 py-1">No agents</p>
         {/if}
       </div>
     {/each}
 
     {#if store.repos.length === 0}
-      <p class="text-xs text-neutral-600 mt-2">Add a repository to get started.</p>
+      <p class="text-xs text-muted-foreground/50 mt-2">Add a repository to get started.</p>
     {/if}
   </div>
 
   <!-- Bottom controls -->
-  <div class="px-3 py-3 border-t border-neutral-800 flex flex-col gap-2">
+  <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
     <AddRepoButton />
-    <button
+    <Button
       onclick={() => openNewAgent()}
       disabled={!store.canCreate}
-      class="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-800 disabled:text-neutral-600 rounded text-sm transition-colors"
+      class="w-full"
+      size="sm"
     >
       + New Agent
-    </button>
+    </Button>
   </div>
 </aside>
 
@@ -157,82 +162,50 @@
 <!-- Destroy session confirmation dialog -->
 {#if confirmDestroyId}
   {@const session = store.sessions.find(s => s.id === confirmDestroyId)}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-    onclick={() => confirmDestroyId = null}
-    onkeydown={(e) => e.key === 'Escape' && (confirmDestroyId = null)}
-  >
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="bg-neutral-900 border border-neutral-700 rounded-lg w-80 p-6 shadow-xl"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h2 class="text-lg font-semibold mb-3">Destroy Agent?</h2>
-      <p class="text-sm text-neutral-400 mb-3">
-        This will kill the shell process and remove the worktree for branch
-        <span class="text-neutral-200 font-medium">{session?.branch ?? 'unknown'}</span>.
-      </p>
-      <label class="flex items-center gap-2 text-sm text-neutral-400 mb-4 cursor-pointer">
-        <input
-          type="checkbox"
-          bind:checked={deleteBranchOnDestroy}
-          class="rounded border-neutral-600 bg-neutral-800"
-        />
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmDestroyId = null; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Destroy Agent?</Dialog.Title>
+        <Dialog.Description>
+          This will kill the shell process and remove the worktree for branch
+          <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+        </Dialog.Description>
+      </Dialog.Header>
+      <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
+        <Checkbox bind:checked={deleteBranchOnDestroy} />
         Also delete the branch
       </label>
-      <div class="flex gap-2 justify-end">
-        <button
-          onclick={() => confirmDestroyId = null}
-          class="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-sm"
-        >
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel
-        </button>
-        <button
-          onclick={confirmDestroy}
-          class="px-4 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm"
-        >
+        </Button>
+        <Button variant="destructive" onclick={confirmDestroy}>
           Destroy
-        </button>
-      </div>
-    </div>
-  </div>
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 {/if}
 
 <!-- Remove repo confirmation dialog -->
 {#if confirmRemoveRepo}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-    onclick={() => confirmRemoveRepo = null}
-    onkeydown={(e) => e.key === 'Escape' && (confirmRemoveRepo = null)}
-  >
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="bg-neutral-900 border border-neutral-700 rounded-lg w-80 p-6 shadow-xl"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h2 class="text-lg font-semibold mb-3">Remove Repository?</h2>
-      <p class="text-sm text-neutral-400 mb-4">
-        Remove <span class="text-neutral-200 font-medium">{store.repoDisplayName(confirmRemoveRepo)}</span> from Grove Bench?
-        This won't delete any files on disk.
-      </p>
-      <div class="flex gap-2 justify-end">
-        <button
-          onclick={() => confirmRemoveRepo = null}
-          class="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-sm"
-        >
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmRemoveRepo = null; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Remove Repository?</Dialog.Title>
+        <Dialog.Description>
+          Remove <span class="text-foreground font-medium">{store.repoDisplayName(confirmRemoveRepo)}</span> from Grove Bench?
+          This won't delete any files on disk.
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmRemoveRepo = null}>
           Cancel
-        </button>
-        <button
-          onclick={() => confirmRemoveRepo && handleRemoveRepo(confirmRemoveRepo)}
-          class="px-4 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm"
-        >
+        </Button>
+        <Button variant="destructive" onclick={() => confirmRemoveRepo && handleRemoveRepo(confirmRemoveRepo)}>
           Remove
-        </button>
-      </div>
-    </div>
-  </div>
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 {/if}

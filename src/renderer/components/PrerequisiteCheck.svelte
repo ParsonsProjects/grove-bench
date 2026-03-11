@@ -29,25 +29,25 @@
 </script>
 
 {#if checking}
-  <div class="fixed inset-0 bg-neutral-950 flex items-center justify-center z-50">
+  <div class="fixed inset-0 bg-background flex items-center justify-center z-50">
     <div class="text-center">
-      <div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-      <p class="text-neutral-400">Checking prerequisites...</p>
+      <div class="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+      <p class="text-muted-foreground">Checking prerequisites...</p>
     </div>
   </div>
 {:else if hasErrors}
-  <div class="fixed inset-0 bg-neutral-950/95 flex items-center justify-center z-50">
-    <div class="bg-neutral-900 border border-neutral-700 rounded-lg p-8 max-w-md">
-      <h2 class="text-lg font-semibold text-red-400 mb-4">Prerequisites Missing</h2>
+  <div class="fixed inset-0 bg-background/95 flex items-center justify-center z-50">
+    <div class="bg-card border border-border p-8 max-w-md">
+      <h2 class="text-lg font-semibold text-destructive mb-4">Prerequisites Missing</h2>
       <ul class="flex flex-col gap-3">
         {#each errors as err}
-          <li class="text-sm text-neutral-300 flex gap-2">
-            <span class="text-red-500 shrink-0">&#x2717;</span>
+          <li class="text-sm text-foreground/80 flex gap-2">
+            <span class="text-destructive shrink-0">&#x2717;</span>
             {err}
           </li>
         {/each}
       </ul>
-      <p class="text-xs text-neutral-500 mt-6">Fix the issues above and restart Grove Bench.</p>
+      <p class="text-xs text-muted-foreground mt-6">Fix the issues above and restart Grove Bench.</p>
     </div>
   </div>
 {/if}

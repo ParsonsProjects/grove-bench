@@ -32,7 +32,6 @@
     if (toolName === 'Write') {
       const content = String(input?.content ?? '');
       if (!content) return [];
-      // All additions for a new/overwritten file
       return content.split('\n').map((line, i) => ({
         type: 'add' as const,
         text: line,
@@ -81,15 +80,15 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 border-blue-400 pl-3">
+<div class="py-1 my-1 border-l-4 border-primary pl-3">
   <!-- Header -->
   <div class="flex items-center gap-2 text-xs mb-1">
-    <span class="text-blue-400 font-bold">{toolName === 'Write' ? '+ new file' : 'edit'}</span>
-    <span class="text-neutral-300">{filePath}</span>
+    <span class="text-primary font-bold">{toolName === 'Write' ? '+ new file' : 'edit'}</span>
+    <span class="text-foreground/80">{filePath}</span>
     {#if pending}
-      <span class="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
+      <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0"></span>
     {:else if isError}
-      <span class="text-red-400">error</span>
+      <span class="text-destructive">error</span>
     {/if}
   </div>
 
@@ -101,17 +100,17 @@
           <div class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>
         {:else if line.type === 'add'}
           <div class="bg-green-950/30 text-green-300 px-2">
-            <span class="inline-block w-8 text-right text-neutral-600 mr-2 select-none">{line.lineNum ?? ''}</span>
+            <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
             <span class="text-green-500 select-none">+</span> {line.text}
           </div>
         {:else if line.type === 'del'}
           <div class="bg-red-950/30 text-red-300 px-2">
-            <span class="inline-block w-8 text-right text-neutral-600 mr-2 select-none">{line.lineNum ?? ''}</span>
+            <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
             <span class="text-red-500 select-none">-</span> {line.text}
           </div>
         {:else}
-          <div class="text-neutral-400 px-2">
-            <span class="inline-block w-8 text-right text-neutral-600 mr-2 select-none">{line.lineNum ?? ''}</span>
+          <div class="text-muted-foreground px-2">
+            <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
             <span class="select-none">&nbsp;</span> {line.text}
           </div>
         {/if}
@@ -120,6 +119,6 @@
   {/if}
 
   {#if isError && result}
-    <div class="text-xs text-red-400 mt-1">{result}</div>
+    <div class="text-xs text-destructive mt-1">{result}</div>
   {/if}
 </div>

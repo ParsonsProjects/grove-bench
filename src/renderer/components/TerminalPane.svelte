@@ -15,7 +15,7 @@
   });
 </script>
 
-<div class="flex flex-col h-full bg-neutral-950">
+<div class="flex flex-col h-full bg-background">
   <MessageList {sessionId} />
   <MessageInput {sessionId} />
 </div>

@@ -76,8 +76,8 @@
       <SystemBlock text={msg.text} variant="error" />
 
     {:else if msg.kind === 'result'}
-      <div class="py-1 border-t border-neutral-800 mt-1">
-        <div class="text-xs text-neutral-500">
+      <div class="py-1 border-t border-border mt-1">
+        <div class="text-xs text-muted-foreground">
           {msg.isError ? 'completed with errors' : 'done'}
           {#if msg.totalCostUsd !== undefined}
             <span class="ml-2">${msg.totalCostUsd.toFixed(4)}</span>
@@ -87,7 +87,7 @@
           {/if}
         </div>
         {#if msg.errors?.length}
-          <div class="text-xs text-red-400 mt-1">{msg.errors.join(', ')}</div>
+          <div class="text-xs text-destructive mt-1">{msg.errors.join(', ')}</div>
         {/if}
       </div>
     {/if}
@@ -95,9 +95,9 @@
 
   <!-- Streaming text (live) -->
   {#if streamingText}
-    <div class="py-1 text-sm text-neutral-200">
+    <div class="py-1 text-sm text-foreground">
       <MarkdownBlock content={streamingText} />
-      <span class="inline-block w-1.5 h-4 bg-neutral-400 animate-pulse ml-0.5 align-text-bottom"></span>
+      <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
   {/if}
 

@@ -34,31 +34,31 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 border-neutral-600 pl-3">
+<div class="py-1 my-1 border-l-4 border-border pl-3">
   <button
     onclick={() => expanded = !expanded}
-    class="w-full flex items-center gap-2 text-left text-xs hover:bg-neutral-800/30 -ml-1 pl-1 py-0.5"
+    class="w-full flex items-center gap-2 text-left text-xs hover:bg-accent/30 -ml-1 pl-1 py-0.5"
   >
-    <span class="text-neutral-400 font-bold">{toolName}</span>
-    <span class="text-neutral-500 truncate flex-1">{summarizeInput(toolInput)}</span>
+    <span class="text-muted-foreground font-bold">{toolName}</span>
+    <span class="text-muted-foreground/70 truncate flex-1">{summarizeInput(toolInput)}</span>
     {#if pending}
-      <span class="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
+      <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0"></span>
     {:else if isError}
-      <span class="text-red-400">error</span>
+      <span class="text-destructive">error</span>
     {:else if result !== undefined}
-      <span class="text-neutral-500">done</span>
+      <span class="text-muted-foreground">done</span>
     {/if}
-    <span class="text-neutral-600 transition-transform {expanded ? 'rotate-90' : ''}">&rsaquo;</span>
+    <span class="text-muted-foreground/40 transition-transform {expanded ? 'rotate-90' : ''}">&rsaquo;</span>
   </button>
 
   {#if expanded}
     <div class="mt-1 text-xs">
-      <div class="text-neutral-500 mb-0.5">input</div>
-      <pre class="text-neutral-400 bg-neutral-900 p-2 overflow-x-auto max-h-48 overflow-y-auto">{formatInput(toolInput)}</pre>
+      <div class="text-muted-foreground mb-0.5">input</div>
+      <pre class="text-muted-foreground bg-card p-2 overflow-x-auto max-h-48 overflow-y-auto">{formatInput(toolInput)}</pre>
       {#if result !== undefined}
-        <div class="text-neutral-500 mt-1 mb-0.5">{isError ? 'error' : 'output'}</div>
-        <pre class="overflow-x-auto max-h-64 overflow-y-auto p-2 bg-neutral-900 whitespace-pre-wrap
-          {isError ? 'text-red-300' : 'text-neutral-400'}">{result}</pre>
+        <div class="text-muted-foreground mt-1 mb-0.5">{isError ? 'error' : 'output'}</div>
+        <pre class="overflow-x-auto max-h-64 overflow-y-auto p-2 bg-card whitespace-pre-wrap
+          {isError ? 'text-red-300' : 'text-muted-foreground'}">{result}</pre>
       {/if}
     </div>
   {/if}

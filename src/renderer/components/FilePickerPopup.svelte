@@ -18,11 +18,9 @@
   let selectedIndex = $state(0);
   let fuse: Fuse<string> | null = null;
 
-  // Cache key
   let cacheKey = `filepicker:${sessionId}`;
   const CACHE_TTL = 30_000;
 
-  // Simple in-memory cache
   const fileCache = new Map<string, { files: string[]; ts: number }>();
 
   $effect(() => {
@@ -50,7 +48,6 @@
     return fuse.search(query, { limit: 20 }).map(r => r.item);
   });
 
-  // Reset selected index when filtered list changes
   $effect(() => {
     const _f = filtered;
     selectedIndex = 0;
@@ -83,16 +80,16 @@
   }
 </script>
 
-<div class="absolute bottom-full left-0 right-0 mb-1 bg-neutral-900 border border-neutral-700 max-h-60 overflow-y-auto z-50 shadow-xl">
+<div class="absolute bottom-full left-0 right-0 mb-1 bg-popover border border-border max-h-60 overflow-y-auto z-50 shadow-xl">
   {#if loading}
-    <div class="px-3 py-2 text-xs text-neutral-500">Loading files...</div>
+    <div class="px-3 py-2 text-xs text-muted-foreground">Loading files...</div>
   {:else if filtered.length === 0}
-    <div class="px-3 py-2 text-xs text-neutral-500">No matches</div>
+    <div class="px-3 py-2 text-xs text-muted-foreground">No matches</div>
   {:else}
     {#each filtered as file, i}
       <button
-        class="w-full text-left px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800 block
-          {i === selectedIndex ? 'bg-neutral-800 text-white' : ''}"
+        class="w-full text-left px-3 py-1 text-xs text-popover-foreground/80 hover:bg-accent block
+          {i === selectedIndex ? 'bg-accent text-accent-foreground' : ''}"
         onmousedown={(e) => { e.preventDefault(); onselect(file); }}
       >
         {file}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -8,7 +9,6 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
 
-  // Find the last result message for cost/duration
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -45,14 +45,14 @@
   });
 </script>
 
-<div class="flex items-center gap-4 px-4 py-1 bg-neutral-900 border-t border-b border-neutral-800 text-xs text-neutral-500 shrink-0">
+<div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   {#if model}
     <span>{model}</span>
   {/if}
 
   <button
     onclick={() => messageStore.cycleMode(sessionId)}
-    class="flex items-center gap-1.5 px-1.5 py-0.5 border rounded transition-colors hover:bg-neutral-800 {modeColors[mode] ?? modeColors.default}"
+    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
     title="Change mode (Alt+M)"
   >
     {modeLabels[mode] ?? mode}
@@ -60,10 +60,10 @@
 
   <span class="flex items-center gap-1.5">
     {#if isRunning}
-      <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse"></span>
-      <span class="text-blue-400">running</span>
+      <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+      <span class="text-primary">running</span>
     {:else}
-      <span class="w-1.5 h-1.5 bg-neutral-600"></span>
+      <span class="w-1.5 h-1.5 bg-muted-foreground/60"></span>
       <span>idle</span>
     {/if}
   </span>
@@ -76,5 +76,5 @@
     <span>{(lastResult.durationMs / 1000).toFixed(1)}s</span>
   {/if}
 
-  <span class="ml-auto text-neutral-600">Alt+M</span>
+  <span class="ml-auto text-muted-foreground/40">Alt+M</span>
 </div>

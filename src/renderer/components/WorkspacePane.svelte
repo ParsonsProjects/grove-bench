@@ -10,8 +10,6 @@
   onMount(async () => {
     messageStore.subscribe(sessionId);
 
-    // If the session is not yet ready, try replaying event history.
-    // Handles cases where events were emitted before we subscribed.
     if (!messageStore.getIsReady(sessionId)) {
       try {
         const history = await window.groveBench.getEventHistory(sessionId);
@@ -38,7 +36,7 @@
   });
 </script>
 
-<div class="flex flex-col h-full bg-neutral-950">
+<div class="flex flex-col h-full bg-background">
   <OutputPanel {sessionId} />
   <StatusBar {sessionId} />
   <PromptEditor {sessionId} />
