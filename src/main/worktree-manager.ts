@@ -14,6 +14,7 @@ interface ManifestEntry {
   repoPath: string;
   branch: string;
   createdAt: number;
+  claudeSessionId?: string;
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -108,6 +109,21 @@ export class WorktreeManager {
     });
 
     return info;
+  }
+
+  /** Persist the Claude SDK session ID so it can be resumed after restart. */
+  async saveClaudeSessionId(worktreeId: string, claudeSessionId: string): Promise<void> {
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].claudeSessionId = claudeSessionId;
+      }
+    });
+  }
+
+  /** Retrieve the last Claude SDK session ID for a worktree. */
+  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
+    const manifest = await this.loadManifest();
+    return manifest[worktreeId]?.claudeSessionId;
   }
 
   async remove(id: string, deleteBranch = false): Promise<void> {

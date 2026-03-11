@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -11,6 +11,10 @@ const api: GroveBenchAPI = {
   // Session operations
   createSession: (opts: CreateSessionOpts) =>
     ipcRenderer.invoke(IPC.SESSION_CREATE, opts),
+  resumeSession: (id: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.SESSION_RESUME, id, repoPath),
+  stopSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_STOP, id),
   destroySession: (id: string, deleteBranch?: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
@@ -21,23 +25,33 @@ const api: GroveBenchAPI = {
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
 
-  // Terminal I/O
-  termWrite: (sessionId: string, data: string) =>
-    ipcRenderer.send(IPC.TERM_WRITE, sessionId, data),
-  termResize: (sessionId: string, cols: number, rows: number) =>
-    ipcRenderer.send(IPC.TERM_RESIZE, sessionId, cols, rows),
-  onTermData: (sessionId: string, callback: (data: string) => void) => {
-    const channel = `${IPC.TERM_DATA}:${sessionId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: string) =>
+  // Agent I/O
+  sendMessage: (sessionId: string, content: string) =>
+    ipcRenderer.send(IPC.AGENT_SEND, sessionId, content),
+  respondToPermission: (sessionId: string, decision: PermissionDecision) =>
+    ipcRenderer.send(IPC.AGENT_PERMISSION, sessionId, decision),
+  onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
+    const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
       callback(data);
     ipcRenderer.on(channel, handler);
     return () => {
       ipcRenderer.removeListener(channel, handler);
     };
   },
-  offTermData: (sessionId: string) => {
-    ipcRenderer.removeAllListeners(`${IPC.TERM_DATA}:${sessionId}`);
+  offAgentEvent: (sessionId: string) => {
+    ipcRenderer.removeAllListeners(`${IPC.AGENT_EVENT}:${sessionId}`);
   },
+  getEventHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY, sessionId),
+
+  // Mode control
+  setMode: (sessionId: string, mode: string) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_MODE, sessionId, mode),
+
+  // File operations (for @ file picker)
+  listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
+  readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
 
   // Prerequisites
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),

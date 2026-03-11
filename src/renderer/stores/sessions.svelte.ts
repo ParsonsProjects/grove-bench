@@ -1,4 +1,4 @@
-import type { SessionInfo, PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
+import type { SessionStatus } from '../../shared/types.js';
 
 const REPOS_KEY = 'grove-bench:repos';
 
@@ -22,7 +22,6 @@ class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>(loadRepos());
   activeSessionId = $state<string | null>(null);
-  prerequisites = $state<PrerequisiteStatus | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
 

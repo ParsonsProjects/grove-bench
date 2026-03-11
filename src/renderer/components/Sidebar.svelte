@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import NewAgentDialog from './NewAgentDialog.svelte';
 
@@ -109,7 +110,7 @@
               {#if destroying === session.id}
                 <span class="w-2 h-2 border border-neutral-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
               {:else}
-                <span class="w-2 h-2 rounded-full {statusColor[session.status] || 'bg-neutral-500'} shrink-0"></span>
+                <span class="w-2 h-2 rounded-full {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
               {/if}
               <span class="text-sm truncate">{session.branch}</span>
             </div>

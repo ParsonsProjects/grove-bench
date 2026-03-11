@@ -1,11 +1,13 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, SessionInfo } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
-import { validateBranchName, branchExists, listBranches } from './git.js';
+import { validateBranchName, branchExists, listBranches, git } from './git.js';
 import { logger } from './logger.js';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 
 export function registerHandlers() {
   // ─── Repo ───
@@ -59,12 +61,10 @@ export function registerHandlers() {
     const exists = await branchExists(opts.repoPath, opts.branchName);
 
     if (opts.useExisting) {
-      // Existing branch mode: require the branch exists
       if (!exists) {
         throw new Error(`Branch "${opts.branchName}" does not exist`);
       }
     } else {
-      // New branch mode: validate name, reject if exists
       const validName = await validateBranchName(opts.branchName);
       if (!validName) {
         throw new Error(`Invalid branch name: "${opts.branchName}"`);
@@ -95,7 +95,7 @@ export function registerHandlers() {
       logger.warn('Failed to copy untracked files:', e);
     }
 
-    // Spawn PTY in the worktree
+    // Start Claude agent in the worktree
     const session = await sessionManager.createSession({
       id: worktree.id,
       branch: worktree.branch,
@@ -108,11 +108,48 @@ export function registerHandlers() {
     return { id: session.id, branch: session.branch };
   });
 
+  ipcMain.handle(IPC.SESSION_RESUME, async (event, id: string, repoPath: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+
+    const worktree = worktreeManager.getWorktree(id);
+    if (!worktree) {
+      throw new Error(`Worktree ${id} not found`);
+    }
+
+    // If already running, just reattach the window so events flow to new webContents
+    if (sessionManager.getSession(id)) {
+      const s = sessionManager.getSession(id)!;
+      sessionManager.reattachWindow(id, win);
+      return { id: s.id, branch: s.branch };
+    }
+
+    // Look up saved Claude session ID for conversation resumption
+    const claudeSessionId = await worktreeManager.getClaudeSessionId(id);
+    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, claudeSession=${claudeSessionId ?? 'none'}`);
+
+    const session = await sessionManager.createSession({
+      id: worktree.id,
+      branch: worktree.branch,
+      cwd: worktree.path,
+      repoPath,
+      window: win,
+      resumeClaudeSessionId: claudeSessionId,
+    });
+
+    logger.info(`Session resumed: id=${session.id}`);
+    return { id: session.id, branch: session.branch };
+  });
+
+  ipcMain.handle(IPC.SESSION_STOP, async (_event, id: string) => {
+    logger.info(`Stopping session (keeping worktree): id=${id}`);
+    await sessionManager.destroySession(id);
+    logger.info(`Session stopped: id=${id}`);
+  });
+
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
-    await sessionManager.destroySession(id);
-    // Wait for file handles before removing worktree
-    await new Promise((r) => setTimeout(r, 500));
+    await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
     logger.info(`Session destroyed: id=${id}`);
   });
@@ -131,7 +168,6 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.WORKTREE_LIST, async (_event, repoPath: string) => {
     const worktrees = await worktreeManager.list(repoPath);
-    // Register into internal map so they can be destroyed later
     for (const wt of worktrees) {
       worktreeManager.register(wt);
     }
@@ -144,13 +180,47 @@ export function registerHandlers() {
     return checkAllPrerequisites();
   });
 
-  // ─── Terminal I/O ───
+  // ─── Agent I/O ───
 
-  ipcMain.on(IPC.TERM_WRITE, (_event, sessionId: string, data: string) => {
-    sessionManager.write(sessionId, data);
+  ipcMain.on(IPC.AGENT_SEND, (_event, sessionId: string, content: string) => {
+    sessionManager.sendMessage(sessionId, content);
   });
 
-  ipcMain.on(IPC.TERM_RESIZE, (_event, sessionId: string, cols: number, rows: number) => {
-    sessionManager.resize(sessionId, cols, rows);
+  ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
+    sessionManager.setMode(sessionId, mode);
+  });
+
+  ipcMain.on(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
+    sessionManager.respondToPermission(sessionId, decision);
+  });
+
+  ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
+    return sessionManager.getEventHistory(sessionId);
+  });
+
+  // ─── File operations (for @ file picker) ───
+
+  ipcMain.handle(IPC.FILE_LIST, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const output = await git(['ls-files'], worktree.path);
+    return output.split('\n').map(l => l.trim()).filter(Boolean);
+  });
+
+  ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const resolved = path.resolve(worktree.path, filePath);
+    // Security: ensure resolved path is within the worktree
+    if (!resolved.startsWith(worktree.path)) {
+      throw new Error('Path traversal not allowed');
+    }
+    const buf = await fs.readFile(resolved);
+    // Cap at 100KB
+    const maxBytes = 100 * 1024;
+    if (buf.length > maxBytes) {
+      return buf.subarray(0, maxBytes).toString('utf-8') + '\n... (truncated at 100KB)';
+    }
+    return buf.toString('utf-8');
   });
 }

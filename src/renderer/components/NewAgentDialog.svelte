@@ -191,7 +191,7 @@
       {/if}
 
       <p class="text-xs text-neutral-500">
-        New worktrees don't include node_modules. Your agent may need to run npm install first.
+        New worktrees don't include node_modules. The agent may need to run npm install first.
       </p>
 
       {#if dialogError}
