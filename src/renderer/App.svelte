@@ -227,8 +227,10 @@
                 tabindex="-1"
                 onclick={(e) => { e.stopPropagation(); closeTab(session.id); }}
                 onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); closeTab(session.id); } }}
-                class="ml-1 text-muted-foreground/40 hover:text-foreground opacity-0 group-hover/tab:opacity-100 transition-opacity cursor-pointer"
-              >&times;</span>
+                class="ml-1 w-4 h-4 flex items-center justify-center rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted opacity-0 group-hover/tab:opacity-100 transition-all cursor-pointer"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </span>
             </button>
           {/each}
         </div>
