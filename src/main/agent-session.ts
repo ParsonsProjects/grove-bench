@@ -134,15 +134,15 @@ class AgentSessionManager {
     // Emit helper — always reads session.window so it picks up re-attached windows.
     // Also buffers every event so they can be replayed after renderer reload.
     const emit = (event: AgentEvent) => {
-      console.log(`[emit] session=${id} event.type=${event.type}`);
+      logger.debug(`[emit] session=${id} event.type=${event.type}`);
       session.eventHistory.push(event);
       const w = session.window;
       if (!w.isDestroyed()) {
         const channel = `${IPC.AGENT_EVENT}:${id}`;
-        console.log(`[emit] sending on channel=${channel}`);
+        logger.debug(`[emit] sending on channel=${channel}`);
         w.webContents.send(channel, event);
       } else {
-        console.log(`[emit] window is destroyed, dropping event`);
+        logger.debug(`[emit] window is destroyed, dropping event`);
       }
     };
 
@@ -182,9 +182,9 @@ class AgentSessionManager {
 
     let permRequestCounter = 0;
 
-    console.log(`[runQuery] session=${id} starting`);
+    logger.debug(`[runQuery] session=${id} starting`);
     const queryFn = await getQuery();
-    console.log(`[runQuery] session=${id} SDK loaded`);
+    logger.debug(`[runQuery] session=${id} SDK loaded`);
     const q = queryFn({
       prompt: readableStreamToAsyncIterable(session.inputStream!),
       options: {
@@ -235,22 +235,22 @@ class AgentSessionManager {
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
         },
         stderr: (data: string) => {
-          console.log(`[claude-stderr] session=${id}: ${data.trim()}`);
+          logger.debug(`[claude-stderr] session=${id}: ${data.trim()}`);
         },
       },
     });
 
     session.queryInstance = q;
-    console.log(`[runQuery] session=${id} query created, entering message loop`);
+    logger.debug(`[runQuery] session=${id} query created, entering message loop`);
 
     // Process message stream
     try {
       for await (const message of q) {
-        console.log(`[runQuery] session=${id} msg type=${message.type}`);
+        logger.debug(`[runQuery] session=${id} msg type=${message.type}`);
         if (abortController.signal.aborted) break;
         this.handleMessage(session, message, emit);
       }
-      console.log(`[runQuery] session=${id} message loop ended normally`);
+      logger.debug(`[runQuery] session=${id} message loop ended normally`);
     } catch (err) {
       console.error(`[runQuery] session=${id} message loop error:`, err);
       const errMsg = (err as Error).message || String(err);
@@ -464,7 +464,7 @@ class AgentSessionManager {
   sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): void {
     const session = this.sessions.get(id);
     if (!session?.inputController) {
-      console.log(`[sendMessage] session=${id} no session or inputController`);
+      logger.debug(`[sendMessage] session=${id} no session or inputController`);
       return;
     }
 
@@ -486,7 +486,7 @@ class AgentSessionManager {
     }
 
     const sessionId = session.claudeSessionId ?? '';
-    console.log(`[sendMessage] session=${id} enqueuing to SDK, claudeSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
+    logger.debug(`[sendMessage] session=${id} enqueuing to SDK, claudeSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
       session.inputController.enqueue({
         type: 'user',
@@ -497,7 +497,7 @@ class AgentSessionManager {
         },
         parent_tool_use_id: null,
       } as SDKUserMessage);
-      console.log(`[sendMessage] session=${id} enqueued successfully`);
+      logger.debug(`[sendMessage] session=${id} enqueued successfully`);
     } catch (e) {
       console.error(`[sendMessage] session=${id} enqueue FAILED:`, e);
       logger.warn(`Failed to send message to session ${id}:`, e);

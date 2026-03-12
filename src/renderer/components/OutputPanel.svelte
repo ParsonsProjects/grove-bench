@@ -87,6 +87,15 @@
   bind:this={scrollContainer}
   onscroll={handleScroll}
 >
+  {#if messages.length === 0 && !streamingText}
+    <div class="flex-1 flex items-center justify-center h-full text-muted-foreground">
+      <div class="text-center">
+        <p class="text-sm mb-1">Waiting for input...</p>
+        <p class="text-xs">Type a message below to start the conversation.</p>
+      </div>
+    </div>
+  {/if}
+
   {#each messages as msg (msg.id)}
     {@const isMatch = matchingIds.has(msg.id)}
     {@const isCurrent = currentMatchId === msg.id}

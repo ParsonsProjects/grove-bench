@@ -607,18 +607,8 @@ class MessageStore {
   /** Subscribe to events from the main process for a session */
   subscribe(sessionId: string) {
     if (this.cleanups.has(sessionId)) {
-      this.pushMessage(sessionId, {
-        kind: 'system',
-        id: nextId(),
-        text: `[debug] subscribe: already subscribed to ${sessionId}`,
-      });
       return;
     }
-    this.pushMessage(sessionId, {
-      kind: 'system',
-      id: nextId(),
-      text: `[debug] subscribe: subscribing to ${sessionId}`,
-    });
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
       this.ingestEvent(sessionId, event);
     });
