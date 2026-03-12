@@ -41,7 +41,27 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Native Linux/macOS support and testing (currently Windows-focused)
 
 ### Clipboard
-- [ ] Explicit system clipboard integration for copying code blocks/outputs
+- [x] Copy buttons on code blocks, bash output, diffs, file ops, thinking blocks
+
+## Feature Requests
+
+### Input & UX
+- [ ] Auto-grow input with max height and manual resize
+- [ ] Markdown rendering in input (preview mode)
+- [ ] Context length indicator (token usage / remaining)
+- [ ] Drag and drop (files, images into prompt)
+
+### Agent Capabilities
+- [ ] Commands (slash commands for common actions)
+- [ ] Skills (reusable prompt templates / workflows)
+- [ ] MCP server connections (connect to external MCP servers)
+
+### Git & Workflow
+- [ ] Branch → PR link (create PR from session branch)
+- [ ] Branch without worktree (use existing checkout, no worktree creation)
+
+### Dev & Preview
+- [ ] Localhost run (start/preview dev server from worktree)
 
 ## Already at Parity or Better
 

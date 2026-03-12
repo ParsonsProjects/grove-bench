@@ -7,6 +7,7 @@
 
   let value = $state('');
   let textarea: HTMLTextAreaElement;
+  let userResized = $state(false);
   let pickerOpen = $state(false);
   let pickerQuery = $state('');
   let atStartIndex = $state(-1);
@@ -50,7 +51,9 @@
 
     value = '';
     closePicker();
-    if (textarea) textarea.style.height = 'auto';
+    userResized = false;
+    if (container) container.style.height = '';
+    if (textarea) textarea.style.height = '';
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -63,11 +66,20 @@
     }
   }
 
+  function autoResize() {
+    if (!textarea || !container || userResized) return;
+    // Temporarily reset to measure natural height
+    textarea.style.height = '0';
+    const scrollH = textarea.scrollHeight;
+    // pb-3(12) + pt-2(8) + resize handle h-1(4) + border(1)
+    const padding = 25;
+    const newHeight = Math.min(scrollH + padding, 200);
+    container.style.height = newHeight + 'px';
+    textarea.style.height = '100%';
+  }
+
   function handleInput() {
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
-    }
+    autoResize();
 
     const pos = textarea?.selectionStart ?? 0;
     const textBefore = value.slice(0, pos);
@@ -96,12 +108,44 @@
     textarea?.focus();
   }
 
+  let container: HTMLDivElement;
+
+  function handleResizeMousedown(e: MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = container.offsetHeight;
+
+    function onMousemove(ev: MouseEvent) {
+      const newHeight = Math.max(60, Math.min(startHeight - (ev.clientY - startY), window.innerHeight * 0.5));
+      container.style.height = newHeight + 'px';
+      userResized = true;
+    }
+
+    function onMouseup() {
+      window.removeEventListener('mousemove', onMousemove);
+      window.removeEventListener('mouseup', onMouseup);
+    }
+
+    window.addEventListener('mousemove', onMousemove);
+    window.addEventListener('mouseup', onMouseup);
+  }
+
   function handleStop() {
     window.groveBench.stopSession(sessionId);
   }
 </script>
 
-<div class="px-4 py-3 bg-background border-t border-border relative">
+<div
+  bind:this={container}
+  class="bg-background border-t border-border relative flex flex-col shrink-0"
+>
+  <!-- Resize handle -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="h-1 cursor-ns-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
+    onmousedown={handleResizeMousedown}
+  ></div>
+
   {#if pickerOpen}
     <FilePickerPopup
       bind:this={pickerRef}
@@ -112,7 +156,7 @@
     />
   {/if}
 
-  <div class="flex gap-2 items-stretch">
+  <div class="flex gap-2 items-stretch flex-1 min-h-0 px-4 pb-3 pt-2">
     <textarea
       bind:this={textarea}
       bind:value
