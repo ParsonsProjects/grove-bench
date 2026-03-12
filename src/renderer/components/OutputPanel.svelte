@@ -83,15 +83,27 @@
 {/if}
 
 <div
-  class="flex-1 overflow-y-auto px-4 py-3"
+  class="pixel-bg flex-1 overflow-y-auto px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
 >
+  {#each Array(20) as _, i}
+    <span
+      class="blue-pixel absolute rounded-[1px]"
+      style="
+        width: 4px; height: 4px;
+        top: {8 + (((i * 37 + 13) * 7) % 84)}%;
+        left: {5 + (((i * 53 + 7) * 11) % 90)}%;
+        animation-delay: {(i * 1.3) % 6}s;
+      "
+    ></span>
+  {/each}
+
   {#if messages.length === 0 && !streamingText}
-    <div class="flex-1 flex items-center justify-center h-full text-muted-foreground">
-      <div class="text-center">
-        <p class="text-sm mb-1">Waiting for input...</p>
-        <p class="text-xs">Type a message below to start the conversation.</p>
+    <div class="flex items-center justify-center h-full text-muted-foreground">
+      <div class="text-center relative z-10">
+        <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
+        <p class="text-xs opacity-40">Type a message below to start the conversation.</p>
       </div>
     </div>
   {/if}

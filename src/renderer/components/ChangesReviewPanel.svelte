@@ -105,15 +105,37 @@
 </script>
 
 {#if isRunning}
-  <div class="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-    <div class="flex items-center gap-2">
+  <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
+    {#each Array(20) as _, i}
+      <span
+        class="blue-pixel absolute rounded-[1px]"
+        style="
+          width: 4px; height: 4px;
+          top: {8 + (((i * 37 + 13) * 7) % 84)}%;
+          left: {5 + (((i * 53 + 7) * 11) % 90)}%;
+          animation-delay: {(i * 1.3) % 6}s;
+        "
+      ></span>
+    {/each}
+    <div class="flex items-center gap-2 relative z-10">
       <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
       Agent is working... changes will appear when the turn completes.
     </div>
   </div>
 {:else if fileChanges.length === 0}
-  <div class="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-    No file changes in the last turn.
+  <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
+    {#each Array(20) as _, i}
+      <span
+        class="blue-pixel absolute rounded-[1px]"
+        style="
+          width: 4px; height: 4px;
+          top: {8 + (((i * 37 + 13) * 7) % 84)}%;
+          left: {5 + (((i * 53 + 7) * 11) % 90)}%;
+          animation-delay: {(i * 1.3) % 6}s;
+        "
+      ></span>
+    {/each}
+    <span class="relative z-10">No file changes in the last turn.</span>
   </div>
 {:else}
   <div class="flex-1 overflow-y-auto">
