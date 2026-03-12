@@ -30,11 +30,6 @@ export async function isGitRepo(path: string): Promise<boolean> {
   }
 }
 
-export async function getCurrentBranch(cwd: string): Promise<string> {
-  const result = await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd });
-  return result.stdout.trim();
-}
-
 export async function branchExists(cwd: string, branch: string): Promise<boolean> {
   try {
     await execa('git', ['rev-parse', '--verify', branch], { cwd });

@@ -382,7 +382,7 @@ export class WorktreeManager {
           copyFiles.push(pattern);
         } catch { /* doesn't exist */ }
       }
-      const config: WorktreeRepoConfig = { copyFiles, copyDirs: [] };
+      const config: WorktreeRepoConfig = { copyFiles };
       await this.saveRepoConfig(repoPath, config);
       return config;
     }

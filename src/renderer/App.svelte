@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -79,17 +79,21 @@
   }
 
   let resumingId: string | null = null;
+  let failedResumeIds = new Set<string>();
 
   $effect(() => {
     const session = store.activeSession;
-    if (!session || session.status !== 'stopped' || resumingId === session.id) return;
+    if (!session || session.status !== 'stopped' || resumingId === session.id || failedResumeIds.has(session.id)) return;
 
     resumingId = session.id;
+    const sessionId = session.id;
     window.groveBench.resumeSession(session.id, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       messageStore.subscribe(result.id);
+      failedResumeIds.delete(sessionId);
     }).catch((e: any) => {
       store.setError(e.message || String(e));
+      failedResumeIds.add(sessionId);
     }).finally(() => {
       resumingId = null;
     });

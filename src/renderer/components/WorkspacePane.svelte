@@ -60,7 +60,7 @@
         // Skip transient events during replay — partial_text is superseded by
         // assistant_text, and activity/tool_progress are ephemeral status updates.
         const skipDuringReplay = new Set([
-          'partial_text', 'activity', 'tool_progress',
+          'partial_text', 'activity', 'tool_progress', 'usage',
         ]);
         for (const event of history) {
           if (!skipDuringReplay.has(event.type)) {

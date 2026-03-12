@@ -17,7 +17,6 @@ export interface WorktreeInfo {
 
 export interface WorktreeRepoConfig {
   copyFiles: string[];
-  copyDirs: string[];
 }
 
 // ─── Session ───
@@ -56,28 +55,6 @@ export interface PrerequisiteStatus {
 }
 
 // ─── Agent Events (renderer-side, serializable) ───
-
-/** Flattened content block from an assistant message */
-export interface AgentTextBlock {
-  type: 'text';
-  text: string;
-}
-
-export interface AgentToolUseBlock {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: unknown;
-}
-
-export interface AgentToolResultBlock {
-  type: 'tool_result';
-  tool_use_id: string;
-  content: string;
-  is_error?: boolean;
-}
-
-export type AgentContentBlock = AgentTextBlock | AgentToolUseBlock | AgentToolResultBlock;
 
 /**
  * Serializable events sent from main → renderer via IPC.

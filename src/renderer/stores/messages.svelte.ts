@@ -280,11 +280,6 @@ class MessageStore {
     this.revertedFilesBySession[sessionId] = new Set(reverted);
   }
 
-  /** Un-revert tracking (if user wants to re-accept after revert — file stays reverted on disk though) */
-  clearRevertedFiles(sessionId: string) {
-    this.revertedFilesBySession[sessionId] = new Set();
-  }
-
   removeDevServer(sessionId: string, port: number) {
     const servers = this.devServersBySession[sessionId] ?? [];
     this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);
@@ -655,20 +650,6 @@ class MessageStore {
     }
   }
 
-  /** Clear all messages for a session */
-  clearSession(sessionId: string) {
-    this.messagesBySession[sessionId] = [];
-    this.streamingText[sessionId] = '';
-    this.isRunning[sessionId] = false;
-    this.isReady[sessionId] = false;
-    delete this.usageBySession[sessionId];
-    delete this.systemInfoBySession[sessionId];
-    delete this.contextWindowBySession[sessionId];
-    delete this.turnsBySession[sessionId];
-    delete this.pendingClear[sessionId];
-    delete this.activityBySession[sessionId];
-    delete this.devServersBySession[sessionId];
-  }
 }
 
 export const messageStore = new MessageStore();

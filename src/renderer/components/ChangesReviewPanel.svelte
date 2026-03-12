@@ -15,11 +15,17 @@
   let revertingFiles = $state<Set<string>>(new Set());
   let fileDiffs = $state<Record<string, string>>({});
 
+  // Track the previous fileChanges identity to detect when they update
+  let prevFileChangeKeys = $state<string>('');
+
   // Expand all files by default when changes arrive
   $effect(() => {
-    if (fileChanges.length > 0) {
+    const key = fileChanges.map(f => f.filePath).join('\0');
+    if (fileChanges.length > 0 && key !== prevFileChangeKeys) {
+      prevFileChangeKeys = key;
       expandedFiles = new Set(fileChanges.map(f => f.filePath));
-      // Load git diffs for each file
+      // Invalidate cached diffs and reload
+      fileDiffs = {};
       for (const fc of fileChanges) {
         loadDiff(fc.filePath);
       }

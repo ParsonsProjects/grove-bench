@@ -25,15 +25,6 @@
   let cachePercent = $derived(Math.min((cachedTokens / contextWindow) * 100, usedPercent));
   let freshPercent = $derived(Math.max(0, usedPercent - cachePercent));
 
-  // Color gradient based on usage percentage
-  // 0-40%: green, 40-60%: yellow, 60-80%: orange, 80-100%: red
-  function usageColor(pct: number): string {
-    if (pct <= 40) return 'rgb(34, 197, 94)';       // green-500
-    if (pct <= 60) return 'rgb(234, 179, 8)';        // yellow-500
-    if (pct <= 80) return 'rgb(249, 115, 22)';       // orange-500
-    return 'rgb(239, 68, 68)';                        // red-500
-  }
-
   // Interpolated color for smooth transitions
   function usageColorSmooth(pct: number): string {
     const stops = [

@@ -6,7 +6,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import { Separator } from '$lib/components/ui/separator/index.js';
+
 
   let showNewAgent = $state(false);
   let newAgentDefaultRepo = $state('');

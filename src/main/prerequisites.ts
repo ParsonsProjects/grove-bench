@@ -25,7 +25,8 @@ export async function checkGit(): Promise<PrerequisiteStatus['git']> {
 
 export async function findClaudeCode(): Promise<PrerequisiteStatus['claudeCode']> {
   try {
-    const { stdout } = await execFileAsync('where.exe', ['claude']);
+    const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
+    const { stdout } = await execFileAsync(cmd, ['claude']);
     const firstMatch = stdout.trim().split('\n')[0];
     return { available: true, path: firstMatch };
   } catch {

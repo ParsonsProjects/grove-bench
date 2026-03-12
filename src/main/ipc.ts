@@ -9,7 +9,7 @@ import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 export function registerHandlers() {
   // ─── Repo ───
@@ -226,39 +226,41 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const resolved = path.resolve(worktree.path, filePath);
-    if (!resolved.startsWith(worktree.path)) {
+    const normalizedResolved = path.normalize(resolved);
+    const normalizedWorktree = path.normalize(worktree.path) + path.sep;
+    if (!normalizedResolved.startsWith(normalizedWorktree)) {
       throw new Error('Path traversal not allowed');
     }
 
     // Try VS Code first, then fall back to system default
-    const lineArg = line ? `:${line}` : '';
-    const quoted = `"${resolved}"`;
+    const gotoArg = line ? `${resolved}:${line}` : resolved;
 
     return new Promise<void>((resolve, reject) => {
       // VS Code supports file:line syntax via -g flag
-      const codeCmd = line ? `code -g "${resolved}:${line}"` : `code ${quoted}`;
-      exec(codeCmd, (err) => {
+      const codeArgs = line ? ['-g', gotoArg] : [resolved];
+      execFile('code', codeArgs, (err) => {
         if (!err) {
           resolve();
           return;
         }
         // Fallback: try cursor, then system open
-        const cursorCmd = line ? `cursor -g "${resolved}:${line}"` : `cursor ${quoted}`;
-        exec(cursorCmd, (err2) => {
+        const cursorArgs = line ? ['-g', gotoArg] : [resolved];
+        execFile('cursor', cursorArgs, (err2) => {
           if (!err2) {
             resolve();
             return;
           }
-          // Final fallback: system default (start on Windows)
-          const openCmd = process.platform === 'win32' ? `start "" ${quoted}` :
-            process.platform === 'darwin' ? `open ${quoted}` : `xdg-open ${quoted}`;
-          exec(openCmd, (err3) => {
-            if (err3) {
-              reject(new Error('Could not open file. Install VS Code or Cursor CLI.'));
-            } else {
-              resolve();
-            }
-          });
+          // Final fallback: system default
+          if (process.platform === 'win32') {
+            execFile('cmd', ['/c', 'start', '""', resolved], (err3) => {
+              err3 ? reject(new Error('Could not open file. Install VS Code or Cursor CLI.')) : resolve();
+            });
+          } else {
+            const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+            execFile(opener, [resolved], (err3) => {
+              err3 ? reject(new Error('Could not open file. Install VS Code or Cursor CLI.')) : resolve();
+            });
+          }
         });
       });
     });
@@ -287,7 +289,7 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const resolved = path.resolve(worktree.path, filePath);
-    if (!resolved.startsWith(worktree.path)) {
+    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
       throw new Error('Path traversal not allowed');
     }
     await git(['checkout', '--', filePath], worktree.path);
@@ -297,7 +299,7 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const resolved = path.resolve(worktree.path, filePath);
-    if (!resolved.startsWith(worktree.path)) {
+    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
       throw new Error('Path traversal not allowed');
     }
     // Get unified diff of this file vs HEAD
@@ -314,7 +316,7 @@ export function registerHandlers() {
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const resolved = path.resolve(worktree.path, filePath.replace(/\/$/, ''));
     // Security: ensure resolved path is within the worktree
-    if (!resolved.startsWith(worktree.path)) {
+    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
       throw new Error('Path traversal not allowed');
     }
     const stat = await fs.stat(resolved);
