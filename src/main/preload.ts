@@ -55,6 +55,12 @@ const api: GroveBenchAPI = {
   openInEditor: (sessionId: string, filePath: string, line?: number) =>
     ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
 
+  // File revert & diff (for changes review)
+  revertFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath),
+  getFileDiff: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
+
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 

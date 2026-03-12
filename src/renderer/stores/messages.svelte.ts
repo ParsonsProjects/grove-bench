@@ -133,6 +133,9 @@ class MessageStore {
   /** Detected dev server ports per session */
   devServersBySession = $state<Record<string, { port: number; url: string }[]>>({});
 
+  /** Files that have been reverted in the changes review panel */
+  revertedFilesBySession = $state<Record<string, Set<string>>>({});
+
   private cleanups = new Map<string, () => void>();
 
   getMessages(sessionId: string): ChatMessage[] {
@@ -213,14 +216,83 @@ class MessageStore {
     return '';
   }
 
+  /**
+   * Get all file changes from the last completed turn, grouped by file path.
+   * A "turn" is everything between the last user message and the following result.
+   */
+  getLastTurnFileChanges(sessionId: string): { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[] {
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    if (msgs.length === 0) return [];
+
+    // Find the last result message (marks end of turn)
+    let resultIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].kind === 'result') { resultIdx = i; break; }
+    }
+    if (resultIdx < 0) return [];
+
+    // Find the user message before that result (marks start of turn)
+    let userIdx = -1;
+    for (let i = resultIdx - 1; i >= 0; i--) {
+      if (msgs[i].kind === 'user') { userIdx = i; break; }
+    }
+    // If no user message found, start from beginning
+    const startIdx = userIdx >= 0 ? userIdx : 0;
+
+    // Collect all Edit/Write tool calls in this turn range
+    const turnMsgs = msgs.slice(startIdx, resultIdx + 1);
+    const editCalls = turnMsgs.filter(
+      (m): m is ChatToolCallMessage =>
+        m.kind === 'tool_call' &&
+        (m.toolName === 'Edit' || m.toolName === 'Write') &&
+        !m.isError
+    );
+
+    // Group by file path
+    const byFile = new Map<string, ChatToolCallMessage[]>();
+    for (const call of editCalls) {
+      const input = call.toolInput as Record<string, unknown>;
+      const fp = String(input?.file_path ?? input?.filePath ?? '');
+      if (!fp) continue;
+      const existing = byFile.get(fp) ?? [];
+      existing.push(call);
+      byFile.set(fp, existing);
+    }
+
+    return [...byFile.entries()].map(([filePath, edits]) => ({
+      filePath,
+      toolName: edits[edits.length - 1].toolName,
+      toolInput: edits[edits.length - 1].toolInput,
+      edits,
+    }));
+  }
+
+  /** Check if a file has been reverted */
+  isFileReverted(sessionId: string, filePath: string): boolean {
+    return this.revertedFilesBySession[sessionId]?.has(filePath) ?? false;
+  }
+
+  /** Revert a file via git checkout and track it */
+  async revertFile(sessionId: string, filePath: string) {
+    await window.groveBench.revertFile(sessionId, filePath);
+    const reverted = this.revertedFilesBySession[sessionId] ?? new Set();
+    reverted.add(filePath);
+    this.revertedFilesBySession[sessionId] = new Set(reverted);
+  }
+
+  /** Un-revert tracking (if user wants to re-accept after revert — file stays reverted on disk though) */
+  clearRevertedFiles(sessionId: string) {
+    this.revertedFilesBySession[sessionId] = new Set();
+  }
+
   removeDevServer(sessionId: string, port: number) {
     const servers = this.devServersBySession[sessionId] ?? [];
     this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);
   }
 
   async setMode(sessionId: string, mode: string) {
-    await window.groveBench.setMode(sessionId, mode);
     this.modeBySession[sessionId] = mode;
+    await window.groveBench.setMode(sessionId, mode);
   }
 
   cycleMode(sessionId: string) {

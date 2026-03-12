@@ -24,7 +24,9 @@
 
   let input = $derived(toolInput as Record<string, unknown>);
   let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
+  let isBashTool = $derived(toolName === 'Bash');
   let filePath = $derived(isEditTool ? String(input?.file_path ?? input?.filePath ?? '') : '');
+  let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
 
   function approve() {
@@ -76,7 +78,7 @@
         class="text-muted-foreground hover:text-primary hover:underline cursor-pointer truncate flex-1 text-left"
         title="Open in editor"
       >{filePath}</button>
-    {:else}
+    {:else if !isBashTool}
       <span class="text-muted-foreground truncate flex-1">{summarizeInput(toolInput)}</span>
     {/if}
     {#if !resolved && isEditTool && diffLines.length > 0 && toolName === 'Edit'}
@@ -89,6 +91,11 @@
     {/if}
   </div>
 
+  <!-- Command preview for Bash -->
+  {#if isBashTool && bashCommand}
+    <pre class="text-xs text-foreground bg-card/80 border border-border px-3 py-2 mt-1 overflow-x-auto max-h-32 overflow-y-auto font-mono whitespace-pre-wrap break-all">{bashCommand}</pre>
+  {/if}
+
   <!-- Inline diff preview for Edit/Write (only while awaiting approval) -->
   {#if !resolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
@@ -96,7 +103,7 @@
     </div>
   {/if}
 
-  {#if !isEditTool}
+  {#if !isEditTool && !isBashTool}
     <button
       onclick={() => expanded = !expanded}
       class="text-xs text-muted-foreground hover:text-foreground mt-1"

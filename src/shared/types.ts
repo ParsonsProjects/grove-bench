@@ -161,6 +161,10 @@ export interface GroveBenchAPI {
   readFile(sessionId: string, filePath: string): Promise<string>;
   openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
 
+  // File revert (for changes review)
+  revertFile(sessionId: string, filePath: string): Promise<void>;
+  getFileDiff(sessionId: string, filePath: string): Promise<string>;
+
   // External links
   openExternal(url: string): Promise<void>;
 
@@ -199,4 +203,6 @@ export const IPC = {
   AGENT_SET_MODE: 'agent:setMode',
   OPEN_EXTERNAL: 'shell:openExternal',
   KILL_PORT: 'process:killPort',
+  FILE_REVERT: 'file:revert',
+  FILE_DIFF: 'file:diff',
 } as const;

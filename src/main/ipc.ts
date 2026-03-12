@@ -281,6 +281,34 @@ export function registerHandlers() {
     return killProcessOnPort(port);
   });
 
+  // ─── File revert & diff (for changes review panel) ───
+
+  ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const resolved = path.resolve(worktree.path, filePath);
+    if (!resolved.startsWith(worktree.path)) {
+      throw new Error('Path traversal not allowed');
+    }
+    await git(['checkout', '--', filePath], worktree.path);
+  });
+
+  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const resolved = path.resolve(worktree.path, filePath);
+    if (!resolved.startsWith(worktree.path)) {
+      throw new Error('Path traversal not allowed');
+    }
+    // Get unified diff of this file vs HEAD
+    try {
+      return await git(['diff', 'HEAD', '--', filePath], worktree.path);
+    } catch {
+      // File may be untracked (new file) — show entire content as added
+      return '';
+    }
+  });
+
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);

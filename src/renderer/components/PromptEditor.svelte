@@ -50,6 +50,7 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let isReady = $derived(messageStore.getIsReady(sessionId));
   let canSend = $derived(!isRunning);
+  let activity = $derived(messageStore.getActivity(sessionId));
 
   function handleSubmit() {
     const text = value.trim();
@@ -455,6 +456,24 @@
     </div>
   {/if}
 
+  <!-- Activity status bar when running -->
+  {#if isRunning}
+    <div class="flex items-center gap-2 px-4 pt-2 pb-1 text-xs text-muted-foreground">
+      <span class="inline-block w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+      <span>
+        {#if activity.activity === 'tool_starting' && activity.toolName}
+          Running {activity.toolName}{activity.elapsedSeconds ? ` (${activity.elapsedSeconds}s)` : ''}
+        {:else if activity.activity === 'thinking'}
+          Thinking...
+        {:else if activity.activity === 'generating'}
+          Writing...
+        {:else}
+          Working...
+        {/if}
+      </span>
+    </div>
+  {/if}
+
   <div class="flex gap-2 items-end px-4 pb-3 pt-2">
     <textarea
       bind:this={textarea}
@@ -464,9 +483,10 @@
       disabled={false}
       placeholder={isRunning ? 'Waiting for Claude...' : 'Message (Enter to send, @ for files, / for commands)'}
       rows="1"
-      class="flex-1 bg-card border border-input px-3 py-2 text-sm text-foreground
+      class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
         placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
-        disabled:opacity-50 disabled:cursor-not-allowed font-mono"
+        disabled:opacity-50 disabled:cursor-not-allowed font-mono
+        {isRunning ? 'border-muted opacity-60' : 'border-input'}"
     ></textarea>
 
     {#if isRunning}
