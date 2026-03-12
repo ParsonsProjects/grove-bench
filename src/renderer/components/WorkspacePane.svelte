@@ -82,6 +82,7 @@
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
     >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
       Activity
       {#if hasPendingPermission}
         <span class="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
@@ -96,6 +97,7 @@
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
     >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
       Changes
       {#if hasChanges}
         <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full leading-none font-bold">

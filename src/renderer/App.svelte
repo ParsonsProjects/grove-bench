@@ -7,6 +7,7 @@
   import ErrorToast from './components/ErrorToast.svelte';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
+  import TitleBar from './components/TitleBar.svelte';
 
   async function restoreWorktrees() {
     const runningSessions = await window.groveBench.listSessions();
@@ -166,20 +167,34 @@
 
 <PrerequisiteCheck />
 
-<div class="flex h-screen bg-background text-foreground font-mono">
+<div class="flex flex-col h-screen bg-background text-foreground font-mono">
+<TitleBar />
+<div class="flex flex-1 min-h-0">
   <Sidebar />
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
     {#if store.sessions.length === 0}
-      <div class="flex-1 flex items-center justify-center text-muted-foreground">
-        <div class="text-center">
+      <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
+        {#each Array(20) as _, i}
+          <span
+            class="blue-pixel absolute rounded-[1px]"
+            style="width:4px;height:4px;top:{8+(((i*37+13)*7)%84)}%;left:{5+(((i*53+7)*11)%90)}%;animation-delay:{(i*1.3)%6}s;"
+          ></span>
+        {/each}
+        <div class="text-center relative z-10">
           <p class="text-sm mb-2">No active agents</p>
           <p class="text-xs">Add a repository and create an agent to get started.</p>
         </div>
       </div>
     {:else if !store.activeSession}
-      <div class="flex-1 flex items-center justify-center text-muted-foreground">
-        <div class="text-center">
+      <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
+        {#each Array(20) as _, i}
+          <span
+            class="blue-pixel absolute rounded-[1px]"
+            style="width:4px;height:4px;top:{8+(((i*37+13)*7)%84)}%;left:{5+(((i*53+7)*11)%90)}%;animation-delay:{(i*1.3)%6}s;"
+          ></span>
+        {/each}
+        <div class="text-center relative z-10">
           <p class="text-sm mb-2">No open sessions</p>
           <p class="text-xs">Click a session in the sidebar to open it.</p>
         </div>
@@ -242,15 +257,22 @@
           {#if session.status === 'running'}
             <WorkspacePane sessionId={session.id} />
           {:else}
-            <div class="flex items-center justify-center h-full text-muted-foreground">
-              <div class="w-5 h-5 border-2 border-border border-t-transparent animate-spin"></div>
-              <span class="ml-3 text-sm">Starting agent...</span>
+            <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
+              {#each Array(20) as _, i}
+                <span
+                  class="blue-pixel absolute rounded-[1px]"
+                  style="width:4px;height:4px;top:{8+(((i*37+13)*7)%84)}%;left:{5+(((i*53+7)*11)%90)}%;animation-delay:{(i*1.3)%6}s;"
+                ></span>
+              {/each}
+              <div class="w-5 h-5 border-2 border-border border-t-transparent animate-spin relative z-10"></div>
+              <span class="ml-3 text-sm relative z-10">Starting agent...</span>
             </div>
           {/if}
         </div>
       {/each}
     {/if}
   </main>
+</div>
 </div>
 
 {#if showSessionFinder}

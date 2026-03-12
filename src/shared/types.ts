@@ -205,6 +205,12 @@ export interface GroveBenchAPI {
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
+
+  // Window controls
+  winMinimize(): void;
+  winMaximize(): void;
+  winClose(): void;
+  winIsMaximized(): Promise<boolean>;
 }
 
 // ─── IPC Channel Names ───
@@ -244,4 +250,8 @@ export const IPC = {
   PLUGIN_UNINSTALL: 'plugin:uninstall',
   PLUGIN_ENABLE: 'plugin:enable',
   PLUGIN_DISABLE: 'plugin:disable',
+  WIN_MINIMIZE: 'win:minimize',
+  WIN_MAXIMIZE: 'win:maximize',
+  WIN_CLOSE: 'win:close',
+  WIN_IS_MAXIMIZED: 'win:isMaximized',
 } as const;

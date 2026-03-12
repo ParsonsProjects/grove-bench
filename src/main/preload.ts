@@ -103,6 +103,12 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.APP_CLOSING, handler);
     };
   },
+
+  // Window controls
+  winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),
+  winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
+  winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
+  winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
 };
 
 contextBridge.exposeInMainWorld('groveBench', api);

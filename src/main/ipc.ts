@@ -383,6 +383,27 @@ export function registerHandlers() {
     await execa('claude', ['plugin', 'disable', pluginId]);
   });
 
+  // ─── Window controls ───
+
+  ipcMain.on(IPC.WIN_MINIMIZE, (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.on(IPC.WIN_MAXIMIZE, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      win.isMaximized() ? win.unmaximize() : win.maximize();
+    }
+  });
+
+  ipcMain.on(IPC.WIN_CLOSE, (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle(IPC.WIN_IS_MAXIMIZED, (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+  });
+
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);

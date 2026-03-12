@@ -29,6 +29,7 @@ function createWindow() {
     height: state.height,
     minWidth: 800,
     minHeight: 600,
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
