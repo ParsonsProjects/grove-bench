@@ -47,6 +47,30 @@
 
   let showSessionFinder = $state(false);
 
+  // Track which inactive tabs had a turn complete
+  let sessionCompletedWhileInactive = $state<Record<string, boolean>>({});
+  let prevRunningState = $state<Record<string, boolean>>({});
+
+  // Detect when a non-active session transitions from running → idle
+  $effect(() => {
+    for (const session of store.sessions) {
+      const running = messageStore.getIsRunning(session.id);
+      const wasRunning = prevRunningState[session.id] ?? false;
+      if (wasRunning && !running && store.activeSessionId !== session.id) {
+        sessionCompletedWhileInactive[session.id] = true;
+      }
+      prevRunningState[session.id] = running;
+    }
+  });
+
+  // Clear flash when switching to a session
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    if (activeId && sessionCompletedWhileInactive[activeId]) {
+      delete sessionCompletedWhileInactive[activeId];
+    }
+  });
+
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
@@ -124,12 +148,22 @@
           {#each openSessions as session (session.id)}
             {@const isActive = store.activeSessionId === session.id}
             {@const running = messageStore.getIsRunning(session.id)}
+            {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
+            {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
             <button
-              onclick={() => store.activeSessionId = session.id}
+              onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
               class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab
                 {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}"
             >
-              <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
+              {#if !isActive && running}
+                <span class="w-3 h-3 shrink-0 border-[1.5px] border-primary border-t-transparent rounded-full animate-spin"></span>
+              {:else if !isActive && hasPending}
+                <span class="w-1.5 h-1.5 shrink-0 bg-amber-500 animate-pulse rounded-full"></span>
+              {:else if needsAttention}
+                <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash rounded-full"></span>
+              {:else}
+                <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
+              {/if}
               {#if store.repos.length > 1}
                 <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
                 <span class="text-muted-foreground/40">/</span>
@@ -169,3 +203,13 @@
 {/if}
 
 <ErrorToast />
+
+<style>
+  :global(.tab-flash) {
+    animation: tab-flash 0.8s ease-in-out infinite;
+  }
+  @keyframes tab-flash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+</style>
