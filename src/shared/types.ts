@@ -103,6 +103,34 @@ export interface ImageAttachment {
   name: string;
 }
 
+// ─── Plugins ───
+
+export interface InstalledPlugin {
+  id: string;
+  version: string;
+  scope: 'user' | 'project' | 'local';
+  enabled: boolean;
+  installPath: string;
+  installedAt: string;
+  lastUpdated: string;
+  projectPath?: string;
+}
+
+export interface AvailablePlugin {
+  pluginId: string;
+  name: string;
+  description: string;
+  marketplaceName: string;
+  version: string;
+  source: string;
+  installCount: number;
+}
+
+export interface PluginListResult {
+  installed: InstalledPlugin[];
+  available: AvailablePlugin[];
+}
+
 // ─── IPC API (exposed via contextBridge) ───
 
 export interface GroveBenchAPI {
@@ -161,6 +189,13 @@ export interface GroveBenchAPI {
   // Localhost process cleanup
   killPort(port: number): Promise<void>;
 
+  // Plugins
+  pluginList(): Promise<PluginListResult>;
+  pluginInstall(pluginId: string, scope?: string): Promise<void>;
+  pluginUninstall(pluginId: string): Promise<void>;
+  pluginEnable(pluginId: string): Promise<void>;
+  pluginDisable(pluginId: string): Promise<void>;
+
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
 }
@@ -197,4 +232,9 @@ export const IPC = {
   FILE_DIFF: 'file:diff',
   PR_INFO: 'pr:info',
   AGENT_SET_MODEL: 'agent:setModel',
+  PLUGIN_LIST: 'plugin:list',
+  PLUGIN_INSTALL: 'plugin:install',
+  PLUGIN_UNINSTALL: 'plugin:uninstall',
+  PLUGIN_ENABLE: 'plugin:enable',
+  PLUGIN_DISABLE: 'plugin:disable',
 } as const;

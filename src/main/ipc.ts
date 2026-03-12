@@ -335,6 +335,34 @@ export function registerHandlers() {
     }
   });
 
+  // ─── Plugins ───
+
+  ipcMain.handle(IPC.PLUGIN_LIST, async () => {
+    try {
+      const { stdout } = await execa('claude', ['plugin', 'list', '--json', '--available']);
+      return JSON.parse(stdout);
+    } catch (e: any) {
+      logger.warn('Failed to list plugins:', e.message);
+      return { installed: [], available: [] };
+    }
+  });
+
+  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user') => {
+    await execa('claude', ['plugin', 'install', pluginId, '--scope', scope]);
+  });
+
+  ipcMain.handle(IPC.PLUGIN_UNINSTALL, async (_event, pluginId: string) => {
+    await execa('claude', ['plugin', 'uninstall', pluginId]);
+  });
+
+  ipcMain.handle(IPC.PLUGIN_ENABLE, async (_event, pluginId: string) => {
+    await execa('claude', ['plugin', 'enable', pluginId]);
+  });
+
+  ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
+    await execa('claude', ['plugin', 'disable', pluginId]);
+  });
+
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
