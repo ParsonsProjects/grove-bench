@@ -61,6 +61,26 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
+    if (opts.direct) {
+      // Direct mode — run on the repo checkout, no worktree
+      // Determine the current branch name
+      const branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
+      logger.info(`Creating direct session: branch=${branch}, repo=${opts.repoPath}`);
+
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch);
+
+      const session = await sessionManager.createSession({
+        id: entry.id,
+        branch: entry.branch,
+        cwd: opts.repoPath,
+        repoPath: opts.repoPath,
+        window: win,
+      });
+
+      logger.info(`Direct session created: id=${session.id}`);
+      return { id: session.id, branch: session.branch };
+    }
+
     const exists = await branchExists(opts.repoPath, opts.branchName);
 
     if (opts.useExisting) {

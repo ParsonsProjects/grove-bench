@@ -58,7 +58,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Git & Workflow
 - [ ] Branch → PR link (create PR from session branch)
-- [ ] Branch without worktree (use existing checkout, no worktree creation)
+- [x] Branch without worktree (use existing checkout, no worktree creation)
 
 ### Dev & Preview
 - [ ] Localhost run (start/preview dev server from worktree)

@@ -29,6 +29,7 @@
             branch: wt.branch,
             repoPath: repo,
             status: isRunning ? 'running' : 'stopped',
+            direct: wt.direct,
           });
 
           if (isRunning) {
@@ -42,6 +43,12 @@
       } catch {
         store.removeRepo(repo);
       }
+    }
+
+    // After restoring all sessions, select the first running one
+    const firstRunning = store.sessions.find((s) => s.status === 'running');
+    if (firstRunning) {
+      store.activeSessionId = firstRunning.id;
     }
   }
 
@@ -99,6 +106,39 @@
     });
   });
 
+  // Tab drag-and-drop reordering
+  let dragTabId = $state<string | null>(null);
+  let dropTargetId = $state<string | null>(null);
+
+  function handleTabDragStart(e: DragEvent, id: string) {
+    dragTabId = id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id);
+    }
+  }
+
+  function handleTabDragOver(e: DragEvent, id: string) {
+    if (!dragTabId || dragTabId === id) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dropTargetId = id;
+  }
+
+  function handleTabDrop(e: DragEvent, id: string) {
+    e.preventDefault();
+    if (dragTabId && dragTabId !== id) {
+      store.reorderSession(dragTabId, id);
+    }
+    dragTabId = null;
+    dropTargetId = null;
+  }
+
+  function handleTabDragEnd() {
+    dragTabId = null;
+    dropTargetId = null;
+  }
+
   async function closeTab(id: string) {
     try {
       await window.groveBench.stopSession(id);
@@ -154,10 +194,19 @@
             {@const running = messageStore.getIsRunning(session.id)}
             {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
             {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
+            {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
             <button
+              draggable="true"
+              ondragstart={(e) => handleTabDragStart(e, session.id)}
+              ondragover={(e) => handleTabDragOver(e, session.id)}
+              ondrop={(e) => handleTabDrop(e, session.id)}
+              ondragend={handleTabDragEnd}
+              ondragleave={() => { if (dropTargetId === session.id) dropTargetId = null; }}
               onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
               class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab
-                {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}"
+                {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
+                {dragTabId === session.id ? 'opacity-40' : ''}
+                {isDragOver ? 'border-l-2 border-l-primary' : ''}"
             >
               {#if !isActive && running}
                 <span class="w-3 h-3 shrink-0 border-[1.5px] border-primary border-t-transparent rounded-full animate-spin"></span>

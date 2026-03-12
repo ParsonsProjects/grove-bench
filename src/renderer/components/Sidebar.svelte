@@ -117,6 +117,11 @@
               {:else}
                 <span class="w-2 h-2 {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
               {/if}
+              {#if session.direct}
+                <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Direct (no worktree)"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+              {:else}
+                <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Worktree"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>
+              {/if}
               <span class="text-sm truncate">{session.branch}</span>
             </div>
             <span
@@ -181,14 +186,22 @@
       <Dialog.Header>
         <Dialog.Title>Destroy Agent?</Dialog.Title>
         <Dialog.Description>
-          This will kill the shell process and remove the worktree for branch
-          <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+          {#if session?.direct}
+            This will stop the agent session on branch
+            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+            No files will be deleted.
+          {:else}
+            This will kill the shell process and remove the worktree for branch
+            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+          {/if}
         </Dialog.Description>
       </Dialog.Header>
-      <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
-        <Checkbox bind:checked={deleteBranchOnDestroy} />
-        Also delete the branch
-      </label>
+      {#if !session?.direct}
+        <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
+          <Checkbox bind:checked={deleteBranchOnDestroy} />
+          Also delete the branch
+        </label>
+      {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel

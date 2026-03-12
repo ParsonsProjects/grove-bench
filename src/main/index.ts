@@ -63,7 +63,19 @@ function createWindow() {
   logger.info('Grove Bench started');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+
+  // Run an initial worktree sweep shortly after launch, then every 15 minutes
+  const SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+  const runSweep = () => {
+    worktreeManager.sweepStaleWorktrees().catch((e) => {
+      logger.warn('Background worktree sweep failed:', e);
+    });
+  };
+  setTimeout(runSweep, 10_000); // 10s after launch
+  setInterval(runSweep, SWEEP_INTERVAL_MS);
+});
 
 app.on('window-all-closed', () => {
   app.quit();

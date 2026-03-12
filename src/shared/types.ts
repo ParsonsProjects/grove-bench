@@ -13,6 +13,8 @@ export interface WorktreeInfo {
   branch: string;
   repoPath: string;
   createdAt: number;
+  /** True when session runs directly on the repo (no worktree created). */
+  direct?: boolean;
 }
 
 export interface WorktreeRepoConfig {
@@ -26,6 +28,8 @@ export interface CreateSessionOpts {
   branchName: string;
   baseBranch?: string;
   useExisting?: boolean;
+  /** Run directly on the repo checkout — no worktree is created. */
+  direct?: boolean;
 }
 
 export type SessionStatus = 'starting' | 'running' | 'stopped' | 'error';

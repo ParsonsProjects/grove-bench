@@ -15,7 +15,7 @@
   let creating = $state(false);
   let dialogError = $state('');
 
-  let mode = $state<'new' | 'existing'>('new');
+  let mode = $state<'new' | 'existing' | 'direct'>('new');
   let branches = $state<string[]>([]);
   let loadingBranches = $state(false);
   let selectedBranch = $state('');
@@ -77,17 +77,20 @@
     if (!selectedRepo) return;
     if (mode === 'new' && !branchName.trim()) return;
     if (mode === 'existing' && !selectedBranch) return;
+    // direct mode has no extra requirements
 
     creating = true;
     dialogError = '';
 
     try {
-      const opts = mode === 'existing'
+      const opts = mode === 'direct'
+        ? { repoPath: selectedRepo, branchName: '', direct: true as const }
+        : mode === 'existing'
         ? { repoPath: selectedRepo, branchName: selectedBranch, useExisting: true as const }
         : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
 
       const result = await window.groveBench.createSession(opts);
-      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: 'running' });
+      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: 'running', ...(mode === 'direct' ? { direct: true } : {}) });
       open = false;
       onclose();
     } catch (e: any) {
@@ -99,6 +102,7 @@
 
   function canCreate(): boolean {
     if (!selectedRepo || creating) return false;
+    if (mode === 'direct') return true;
     if (mode === 'new') return !!branchName.trim();
     return !!selectedBranch;
   }
@@ -161,10 +165,22 @@
           >
             Existing branch
           </Button>
+          <Button
+            variant={mode === 'direct' ? 'default' : 'secondary'}
+            class="flex-1 rounded-none border-0"
+            size="sm"
+            onclick={() => mode = 'direct'}
+          >
+            Direct
+          </Button>
         </div>
       </div>
 
-      {#if mode === 'new'}
+      {#if mode === 'direct'}
+        <p class="text-xs text-muted-foreground">
+          Runs the agent directly on the current branch of the repository. No worktree will be created — changes are made in-place.
+        </p>
+      {:else if mode === 'new'}
         <div>
           <Label for="branch" class="mb-1 block">Branch Name</Label>
           <Input
@@ -248,9 +264,11 @@
         </div>
       {/if}
 
-      <p class="text-xs text-muted-foreground">
-        New worktrees don't include node_modules. The agent may need to run npm install first.
-      </p>
+      {#if mode !== 'direct'}
+        <p class="text-xs text-muted-foreground">
+          New worktrees don't include node_modules. The agent may need to run npm install first.
+        </p>
+      {/if}
 
       {#if dialogError}
         <div class="bg-destructive/10 border border-destructive/50 p-2 text-xs text-destructive">
