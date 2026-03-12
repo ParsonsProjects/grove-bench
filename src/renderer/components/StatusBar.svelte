@@ -7,19 +7,22 @@
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
+  let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
   let contextWindow = $derived(messageStore.getContextWindow(sessionId));
   let turns = $derived(messageStore.getTurns(sessionId));
 
-  // Context is input_tokens = current context window usage (system + tools + messages)
-  let usedTokens = $derived(usage.inputTokens);
+  // Total context = input_tokens (non-cached) + cache_read + cache_creation
+  // input_tokens from the API only counts tokens NOT served from cache
+  let usedTokens = $derived(usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens);
   let freeTokens = $derived(Math.max(0, contextWindow - usedTokens));
   let usedPercent = $derived(Math.min((usedTokens / contextWindow) * 100, 100));
   let showContext = $derived(usedTokens > 0);
 
   // Cache proportion for segmented bar
-  let cachePercent = $derived((usage.cacheReadTokens / contextWindow) * 100);
+  let cachedTokens = $derived(usage.cacheReadTokens + usage.cacheCreationTokens);
+  let cachePercent = $derived(Math.min((cachedTokens / contextWindow) * 100, usedPercent));
   let freshPercent = $derived(Math.max(0, usedPercent - cachePercent));
 
   // Color gradient based on usage percentage
@@ -131,7 +134,17 @@
   <span class="flex items-center gap-1.5">
     {#if isRunning}
       <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
-      <span class="text-primary">running</span>
+      {#if activity.activity === 'thinking'}
+        <span class="text-purple-400">thinking</span>
+      {:else if activity.activity === 'tool_starting'}
+        <span class="text-yellow-400 truncate max-w-32">
+          {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
+        </span>
+      {:else if activity.activity === 'generating'}
+        <span class="text-primary">writing</span>
+      {:else}
+        <span class="text-primary">running</span>
+      {/if}
     {:else}
       <span class="w-1.5 h-1.5 bg-muted-foreground/60"></span>
       <span>idle</span>
@@ -214,25 +227,29 @@
               <span class="text-foreground font-medium">{formatTokens(contextWindow)}</span>
             </div>
             <div class="flex justify-between">
-              <span>Input (context size)</span>
-              <span class="font-medium" style:color={textColor}>{formatTokens(usage.inputTokens)}</span>
+              <span>Used (total input)</span>
+              <span class="font-medium" style:color={textColor}>{formatTokens(usedTokens)}</span>
             </div>
-            <div class="flex justify-between">
-              <span>Output (cumulative)</span>
-              <span class="text-foreground">{formatTokens(usage.outputTokens)}</span>
+            <div class="flex justify-between text-[10px] pl-2">
+              <span>Non-cached</span>
+              <span class="text-foreground">{formatTokens(usage.inputTokens)}</span>
             </div>
             {#if usage.cacheReadTokens > 0}
-              <div class="flex justify-between">
+              <div class="flex justify-between text-[10px] pl-2">
                 <span>Cache read</span>
                 <span class="text-blue-400">{formatTokens(usage.cacheReadTokens)}</span>
               </div>
             {/if}
             {#if usage.cacheCreationTokens > 0}
-              <div class="flex justify-between">
+              <div class="flex justify-between text-[10px] pl-2">
                 <span>Cache write</span>
                 <span class="text-foreground">{formatTokens(usage.cacheCreationTokens)}</span>
               </div>
             {/if}
+            <div class="flex justify-between">
+              <span>Output (cumulative)</span>
+              <span class="text-foreground">{formatTokens(usage.outputTokens)}</span>
+            </div>
             <div class="flex justify-between border-t border-border pt-1.5 mt-1.5">
               <span>Remaining</span>
               <span class="{remainingColor} font-medium">{formatTokens(freeTokens)}</span>
@@ -313,6 +330,26 @@
               </div>
             </details>
           {/if}
+
+          <!-- Quick actions -->
+          <div class="border-t border-border pt-2.5 mt-2.5 flex gap-2">
+            <button
+              onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
+              disabled={isRunning}
+              class="flex-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Compact conversation to free context"
+            >
+              /compact
+            </button>
+            <button
+              onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
+              disabled={isRunning}
+              class="flex-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Clear conversation and start fresh"
+            >
+              /clear
+            </button>
+          </div>
         </div>
       {/if}
     </div>

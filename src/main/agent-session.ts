@@ -285,6 +285,23 @@ class AgentSessionManager {
             w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
           }
 
+        } else if (message.subtype === 'compact_boundary') {
+          const meta = (message as any).compact_metadata ?? {};
+          emit({
+            type: 'compact_boundary',
+            trigger: meta.trigger ?? 'manual',
+            preTokens: meta.pre_tokens ?? 0,
+          });
+        } else if (message.subtype === 'status') {
+          const status = (message as any).status;
+          if (status === 'compacting') {
+            emit({ type: 'status', message: 'Compacting conversation...' });
+          }
+        } else if (message.subtype === 'local_command_output') {
+          const content = (message as any).content;
+          if (content) {
+            emit({ type: 'status', message: content });
+          }
         }
         break;
       }
@@ -367,6 +384,17 @@ class AgentSessionManager {
         break;
       }
 
+      case 'tool_progress': {
+        const m = message as any;
+        emit({
+          type: 'tool_progress',
+          toolName: m.tool_name ?? '',
+          toolUseId: m.tool_use_id ?? '',
+          elapsedSeconds: m.elapsed_time_seconds ?? 0,
+        });
+        break;
+      }
+
       case 'stream_event': {
         // Partial streaming events for real-time text display
         const event = message.event;
@@ -374,13 +402,26 @@ class AgentSessionManager {
           const delta = (event as any).delta;
           if (delta?.type === 'text_delta' && delta.text) {
             emit({ type: 'partial_text', text: delta.text });
+          } else if (delta?.type === 'thinking_delta') {
+            emit({ type: 'activity', activity: 'thinking' });
           }
+        } else if (event.type === 'content_block_start') {
+          const block = (event as any).content_block;
+          if (block?.type === 'thinking') {
+            emit({ type: 'activity', activity: 'thinking' });
+          } else if (block?.type === 'text') {
+            emit({ type: 'activity', activity: 'generating' });
+          } else if (block?.type === 'tool_use') {
+            emit({ type: 'activity', activity: 'tool_starting', toolName: block.name });
+          }
+        } else if (event.type === 'message_start') {
+          emit({ type: 'activity', activity: 'generating' });
         }
         break;
       }
 
       default:
-        // Ignore other message types (compact_boundary, etc.)
+        // Ignore other message types
         break;
     }
   }

@@ -13,28 +13,49 @@
     onclose: () => void;
   } = $props();
 
-  let files = $state<string[]>([]);
+  interface FileEntry {
+    path: string;
+    filename: string;
+  }
+
+  let files = $state<FileEntry[]>([]);
   let loading = $state(true);
   let selectedIndex = $state(0);
-  let fuse: Fuse<string> | null = null;
+  let fuse: Fuse<FileEntry> | null = null;
 
   let cacheKey = `filepicker:${sessionId}`;
   const CACHE_TTL = 30_000;
 
-  const fileCache = new Map<string, { files: string[]; ts: number }>();
+  const fileCache = new Map<string, { files: FileEntry[]; ts: number }>();
+
+  function toEntries(paths: string[]): FileEntry[] {
+    return paths.map((p) => ({
+      path: p,
+      filename: p.split('/').pop() ?? p,
+    }));
+  }
+
+  const fuseOpts: Fuse.IFuseOptions<FileEntry> = {
+    keys: [
+      { name: 'filename', weight: 2 },
+      { name: 'path', weight: 1 },
+    ],
+    threshold: 0.4,
+    ignoreLocation: true,
+  };
 
   $effect(() => {
     const cached = fileCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       files = cached.files;
-      fuse = new Fuse(files, { threshold: 0.4 });
+      fuse = new Fuse(files, fuseOpts);
       loading = false;
     } else {
       loading = true;
       window.groveBench.listFiles(sessionId).then((result) => {
-        files = result;
-        fileCache.set(cacheKey, { files: result, ts: Date.now() });
-        fuse = new Fuse(files, { threshold: 0.4 });
+        files = toEntries(result);
+        fileCache.set(cacheKey, { files, ts: Date.now() });
+        fuse = new Fuse(files, fuseOpts);
         loading = false;
       }).catch(() => {
         loading = false;
@@ -46,7 +67,7 @@
     if (!query) return files.slice(0, 20);
     if (!fuse) return [];
     return fuse.search(query, { limit: 20 }).map(r => r.item);
-  });
+  }) as FileEntry[];
 
   $effect(() => {
     const _f = filtered;
@@ -67,7 +88,7 @@
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
       if (filtered.length > 0) {
-        onselect(filtered[selectedIndex]);
+        onselect(filtered[selectedIndex].path);
       }
       return true;
     }
@@ -86,13 +107,14 @@
   {:else if filtered.length === 0}
     <div class="px-3 py-2 text-xs text-muted-foreground">No matches</div>
   {:else}
-    {#each filtered as file, i}
+    {#each filtered as entry, i}
       <button
-        class="w-full text-left px-3 py-1 text-xs text-popover-foreground/80 hover:bg-accent block
-          {i === selectedIndex ? 'bg-accent text-accent-foreground' : ''}"
-        onmousedown={(e) => { e.preventDefault(); onselect(file); }}
+        class="w-full text-left px-3 py-1 text-xs hover:bg-accent block
+          {i === selectedIndex ? 'bg-accent text-accent-foreground' : 'text-popover-foreground/80'}"
+        onmousedown={(e) => { e.preventDefault(); onselect(entry.path); }}
       >
-        {file}
+        <span class="text-foreground">{entry.filename}</span>
+        <span class="text-muted-foreground ml-1.5">{entry.path.slice(0, entry.path.length - entry.filename.length)}</span>
       </button>
     {/each}
   {/if}

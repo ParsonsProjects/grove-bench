@@ -94,6 +94,12 @@ class MessageStore {
   /** Whether Claude is currently processing for a session */
   isRunning = $state<Record<string, boolean>>({});
 
+  /** Whether a /clear was issued and we're waiting for re-init */
+  pendingClear = $state<Record<string, boolean>>({});
+
+  /** Current activity per session (what the LLM is doing right now) */
+  activityBySession = $state<Record<string, { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; elapsedSeconds?: number }>>({});
+
   /** Whether the session has initialized (received system_init) and can accept messages */
   isReady = $state<Record<string, boolean>>({});
 
@@ -163,6 +169,10 @@ class MessageStore {
     return this.turnsBySession[sessionId] ?? 0;
   }
 
+  getActivity(sessionId: string) {
+    return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
+  }
+
   async setMode(sessionId: string, mode: string) {
     await window.groveBench.setMode(sessionId, mode);
     this.modeBySession[sessionId] = mode;
@@ -202,23 +212,24 @@ class MessageStore {
       text,
     });
     this.isRunning[sessionId] = true;
-    this.pushMessage(sessionId, {
-      kind: 'system',
-      id: nextId(),
-      text: `[debug] addUserMessage: isRunning=true, isReady=${this.isReady[sessionId]}`,
-    });
+    this.activityBySession[sessionId] = { activity: 'generating' };
   }
 
   /** Ingest a raw AgentEvent from the main process */
   ingestEvent(sessionId: string, event: AgentEvent) {
-    this.pushMessage(sessionId, {
-      kind: 'system',
-      id: nextId(),
-      text: `[debug] ingestEvent: type=${event.type}`,
-    });
     switch (event.type) {
-      case 'system_init':
+      case 'system_init': {
+        // If /clear was issued, wipe all messages for a fresh start
+        const wasCleared = !!this.pendingClear[sessionId];
+        if (wasCleared) {
+          this.messagesBySession[sessionId] = [];
+          this.streamingText[sessionId] = '';
+          delete this.usageBySession[sessionId];
+          delete this.turnsBySession[sessionId];
+          delete this.pendingClear[sessionId];
+        }
         this.isReady[sessionId] = true;
+        this.isRunning[sessionId] = false;
         this.modelBySession[sessionId] = event.model;
         this.systemInfoBySession[sessionId] = {
           tools: event.tools ?? [],
@@ -230,9 +241,12 @@ class MessageStore {
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),
-          text: `Connected to ${event.model}`,
+          text: wasCleared
+            ? `Conversation cleared — connected to ${event.model}`
+            : `Connected to ${event.model}`,
         });
         break;
+      }
 
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
@@ -327,6 +341,7 @@ class MessageStore {
       case 'result':
         this.flushStreamingText(sessionId);
         this.isRunning[sessionId] = false;
+        this.activityBySession[sessionId] = { activity: 'idle' };
         if (event.contextWindow) {
           this.contextWindowBySession[sessionId] = event.contextWindow;
         }
@@ -375,11 +390,49 @@ class MessageStore {
         break;
       }
 
+      case 'compact_boundary':
+        this.pushMessage(sessionId, {
+          kind: 'system',
+          id: nextId(),
+          text: `Context compacted (${event.trigger}) — was ${Math.round(event.preTokens / 1000)}k tokens`,
+        });
+        break;
+
+      case 'tool_progress':
+        this.activityBySession[sessionId] = {
+          activity: 'tool_starting',
+          toolName: event.toolName,
+          elapsedSeconds: event.elapsedSeconds,
+        };
+        break;
+
+      case 'activity':
+        this.activityBySession[sessionId] = {
+          activity: event.activity,
+          toolName: event.toolName,
+        };
+        break;
+
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.isRunning[sessionId] = false;
+        this.activityBySession[sessionId] = { activity: 'idle' };
         break;
     }
+  }
+
+  /** Send a slash command (e.g. /compact, /clear) */
+  sendCommand(sessionId: string, command: string) {
+    if (command.trim() === '/clear') {
+      this.pendingClear[sessionId] = true;
+    }
+    this.pushMessage(sessionId, {
+      kind: 'user',
+      id: nextId(),
+      text: command,
+    });
+    this.isRunning[sessionId] = true;
+    window.groveBench.sendMessage(sessionId, command);
   }
 
   /** Resolve a permission request in the UI */
@@ -448,6 +501,8 @@ class MessageStore {
     delete this.systemInfoBySession[sessionId];
     delete this.contextWindowBySession[sessionId];
     delete this.turnsBySession[sessionId];
+    delete this.pendingClear[sessionId];
+    delete this.activityBySession[sessionId];
   }
 }
 

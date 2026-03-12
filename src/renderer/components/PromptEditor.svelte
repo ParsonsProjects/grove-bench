@@ -13,6 +13,32 @@
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
 
+  // Slash command autocomplete
+  let commandPickerOpen = $state(false);
+  let commandQuery = $state('');
+  let commandSelectedIndex = $state(0);
+
+  const builtinCommands = [
+    { name: '/compact', description: 'Compact conversation to free context space' },
+    { name: '/clear', description: 'Clear conversation and start fresh' },
+  ];
+
+  // Include custom slash commands from session info
+  let customCommands = $derived.by(() => {
+    const info = messageStore.getSystemInfo(sessionId);
+    return info.slashCommands
+      .filter((c) => c !== 'compact' && c !== 'clear')
+      .map((c) => ({ name: `/${c}`, description: '' }));
+  });
+
+  let allCommands = $derived([...builtinCommands, ...customCommands]);
+
+  let filteredCommands = $derived(
+    commandQuery
+      ? allCommands.filter((c) => c.name.toLowerCase().includes(commandQuery.toLowerCase()))
+      : allCommands,
+  );
+
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let isReady = $derived(messageStore.getIsReady(sessionId));
   let canSend = $derived(!isRunning);
@@ -20,6 +46,18 @@
   function handleSubmit() {
     const text = value.trim();
     if (!text || !canSend) return;
+
+    // Check if it's a slash command
+    if (text.startsWith('/')) {
+      messageStore.sendCommand(sessionId, text);
+      value = '';
+      closePicker();
+      closeCommandPicker();
+      userResized = false;
+      if (container) container.style.height = '';
+      if (textarea) textarea.style.height = '';
+      return;
+    }
 
     const atPattern = /@([\w.\/\-]+)/g;
     const refs: string[] = [];
@@ -51,6 +89,7 @@
 
     value = '';
     closePicker();
+    closeCommandPicker();
     userResized = false;
     if (container) container.style.height = '';
     if (textarea) textarea.style.height = '';
@@ -60,6 +99,49 @@
     if (pickerOpen && pickerRef) {
       if (pickerRef.handleKeydown(e)) return;
     }
+
+    // Command picker navigation
+    if (commandPickerOpen && filteredCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        commandSelectedIndex = (commandSelectedIndex + 1) % filteredCommands.length;
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        commandSelectedIndex = (commandSelectedIndex - 1 + filteredCommands.length) % filteredCommands.length;
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const cmd = filteredCommands[commandSelectedIndex];
+        if (cmd) {
+          value = cmd.name + ' ';
+          closeCommandPicker();
+        }
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const cmd = filteredCommands[commandSelectedIndex];
+        if (cmd) {
+          value = cmd.name;
+          closeCommandPicker();
+          handleSubmit();
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCommandPicker();
+        return;
+      }
+    } else if (commandPickerOpen && e.key === 'Escape') {
+      e.preventDefault();
+      closeCommandPicker();
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -81,6 +163,15 @@
   function handleInput() {
     autoResize();
 
+    // Slash command picker
+    if (value.startsWith('/') && !value.includes(' ')) {
+      commandPickerOpen = true;
+      commandQuery = value;
+      commandSelectedIndex = 0;
+    } else {
+      closeCommandPicker();
+    }
+
     const pos = textarea?.selectionStart ?? 0;
     const textBefore = value.slice(0, pos);
     const atMatch = textBefore.match(/@([\w.\/\-]*)$/);
@@ -100,12 +191,24 @@
     atStartIndex = -1;
   }
 
+  function closeCommandPicker() {
+    commandPickerOpen = false;
+    commandQuery = '';
+    commandSelectedIndex = 0;
+  }
+
   function selectFile(path: string) {
     const before = value.slice(0, atStartIndex);
     const after = value.slice(textarea?.selectionStart ?? value.length);
     value = before + '@' + path + ' ' + after;
     closePicker();
     textarea?.focus();
+  }
+
+  function selectCommand(cmd: { name: string }) {
+    value = cmd.name;
+    closeCommandPicker();
+    handleSubmit();
   }
 
   let container: HTMLDivElement;
@@ -156,6 +259,24 @@
     />
   {/if}
 
+  <!-- Slash command autocomplete -->
+  {#if commandPickerOpen && filteredCommands.length > 0}
+    <div class="absolute bottom-full left-4 mb-1 bg-popover border border-border shadow-xl z-50 w-72 max-h-48 overflow-y-auto">
+      {#each filteredCommands as cmd, i}
+        <button
+          class="w-full text-left px-3 py-2 text-sm flex items-center gap-3 hover:bg-accent transition-colors
+            {i === commandSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground'}"
+          onmousedown={(e) => { e.preventDefault(); selectCommand(cmd); }}
+        >
+          <span class="font-mono text-primary">{cmd.name}</span>
+          {#if cmd.description}
+            <span class="text-muted-foreground text-xs truncate">{cmd.description}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="flex gap-2 items-stretch flex-1 min-h-0 px-4 pb-3 pt-2">
     <textarea
       bind:this={textarea}
@@ -163,7 +284,7 @@
       oninput={handleInput}
       onkeydown={handleKeydown}
       disabled={false}
-      placeholder={isRunning ? 'Waiting for Claude...' : 'Message (Enter to send, @ for files)'}
+      placeholder={isRunning ? 'Waiting for Claude...' : 'Message (Enter to send, @ for files, / for commands)'}
       rows="1"
       class="flex-1 bg-card border border-input px-3 py-2 text-sm text-foreground
         placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring

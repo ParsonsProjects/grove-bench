@@ -94,6 +94,9 @@ export type AgentEvent =
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
+  | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
+  | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
+  | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number };
