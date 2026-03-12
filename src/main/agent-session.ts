@@ -22,7 +22,7 @@ async function getQuery() {
 
 // Re-declare the types we need (type-only imports are erased at runtime)
 type Query = import('@anthropic-ai/claude-agent-sdk').Query;
-type SDKMessage = Awaited<ReturnType<Query[typeof Symbol.asyncIterator]>['next']>['value'];
+type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
 type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
 
 interface PendingPermission {

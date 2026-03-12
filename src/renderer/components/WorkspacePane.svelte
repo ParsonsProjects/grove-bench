@@ -22,7 +22,7 @@
   });
 
   // Track mode before switching to changes tab so we can restore it
-  let modeBeforeChanges = $state<string | null>(null);
+  let modeBeforeChanges = $state<'default' | 'plan' | 'acceptEdits' | null>(null);
 
   function switchTab(tab: 'activity' | 'changes') {
     if (tab === activeTab) return;

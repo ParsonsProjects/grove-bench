@@ -1,4 +1,4 @@
-import type { AgentEvent, PermissionDecision } from '../../shared/types.js';
+import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
 
 // ─── Chat message types ───
 
@@ -110,7 +110,7 @@ class MessageStore {
   modelBySession = $state<Record<string, string>>({});
 
   /** Current permission mode per session */
-  modeBySession = $state<Record<string, string>>({});
+  modeBySession = $state<Record<string, PermissionMode>>({});
 
   /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
   usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
@@ -158,7 +158,7 @@ class MessageStore {
     return this.modelBySession[sessionId] ?? '';
   }
 
-  getMode(sessionId: string): string {
+  getMode(sessionId: string): PermissionMode {
     return this.modeBySession[sessionId] ?? 'default';
   }
 
@@ -290,7 +290,7 @@ class MessageStore {
     this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);
   }
 
-  async setMode(sessionId: string, mode: string) {
+  async setMode(sessionId: string, mode: PermissionMode) {
     this.modeBySession[sessionId] = mode;
     await window.groveBench.setMode(sessionId, mode);
   }
@@ -298,7 +298,7 @@ class MessageStore {
   cycleMode(sessionId: string) {
     const modes = ['default', 'plan', 'acceptEdits'] as const;
     const current = this.getMode(sessionId);
-    const idx = modes.indexOf(current as any);
+    const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);
   }

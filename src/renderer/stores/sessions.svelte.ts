@@ -1,4 +1,4 @@
-import type { SessionStatus } from '../../shared/types.js';
+import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
 
 const REPOS_KEY = 'grove-bench:repos';
 
@@ -24,6 +24,7 @@ class SessionStore {
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
+  prerequisites = $state<PrerequisiteStatus | null>(null);
 
   get count() {
     return this.sessions.length;

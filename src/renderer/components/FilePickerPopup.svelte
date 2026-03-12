@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Fuse from 'fuse.js';
+  import Fuse, { type IFuseOptions } from 'fuse.js';
 
   let {
     sessionId,
@@ -41,7 +41,7 @@
     });
   }
 
-  const fuseOpts: Fuse.IFuseOptions<FileEntry> = {
+  const fuseOpts: IFuseOptions<FileEntry> = {
     keys: [
       { name: 'filename', weight: 2 },
       { name: 'path', weight: 1 },
