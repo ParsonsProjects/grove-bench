@@ -103,6 +103,24 @@ class MessageStore {
   /** Current permission mode per session */
   modeBySession = $state<Record<string, string>>({});
 
+  /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
+  usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
+
+  /** System info per session (from system_init) */
+  systemInfoBySession = $state<Record<string, {
+    tools: string[];
+    agents: string[];
+    skills: string[];
+    slashCommands: string[];
+    mcpServers: { name: string; status: string }[];
+  }>>({});
+
+  /** Context window size per session (from result's modelUsage, or default 200k) */
+  contextWindowBySession = $state<Record<string, number>>({});
+
+  /** Number of turns per session */
+  turnsBySession = $state<Record<string, number>>({});
+
   private cleanups = new Map<string, () => void>();
 
   getMessages(sessionId: string): ChatMessage[] {
@@ -127,6 +145,22 @@ class MessageStore {
 
   getMode(sessionId: string): string {
     return this.modeBySession[sessionId] ?? 'default';
+  }
+
+  getUsage(sessionId: string) {
+    return this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  }
+
+  getSystemInfo(sessionId: string) {
+    return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+  }
+
+  getContextWindow(sessionId: string): number {
+    return this.contextWindowBySession[sessionId] ?? 200_000;
+  }
+
+  getTurns(sessionId: string): number {
+    return this.turnsBySession[sessionId] ?? 0;
   }
 
   async setMode(sessionId: string, mode: string) {
@@ -186,6 +220,13 @@ class MessageStore {
       case 'system_init':
         this.isReady[sessionId] = true;
         this.modelBySession[sessionId] = event.model;
+        this.systemInfoBySession[sessionId] = {
+          tools: event.tools ?? [],
+          agents: event.agents ?? [],
+          skills: event.skills ?? [],
+          slashCommands: event.slashCommands ?? [],
+          mcpServers: event.mcpServers ?? [],
+        };
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),
@@ -286,6 +327,12 @@ class MessageStore {
       case 'result':
         this.flushStreamingText(sessionId);
         this.isRunning[sessionId] = false;
+        if (event.contextWindow) {
+          this.contextWindowBySession[sessionId] = event.contextWindow;
+        }
+        if (event.numTurns) {
+          this.turnsBySession[sessionId] = event.numTurns;
+        }
         this.pushMessage(sessionId, {
           kind: 'result',
           id: nextId(),
@@ -314,6 +361,19 @@ class MessageStore {
           text: event.message,
         });
         break;
+
+      case 'usage': {
+        const prev = this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+        this.usageBySession[sessionId] = {
+          // input_tokens = current context window usage (latest value, not cumulative)
+          inputTokens: event.inputTokens,
+          // output_tokens accumulate across turns
+          outputTokens: prev.outputTokens + event.outputTokens,
+          cacheReadTokens: event.cacheReadTokens ?? 0,
+          cacheCreationTokens: event.cacheCreationTokens ?? 0,
+        };
+        break;
+      }
 
       case 'process_exit':
         this.flushStreamingText(sessionId);
@@ -384,6 +444,10 @@ class MessageStore {
     this.streamingText[sessionId] = '';
     this.isRunning[sessionId] = false;
     this.isReady[sessionId] = false;
+    delete this.usageBySession[sessionId];
+    delete this.systemInfoBySession[sessionId];
+    delete this.contextWindowBySession[sessionId];
+    delete this.turnsBySession[sessionId];
   }
 }
 

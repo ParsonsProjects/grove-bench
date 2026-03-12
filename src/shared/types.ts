@@ -85,14 +85,15 @@ export type AgentContentBlock = AgentTextBlock | AgentToolUseBlock | AgentToolRe
  * for safe serialization across the IPC boundary.
  */
 export type AgentEvent =
-  | { type: 'system_init'; sessionId: string; model: string; tools: string[] }
+  | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
-  | { type: 'result'; subtype: string; result?: string; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[] }
+  | { type: 'result'; subtype: string; result?: string; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number };

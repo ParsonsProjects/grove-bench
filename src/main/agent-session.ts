@@ -275,6 +275,10 @@ class AgentSessionManager {
             sessionId: message.session_id,
             model: message.model,
             tools: message.tools,
+            agents: (message as any).agents,
+            skills: (message as any).skills,
+            slashCommands: (message as any).slash_commands,
+            mcpServers: (message as any).mcp_servers,
           });
           const w = session.window;
           if (!w.isDestroyed()) {
@@ -308,6 +312,17 @@ class AgentSessionManager {
             }
           }
         }
+        // Emit usage info if available
+        const usage = (message.message as any)?.usage;
+        if (usage) {
+          emit({
+            type: 'usage',
+            inputTokens: usage.input_tokens ?? 0,
+            outputTokens: usage.output_tokens ?? 0,
+            cacheReadTokens: usage.cache_read_input_tokens,
+            cacheCreationTokens: usage.cache_creation_input_tokens,
+          });
+        }
         break;
       }
 
@@ -333,6 +348,11 @@ class AgentSessionManager {
       }
 
       case 'result': {
+        // Extract contextWindow from modelUsage (first model entry)
+        const modelUsage = (message as any).modelUsage as Record<string, { contextWindow?: number }> | undefined;
+        const contextWindow = modelUsage
+          ? Object.values(modelUsage)[0]?.contextWindow
+          : undefined;
         emit({
           type: 'result',
           subtype: message.subtype,
@@ -341,6 +361,8 @@ class AgentSessionManager {
           durationMs: message.duration_ms,
           isError: message.is_error,
           errors: 'errors' in message ? (message as any).errors : undefined,
+          numTurns: message.num_turns,
+          contextWindow,
         });
         break;
       }

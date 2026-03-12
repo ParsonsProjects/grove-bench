@@ -46,9 +46,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ## Feature Requests
 
 ### Input & UX
-- [ ] Auto-grow input with max height and manual resize
+- [x] Auto-grow input with max height and manual resize
 - [ ] Markdown rendering in input (preview mode)
-- [ ] Context length indicator (token usage / remaining)
+- [x] Context length indicator (token usage / remaining)
 - [ ] Drag and drop (files, images into prompt)
 
 ### Agent Capabilities
