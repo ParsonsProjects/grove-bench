@@ -17,6 +17,8 @@
 
   let messages = $derived(messageStore.getMessages(sessionId));
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  let activity = $derived(messageStore.getActivity(sessionId));
 
   // Message search state
   let searchOpen = $state(false);
@@ -178,6 +180,20 @@
     <div class="py-1 text-sm text-foreground">
       <MarkdownBlock content={streamingText} />
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
+    </div>
+  {:else if isRunning}
+    <!-- Activity indicator when agent is working but not streaming text -->
+    <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+      {#if activity.activity === 'thinking'}
+        <span class="text-purple-400">thinking...</span>
+      {:else if activity.activity === 'tool_starting'}
+        <span class="text-yellow-400">
+          running {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
+        </span>
+      {:else}
+        <span>working...</span>
+      {/if}
     </div>
   {/if}
 
