@@ -19,6 +19,15 @@
   let branches = $state<string[]>([]);
   let loadingBranches = $state(false);
   let selectedBranch = $state('');
+  let branchSearch = $state('');
+  let branchDropdownOpen = $state(false);
+  let branchDropdownEl: HTMLDivElement | undefined = $state();
+
+  function handleWindowClick(e: MouseEvent) {
+    if (branchDropdownOpen && branchDropdownEl && !branchDropdownEl.contains(e.target as Node)) {
+      branchDropdownOpen = false;
+    }
+  }
 
   function usedBranches(): Set<string> {
     return new Set(
@@ -32,6 +41,13 @@
     const used = usedBranches();
     return branches.filter((b) => !used.has(b));
   }
+
+  let filteredBranches = $derived.by(() => {
+    const avail = availableBranches();
+    const q = branchSearch.toLowerCase().trim();
+    if (!q) return avail;
+    return avail.filter((b) => b.toLowerCase().includes(q));
+  });
 
   async function fetchBranches() {
     if (!selectedRepo) return;
@@ -94,6 +110,8 @@
     }
   }
 </script>
+
+<svelte:window onclick={handleWindowClick} />
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
   <Dialog.Content class="max-w-sm">
@@ -179,16 +197,53 @@
               No available branches
             </div>
           {:else}
-            <Select.Root type="single" value={selectedBranch} onValueChange={(v) => { selectedBranch = v; }}>
-              <Select.Trigger class="w-full">
-                {selectedBranch || 'Select branch'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each availableBranches() as branch}
-                  <Select.Item value={branch} label={branch} />
-                {/each}
-              </Select.Content>
-            </Select.Root>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="relative" bind:this={branchDropdownEl} onkeydown={(e) => {
+              if (e.key === 'Escape') { branchDropdownOpen = false; }
+            }}>
+              <button
+                type="button"
+                class="w-full flex items-center justify-between bg-background border border-input px-3 py-2 text-sm hover:bg-accent transition-colors text-left"
+                onclick={() => { branchDropdownOpen = !branchDropdownOpen; }}
+              >
+                <span class={selectedBranch ? 'text-foreground' : 'text-muted-foreground'}>
+                  {selectedBranch || 'Select branch'}
+                </span>
+                <svg class="h-4 w-4 opacity-50 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              {#if branchDropdownOpen}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md overflow-hidden">
+                  <div class="p-2 border-b border-border">
+                    <input
+                      type="text"
+                      class="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                      placeholder="Search branches..."
+                      bind:value={branchSearch}
+                      autofocus
+                    />
+                  </div>
+                  <div class="max-h-48 overflow-y-auto p-1">
+                    {#each filteredBranches as branch}
+                      <button
+                        type="button"
+                        class="w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent transition-colors flex items-center gap-2 {branch === selectedBranch ? 'bg-accent' : ''}"
+                        onclick={() => { selectedBranch = branch; branchDropdownOpen = false; branchSearch = ''; }}
+                      >
+                        {#if branch === selectedBranch}
+                          <svg class="h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                        {:else}
+                          <span class="w-4 shrink-0"></span>
+                        {/if}
+                        <span class="truncate">{branch}</span>
+                      </button>
+                    {:else}
+                      <div class="px-2 py-4 text-sm text-muted-foreground text-center">No branches match</div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
           {/if}
         </div>
       {/if}
