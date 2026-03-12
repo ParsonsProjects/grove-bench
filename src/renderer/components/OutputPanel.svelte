@@ -78,14 +78,22 @@
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
   }
+
+  function scrollToBottom() {
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      shouldAutoScroll = true;
+    }
+  }
 </script>
 
 {#if searchOpen}
   <MessageSearchBar {sessionId} onclose={closeSearch} onmatchchange={handleSearchMatch} />
 {/if}
 
+<div class="flex-1 relative overflow-hidden">
 <div
-  class="pixel-bg flex-1 overflow-y-auto px-4 py-3 relative"
+  class="pixel-bg h-full overflow-y-auto px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
 >
@@ -199,4 +207,15 @@
   {/if}
 
   <div class="h-1"></div>
+</div>
+
+{#if !shouldAutoScroll}
+  <button
+    onclick={scrollToBottom}
+    class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 px-2 py-1 text-xs bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shadow-md"
+    title="Scroll to bottom"
+  >
+    &darr; Bottom
+  </button>
+{/if}
 </div>
