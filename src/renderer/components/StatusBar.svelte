@@ -241,7 +241,7 @@
         class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
         title="Background tasks — click for details"
       >
-        <span class="w-2.5 h-2.5 bg-yellow-400 animate-pulse"></span>
+        <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse"></span>
         {pendingTools.length} task{pendingTools.length > 1 ? 's' : ''}
       </button>
 
