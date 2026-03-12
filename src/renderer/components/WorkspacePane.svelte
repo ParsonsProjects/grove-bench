@@ -13,7 +13,6 @@
   let fileChanges = $derived(messageStore.getLastTurnFileChanges(sessionId));
   let hasChanges = $derived(fileChanges.length > 0);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  let currentMode = $derived(messageStore.getMode(sessionId));
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived.by(() => {
@@ -21,24 +20,8 @@
     return msgs.some((m) => m.kind === 'permission' && !m.resolved);
   });
 
-  // Track mode before switching to changes tab so we can restore it
-  let modeBeforeChanges = $state<'default' | 'plan' | 'acceptEdits' | null>(null);
-
   function switchTab(tab: 'activity' | 'changes') {
     if (tab === activeTab) return;
-
-    if (tab === 'changes') {
-      // Save current mode and switch to acceptEdits so future edits auto-execute
-      if (currentMode !== 'acceptEdits') {
-        modeBeforeChanges = currentMode;
-        messageStore.setMode(sessionId, 'acceptEdits');
-      }
-    } else if (tab === 'activity' && modeBeforeChanges !== null) {
-      // Restore previous mode when leaving changes tab
-      messageStore.setMode(sessionId, modeBeforeChanges);
-      modeBeforeChanges = null;
-    }
-
     activeTab = tab;
   }
 

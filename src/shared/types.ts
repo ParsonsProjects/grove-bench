@@ -140,6 +140,9 @@ export interface GroveBenchAPI {
   // Mode control
   setMode(sessionId: string, mode: PermissionMode): Promise<void>;
 
+  // Model control
+  setModel(sessionId: string, model?: string): Promise<void>;
+
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
@@ -193,4 +196,5 @@ export const IPC = {
   FILE_REVERT: 'file:revert',
   FILE_DIFF: 'file:diff',
   PR_INFO: 'pr:info',
+  AGENT_SET_MODEL: 'agent:setModel',
 } as const;

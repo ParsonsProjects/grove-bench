@@ -193,6 +193,10 @@ export function registerHandlers() {
     sessionManager.setMode(sessionId, mode);
   });
 
+  ipcMain.handle(IPC.AGENT_SET_MODEL, (_event, sessionId: string, model?: string) => {
+    return sessionManager.setModel(sessionId, model);
+  });
+
   ipcMain.on(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
     sessionManager.respondToPermission(sessionId, decision);
   });

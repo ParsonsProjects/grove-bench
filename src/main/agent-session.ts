@@ -526,6 +526,17 @@ class AgentSessionManager {
     }
   }
 
+  async setModel(id: string, model?: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryInstance) return;
+    try {
+      await session.queryInstance.setModel(model);
+    } catch (e) {
+      logger.warn(`Failed to set model for session ${id}:`, e);
+      throw e;
+    }
+  }
+
   async destroySession(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;

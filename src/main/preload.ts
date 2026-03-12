@@ -49,6 +49,10 @@ const api: GroveBenchAPI = {
   setMode: (sessionId: string, mode: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_MODE, sessionId, mode),
 
+  // Model control
+  setModel: (sessionId: string, model?: string) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
+
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),

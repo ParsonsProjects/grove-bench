@@ -6,6 +6,23 @@
   let { sessionId }: { sessionId: string } = $props();
 
   let prInfo = $state<PrInfo | null>(null);
+  let modelPickerOpen = $state(false);
+
+  const modelOptions = [
+    { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+    { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+    { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+  ];
+
+  async function switchModel(modelId: string) {
+    modelPickerOpen = false;
+    try {
+      await window.groveBench.setModel(sessionId, modelId);
+      messageStore.setModelOverride(sessionId, modelId);
+    } catch (e: any) {
+      console.error('Failed to switch model:', e);
+    }
+  }
 
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
@@ -90,6 +107,11 @@
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
 
+  // Refs for click-outside detection on popovers
+  let modelPickerRef = $state<HTMLDivElement | null>(null);
+  let tasksRef = $state<HTMLDivElement | null>(null);
+  let contextRef = $state<HTMLDivElement | null>(null);
+
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -117,8 +139,22 @@
     }
   }
 
+  function handleClickOutside(e: MouseEvent) {
+    const target = e.target as Node;
+    if (modelPickerOpen && modelPickerRef && !modelPickerRef.contains(target)) {
+      modelPickerOpen = false;
+    }
+    if (tasksExpanded && tasksRef && !tasksRef.contains(target)) {
+      tasksExpanded = false;
+    }
+    if (contextExpanded && contextRef && !contextRef.contains(target)) {
+      contextExpanded = false;
+    }
+  }
+
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
+    window.addEventListener('click', handleClickOutside);
     window.groveBench.getPrInfo(sessionId).then((info) => {
       prInfo = info;
     });
@@ -126,12 +162,38 @@
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
+    window.removeEventListener('click', handleClickOutside);
   });
 </script>
 
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   {#if model}
-    <span>{model}</span>
+    <div class="relative" bind:this={modelPickerRef}>
+      <button
+        onclick={() => modelPickerOpen = !modelPickerOpen}
+        class="hover:text-foreground transition-colors"
+        title="Change model"
+      >
+        {model}
+      </button>
+
+      {#if modelPickerOpen}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl py-1 text-xs w-48 z-50">
+          {#each modelOptions as opt}
+            <button
+              onclick={() => switchModel(opt.value)}
+              class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors
+                {model === opt.value ? 'text-primary font-medium' : 'text-muted-foreground'}"
+            >
+              {opt.label}
+              {#if model === opt.value}
+                <span class="ml-1">*</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if prInfo}
@@ -173,7 +235,7 @@
   </span>
 
   {#if pendingTools.length > 0}
-    <div class="relative">
+    <div class="relative" bind:this={tasksRef}>
       <button
         onclick={() => tasksExpanded = !tasksExpanded}
         class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
@@ -234,7 +296,7 @@
   {/if}
 
   {#if showContext}
-    <div class="relative ml-auto">
+    <div class="relative ml-auto" bind:this={contextRef}>
       <button
         onclick={() => contextExpanded = !contextExpanded}
         class="flex items-center gap-2 hover:text-foreground transition-colors"

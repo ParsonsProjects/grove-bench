@@ -158,6 +158,10 @@ class MessageStore {
     return this.modelBySession[sessionId] ?? '';
   }
 
+  setModelOverride(sessionId: string, model: string): void {
+    this.modelBySession[sessionId] = model;
+  }
+
   getMode(sessionId: string): PermissionMode {
     return this.modeBySession[sessionId] ?? 'default';
   }
