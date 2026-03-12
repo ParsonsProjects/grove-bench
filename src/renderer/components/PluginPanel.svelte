@@ -110,7 +110,7 @@
     <div class="flex-1 overflow-auto mt-2 min-h-0">
       {#if pluginStore.loading}
         <div class="flex items-center justify-center py-8 text-muted-foreground">
-          <span class="w-4 h-4 border-2 border-border border-t-transparent rounded-full animate-spin mr-2"></span>
+          <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
           <span class="text-sm">Loading plugins...</span>
         </div>
       {:else if tab === 'installed'}

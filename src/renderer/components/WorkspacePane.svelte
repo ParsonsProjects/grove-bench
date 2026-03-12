@@ -85,9 +85,9 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
       Activity
       {#if hasPendingPermission}
-        <span class="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+        <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
       {:else if isRunning}
-        <span class="inline-block w-2 h-2 rounded-full bg-primary animate-spin-dot"></span>
+        <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
       {/if}
       <span class="text-muted-foreground/60 ml-1">Alt+1</span>
     </button>
@@ -130,14 +130,3 @@
     </div>
   {/if}
 </div>
-
-<style>
-  :global(.animate-spin-dot) {
-    animation: spin-dot 1s linear infinite;
-  }
-  @keyframes spin-dot {
-    0% { opacity: 1; }
-    50% { opacity: 0.3; }
-    100% { opacity: 1; }
-  }
-</style>

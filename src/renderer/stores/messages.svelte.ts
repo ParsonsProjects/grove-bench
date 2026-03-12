@@ -367,6 +367,7 @@ class MessageStore {
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
         // Clear streaming text (it was a preview) and push the finalized message.
+        this.isRunning[sessionId] = true;
         this.streamingText[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'text',
@@ -377,10 +378,12 @@ class MessageStore {
         break;
 
       case 'partial_text':
+        this.isRunning[sessionId] = true;
         this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
         break;
 
       case 'assistant_tool_use':
+        this.isRunning[sessionId] = true;
         // If partial text was streaming but no assistant_text arrived to finalize it
         // (e.g., the assistant switched from text to tool_use mid-message), flush it.
         // Guard: only flush if there IS accumulated streaming text.
@@ -459,6 +462,7 @@ class MessageStore {
         break;
 
       case 'thinking':
+        this.isRunning[sessionId] = true;
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
@@ -541,6 +545,9 @@ class MessageStore {
       }
 
       case 'activity':
+        if (event.activity !== 'idle') {
+          this.isRunning[sessionId] = true;
+        }
         this.activityBySession[sessionId] = {
           activity: event.activity,
           toolName: event.toolName,

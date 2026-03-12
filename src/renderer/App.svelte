@@ -224,9 +224,9 @@
                 {isDragOver ? 'border-l-2 border-l-primary' : ''}"
             >
               {#if !isActive && running}
-                <span class="w-3 h-3 shrink-0 border-[1.5px] border-primary border-t-transparent rounded-full animate-spin"></span>
+                <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
               {:else if !isActive && hasPending}
-                <span class="w-1.5 h-1.5 shrink-0 bg-amber-500 animate-pulse rounded-full"></span>
+                <span class="w-1.5 h-1.5 shrink-0 bg-amber-500 animate-pulse"></span>
               {:else if needsAttention}
                 <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash rounded-full"></span>
               {:else}
@@ -264,7 +264,7 @@
                   style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
                 ></span>
               {/each}
-              <div class="w-5 h-5 border-2 border-border border-t-transparent animate-spin relative z-10"></div>
+              <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
               <span class="ml-3 text-sm relative z-10">Starting agent...</span>
             </div>
           {/if}

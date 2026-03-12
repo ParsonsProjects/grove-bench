@@ -182,17 +182,18 @@
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
   {:else if isRunning}
-    <!-- Activity indicator when agent is working but not streaming text -->
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+      <span class="inline-block w-2.5 h-2.5 bg-primary animate-pulse"></span>
       {#if activity.activity === 'thinking'}
-        <span class="text-purple-400">thinking...</span>
+        <span class="text-purple-400">Thinking...</span>
       {:else if activity.activity === 'tool_starting'}
         <span class="text-yellow-400">
-          running {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
+          Running {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0} ({Math.round(activity.elapsedSeconds)}s){/if}
         </span>
+      {:else if activity.activity === 'generating'}
+        <span class="text-primary">Writing...</span>
       {:else}
-        <span>working...</span>
+        <span>Working...</span>
       {/if}
     </div>
   {/if}

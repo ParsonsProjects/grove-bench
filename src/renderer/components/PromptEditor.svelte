@@ -50,7 +50,6 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let isReady = $derived(messageStore.getIsReady(sessionId));
   let canSend = $derived(!isRunning);
-  let activity = $derived(messageStore.getActivity(sessionId));
 
   function handleSubmit() {
     const text = value.trim();
@@ -453,24 +452,6 @@
           >&times;</button>
         </span>
       {/each}
-    </div>
-  {/if}
-
-  <!-- Activity status bar when running -->
-  {#if isRunning}
-    <div class="flex items-center gap-2 px-4 pt-2 pb-1 text-xs text-muted-foreground">
-      <span class="inline-block w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-      <span>
-        {#if activity.activity === 'tool_starting' && activity.toolName}
-          Running {activity.toolName}{activity.elapsedSeconds ? ` (${activity.elapsedSeconds}s)` : ''}
-        {:else if activity.activity === 'thinking'}
-          Thinking...
-        {:else if activity.activity === 'generating'}
-          Writing...
-        {:else}
-          Working...
-        {/if}
-      </span>
     </div>
   {/if}
 

@@ -241,7 +241,7 @@
         class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
         title="Background tasks — click for details"
       >
-        <span class="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></span>
+        <span class="w-2.5 h-2.5 bg-yellow-400 animate-pulse"></span>
         {pendingTools.length} task{pendingTools.length > 1 ? 's' : ''}
       </button>
 
@@ -251,7 +251,7 @@
           <div class="space-y-1.5 max-h-48 overflow-y-auto">
             {#each pendingTools as task}
               <div class="flex items-center gap-2">
-                <span class="w-2 h-2 border border-yellow-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
+                <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse shrink-0"></span>
                 <span class="text-yellow-400 font-medium shrink-0">{task.toolName}</span>
                 <span class="text-muted-foreground truncate flex-1">{task.summary}</span>
                 {#if task.elapsedSeconds && task.elapsedSeconds > 0}

@@ -112,7 +112,7 @@
           >
             <div class="flex items-center gap-2 min-w-0">
               {#if destroying === session.id}
-                <span class="w-2 h-2 border border-muted-foreground border-t-transparent rounded-full animate-spin shrink-0"></span>
+                <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
               {:else}
                 <span class="w-2 h-2 {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
               {/if}

@@ -44,7 +44,7 @@
     <span class="text-muted-foreground font-bold">{toolName}</span>
     <span class="text-muted-foreground/70 truncate flex-1">{summarizeInput(toolInput)}</span>
     {#if pending}
-      <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0"></span>
+      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
     {:else if isError}
       <span class="text-destructive">error</span>
     {:else if result !== undefined}
