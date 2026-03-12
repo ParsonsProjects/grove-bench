@@ -149,7 +149,11 @@ class AgentSessionManager {
     // Start the agent query in the background
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED:`, err);
-      emit({ type: 'error', message: String(err.message || err) });
+      const errMsg = String(err.message || err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      emit({ type: 'error', message: isAuthError
+        ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+        : errMsg });
       session.status = 'error';
       const w = session.window;
       if (!w.isDestroyed()) {
@@ -249,7 +253,13 @@ class AgentSessionManager {
       console.log(`[runQuery] session=${id} message loop ended normally`);
     } catch (err) {
       console.error(`[runQuery] session=${id} message loop error:`, err);
-      emit({ type: 'error', message: `Query error: ${(err as Error).message || err}` });
+      const errMsg = (err as Error).message || String(err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      if (isAuthError) {
+        emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+      } else {
+        emit({ type: 'error', message: `Query error: ${errMsg}` });
+      }
     }
 
     // Query finished

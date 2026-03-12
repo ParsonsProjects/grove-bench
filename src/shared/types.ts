@@ -51,6 +51,9 @@ export interface PrerequisiteStatus {
   claudeCode: {
     available: boolean;
     path?: string;
+    authenticated?: boolean;
+    authMethod?: string;
+    email?: string;
   };
 }
 

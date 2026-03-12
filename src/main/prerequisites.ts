@@ -28,7 +28,21 @@ export async function findClaudeCode(): Promise<PrerequisiteStatus['claudeCode']
     const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
     const { stdout } = await execFileAsync(cmd, ['claude']);
     const firstMatch = stdout.trim().split('\n')[0];
-    return { available: true, path: firstMatch };
+
+    // Check authentication status — use shell:true so .cmd shims work on Windows
+    try {
+      const { stdout: authJson } = await execFileAsync('claude', ['auth', 'status', '--json'], { shell: true });
+      const auth = JSON.parse(authJson.trim());
+      return {
+        available: true,
+        path: firstMatch,
+        authenticated: auth.loggedIn === true,
+        authMethod: auth.authMethod,
+        email: auth.email,
+      };
+    } catch {
+      return { available: true, path: firstMatch, authenticated: false };
+    }
   } catch {
     return { available: false };
   }
