@@ -7,9 +7,8 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
-  This app is always dark mode. We put dark values directly in :root
-  and keep the .dark block as a no-op for shadcn component compatibility.
-  Colors matched to the original neutral-950/900/800 + blue-600 scheme.
+  VS Code "Dark Modern" theme.
+  Colors derived from the VS Code Dark Modern color palette.
 */
 :root {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
@@ -17,92 +16,93 @@
   /* Square design: no border-radius */
   --radius: 0rem;
 
-  /* Dark neutral background (neutral-950) */
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
+  /* Editor background: #1f1f1f */
+  --background: oklch(0.208 0 0);
+  --foreground: oklch(0.835 0 0);        /* #cccccc */
 
-  /* Card/popover (neutral-900) */
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
+  /* Card/panel: #252526 */
+  --card: oklch(0.233 0 0);
+  --card-foreground: oklch(0.835 0 0);
+  --popover: oklch(0.233 0 0);
+  --popover-foreground: oklch(0.835 0 0);
 
-  /* Primary: blue-600 */
-  --primary: oklch(0.546 0.245 262.881);
+  /* Primary: #0078d4 (VS Code blue) */
+  --primary: oklch(0.541 0.181 254.624);
   --primary-foreground: oklch(1 0 0);
 
-  /* Secondary: neutral-800 */
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
+  /* Secondary: #313131 (input/dropdown bg) */
+  --secondary: oklch(0.279 0 0);
+  --secondary-foreground: oklch(0.835 0 0);
 
-  /* Muted: neutral-800 / neutral-400 */
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /* Muted: #313131 bg / #858585 text */
+  --muted: oklch(0.279 0 0);
+  --muted-foreground: oklch(0.576 0 0);
 
-  /* Accent: neutral-800 */
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  /* Accent: #04395e (selection highlight) */
+  --accent: oklch(0.310 0.065 245);
+  --accent-foreground: oklch(0.835 0 0);
 
-  /* Destructive: red-600 */
-  --destructive: oklch(0.577 0.245 27.325);
+  /* Destructive: #f14c4c (error red) */
+  --destructive: oklch(0.608 0.220 22);
 
-  /* Borders: neutral-700 */
-  --border: oklch(0.371 0 0);
-  --input: oklch(0.371 0 0);
+  /* Borders: #2b2b2b (subtle), input uses #3c3c3c */
+  --border: oklch(0.260 0 0);
+  --input: oklch(0.320 0 0);
 
-  /* Ring: blue-500 */
-  --ring: oklch(0.623 0.214 259.815);
+  /* Ring: #0078d4 */
+  --ring: oklch(0.541 0.181 254.624);
 
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  /* Chart colors from VS Code terminal palette */
+  --chart-1: oklch(0.541 0.181 254.624);  /* blue */
+  --chart-2: oklch(0.696 0.17 162.48);    /* green */
+  --chart-3: oklch(0.769 0.188 70.08);    /* yellow */
+  --chart-4: oklch(0.627 0.265 303.9);    /* purple */
+  --chart-5: oklch(0.608 0.220 22);       /* red */
 
-  /* Sidebar: neutral-950 */
-  --sidebar: oklch(0.145 0 0);
-  --sidebar-foreground: oklch(0.556 0 0);
-  --sidebar-primary: oklch(0.546 0.245 262.881);
+  /* Sidebar: #181818 (activity bar bg) */
+  --sidebar: oklch(0.176 0 0);
+  --sidebar-foreground: oklch(0.576 0 0);
+  --sidebar-primary: oklch(0.541 0.181 254.624);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-accent: oklch(0.260 0 0);
+  --sidebar-accent-foreground: oklch(0.835 0 0);
+  --sidebar-border: oklch(0.233 0 0);
+  --sidebar-ring: oklch(0.576 0 0);
 }
 
 /* Keep .dark block for shadcn component compatibility (values same as :root) */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.546 0.245 262.881);
+  --background: oklch(0.208 0 0);
+  --foreground: oklch(0.835 0 0);
+  --card: oklch(0.233 0 0);
+  --card-foreground: oklch(0.835 0 0);
+  --popover: oklch(0.233 0 0);
+  --popover-foreground: oklch(0.835 0 0);
+  --primary: oklch(0.541 0.181 254.624);
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.371 0 0);
-  --input: oklch(0.371 0 0);
-  --ring: oklch(0.623 0.214 259.815);
-  --chart-1: oklch(0.488 0.243 264.376);
+  --secondary: oklch(0.279 0 0);
+  --secondary-foreground: oklch(0.835 0 0);
+  --muted: oklch(0.279 0 0);
+  --muted-foreground: oklch(0.576 0 0);
+  --accent: oklch(0.310 0.065 245);
+  --accent-foreground: oklch(0.835 0 0);
+  --destructive: oklch(0.608 0.220 22);
+  --border: oklch(0.260 0 0);
+  --input: oklch(0.320 0 0);
+  --ring: oklch(0.541 0.181 254.624);
+  --chart-1: oklch(0.541 0.181 254.624);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.145 0 0);
-  --sidebar-foreground: oklch(0.556 0 0);
-  --sidebar-primary: oklch(0.546 0.245 262.881);
+  --chart-5: oklch(0.608 0.220 22);
+  --sidebar: oklch(0.176 0 0);
+  --sidebar-foreground: oklch(0.576 0 0);
+  --sidebar-primary: oklch(0.541 0.181 254.624);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-accent: oklch(0.260 0 0);
+  --sidebar-accent-foreground: oklch(0.835 0 0);
+  --sidebar-border: oklch(0.233 0 0);
+  --sidebar-ring: oklch(0.576 0 0);
 }
 
 @theme inline {
@@ -146,7 +146,7 @@
 /* Scrollbar styling */
 * {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.371 0 0) transparent;
+  scrollbar-color: oklch(0.320 0 0) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -159,12 +159,12 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: oklch(0.371 0 0);
+  background: oklch(0.320 0 0);
   border-radius: 3px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.45 0 0);
+  background: oklch(0.400 0 0);
 }
 
 *::-webkit-scrollbar-corner {

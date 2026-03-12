@@ -91,7 +91,7 @@
             {#if store.canCreate}
               <button
                 onclick={() => openNewAgent(repo)}
-                class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
+                class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
                 title="New agent in this repo"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
@@ -100,7 +100,7 @@
             <button
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
-              class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
               title={canRemove ? 'Remove repository' : 'Destroy all sessions first'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -133,7 +133,7 @@
               tabindex="-1"
               onclick={(e) => { e.stopPropagation(); requestDestroy(session.id); }}
               onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') requestDestroy(session.id); }}
-              class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer transition-colors shrink-0"
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer transition-colors shrink-0"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </span>
