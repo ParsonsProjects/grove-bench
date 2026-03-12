@@ -46,7 +46,7 @@
     {#each Array(20) as _, i}
       <span
         class="blue-pixel absolute rounded-[1px]"
-        style="width:4px;height:4px;top:{8+(((i*37+13)*7)%84)}%;left:{5+(((i*53+7)*11)%90)}%;animation-delay:{(i*1.3)%6}s;"
+        style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
       ></span>
     {/each}
     <div class="text-center relative z-10">
