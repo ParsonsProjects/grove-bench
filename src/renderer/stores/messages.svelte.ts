@@ -244,6 +244,21 @@ class MessageStore {
             ...msgs.slice(idx + 1),
           ];
         }
+        // Also mark any matching permission request as resolved (handles replay after refresh)
+        const msgs2 = this.messagesBySession[sessionId] ?? [];
+        const permIdx = msgs2.findIndex(
+          (m) => m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved,
+        );
+        if (permIdx >= 0) {
+          const updated = { ...(msgs2[permIdx] as ChatPermissionMessage) };
+          updated.resolved = true;
+          updated.decision = event.isError ? 'deny' : 'allow';
+          this.messagesBySession[sessionId] = [
+            ...msgs2.slice(0, permIdx),
+            updated,
+            ...msgs2.slice(permIdx + 1),
+          ];
+        }
         break;
       }
 
@@ -308,7 +323,7 @@ class MessageStore {
   }
 
   /** Resolve a permission request in the UI */
-  resolvePermission(sessionId: string, requestId: string, decision: 'allow' | 'deny') {
+  resolvePermission(sessionId: string, requestId: string, decision: 'allow' | 'deny' | 'allowAlways') {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const idx = msgs.findIndex(
       (m) => m.kind === 'permission' && m.requestId === requestId,
@@ -316,7 +331,7 @@ class MessageStore {
     if (idx >= 0) {
       const updated = { ...(msgs[idx] as ChatPermissionMessage) };
       updated.resolved = true;
-      updated.decision = decision;
+      updated.decision = decision === 'deny' ? 'deny' : 'allow';
       this.messagesBySession[sessionId] = [
         ...msgs.slice(0, idx),
         updated,

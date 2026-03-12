@@ -1,4 +1,6 @@
 <script lang="ts">
+  import CopyButton from './CopyButton.svelte';
+
   let {
     toolInput,
     result,
@@ -26,9 +28,10 @@
 
 <div class="py-1 my-1 border-l-4 border-border pl-3">
   <!-- Command -->
-  <div class="flex items-center gap-2">
+  <div class="flex items-center gap-2 group/cmd">
     <span class="text-cyan-400 text-xs select-none font-bold">$</span>
     <code class="text-xs text-foreground flex-1 break-all">{command}</code>
+    <CopyButton text={command} class="opacity-0 group-hover/cmd:opacity-100 shrink-0" />
     {#if pending}
       <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0"></span>
     {:else if isError}
@@ -40,7 +43,8 @@
 
   <!-- Output -->
   {#if result !== undefined}
-    <div class="mt-1">
+    <div class="mt-1 relative group/out">
+      <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/out:opacity-100" />
       {#if isLong && collapsed}
         <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{outputLines.slice(0, 20).join('\n')}</pre>
         <button

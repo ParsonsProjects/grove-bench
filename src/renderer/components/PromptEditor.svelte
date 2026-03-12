@@ -45,9 +45,7 @@
       });
     } else {
       messageStore.addUserMessage(sessionId, text);
-      messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] calling sendMessage sessionId=${sessionId}` } as any);
       window.groveBench.sendMessage(sessionId, text);
-      messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] sendMessage returned` } as any);
     }
 
     value = '';
@@ -114,7 +112,7 @@
     />
   {/if}
 
-  <div class="flex gap-2 items-end">
+  <div class="flex gap-2 items-stretch">
     <textarea
       bind:this={textarea}
       bind:value
@@ -129,16 +127,15 @@
     ></textarea>
 
     {#if isRunning}
-      <Button variant="outline" size="sm" onclick={handleStop} class="text-muted-foreground hover:text-destructive hover:border-destructive">
+      <Button variant="outline" onclick={handleStop} class="text-muted-foreground hover:text-destructive hover:border-destructive h-auto">
         Stop
       </Button>
     {:else}
       <Button
         variant="outline"
-        size="sm"
         onclick={handleSubmit}
         disabled={!value.trim() || !canSend}
-        class="text-primary border-primary hover:bg-primary/10"
+        class="text-primary border-primary hover:bg-primary/10 h-auto"
       >
         Send
       </Button>

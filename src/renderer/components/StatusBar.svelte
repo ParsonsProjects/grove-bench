@@ -76,5 +76,9 @@
     <span>{(lastResult.durationMs / 1000).toFixed(1)}s</span>
   {/if}
 
-  <span class="ml-auto text-muted-foreground/40">Alt+M</span>
+  <span class="ml-auto text-muted-foreground/40 flex gap-3">
+    <span>Ctrl+R find</span>
+    <span>Ctrl+F search</span>
+    <span>Alt+M mode</span>
+  </span>
 </div>

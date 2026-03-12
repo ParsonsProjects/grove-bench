@@ -52,6 +52,8 @@ const api: GroveBenchAPI = {
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
+  openInEditor: (sessionId: string, filePath: string, line?: number) =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
 
   // Prerequisites
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),

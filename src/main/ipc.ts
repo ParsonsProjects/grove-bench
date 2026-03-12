@@ -8,6 +8,7 @@ import { validateBranchName, branchExists, listBranches, git } from './git.js';
 import { logger } from './logger.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { exec } from 'node:child_process';
 
 export function registerHandlers() {
   // ─── Repo ───
@@ -205,6 +206,48 @@ export function registerHandlers() {
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const output = await git(['ls-files'], worktree.path);
     return output.split('\n').map(l => l.trim()).filter(Boolean);
+  });
+
+  ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const resolved = path.resolve(worktree.path, filePath);
+    if (!resolved.startsWith(worktree.path)) {
+      throw new Error('Path traversal not allowed');
+    }
+
+    // Try VS Code first, then fall back to system default
+    const lineArg = line ? `:${line}` : '';
+    const quoted = `"${resolved}"`;
+
+    return new Promise<void>((resolve, reject) => {
+      // VS Code supports file:line syntax via -g flag
+      const codeCmd = line ? `code -g "${resolved}:${line}"` : `code ${quoted}`;
+      exec(codeCmd, (err) => {
+        if (!err) {
+          resolve();
+          return;
+        }
+        // Fallback: try cursor, then system open
+        const cursorCmd = line ? `cursor -g "${resolved}:${line}"` : `cursor ${quoted}`;
+        exec(cursorCmd, (err2) => {
+          if (!err2) {
+            resolve();
+            return;
+          }
+          // Final fallback: system default (start on Windows)
+          const openCmd = process.platform === 'win32' ? `start "" ${quoted}` :
+            process.platform === 'darwin' ? `open ${quoted}` : `xdg-open ${quoted}`;
+          exec(openCmd, (err3) => {
+            if (err3) {
+              reject(new Error('Could not open file. Install VS Code or Cursor CLI.'));
+            } else {
+              resolve();
+            }
+          });
+        });
+      });
+    });
   });
 
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {

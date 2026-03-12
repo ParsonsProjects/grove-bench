@@ -45,6 +45,8 @@ interface ManagedSession {
   inputController: ReadableStreamDefaultController<SDKUserMessage> | null;
   inputStream: ReadableStream<SDKUserMessage> | null;
   pendingPermissions: Map<string, PendingPermission>;
+  /** Tools the user has chosen to always allow for this session */
+  alwaysAllowedTools: Set<string>;
   claudeSessionId: string | null;
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
@@ -114,6 +116,7 @@ class AgentSessionManager {
       inputController,
       inputStream,
       pendingPermissions: new Map(),
+      alwaysAllowedTools: new Set(),
       claudeSessionId: opts.resumeClaudeSessionId || null,
       window: win,
       eventHistory: [],
@@ -183,6 +186,10 @@ class AgentSessionManager {
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
+          // Auto-approve if user previously chose "Always Allow" for this tool
+          if (session.alwaysAllowedTools.has(toolName)) {
+            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+          }
           // Forward permission request to renderer and wait for user response.
           // Times out after 5 minutes to prevent leaked promises if window closes.
           const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
@@ -391,7 +398,10 @@ class AgentSessionManager {
 
     session.pendingPermissions.delete(decision.requestId);
 
-    if (decision.behavior === 'allow') {
+    if (decision.behavior === 'allow' || decision.behavior === 'allowAlways') {
+      if (decision.behavior === 'allowAlways') {
+        session.alwaysAllowedTools.add(pending.toolName);
+      }
       pending.resolve({ behavior: 'allow', updatedInput: pending.toolInput });
     } else {
       pending.resolve({

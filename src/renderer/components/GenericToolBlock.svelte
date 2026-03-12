@@ -1,4 +1,6 @@
 <script lang="ts">
+  import CopyButton from './CopyButton.svelte';
+
   let {
     toolName,
     toolInput,
@@ -57,8 +59,11 @@
       <pre class="text-muted-foreground bg-card p-2 overflow-x-auto max-h-48 overflow-y-auto">{formatInput(toolInput)}</pre>
       {#if result !== undefined}
         <div class="text-muted-foreground mt-1 mb-0.5">{isError ? 'error' : 'output'}</div>
-        <pre class="overflow-x-auto max-h-64 overflow-y-auto p-2 bg-card whitespace-pre-wrap
-          {isError ? 'text-red-300' : 'text-muted-foreground'}">{result}</pre>
+        <div class="relative group/gen-out">
+          <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/gen-out:opacity-100" />
+          <pre class="overflow-x-auto max-h-64 overflow-y-auto p-2 bg-card whitespace-pre-wrap
+            {isError ? 'text-red-300' : 'text-muted-foreground'}">{result}</pre>
+        </div>
       {/if}
     </div>
   {/if}

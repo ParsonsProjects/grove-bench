@@ -110,7 +110,7 @@
             {store.repoDisplayName(store.repos[0])}
           </div>
         {:else}
-          <Select.Root bind:value={selectedRepo}>
+          <Select.Root type="single" value={selectedRepo} onValueChange={(v) => { selectedRepo = v; }}>
             <Select.Trigger class="w-full">
               {store.repoDisplayName(selectedRepo) || 'Select repository'}
             </Select.Trigger>
@@ -179,7 +179,7 @@
               No available branches
             </div>
           {:else}
-            <Select.Root bind:value={selectedBranch}>
+            <Select.Root type="single" value={selectedBranch} onValueChange={(v) => { selectedBranch = v; }}>
               <Select.Trigger class="w-full">
                 {selectedBranch || 'Select branch'}
               </Select.Trigger>

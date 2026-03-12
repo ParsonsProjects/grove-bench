@@ -100,7 +100,7 @@ export type AgentEvent =
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
-  behavior: 'allow' | 'deny';
+  behavior: 'allow' | 'deny' | 'allowAlways';
   message?: string; // denial message
 }
 
@@ -144,6 +144,7 @@ export interface GroveBenchAPI {
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
+  openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -154,6 +155,7 @@ export interface GroveBenchAPI {
 export type PermissionMode = 'default' | 'plan' | 'acceptEdits';
 
 export const IPC = {
+  FILE_OPEN_IN_EDITOR: 'file:openInEditor',
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',

@@ -57,6 +57,7 @@
     {:else if msg.kind === 'tool_call'}
       <div class="mb-1">
         <ToolCallBlock
+          {sessionId}
           toolName={msg.toolName}
           toolInput={msg.toolInput}
           result={msg.result}

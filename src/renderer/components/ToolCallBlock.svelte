@@ -5,12 +5,14 @@
   import GenericToolBlock from './GenericToolBlock.svelte';
 
   let {
+    sessionId,
     toolName,
     toolInput,
     result,
     isError,
     pending,
   }: {
+    sessionId: string;
     toolName: string;
     toolInput: unknown;
     result?: string;
@@ -22,9 +24,9 @@
 {#if toolName === 'Bash'}
   <BashBlock {toolInput} {result} {isError} {pending} />
 {:else if toolName === 'Edit' || toolName === 'Write'}
-  <DiffBlock {toolName} {toolInput} {result} {pending} {isError} />
+  <DiffBlock {sessionId} {toolName} {toolInput} {result} {pending} {isError} />
 {:else if toolName === 'Read' || toolName === 'Grep' || toolName === 'Glob'}
-  <FileOpBlock {toolName} {toolInput} {result} {pending} {isError} />
+  <FileOpBlock {sessionId} {toolName} {toolInput} {result} {pending} {isError} />
 {:else}
   <GenericToolBlock {toolName} {toolInput} {result} {pending} {isError} />
 {/if}

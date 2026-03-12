@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
+  import SessionFinder from './components/SessionFinder.svelte';
 
   async function restoreWorktrees() {
     const runningSessions = await window.groveBench.listSessions();
@@ -61,6 +62,15 @@
     }
   }
 
+  let showSessionFinder = $state(false);
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+      e.preventDefault();
+      showSessionFinder = !showSessionFinder;
+    }
+  }
+
   let resumingId: string | null = null;
 
   $effect(() => {
@@ -91,11 +101,15 @@
 
   onMount(() => {
     restoreWorktrees();
+    window.addEventListener('keydown', handleGlobalKeydown);
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);
     });
-    return unsub;
+    return () => {
+      unsub();
+      window.removeEventListener('keydown', handleGlobalKeydown);
+    };
   });
 </script>
 
@@ -166,5 +180,9 @@
     {/if}
   </main>
 </div>
+
+{#if showSessionFinder}
+  <SessionFinder onclose={() => showSessionFinder = false} />
+{/if}
 
 <ErrorToast />
