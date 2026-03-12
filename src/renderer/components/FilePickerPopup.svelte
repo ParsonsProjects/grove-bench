@@ -16,6 +16,7 @@
   interface FileEntry {
     path: string;
     filename: string;
+    isDir: boolean;
   }
 
   let files = $state<FileEntry[]>([]);
@@ -29,10 +30,15 @@
   const fileCache = new Map<string, { files: FileEntry[]; ts: number }>();
 
   function toEntries(paths: string[]): FileEntry[] {
-    return paths.map((p) => ({
-      path: p,
-      filename: p.split('/').pop() ?? p,
-    }));
+    return paths.map((p) => {
+      const isDir = p.endsWith('/');
+      const clean = isDir ? p.slice(0, -1) : p;
+      return {
+        path: p,
+        filename: clean.split('/').pop() ?? clean,
+        isDir,
+      };
+    });
   }
 
   const fuseOpts: Fuse.IFuseOptions<FileEntry> = {
@@ -113,8 +119,11 @@
           {i === selectedIndex ? 'bg-accent text-accent-foreground' : 'text-popover-foreground/80'}"
         onmousedown={(e) => { e.preventDefault(); onselect(entry.path); }}
       >
-        <span class="text-foreground">{entry.filename}</span>
-        <span class="text-muted-foreground ml-1.5">{entry.path.slice(0, entry.path.length - entry.filename.length)}</span>
+        <span class="text-muted-foreground/60 mr-1">{entry.isDir ? '\u{1F4C1}' : '\u{1F4C4}'}</span>
+        <span class="text-foreground">{entry.filename}{entry.isDir ? '/' : ''}</span>
+        {#if !entry.isDir}
+          <span class="text-muted-foreground ml-1.5">{entry.path.slice(0, entry.path.length - entry.filename.length)}</span>
+        {/if}
       </button>
     {/each}
   {/if}

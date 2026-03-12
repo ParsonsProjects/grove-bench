@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron';
+import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
@@ -6,6 +6,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { validateBranchName, branchExists, listBranches, git } from './git.js';
 import { logger } from './logger.js';
+import { killProcessOnPort } from './port-killer.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { exec } from 'node:child_process';
@@ -183,8 +184,8 @@ export function registerHandlers() {
 
   // ─── Agent I/O ───
 
-  ipcMain.on(IPC.AGENT_SEND, (_event, sessionId: string, content: string) => {
-    sessionManager.sendMessage(sessionId, content);
+  ipcMain.on(IPC.AGENT_SEND, (_event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
+    sessionManager.sendMessage(sessionId, content, images);
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
@@ -205,7 +206,20 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const output = await git(['ls-files'], worktree.path);
-    return output.split('\n').map(l => l.trim()).filter(Boolean);
+    const files = output.split('\n').map(l => l.trim()).filter(Boolean);
+
+    // Extract unique directories from file paths
+    const dirs = new Set<string>();
+    for (const f of files) {
+      const parts = f.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        dirs.add(parts.slice(0, i).join('/') + '/');
+      }
+    }
+
+    // Return dirs first (sorted), then files
+    const sortedDirs = [...dirs].sort();
+    return [...sortedDirs, ...files];
   });
 
   ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number) => {
@@ -250,13 +264,39 @@ export function registerHandlers() {
     });
   });
 
+  // ─── External links & process cleanup ───
+
+  ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
+    // Only allow http/https URLs for security
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error('Only http/https URLs are allowed');
+    }
+    await shell.openExternal(url);
+  });
+
+  ipcMain.handle(IPC.KILL_PORT, async (_event, port: number) => {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('Invalid port number');
+    }
+    return killProcessOnPort(port);
+  });
+
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath);
+    const resolved = path.resolve(worktree.path, filePath.replace(/\/$/, ''));
     // Security: ensure resolved path is within the worktree
     if (!resolved.startsWith(worktree.path)) {
       throw new Error('Path traversal not allowed');
+    }
+    const stat = await fs.stat(resolved);
+    if (stat.isDirectory()) {
+      // Return a listing of tracked files under this directory
+      const output = await git(['ls-files'], worktree.path);
+      const prefix = path.relative(worktree.path, resolved).replace(/\\/g, '/');
+      const entries = output.split('\n').map(l => l.trim()).filter(Boolean)
+        .filter(f => f.startsWith(prefix ? prefix + '/' : ''));
+      return entries.join('\n');
     }
     const buf = await fs.readFile(resolved);
     // Cap at 100KB

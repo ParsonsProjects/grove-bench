@@ -100,6 +100,9 @@ class MessageStore {
   /** Current activity per session (what the LLM is doing right now) */
   activityBySession = $state<Record<string, { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; elapsedSeconds?: number }>>({});
 
+  /** Per-tool progress tracking — maps toolUseId to progress info */
+  toolProgressBySession = $state<Record<string, Record<string, { toolName: string; elapsedSeconds: number }>>>({});
+
   /** Whether the session has initialized (received system_init) and can accept messages */
   isReady = $state<Record<string, boolean>>({});
 
@@ -126,6 +129,9 @@ class MessageStore {
 
   /** Number of turns per session */
   turnsBySession = $state<Record<string, number>>({});
+
+  /** Detected dev server ports per session */
+  devServersBySession = $state<Record<string, { port: number; url: string }[]>>({});
 
   private cleanups = new Map<string, () => void>();
 
@@ -171,6 +177,45 @@ class MessageStore {
 
   getActivity(sessionId: string) {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
+  }
+
+  getDevServers(sessionId: string): { port: number; url: string }[] {
+    return this.devServersBySession[sessionId] ?? [];
+  }
+
+  /** Get all currently pending tool calls with their progress info. */
+  getPendingTools(sessionId: string): { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] {
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    const progress = this.toolProgressBySession[sessionId] ?? {};
+    const pending: { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] = [];
+    for (const m of msgs) {
+      if (m.kind === 'tool_call' && m.pending) {
+        const p = progress[m.toolUseId];
+        pending.push({
+          toolName: m.toolName,
+          toolUseId: m.toolUseId,
+          summary: this.summarizeToolInput(m.toolName, m.toolInput),
+          elapsedSeconds: p?.elapsedSeconds,
+        });
+      }
+    }
+    return pending;
+  }
+
+  private summarizeToolInput(toolName: string, input: unknown): string {
+    if (typeof input !== 'object' || input === null) return '';
+    const obj = input as Record<string, unknown>;
+    if (toolName === 'Bash' && obj.command) return String(obj.command).slice(0, 60);
+    if (toolName === 'Agent' && obj.prompt) return String(obj.prompt).slice(0, 60);
+    if (obj.file_path) return String(obj.file_path);
+    if (obj.pattern) return String(obj.pattern);
+    if (obj.description) return String(obj.description).slice(0, 60);
+    return '';
+  }
+
+  removeDevServer(sessionId: string, port: number) {
+    const servers = this.devServersBySession[sessionId] ?? [];
+    this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);
   }
 
   async setMode(sessionId: string, mode: string) {
@@ -299,6 +344,12 @@ class MessageStore {
             ...msgs.slice(idx + 1),
           ];
         }
+        // Clear tool progress for this tool
+        const prog = this.toolProgressBySession[sessionId];
+        if (prog?.[event.toolUseId]) {
+          delete prog[event.toolUseId];
+          this.toolProgressBySession[sessionId] = { ...prog };
+        }
         // Also mark any matching permission request as resolved (handles replay after refresh)
         const msgs2 = this.messagesBySession[sessionId] ?? [];
         const permIdx = msgs2.findIndex(
@@ -342,6 +393,7 @@ class MessageStore {
         this.flushStreamingText(sessionId);
         this.isRunning[sessionId] = false;
         this.activityBySession[sessionId] = { activity: 'idle' };
+        this.toolProgressBySession[sessionId] = {};
         if (event.contextWindow) {
           this.contextWindowBySession[sessionId] = event.contextWindow;
         }
@@ -398,13 +450,18 @@ class MessageStore {
         });
         break;
 
-      case 'tool_progress':
+      case 'tool_progress': {
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
           elapsedSeconds: event.elapsedSeconds,
         };
+        // Track per-tool progress
+        const prog = this.toolProgressBySession[sessionId] ?? {};
+        prog[event.toolUseId] = { toolName: event.toolName, elapsedSeconds: event.elapsedSeconds };
+        this.toolProgressBySession[sessionId] = { ...prog };
         break;
+      }
 
       case 'activity':
         this.activityBySession[sessionId] = {
@@ -412,6 +469,22 @@ class MessageStore {
           toolName: event.toolName,
         };
         break;
+
+      case 'user_message':
+        this.pushMessage(sessionId, {
+          kind: 'user',
+          id: nextId(),
+          text: event.text,
+        });
+        break;
+
+      case 'devserver_detected': {
+        const servers = this.devServersBySession[sessionId] ?? [];
+        if (!servers.some((s) => s.port === event.port)) {
+          this.devServersBySession[sessionId] = [...servers, { port: event.port, url: event.url }];
+        }
+        break;
+      }
 
       case 'process_exit':
         this.flushStreamingText(sessionId);
@@ -491,6 +564,25 @@ class MessageStore {
     window.groveBench.offAgentEvent(sessionId);
   }
 
+  /** After replaying event history, mark any tool_calls still pending as resolved.
+   *  During replay the tool_result handler should match, but if events arrive
+   *  out of order or the session is idle, we clean up so spinners don't linger. */
+  resolveStaleToolCalls(sessionId: string) {
+    if (this.isRunning[sessionId]) return; // genuinely in-flight
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let changed = false;
+    const updated = msgs.map((m) => {
+      if (m.kind === 'tool_call' && m.pending) {
+        changed = true;
+        return { ...m, pending: false };
+      }
+      return m;
+    });
+    if (changed) {
+      this.messagesBySession[sessionId] = updated;
+    }
+  }
+
   /** Clear all messages for a session */
   clearSession(sessionId: string) {
     this.messagesBySession[sessionId] = [];
@@ -503,6 +595,7 @@ class MessageStore {
     delete this.turnsBySession[sessionId];
     delete this.pendingClear[sessionId];
     delete this.activityBySession[sessionId];
+    delete this.devServersBySession[sessionId];
   }
 }
 

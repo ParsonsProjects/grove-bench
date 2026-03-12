@@ -26,8 +26,8 @@ const api: GroveBenchAPI = {
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
 
   // Agent I/O
-  sendMessage: (sessionId: string, content: string) =>
-    ipcRenderer.send(IPC.AGENT_SEND, sessionId, content),
+  sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
+    ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.send(IPC.AGENT_PERMISSION, sessionId, decision),
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
@@ -54,6 +54,12 @@ const api: GroveBenchAPI = {
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
   openInEditor: (sessionId: string, filePath: string, line?: number) =>
     ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
+
+  // External links
+  openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
+
+  // Localhost process cleanup
+  killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
 
   // Prerequisites
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),

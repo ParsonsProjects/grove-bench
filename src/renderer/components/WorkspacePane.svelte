@@ -8,14 +8,21 @@
   let { sessionId }: { sessionId: string } = $props();
 
   onMount(async () => {
-    messageStore.subscribe(sessionId);
-
+    // Replay history BEFORE subscribing to live events to avoid duplicates.
+    // Events emitted during the tiny gap between replay and subscribe are
+    // negligible and far less disruptive than duplicate messages.
     if (!messageStore.getIsReady(sessionId)) {
       try {
         const history = await window.groveBench.getEventHistory(sessionId);
-        messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay: ${history.length} events` } as any);
+        // Skip transient events during replay — partial_text is superseded by
+        // assistant_text, and activity/tool_progress are ephemeral status updates.
+        const skipDuringReplay = new Set([
+          'partial_text', 'activity', 'tool_progress',
+        ]);
         for (const event of history) {
-          messageStore.ingestEvent(sessionId, event);
+          if (!skipDuringReplay.has(event.type)) {
+            messageStore.ingestEvent(sessionId, event);
+          }
         }
         if (history.length > 0) {
           const last = history[history.length - 1];
@@ -23,12 +30,15 @@
             messageStore.isRunning[sessionId] = false;
           }
         }
+        // After replay, resolve any tool_calls still marked pending
+        messageStore.resolveStaleToolCalls(sessionId);
       } catch (e: any) {
         messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);
       }
-    } else {
-      messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] already ready, skipping history replay` } as any);
     }
+
+    // Subscribe to live events only after history is replayed
+    messageStore.subscribe(sessionId);
   });
 
   onDestroy(() => {

@@ -97,6 +97,8 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
+  | { type: 'user_message'; text: string }
+  | { type: 'devserver_detected'; port: number; url: string }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number };
@@ -106,6 +108,15 @@ export interface PermissionDecision {
   requestId: string;
   behavior: 'allow' | 'deny' | 'allowAlways';
   message?: string; // denial message
+}
+
+// ─── Image Attachment ───
+
+export interface ImageAttachment {
+  /** base64-encoded image data (no data: prefix) */
+  data: string;
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  name: string;
 }
 
 // ─── IPC API (exposed via contextBridge) ───
@@ -130,7 +141,7 @@ export interface GroveBenchAPI {
   listBranches(repoPath: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
-  sendMessage(sessionId: string, content: string): void;
+  sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
   respondToPermission(sessionId: string, decision: PermissionDecision): void;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
@@ -149,6 +160,12 @@ export interface GroveBenchAPI {
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
   openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
+
+  // External links
+  openExternal(url: string): Promise<void>;
+
+  // Localhost process cleanup
+  killPort(port: number): Promise<void>;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -180,4 +197,6 @@ export const IPC = {
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',
+  OPEN_EXTERNAL: 'shell:openExternal',
+  KILL_PORT: 'process:killPort',
 } as const;

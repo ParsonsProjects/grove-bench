@@ -80,7 +80,10 @@
     return String(n);
   }
 
+  let devServers = $derived(messageStore.getDevServers(sessionId));
+  let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let contextExpanded = $state(false);
+  let tasksExpanded = $state(false);
 
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
@@ -151,12 +154,65 @@
     {/if}
   </span>
 
+  {#if pendingTools.length > 0}
+    <div class="relative">
+      <button
+        onclick={() => tasksExpanded = !tasksExpanded}
+        class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
+        title="Background tasks — click for details"
+      >
+        <span class="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></span>
+        {pendingTools.length} task{pendingTools.length > 1 ? 's' : ''}
+      </button>
+
+      {#if tasksExpanded}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-80 z-50">
+          <div class="font-medium text-foreground mb-2">Running Tasks</div>
+          <div class="space-y-1.5 max-h-48 overflow-y-auto">
+            {#each pendingTools as task}
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 border border-yellow-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
+                <span class="text-yellow-400 font-medium shrink-0">{task.toolName}</span>
+                <span class="text-muted-foreground truncate flex-1">{task.summary}</span>
+                {#if task.elapsedSeconds && task.elapsedSeconds > 0}
+                  <span class="text-muted-foreground/60 shrink-0">{Math.round(task.elapsedSeconds)}s</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if lastResult?.totalCostUsd !== undefined}
     <span>${lastResult.totalCostUsd.toFixed(4)}</span>
   {/if}
 
   {#if lastResult?.durationMs !== undefined}
     <span>{(lastResult.durationMs / 1000).toFixed(1)}s</span>
+  {/if}
+
+  {#if devServers.length > 0}
+    {#each devServers as server}
+      <span class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+        <button
+          onclick={() => window.groveBench.openExternal(server.url)}
+          class="text-green-400 hover:text-green-300 hover:underline transition-colors"
+          title="Open {server.url} in browser"
+        >
+          :{server.port}
+        </button>
+        <button
+          onclick={() => { window.groveBench.killPort(server.port); messageStore.removeDevServer(sessionId, server.port); }}
+          class="text-muted-foreground/40 hover:text-destructive transition-colors"
+          title="Kill server on port {server.port}"
+        >
+          &times;
+        </button>
+      </span>
+    {/each}
   {/if}
 
   {#if showContext}

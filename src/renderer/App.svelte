@@ -32,26 +32,9 @@
           });
 
           if (isRunning) {
-            window.groveBench.resumeSession(wt.id, repo).then(async () => {
-              try {
-                const history = await window.groveBench.getEventHistory(wt.id);
-                for (const event of history) {
-                  messageStore.ingestEvent(wt.id, event);
-                }
-                if (history.length > 0) {
-                  const last = history[history.length - 1];
-                  if (last.type === 'result' || last.type === 'process_exit') {
-                    messageStore.isRunning[wt.id] = false;
-                  }
-                }
-              } catch {
-                messageStore.ingestEvent(wt.id, {
-                  type: 'status',
-                  message: 'Session reconnected — restart app to enable message history',
-                });
-              }
-              messageStore.subscribe(wt.id);
-            }).catch((e: any) => {
+            // Just reattach the window — history replay and subscription
+            // are handled by WorkspacePane when it mounts.
+            window.groveBench.resumeSession(wt.id, repo).catch((e: any) => {
               store.setError(e.message || String(e));
             });
           }

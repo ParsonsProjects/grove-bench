@@ -54,6 +54,18 @@
     const _html = html; // track re-renders
     if (!container) return;
 
+    // Intercept link clicks to open externally (especially localhost URLs)
+    const linkHandler = (e: MouseEvent) => {
+      const anchor = (e.target as HTMLElement).closest('a');
+      if (!anchor) return;
+      const href = anchor.getAttribute('href');
+      if (href && /^https?:\/\//i.test(href)) {
+        e.preventDefault();
+        window.groveBench.openExternal(href);
+      }
+    };
+    container.addEventListener('click', linkHandler);
+
     const buttons = container.querySelectorAll<HTMLButtonElement>('.code-copy-btn');
     const handlers: Array<[HTMLButtonElement, () => void]> = [];
 
@@ -77,6 +89,7 @@
     }
 
     return () => {
+      container.removeEventListener('click', linkHandler);
       for (const [btn, handler] of handlers) {
         btn.removeEventListener('click', handler);
       }

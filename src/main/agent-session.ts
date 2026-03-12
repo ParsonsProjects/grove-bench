@@ -3,6 +3,7 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
+import { killProcessOnPort } from './port-killer.js';
 
 // The Agent SDK is ESM-only; Electron's main process is CJS.
 // Use Function constructor to create a dynamic import that Rollup/Vite
@@ -51,6 +52,10 @@ interface ManagedSession {
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
   eventHistory: AgentEvent[];
+  /** Ports where dev servers were detected — cleaned up on session destroy */
+  detectedPorts: Set<number>;
+  /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
+  toolUseMap: Map<string, string>;
 }
 
 /**
@@ -120,6 +125,8 @@ class AgentSessionManager {
       claudeSessionId: opts.resumeClaudeSessionId || null,
       window: win,
       eventHistory: [],
+      detectedPorts: new Set(),
+      toolUseMap: new Map(),
     };
 
     this.sessions.set(id, session);
@@ -313,6 +320,8 @@ class AgentSessionManager {
             if (block.type === 'text') {
               emit({ type: 'assistant_text', text: block.text, uuid: message.uuid });
             } else if (block.type === 'tool_use') {
+              // Track tool name for matching results later
+              session.toolUseMap.set(block.id, block.name);
               emit({
                 type: 'assistant_tool_use',
                 toolName: block.name,
@@ -358,6 +367,22 @@ class AgentSessionManager {
                 content: resultContent,
                 isError: block.is_error,
               });
+              // Detect localhost URLs in Bash tool output
+              const toolName = session.toolUseMap.get(block.tool_use_id);
+              if (toolName === 'Bash' && resultContent) {
+                const portMatches = resultContent.matchAll(
+                  /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
+                );
+                for (const m of portMatches) {
+                  const port = parseInt(m[1], 10);
+                  if (!session.detectedPorts.has(port)) {
+                    session.detectedPorts.add(port);
+                    const url = m[0].replace(/0\.0\.0\.0|\[::\]/, 'localhost');
+                    logger.info(`Dev server detected on port ${port} in session ${session.id}`);
+                    emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
+                  }
+                }
+              }
             }
           }
         }
@@ -426,22 +451,39 @@ class AgentSessionManager {
     }
   }
 
-  sendMessage(id: string, content: string): void {
+  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): void {
     const session = this.sessions.get(id);
     if (!session?.inputController) {
       console.log(`[sendMessage] session=${id} no session or inputController`);
       return;
     }
 
+    // Record in event history so user messages survive renderer refresh
+    session.eventHistory.push({ type: 'user_message', text: content });
+
+    // Build content: plain string when no images, content block array when images attached
+    let messageContent: string | Array<Record<string, unknown>> = content;
+    if (images && images.length > 0) {
+      const blocks: Array<Record<string, unknown>> = [];
+      for (const img of images) {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: img.mediaType, data: img.data },
+        });
+      }
+      blocks.push({ type: 'text', text: content });
+      messageContent = blocks;
+    }
+
     const sessionId = session.claudeSessionId ?? '';
-    console.log(`[sendMessage] session=${id} enqueuing to SDK, claudeSessionId=${sessionId || '(not yet initialized)'}`);
+    console.log(`[sendMessage] session=${id} enqueuing to SDK, claudeSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
       session.inputController.enqueue({
         type: 'user',
         session_id: sessionId,
         message: {
           role: 'user',
-          content,
+          content: messageContent,
         },
         parent_tool_use_id: null,
       } as SDKUserMessage);
@@ -504,6 +546,14 @@ class AgentSessionManager {
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
       pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
+    }
+
+    // Kill any dev servers that were detected during this session
+    if (session.detectedPorts.size > 0) {
+      logger.info(`Killing ${session.detectedPorts.size} dev server(s) for session ${id}: ports ${[...session.detectedPorts].join(', ')}`);
+      await Promise.all(
+        [...session.detectedPorts].map((port) => killProcessOnPort(port).catch(() => {}))
+      );
     }
 
     // Wait for Windows file handles to release

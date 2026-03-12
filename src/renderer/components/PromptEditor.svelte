@@ -2,6 +2,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import * as Command from '$lib/components/ui/command/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -12,6 +13,13 @@
   let pickerQuery = $state('');
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
+
+  // Drag-and-drop file attachments
+  type AttachedFile = { name: string; content: string; type: 'text' } | { name: string; dataUrl: string; type: 'image' };
+  let attachedFiles = $state<AttachedFile[]>([]);
+  let dragOver = $state(false);
+  let dropMessage = $state<{ text: string; isError: boolean } | null>(null);
+  let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Slash command autocomplete
   let commandPickerOpen = $state(false);
@@ -54,7 +62,6 @@
       closePicker();
       closeCommandPicker();
       userResized = false;
-      if (container) container.style.height = '';
       if (textarea) textarea.style.height = '';
       return;
     }
@@ -66,28 +73,57 @@
       refs.push(match[1]);
     }
 
+    // Separate text files and image attachments
+    const textFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'text' } => f.type === 'text');
+    const imageFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'image' } => f.type === 'image');
+
+    // Build file tags from text attachments
+    const droppedTags = textFiles.map(
+      (f) => `<file path="${f.name}">\n${f.content}\n</file>`,
+    );
+
+    // Extract base64 image data for the API
+    const images = imageFiles.map((f) => {
+      // dataUrl format: "data:image/png;base64,iVBOR..."
+      const [header, data] = f.dataUrl.split(',');
+      const mediaType = header.match(/data:(image\/\w+)/)?.[1] ?? 'image/png';
+      return { data, mediaType: mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', name: f.name };
+    });
+
+    const displayText = attachedFiles.length > 0
+      ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
+      : text;
+
+    function send(prefix: string) {
+      messageStore.addUserMessage(sessionId, displayText);
+      window.groveBench.sendMessage(sessionId, prefix + text, images.length > 0 ? images : undefined);
+    }
+
     if (refs.length > 0) {
       Promise.all(
         refs.map(async (ref) => {
           try {
             const content = await window.groveBench.readFile(sessionId, ref);
-            return `<file path="${ref}">\n${content}\n</file>`;
+            const isDir = ref.endsWith('/');
+            const tag = isDir ? 'folder' : 'file';
+            return `<${tag} path="${ref}">\n${content}\n</${tag}>`;
           } catch {
-            return `<file path="${ref}">\n(could not read file)\n</file>`;
+            const tag = ref.endsWith('/') ? 'folder' : 'file';
+            return `<${tag} path="${ref}">\n(could not read)\n</${tag}>`;
           }
         })
-      ).then((fileTags) => {
-        const prefix = fileTags.join('\n') + '\n\n';
-        const fullMessage = prefix + text;
-        messageStore.addUserMessage(sessionId, text);
-        window.groveBench.sendMessage(sessionId, fullMessage);
+      ).then((refTags) => {
+        const allTags = [...droppedTags, ...refTags];
+        const prefix = allTags.length > 0 ? allTags.join('\n') + '\n\n' : '';
+        send(prefix);
       });
     } else {
-      messageStore.addUserMessage(sessionId, text);
-      window.groveBench.sendMessage(sessionId, text);
+      const prefix = droppedTags.length > 0 ? droppedTags.join('\n') + '\n\n' : '';
+      send(prefix);
     }
 
     value = '';
+    attachedFiles = [];
     closePicker();
     closeCommandPicker();
     userResized = false;
@@ -149,15 +185,11 @@
   }
 
   function autoResize() {
-    if (!textarea || !container || userResized) return;
-    // Temporarily reset to measure natural height
+    if (!textarea || userResized) return;
     textarea.style.height = '0';
     const scrollH = textarea.scrollHeight;
-    // pb-3(12) + pt-2(8) + resize handle h-1(4) + border(1)
-    const padding = 25;
-    const newHeight = Math.min(scrollH + padding, 200);
-    container.style.height = newHeight + 'px';
-    textarea.style.height = '100%';
+    // Cap textarea itself at 150px, let container flex naturally
+    textarea.style.height = Math.min(scrollH, 150) + 'px';
   }
 
   function handleInput() {
@@ -236,11 +268,112 @@
   function handleStop() {
     window.groveBench.stopSession(sessionId);
   }
+
+  // ─── Drag & Drop ───
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer?.types.includes('Files')) {
+      dragOver = true;
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    // Only reset if leaving the container (not entering a child)
+    const related = e.relatedTarget as HTMLElement | null;
+    if (!container?.contains(related)) {
+      dragOver = false;
+    }
+  }
+
+  function showDropMessage(text: string, isError: boolean) {
+    clearTimeout(dropMessageTimer);
+    dropMessage = { text, isError };
+    dropMessageTimer = setTimeout(() => { dropMessage = null; }, 3000);
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    dragOver = false;
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+
+    const MAX_TEXT_SIZE = 100 * 1024; // 100KB
+    const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB (Claude API limit)
+    const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+    const textExtensions = new Set([
+      'ts', 'tsx', 'js', 'jsx', 'svelte', 'vue', 'html', 'css', 'scss', 'less',
+      'json', 'yaml', 'yml', 'toml', 'xml', 'md', 'txt', 'csv', 'sql', 'sh',
+      'bash', 'zsh', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'cpp', 'h',
+      'hpp', 'cs', 'swift', 'php', 'r', 'lua', 'pl', 'ex', 'exs', 'elm',
+      'hs', 'ml', 'fs', 'clj', 'scala', 'dart', 'conf', 'ini', 'env',
+      'gitignore', 'dockerignore', 'dockerfile', 'makefile', 'cmake',
+      'lock', 'log', 'diff', 'patch', 'svg',
+    ]);
+
+    const skipped: string[] = [];
+
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      const nameLC = file.name.toLowerCase();
+      const isImage = imageTypes.has(file.type);
+      const isText = textExtensions.has(ext) || textExtensions.has(nameLC) || file.type.startsWith('text/');
+
+      if (isImage) {
+        if (file.size > MAX_IMAGE_SIZE) {
+          skipped.push(`${file.name} (too large, max 5MB)`);
+          continue;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          if (!attachedFiles.some((f) => f.name === file.name)) {
+            attachedFiles = [...attachedFiles, { name: file.name, dataUrl, type: 'image' }];
+          }
+        };
+        reader.readAsDataURL(file);
+      } else if (isText) {
+        if (file.size > MAX_TEXT_SIZE) {
+          skipped.push(`${file.name} (too large, max 100KB)`);
+          continue;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const content = reader.result as string;
+          if (!attachedFiles.some((f) => f.name === file.name)) {
+            attachedFiles = [...attachedFiles, { name: file.name, content, type: 'text' }];
+          }
+        };
+        reader.readAsText(file);
+      } else {
+        skipped.push(`${file.name} (unsupported type)`);
+      }
+    }
+
+    if (skipped.length > 0) {
+      showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
+    }
+
+    textarea?.focus();
+  }
+
+  function removeAttachedFile(index: number) {
+    attachedFiles = attachedFiles.filter((_, i) => i !== index);
+    textarea?.focus();
+  }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   bind:this={container}
-  class="bg-background border-t border-border relative flex flex-col shrink-0"
+  class="bg-background border-t border-border relative flex flex-col shrink-0 max-h-[50vh]"
+  class:ring-2={dragOver}
+  class:ring-primary={dragOver}
+  class:ring-inset={dragOver}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
 >
   <!-- Resize handle -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -261,23 +394,68 @@
 
   <!-- Slash command autocomplete -->
   {#if commandPickerOpen && filteredCommands.length > 0}
-    <div class="absolute bottom-full left-4 mb-1 bg-popover border border-border shadow-xl z-50 w-72 max-h-48 overflow-y-auto">
-      {#each filteredCommands as cmd, i}
-        <button
-          class="w-full text-left px-3 py-2 text-sm flex items-center gap-3 hover:bg-accent transition-colors
-            {i === commandSelectedIndex ? 'bg-accent text-accent-foreground' : 'text-foreground'}"
-          onmousedown={(e) => { e.preventDefault(); selectCommand(cmd); }}
-        >
-          <span class="font-mono text-primary">{cmd.name}</span>
-          {#if cmd.description}
-            <span class="text-muted-foreground text-xs truncate">{cmd.description}</span>
+    <div class="absolute bottom-full left-4 mb-1 z-50 w-80">
+      <Command.Root shouldFilter={false} class="border border-border shadow-xl">
+        <Command.List class="max-h-48">
+          <Command.Group heading="Commands">
+            {#each filteredCommands as cmd, i}
+              <Command.Item
+                value={cmd.name}
+                onSelect={() => selectCommand(cmd)}
+                data-selected={i === commandSelectedIndex || undefined}
+                class={i === commandSelectedIndex ? 'bg-accent text-accent-foreground' : ''}
+              >
+                <span class="font-mono text-primary">{cmd.name}</span>
+                {#if cmd.description}
+                  <Command.Shortcut class="text-muted-foreground text-xs truncate">{cmd.description}</Command.Shortcut>
+                {/if}
+              </Command.Item>
+            {/each}
+          </Command.Group>
+          <Command.Empty>No matching commands</Command.Empty>
+        </Command.List>
+      </Command.Root>
+    </div>
+  {/if}
+
+  <!-- Drop overlay -->
+  {#if dragOver}
+    <div class="absolute inset-0 bg-primary/10 z-40 flex items-center justify-center pointer-events-none">
+      <span class="text-primary text-sm font-medium">Drop files to attach</span>
+    </div>
+  {/if}
+
+  <!-- Drop feedback message -->
+  {#if dropMessage}
+    <div class="px-4 pt-2 text-xs {dropMessage.isError ? 'text-destructive' : 'text-muted-foreground'}">
+      {dropMessage.text}
+    </div>
+  {/if}
+
+  <!-- Attached file chips -->
+  {#if attachedFiles.length > 0}
+    <div class="flex flex-wrap gap-1.5 px-4 pt-2 max-h-24 overflow-y-auto">
+      {#each attachedFiles as file, i}
+        <span class="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-2 py-1 font-mono border border-primary/25">
+          {#if file.type === 'image'}
+            <img src={file.dataUrl} alt={file.name} class="w-5 h-5 object-cover shrink-0" />
+          {:else}
+            <svg class="w-3 h-3 shrink-0" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V5.621a1 1 0 00-.293-.707l-3.621-3.621A1 1 0 009.379 1H3.5z"/>
+            </svg>
           {/if}
-        </button>
+          {file.name}
+          <button
+            onclick={() => removeAttachedFile(i)}
+            class="text-primary/50 hover:text-primary transition-colors ml-0.5"
+            title="Remove"
+          >&times;</button>
+        </span>
       {/each}
     </div>
   {/if}
 
-  <div class="flex gap-2 items-stretch flex-1 min-h-0 px-4 pb-3 pt-2">
+  <div class="flex gap-2 items-end px-4 pb-3 pt-2">
     <textarea
       bind:this={textarea}
       bind:value
