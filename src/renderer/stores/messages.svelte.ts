@@ -387,6 +387,12 @@ class MessageStore {
         if (this.streamingText[sessionId]) {
           this.flushStreamingText(sessionId);
         }
+        // Sync mode when LLM calls mode-changing tools
+        if (event.toolName === 'EnterPlanMode') {
+          this.modeBySession[sessionId] = 'plan';
+        } else if (event.toolName === 'ExitPlanMode') {
+          this.modeBySession[sessionId] = 'default';
+        }
         this.pushMessage(sessionId, {
           kind: 'tool_call',
           id: nextId(),
@@ -567,8 +573,15 @@ class MessageStore {
 
   /** Send a slash command (e.g. /compact, /clear) */
   sendCommand(sessionId: string, command: string) {
-    if (command.trim() === '/clear') {
+    const trimmed = command.trim();
+    if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
+    }
+    // Sync mode when user issues mode-changing slash commands
+    if (trimmed === '/plan') {
+      this.modeBySession[sessionId] = 'plan';
+    } else if (trimmed === '/code') {
+      this.modeBySession[sessionId] = 'default';
     }
     this.pushMessage(sessionId, {
       kind: 'user',

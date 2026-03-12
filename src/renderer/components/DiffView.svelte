@@ -145,17 +145,17 @@
         {#if line.type === 'hunk'}
           <div class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>
         {:else if line.type === 'add'}
-          <div class="bg-green-950/30 text-green-300 px-2">
+          <div class="bg-green-950/30 text-green-300 px-2 whitespace-pre">
             <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
             <span class="text-green-500 select-none">+</span> {line.text}
           </div>
         {:else if line.type === 'del'}
-          <div class="bg-red-950/30 text-red-300 px-2">
+          <div class="bg-red-950/30 text-red-300 px-2 whitespace-pre">
             <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
             <span class="text-red-500 select-none">-</span> {line.text}
           </div>
         {:else}
-          <div class="text-muted-foreground px-2">
+          <div class="text-muted-foreground px-2 whitespace-pre">
             <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
             <span class="select-none">&nbsp;</span> {line.text}
           </div>
