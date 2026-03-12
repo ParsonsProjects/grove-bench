@@ -4,10 +4,12 @@
   import { messageStore } from './stores/messages.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
+  import OrchestrationPanel from './components/OrchestrationPanel.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
   import TitleBar from './components/TitleBar.svelte';
+  import { orchStore } from './stores/orchestration.svelte.js';
 
   async function restoreWorktrees() {
     const runningSessions = await window.groveBench.listSessions();
@@ -51,6 +53,9 @@
     if (firstRunning) {
       store.activeSessionId = firstRunning.id;
     }
+
+    // Load persisted orchestration jobs
+    await orchStore.loadPersistedJobs();
   }
 
   let showSessionFinder = $state(false);
@@ -173,7 +178,9 @@
   <Sidebar />
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if store.sessions.length === 0}
+    {#if orchStore.activeJobId && !store.activeSessionId}
+      <OrchestrationPanel jobId={orchStore.activeJobId} />
+    {:else if store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span

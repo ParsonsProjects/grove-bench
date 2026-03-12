@@ -56,6 +56,8 @@ interface ManagedSession {
   detectedPorts: Set<number>;
   /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
   toolUseMap: Map<string, string>;
+  /** Last result data for completion callback */
+  lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
 }
 
 /**
@@ -85,8 +87,16 @@ function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): AsyncItera
   };
 }
 
+export interface SessionCompletionResult {
+  sessionId: string;
+  isError: boolean;
+  totalCostUsd?: number;
+  durationMs?: number;
+}
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
+  private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
 
   async createSession(opts: {
     id: string;
@@ -127,6 +137,7 @@ class AgentSessionManager {
       eventHistory: [],
       detectedPorts: new Set(),
       toolUseMap: new Map(),
+      lastResult: null,
     };
 
     this.sessions.set(id, session);
@@ -158,6 +169,12 @@ class AgentSessionManager {
       const w = session.window;
       if (!w.isDestroyed()) {
         w.webContents.send(IPC.SESSION_STATUS, id, 'error');
+      }
+      // Fire completion callback on error
+      const errCb = this.completionCallbacks.get(id);
+      if (errCb) {
+        this.completionCallbacks.delete(id);
+        errCb({ sessionId: id, isError: true });
       }
     });
 
@@ -268,6 +285,18 @@ class AgentSessionManager {
     const w = session.window;
     if (!w.isDestroyed()) {
       w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
+    }
+
+    // Fire completion callback if registered (used by orchestrator)
+    const cb = this.completionCallbacks.get(id);
+    if (cb) {
+      this.completionCallbacks.delete(id);
+      cb({
+        sessionId: id,
+        isError: session.lastResult?.isError ?? false,
+        totalCostUsd: session.lastResult?.totalCostUsd,
+        durationMs: session.lastResult?.durationMs,
+      });
     }
   }
 
@@ -405,6 +434,12 @@ class AgentSessionManager {
         const contextWindow = modelUsage
           ? Object.values(modelUsage)[0]?.contextWindow
           : undefined;
+        // Store for completion callback
+        session.lastResult = {
+          isError: message.is_error,
+          totalCostUsd: message.total_cost_usd,
+          durationMs: message.duration_ms,
+        };
         emit({
           type: 'result',
           subtype: message.subtype,
@@ -577,6 +612,9 @@ class AgentSessionManager {
       );
     }
 
+    // Clean up completion callback
+    this.completionCallbacks.delete(id);
+
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, 500));
 
@@ -617,6 +655,11 @@ class AgentSessionManager {
     if (session) {
       session.window = win;
     }
+  }
+
+  /** Register a one-time callback for when a session's query completes. */
+  onComplete(id: string, callback: (result: SessionCompletionResult) => void): void {
+    this.completionCallbacks.set(id, callback);
   }
 
   /** Return all buffered events for replay after renderer reload. */

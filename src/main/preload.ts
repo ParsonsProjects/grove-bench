@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision, OrchCreateOpts, OrchTask } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -93,6 +93,30 @@ const api: GroveBenchAPI = {
     return () => {
       ipcRenderer.removeListener(IPC.SESSION_STATUS, handler);
     };
+  },
+
+  // Orchestration
+  createOrchJob: (opts: OrchCreateOpts) =>
+    ipcRenderer.invoke(IPC.ORCH_CREATE, opts),
+  approveOrchPlan: (jobId: string, editedTasks?: Partial<OrchTask>[]) =>
+    ipcRenderer.invoke(IPC.ORCH_APPROVE, jobId, editedTasks),
+  cancelOrchJob: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_CANCEL, jobId),
+  listOrchJobs: () =>
+    ipcRenderer.invoke(IPC.ORCH_LIST),
+  retryOrchTask: (jobId: string, taskId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_RETRY_TASK, jobId, taskId),
+  onOrchEvent: (jobId: string, callback: (event: import('../shared/types.js').OrchEvent) => void) => {
+    const channel = `${IPC.ORCH_EVENT}:${jobId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').OrchEvent) =>
+      callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+  offOrchEvent: (jobId: string) => {
+    ipcRenderer.removeAllListeners(`${IPC.ORCH_EVENT}:${jobId}`);
   },
 
   // App lifecycle

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { registerHandlers } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
+import { orchestrator } from './orchestrator.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
 import { logger } from './logger.js';
 import { IPC } from '../shared/types.js';
@@ -55,6 +56,10 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+    // Load persisted orchestration jobs
+    orchestrator.loadPersistedJobs(mainWindow!).catch((e) => {
+      logger.warn('Failed to load persisted orchestration jobs:', e);
+    });
   });
 
   mainWindow.on('closed', () => {
@@ -98,6 +103,7 @@ app.on('before-quit', (event) => {
     (async () => {
       try {
         logger.info(`Cleaning up ${sessionManager.count} sessions...`);
+        await orchestrator.cleanup();
         await sessionManager.destroyAll();
         await new Promise((r) => setTimeout(r, 500));
         await worktreeManager.cleanupAll();

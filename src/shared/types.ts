@@ -138,6 +138,57 @@ export interface PluginListResult {
   available: AvailablePlugin[];
 }
 
+// ─── Orchestration ───
+
+export type OrchJobStatus = 'planning' | 'planned' | 'spawning' | 'running' | 'completed' | 'partial_failure' | 'failed' | 'cancelled';
+export type OrchTaskStatus = 'pending' | 'spawning' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface OrchTask {
+  id: string;
+  jobId: string;
+  description: string;
+  branchName: string;
+  baseBranch: string;
+  scope: string[];
+  priority: number;
+  parallelizable: boolean;
+  dependsOn: string[];
+  sessionId: string | null;
+  status: OrchTaskStatus;
+  instruction: string;
+  createdAt: number;
+  completedAt: number | null;
+  error: string | null;
+  costUsd: number | null;
+}
+
+export interface OrchJob {
+  id: string;
+  repoPath: string;
+  goal: string;
+  baseBranch: string;
+  tasks: OrchTask[];
+  status: OrchJobStatus;
+  createdAt: number;
+  completedAt: number | null;
+  planDurationMs: number | null;
+  totalCostUsd: number | null;
+}
+
+export interface OrchCreateOpts {
+  repoPath: string;
+  goal: string;
+  baseBranch?: string;
+}
+
+export type OrchEvent =
+  | { type: 'orch_plan_start'; jobId: string }
+  | { type: 'orch_plan_complete'; jobId: string; tasks: OrchTask[] }
+  | { type: 'orch_plan_error'; jobId: string; error: string }
+  | { type: 'orch_task_status'; jobId: string; taskId: string; status: OrchTaskStatus; error?: string }
+  | { type: 'orch_job_status'; jobId: string; status: OrchJobStatus }
+  | { type: 'orch_task_progress'; jobId: string; taskId: string; summary: string };
+
 // ─── IPC API (exposed via contextBridge) ───
 
 export interface GroveBenchAPI {
@@ -203,6 +254,15 @@ export interface GroveBenchAPI {
   pluginEnable(pluginId: string): Promise<void>;
   pluginDisable(pluginId: string): Promise<void>;
 
+  // Orchestration
+  createOrchJob(opts: OrchCreateOpts): Promise<{ jobId: string }>;
+  approveOrchPlan(jobId: string, editedTasks?: Partial<OrchTask>[]): Promise<void>;
+  cancelOrchJob(jobId: string): Promise<void>;
+  listOrchJobs(): Promise<OrchJob[]>;
+  retryOrchTask(jobId: string, taskId: string): Promise<void>;
+  onOrchEvent(jobId: string, callback: (event: OrchEvent) => void): () => void;
+  offOrchEvent(jobId: string): void;
+
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
 
@@ -254,4 +314,10 @@ export const IPC = {
   WIN_MAXIMIZE: 'win:maximize',
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
+  ORCH_CREATE: 'orch:create',
+  ORCH_APPROVE: 'orch:approve',
+  ORCH_CANCEL: 'orch:cancel',
+  ORCH_LIST: 'orch:list',
+  ORCH_RETRY_TASK: 'orch:retryTask',
+  ORCH_EVENT: 'orch:event',
 } as const;

@@ -8,6 +8,7 @@ import { checkAllPrerequisites } from './prerequisites.js';
 import { validateBranchName, branchExists, listBranches, git } from './git.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
+import { orchestrator } from './orchestrator.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -381,6 +382,30 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
     await execa('claude', ['plugin', 'disable', pluginId]);
+  });
+
+  // ─── Orchestration ───
+
+  ipcMain.handle(IPC.ORCH_CREATE, async (event, opts: import('../shared/types.js').OrchCreateOpts) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+    return orchestrator.createJob(opts, win);
+  });
+
+  ipcMain.handle(IPC.ORCH_APPROVE, async (_event, jobId: string, editedTasks?: Partial<import('../shared/types.js').OrchTask>[]) => {
+    return orchestrator.approvePlan(jobId, editedTasks);
+  });
+
+  ipcMain.handle(IPC.ORCH_CANCEL, async (_event, jobId: string) => {
+    return orchestrator.cancelJob(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_LIST, async () => {
+    return orchestrator.listJobs();
+  });
+
+  ipcMain.handle(IPC.ORCH_RETRY_TASK, async (_event, jobId: string, taskId: string) => {
+    return orchestrator.retryTask(jobId, taskId);
   });
 
   // ─── Window controls ───

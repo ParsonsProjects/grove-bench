@@ -3,12 +3,16 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import NewAgentDialog from './NewAgentDialog.svelte';
+  import OrchestrationDialog from './OrchestrationDialog.svelte';
+  import { orchStore } from '../stores/orchestration.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import PluginPanel from './PluginPanel.svelte';
 
   let showNewAgent = $state(false);
+  let showOrchestrate = $state(false);
+  let orchDefaultRepo = $state('');
   let showPlugins = $state(false);
   let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
@@ -18,6 +22,7 @@
 
   function focusSession(id: string) {
     store.activeSessionId = id;
+    orchStore.activeJobId = null;
   }
 
   function openNewAgent(defaultRepo = '') {
@@ -135,9 +140,29 @@
           </button>
         {/each}
 
-        {#if repoSessions.length === 0}
+        {#if repoSessions.length === 0 && orchStore.jobsForRepo(repo).length === 0}
           <p class="text-xs text-muted-foreground/50 pl-4 py-1">No agents</p>
         {/if}
+
+        <!-- Orchestration jobs under this repo -->
+        {#each orchStore.jobsForRepo(repo) as orchJob (orchJob.id)}
+          {@const isActiveOrch = orchStore.activeJobId === orchJob.id}
+          {@const orchCompleted = orchJob.tasks.filter(t => t.status === 'completed').length}
+          {@const orchTotal = orchJob.tasks.length}
+          {@const orchRunning = orchJob.status === 'running' || orchJob.status === 'spawning'}
+          <button
+            onclick={() => { orchStore.activeJobId = orchJob.id; store.activeSessionId = null; }}
+            class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/orch transition-colors
+              {isActiveOrch ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          >
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-2 h-2 shrink-0 {orchJob.status === 'completed' ? 'bg-green-500' : orchJob.status === 'failed' || orchJob.status === 'partial_failure' ? 'bg-red-500' : orchRunning ? 'bg-primary animate-pulse' : orchJob.status === 'planning' || orchJob.status === 'planned' ? 'bg-blue-500' : 'bg-neutral-500'}"></span>
+              <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="m4.2 4.2 2.8 2.8"/><path d="m17 17 2.8 2.8"/><path d="m4.2 19.8 2.8-2.8"/><path d="m17 7 2.8-2.8"/></svg>
+              <span class="text-sm truncate">{orchJob.goal.slice(0, 30)}{orchJob.goal.length > 30 ? '...' : ''}</span>
+            </div>
+            <span class="text-xs text-muted-foreground shrink-0">{orchCompleted}/{orchTotal}</span>
+          </button>
+        {/each}
       </div>
     {/each}
 
@@ -156,7 +181,16 @@
         class="flex-1"
         size="sm"
       >
-        + New Agent
+        + Agent
+      </Button>
+      <Button
+        onclick={() => { orchDefaultRepo = store.repos[0] || ''; showOrchestrate = true; }}
+        disabled={!store.canCreate}
+        variant="secondary"
+        class="flex-1"
+        size="sm"
+      >
+        Orchestrate
       </Button>
       <Button
         onclick={() => showPlugins = true}
@@ -173,6 +207,10 @@
 
 {#if showNewAgent}
   <NewAgentDialog onclose={() => showNewAgent = false} defaultRepo={newAgentDefaultRepo} />
+{/if}
+
+{#if showOrchestrate}
+  <OrchestrationDialog onclose={() => showOrchestrate = false} defaultRepo={orchDefaultRepo} />
 {/if}
 
 <PluginPanel open={showPlugins} onclose={() => showPlugins = false} />
