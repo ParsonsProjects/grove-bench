@@ -61,6 +61,9 @@ const api: GroveBenchAPI = {
   getFileDiff: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
 
+  // PR info
+  getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
+
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 

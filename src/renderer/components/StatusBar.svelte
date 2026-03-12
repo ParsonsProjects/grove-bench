@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import type { PrInfo } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
+
+  let prInfo = $state<PrInfo | null>(null);
 
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
@@ -71,6 +74,17 @@
     return String(n);
   }
 
+  // Re-fetch PR info when a turn finishes (agent may have created/pushed a PR)
+  let prevRunning = $state(false);
+  $effect(() => {
+    if (prevRunning && !isRunning) {
+      window.groveBench.getPrInfo(sessionId).then((info) => {
+        prInfo = info;
+      });
+    }
+    prevRunning = isRunning;
+  });
+
   let devServers = $derived(messageStore.getDevServers(sessionId));
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let contextExpanded = $state(false);
@@ -105,6 +119,9 @@
 
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
+    window.groveBench.getPrInfo(sessionId).then((info) => {
+      prInfo = info;
+    });
   });
 
   onDestroy(() => {
@@ -115,6 +132,16 @@
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   {#if model}
     <span>{model}</span>
+  {/if}
+
+  {#if prInfo}
+    <button
+      onclick={() => prInfo && window.groveBench.openExternal(prInfo.url)}
+      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+      title="Open PR #{prInfo.number} on GitHub"
+    >
+      PR #{prInfo.number}
+    </button>
   {/if}
 
   <button

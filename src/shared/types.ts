@@ -87,6 +87,13 @@ export interface PermissionDecision {
   message?: string; // denial message
 }
 
+// ─── PR Info ───
+
+export interface PrInfo {
+  number: number;
+  url: string;
+}
+
 // ─── Image Attachment ───
 
 export interface ImageAttachment {
@@ -142,6 +149,9 @@ export interface GroveBenchAPI {
   revertFile(sessionId: string, filePath: string): Promise<void>;
   getFileDiff(sessionId: string, filePath: string): Promise<string>;
 
+  // PR info
+  getPrInfo(sessionId: string): Promise<PrInfo | null>;
+
   // External links
   openExternal(url: string): Promise<void>;
 
@@ -182,4 +192,5 @@ export const IPC = {
   KILL_PORT: 'process:killPort',
   FILE_REVERT: 'file:revert',
   FILE_DIFF: 'file:diff',
+  PR_INFO: 'pr:info',
 } as const;

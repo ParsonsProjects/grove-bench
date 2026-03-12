@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
+import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
@@ -308,6 +309,25 @@ export function registerHandlers() {
     } catch {
       // File may be untracked (new file) — show entire content as added
       return '';
+    }
+  });
+
+  // ─── PR info ───
+
+  ipcMain.handle(IPC.PR_INFO, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return null;
+    try {
+      const { stdout } = await execa('gh', ['pr', 'view', worktree.branch, '--json', 'number,url'], {
+        cwd: worktree.repoPath,
+      });
+      const data = JSON.parse(stdout);
+      if (data.number && data.url) {
+        return { number: data.number, url: data.url };
+      }
+      return null;
+    } catch {
+      return null;
     }
   });
 
