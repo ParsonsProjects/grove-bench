@@ -369,6 +369,11 @@ class MessageStore {
     await window.groveBench.setMode(sessionId, mode);
   }
 
+  /** Set mode locally without IPC — used for UI-only modes like 'orchestrator'. */
+  setModeLocal(sessionId: string, mode: PermissionMode) {
+    this.modeBySession[sessionId] = mode;
+  }
+
   cycleMode(sessionId: string) {
     const modes = ['default', 'plan', 'acceptEdits'] as const;
     const current = this.getMode(sessionId);

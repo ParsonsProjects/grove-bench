@@ -139,16 +139,18 @@
     default: 'Code',
     plan: 'Plan',
     acceptEdits: 'Edit',
+    orchestrator: 'Orchestrator',
   };
 
   const modeColors: Record<string, string> = {
     default: 'text-green-400 border-green-400/40',
     plan: 'text-yellow-400 border-yellow-400/40',
     acceptEdits: 'text-purple-400 border-purple-400/40',
+    orchestrator: 'text-cyan-400 border-cyan-400/40',
   };
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.altKey && e.key.toLowerCase() === 'm') {
+    if (e.altKey && e.key.toLowerCase() === 'm' && mode !== 'orchestrator') {
       e.preventDefault();
       messageStore.cycleMode(sessionId);
     }
@@ -228,13 +230,22 @@
     </button>
   {/if}
 
-  <button
-    onclick={() => messageStore.cycleMode(sessionId)}
-    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
-    title="Change mode (Alt+M)"
-  >
-    {modeLabels[mode] ?? mode}
-  </button>
+  {#if mode === 'orchestrator'}
+    <span
+      class="flex items-center gap-1.5 px-1.5 py-0.5 border {modeColors.orchestrator}"
+      title="Orchestrator session — mode is fixed"
+    >
+      Orchestrator
+    </span>
+  {:else}
+    <button
+      onclick={() => messageStore.cycleMode(sessionId)}
+      class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
+      title="Change mode (Alt+M)"
+    >
+      {modeLabels[mode] ?? mode}
+    </button>
+  {/if}
 
   <button
     onclick={() => messageStore.setThinking(sessionId, !thinking)}

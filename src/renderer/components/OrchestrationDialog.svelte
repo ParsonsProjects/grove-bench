@@ -43,6 +43,9 @@
         orchJobId: result.jobId,
       });
 
+      // Set fixed orchestrator mode so the status bar shows it correctly
+      messageStore.setModeLocal(result.planSessionId, 'orchestrator');
+
       // Add job to orch store (for kanban data)
       const jobs = await window.groveBench.listOrchJobs();
       const job = jobs.find((j) => j.id === result.jobId);

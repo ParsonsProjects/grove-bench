@@ -338,7 +338,7 @@ export interface GroveBenchAPI {
 
 // ─── IPC Channel Names ───
 
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits';
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'orchestrator';
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
