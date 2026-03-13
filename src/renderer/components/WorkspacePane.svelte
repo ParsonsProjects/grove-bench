@@ -112,7 +112,8 @@
   function handleKeydown(e: KeyboardEvent) {
     // Alt+1 / Alt+2 / Alt+3 to switch tabs
     if (e.altKey && e.key === '1') { e.preventDefault(); switchTab('activity'); }
-    if (e.altKey && e.key === '2') { e.preventDefault(); switchTab('changes'); }
+    if (e.altKey && e.key === '2' && !hasOrch) { e.preventDefault(); switchTab('changes'); }
+    if (e.altKey && e.key === '2' && hasOrch) { e.preventDefault(); switchTab('plan'); }
     if (e.altKey && e.key === '3' && hasOrch) { e.preventDefault(); switchTab('plan'); }
   }
 
@@ -176,21 +177,23 @@
       {/if}
       <span class="text-muted-foreground/60 ml-1">Alt+1</span>
     </button>
-    <button
-      onclick={() => switchTab('changes')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'changes'
-        ? 'border-primary text-foreground'
-        : 'border-transparent text-muted-foreground hover:text-foreground'}"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
-      Changes
-      {#if hasChanges}
-        <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full leading-none font-bold">
-          {fileChanges.length}
-        </span>
-      {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+2</span>
-    </button>
+    {#if !hasOrch}
+      <button
+        onclick={() => switchTab('changes')}
+        class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'changes'
+          ? 'border-primary text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
+        Changes
+        {#if hasChanges}
+          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full leading-none font-bold">
+            {fileChanges.length}
+          </span>
+        {/if}
+        <span class="text-muted-foreground/60 ml-1">Alt+2</span>
+      </button>
+    {/if}
     {#if hasOrch}
       <button
         onclick={() => switchTab('plan')}
@@ -210,16 +213,6 @@
         <span class="text-muted-foreground/60 ml-1">Alt+3</span>
       </button>
 
-      <!-- Right-side orch controls -->
-      <div class="ml-auto flex items-center gap-2 pr-3">
-        {#if orchJob?.status === 'planned' && !approving}
-          <Button size="sm" onclick={handleApprove}>
-            Approve & Launch ({totalCount} tasks)
-          </Button>
-        {:else if approving}
-          <Button size="sm" disabled>Launching...</Button>
-        {/if}
-      </div>
     {/if}
   </div>
 
@@ -260,7 +253,7 @@
               {@const colTasks = tasksForColumn(col)}
               <div class="flex-1 flex flex-col min-w-[180px]">
                 <div class="flex items-center gap-2 px-2 py-1.5 mb-2 border-b-2 {col.color}">
-                  <span class="w-2 h-2 shrink-0 rounded-full {col.dotClass}"></span>
+                  <span class="w-2 h-2 shrink-0 {col.dotClass}"></span>
                   <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">{col.label}</span>
                   {#if colTasks.length > 0}
                     <span class="text-xs text-muted-foreground/60 ml-auto">{colTasks.length}</span>
@@ -345,6 +338,25 @@
             {/each}
           </div>
         </div>
+
+        {#if orchJob.status === 'planned'}
+          <div class="mx-3 mb-3 p-3 border border-primary/30 bg-primary/5 shrink-0">
+            <div class="flex items-center justify-between">
+              <div class="text-sm text-foreground">
+                Plan ready — <span class="text-muted-foreground">{totalCount} task{totalCount !== 1 ? 's' : ''} to launch</span>
+              </div>
+              <div class="flex items-center gap-2">
+                {#if approving}
+                  <Button size="sm" disabled>Launching...</Button>
+                {:else}
+                  <Button size="sm" onclick={handleApprove}>
+                    Approve & Launch
+                  </Button>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
 
         <!-- Footer summary -->
         <div class="px-4 py-2 border-t border-border bg-card shrink-0 flex items-center justify-between text-xs text-muted-foreground">

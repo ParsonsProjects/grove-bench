@@ -142,12 +142,14 @@
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
+  let shortcutsOpen = $state(false);
 
   // Refs for click-outside detection on popovers
   let modelPickerRef = $state<HTMLDivElement | null>(null);
   let tasksRef = $state<HTMLDivElement | null>(null);
   let bgTasksRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
+  let shortcutsRef = $state<HTMLDivElement | null>(null);
 
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
@@ -195,6 +197,9 @@
     }
     if (contextExpanded && contextRef && !contextRef.contains(target)) {
       contextExpanded = false;
+    }
+    if (shortcutsOpen && shortcutsRef && !shortcutsRef.contains(target)) {
+      shortcutsOpen = false;
     }
   }
 
@@ -637,10 +642,28 @@
     <span class="ml-auto"></span>
   {/if}
 
-  <span class="text-muted-foreground/40 flex gap-3">
-    <span>Ctrl+R find</span>
-    <span>Ctrl+F search</span>
-    <span>Alt+M mode</span>
-    <span>Alt+T think</span>
-  </span>
+  <div class="relative" bind:this={shortcutsRef}>
+    <button
+      onclick={() => shortcutsOpen = !shortcutsOpen}
+      class="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+      title="Keyboard shortcuts"
+    >
+      Keys
+    </button>
+
+    {#if shortcutsOpen}
+      <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-56 z-50">
+        <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
+        <div class="space-y-1.5 text-muted-foreground">
+          <div class="flex justify-between"><span>Session finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
+          <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
+          <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
+          <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
+          <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
+          <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
+          <div class="flex justify-between"><span>Plan tab</span><kbd class="text-foreground">Alt+3</kbd></div>
+        </div>
+      </div>
+    {/if}
+  </div>
 </div>
