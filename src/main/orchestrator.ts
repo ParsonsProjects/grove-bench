@@ -3,7 +3,7 @@ import { IPC } from '../shared/types.js';
 import type { OrchJob, OrchTask, OrchCreateOpts, OrchEvent, OrchJobStatus, OrchTaskStatus } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
-import { validateTasks, detectOverlaps } from './decomposer.js';
+import { validateTasks, detectOverlaps, decompose, DECOMPOSE_SCHEMA } from './decomposer.js';
 import { git, mergeNoCommit, abortMerge } from './git.js';
 import { logger } from './logger.js';
 import * as fs from 'node:fs/promises';
@@ -165,30 +165,42 @@ class Orchestrator {
 
     const branchPrefix = `orch/${jobIdShort}`;
 
-    const orchSystemPrompt = `You are a task orchestrator. When the user gives you a goal, analyze the codebase and break it down into 2-5 independent tasks that can be executed by separate AI coding agents, each working in their own isolated git worktree branch.
+    const orchSystemPrompt = `You are a TASK DECOMPOSER, not a coding assistant. Your ONLY job is to analyze the codebase and break the user's goal into 2-5 independent sub-tasks for parallel execution by separate AI coding agents.
+
+CRITICAL RULES:
+- Do NOT write any code, implement anything, or make any changes
+- Do NOT create files, edit files, or run commands other than reading files to understand the codebase
+- You MAY use Read, Glob, Grep, and Bash (read-only commands like ls, find, cat) to explore the codebase
+- Your ONLY output should be analysis followed by a JSON task array
+
+WORKFLOW:
+1. Read the codebase structure (file listing, key files, README, etc.)
+2. Understand the architecture and how the goal maps to the codebase
+3. Decompose the goal into 2-5 independent, parallelizable tasks
+4. Output the task array as a fenced JSON code block
 
 Branch prefix for all tasks: ${branchPrefix}
 
-When you are ready, output a JSON array of tasks inside a fenced code block:
+OUTPUT FORMAT — you MUST end your response with exactly this:
 \`\`\`json
 [{
-  "description": "short description",
-  "branchName": "${branchPrefix}/the-branch-name",
+  "description": "short description of the task",
+  "branchName": "${branchPrefix}/descriptive-branch-name",
   "scope": ["src/file1.ts", "src/dir/"],
   "priority": 1,
   "parallelizable": true,
   "dependsOn": [],
-  "instruction": "Detailed instruction for the agent..."
+  "instruction": "Detailed, self-contained instruction for the agent. Include specific file paths, function names, and expected behavior. The agent will have NO other context besides this instruction and the codebase."
 }]
 \`\`\`
 
-Rules:
-- Each task must be self-contained and executable by a single agent
-- Minimize overlap between tasks (agents should touch different files when possible)
-- Each task's instruction should be detailed enough for an agent to execute without additional context
+TASK DESIGN RULES:
+- Each task must be self-contained — an agent should be able to complete it with ONLY the instruction text and the codebase
+- Minimize file overlap between tasks (agents work in isolated git worktrees and changes are merged later)
 - Branch names must be valid git branch names (use hyphens, prefix with ${branchPrefix}/)
-- dependsOn references task IDs (task_1, task_2, etc.)
-- Mark tasks as parallelizable: true if they can run concurrently`;
+- dependsOn references task IDs: task_1, task_2, etc. (assigned in array order)
+- Set parallelizable: false only if a task truly cannot start until another finishes
+- Instructions should be specific: mention exact file paths, function signatures, and expected behavior`;
 
     await sessionManager.createSession({
       id: planSessionId,
@@ -196,9 +208,13 @@ Rules:
       cwd: opts.repoPath,
       repoPath: opts.repoPath,
       window,
-      permissionMode: 'plan',
+      permissionMode: 'acceptEdits',
       orchJobId: jobId,
-      appendSystemPrompt: orchSystemPrompt,
+      customSystemPrompt: orchSystemPrompt,
+      // Only allow read-only tools — the decomposer must not write code
+      allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'ListDir'],
+      // Force structured JSON output matching the task schema
+      outputFormat: { type: 'json_schema', schema: DECOMPOSE_SCHEMA },
     });
 
     const planStart = Date.now();
@@ -233,30 +249,57 @@ Rules:
 
     try {
       const history = sessionManager.getEventHistory(job.planSessionId!);
-      let resultText = '';
 
+      let raw: import('./decomposer.js').RawTask[] | null = null;
+
+      // 1. Try structured_output first (from outputFormat: json_schema)
       for (const event of history) {
-        if ((event as any).type === 'result' && (event as any).result) {
-          resultText = (event as any).result;
+        const ev = event as any;
+        if (ev.type === 'result' && ev.structured_output) {
+          const so = ev.structured_output;
+          raw = Array.isArray(so) ? so : so.tasks;
         }
       }
 
-      if (!resultText) {
-        throw new Error('Planning agent returned no result text');
+      // 2. Fallback: extract JSON from text output
+      if (!raw) {
+        let resultText = '';
+        const allAssistantText: string[] = [];
+
+        for (const event of history) {
+          const ev = event as any;
+          if (ev.type === 'result' && ev.result) {
+            resultText = ev.result;
+          }
+          if (ev.type === 'assistant' && ev.message) {
+            allAssistantText.push(ev.message);
+          }
+        }
+
+        const searchText = resultText || allAssistantText.join('\n');
+        if (!searchText) {
+          throw new Error('Planning agent returned no result text');
+        }
+
+        let jsonStr = searchText;
+        const fenceMatches = [...searchText.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?```/g)];
+        if (fenceMatches.length > 0) {
+          jsonStr = fenceMatches[fenceMatches.length - 1][1];
+        }
+
+        const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          jsonStr = arrayMatch[0];
+        }
+
+        const parsed = JSON.parse(jsonStr.trim());
+        raw = Array.isArray(parsed) ? parsed : parsed.tasks;
       }
 
-      let jsonStr = resultText;
-      const fenceMatch = resultText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-      if (fenceMatch) {
-        jsonStr = fenceMatch[1];
+      if (!raw || !Array.isArray(raw)) {
+        throw new Error('Planning agent returned no valid task array');
       }
 
-      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        jsonStr = arrayMatch[0];
-      }
-
-      const raw: import('./decomposer.js').RawTask[] = JSON.parse(jsonStr.trim());
       const tasks = validateTasks(raw, branchPrefix);
 
       for (const task of tasks) {

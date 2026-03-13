@@ -136,16 +136,23 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
-    const worktree = worktreeManager.getWorktree(id);
-    if (!worktree) {
-      throw new Error(`Worktree ${id} not found`);
-    }
-
     // If already running, just reattach the window so events flow to new webContents
     if (sessionManager.getSession(id)) {
       const s = sessionManager.getSession(id)!;
       sessionManager.reattachWindow(id, win);
       return { id: s.id, branch: s.branch };
+    }
+
+    // Orchestrator planning sessions (plan_orch_*) run in the repo root, not a worktree.
+    // They are managed by the orchestrator and should not be resumed as normal sessions.
+    if (id.startsWith('plan_')) {
+      logger.info(`Skipping resume for orchestrator planning session: ${id}`);
+      return { id, branch: `orch plan` };
+    }
+
+    const worktree = worktreeManager.getWorktree(id);
+    if (!worktree) {
+      throw new Error(`Worktree ${id} not found`);
     }
 
     // Look up saved Claude session ID for conversation resumption
@@ -174,7 +181,10 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
-    await worktreeManager.remove(id, deleteBranch);
+    // Orchestrator planning sessions don't have worktrees
+    if (!id.startsWith('plan_')) {
+      await worktreeManager.remove(id, deleteBranch);
+    }
     logger.info(`Session destroyed: id=${id}`);
   });
 

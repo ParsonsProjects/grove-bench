@@ -68,6 +68,12 @@ interface ManagedSession {
   permissionMode: 'default' | 'plan' | 'acceptEdits';
   /** Extra system prompt appended to the default claude_code preset. */
   appendSystemPrompt: string | null;
+  /** Fully custom system prompt — overrides the claude_code preset entirely. */
+  customSystemPrompt: string | null;
+  /** If set, only these tools are allowed — everything else is auto-denied. */
+  allowedTools: Set<string> | null;
+  /** Force structured JSON output via json_schema. */
+  outputFormat: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   /** Path to append-only event log on disk. */
   eventLogPath: string;
 }
@@ -124,6 +130,12 @@ class AgentSessionManager {
     parentSessionId?: string | null;
     orchJobId?: string | null;
     appendSystemPrompt?: string | null;
+    /** Fully custom system prompt — overrides the claude_code preset entirely. */
+    customSystemPrompt?: string | null;
+    /** If set, only these tools are allowed — everything else is auto-denied. */
+    allowedTools?: string[] | null;
+    /** Force structured JSON output via json_schema. */
+    outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -161,6 +173,9 @@ class AgentSessionManager {
       orchJobId: opts.orchJobId ?? null,
       permissionMode: opts.permissionMode || 'default',
       appendSystemPrompt: opts.appendSystemPrompt ?? null,
+      customSystemPrompt: opts.customSystemPrompt ?? null,
+      allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
+      outputFormat: opts.outputFormat ?? null,
       eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
     };
 
@@ -251,13 +266,21 @@ class AgentSessionManager {
         abortController,
         includePartialMessages: true,
         settingSources: ['user', 'project', 'local'],
-        systemPrompt: session.appendSystemPrompt
-          ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
-          : { type: 'preset', preset: 'claude_code' },
+        systemPrompt: session.customSystemPrompt
+          ? session.customSystemPrompt
+          : session.appendSystemPrompt
+            ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
+            : { type: 'preset', preset: 'claude_code' },
         permissionMode: session.permissionMode,
+        // Force structured JSON output if configured
+        ...(session.outputFormat ? { outputFormat: session.outputFormat } : {}),
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
+          // If an allowedTools whitelist is set, deny anything not in it
+          if (session.allowedTools && !session.allowedTools.has(toolName)) {
+            return { behavior: 'deny', message: `Tool "${toolName}" is not allowed in this session` };
+          }
           // Auto-approve if user previously chose "Always Allow" for this tool
           if (session.alwaysAllowedTools.has(toolName)) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
@@ -594,6 +617,7 @@ class AgentSessionManager {
           type: 'result',
           subtype: message.subtype,
           result: 'result' in message ? (message as any).result : undefined,
+          structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
           totalCostUsd: message.total_cost_usd,
           durationMs: message.duration_ms,
           isError: message.is_error,

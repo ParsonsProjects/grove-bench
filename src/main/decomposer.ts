@@ -27,27 +27,43 @@ export interface RawTask {
   instruction: string;
 }
 
-export const DECOMPOSE_PROMPT = `You are a task decomposer for a coding project. Given a high-level goal and codebase structure, break it down into 2-5 independent tasks that can be executed by separate AI coding agents, each working in their own isolated git worktree branch.
+/** JSON schema used with outputFormat to force structured decomposition output. */
+export const DECOMPOSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    tasks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          description: { type: 'string', description: 'Short description of the task' },
+          branchName: { type: 'string', description: 'Git branch name (use hyphens, prefixed with the branch prefix)' },
+          scope: { type: 'array', items: { type: 'string' }, description: 'File paths or directories this task touches' },
+          priority: { type: 'number', description: 'Execution priority (1 = highest)' },
+          parallelizable: { type: 'boolean', description: 'Whether this task can run concurrently with others' },
+          dependsOn: { type: 'array', items: { type: 'string' }, description: 'Task IDs this depends on (task_1, task_2, etc.)' },
+          instruction: { type: 'string', description: 'Detailed, self-contained instruction for the coding agent' },
+        },
+        required: ['description', 'branchName', 'scope', 'priority', 'parallelizable', 'dependsOn', 'instruction'],
+      },
+      minItems: 2,
+      maxItems: 5,
+    },
+  },
+  required: ['tasks'],
+};
+
+export const DECOMPOSE_SYSTEM_PROMPT = `You are a task decomposer for a multi-agent coding system. Analyze the codebase context and break the goal into independent sub-tasks for parallel execution by separate AI coding agents.
+
+Each agent works in its own isolated git worktree branch with full codebase access but NO awareness of other agents. After all agents finish, branches are merged.
 
 Rules:
-- Each task must be self-contained and executable by a single agent
-- Minimize overlap between tasks (agents should touch different files when possible)
-- Each task's instruction should be detailed enough for an agent to execute without additional context
-- Branch names must be valid git branch names (no spaces, use hyphens)
-- Use the provided branch prefix for all branch names
-- dependsOn references task IDs from your output (task_1, task_2, etc.)
-- Mark tasks as parallelizable: true if they can run concurrently
-
-Respond with ONLY a JSON array (no markdown fences, no explanation):
-[{
-  "description": "short description",
-  "branchName": "the-branch-name",
-  "scope": ["src/file1.ts", "src/dir/"],
-  "priority": 1,
-  "parallelizable": true,
-  "dependsOn": [],
-  "instruction": "Detailed instruction for the agent..."
-}]`;
+- 2-5 independent tasks
+- Each task must be self-contained — the agent receives ONLY the instruction and the codebase
+- Minimize file overlap (overlapping files cause merge conflicts)
+- Instructions must be specific: exact file paths, function names, expected behavior
+- dependsOn references task IDs: task_1, task_2, etc. (assigned in array order)
+- Set parallelizable: false ONLY if a task truly cannot start until another finishes`;
 
 export async function gatherContext(repoPath: string): Promise<string> {
   // Get file listing
@@ -189,20 +205,20 @@ export async function decompose(
   const context = await gatherContext(repoPath);
   const branchPrefix = `orch/${jobIdShort}`;
 
-  const prompt = `${DECOMPOSE_PROMPT}\n\nBranch prefix: ${branchPrefix}\n\n${context}\n\nGoal: ${goal}`;
+  const prompt = `Branch prefix for all task branch names: ${branchPrefix}\n\n${context}\n\nGoal: ${goal}`;
 
   logger.info(`[decomposer] Starting decomposition for: ${goal.slice(0, 100)}`);
 
   const queryFn = await getQuery();
   const abortController = new AbortController();
 
-  // Abort after 90 seconds to prevent hanging forever
+  // Abort after 120 seconds
   const abortTimer = setTimeout(() => {
-    logger.warn('[decomposer] Aborting — 90s timeout reached');
+    logger.warn('[decomposer] Aborting — 120s timeout reached');
     abortController.abort();
-  }, 90_000);
+  }, 120_000);
 
-  let resultText = '';
+  let structured: { tasks: RawTask[] } | null = null;
 
   try {
     const q = queryFn({
@@ -212,18 +228,29 @@ export async function decompose(
         abortController,
         permissionMode: 'plan',
         model: 'sonnet',
-        systemPrompt: { type: 'preset', preset: 'claude_code' },
-        env: {
-          ...process.env,
-          CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
-        },
+        systemPrompt: DECOMPOSE_SYSTEM_PROMPT,
+        outputFormat: { type: 'json_schema', schema: DECOMPOSE_SCHEMA },
       },
     });
 
     for await (const message of q) {
       logger.debug(`[decomposer] message type=${message.type}`);
       if (message.type === 'result' && !message.is_error) {
-        resultText = (message as any).result || '';
+        // structured_output is the parsed JSON when outputFormat is used
+        const so = (message as any).structured_output;
+        if (so) {
+          structured = so as { tasks: RawTask[] };
+        } else {
+          // Fallback: try parsing the result text
+          const resultText = (message as any).result || '';
+          if (resultText) {
+            let jsonStr = resultText;
+            const fenceMatch = resultText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+            if (fenceMatch) jsonStr = fenceMatch[1];
+            const parsed = JSON.parse(jsonStr.trim());
+            structured = Array.isArray(parsed) ? { tasks: parsed } : parsed;
+          }
+        }
       } else if (message.type === 'result' && message.is_error) {
         const errors = (message as any).errors || [];
         throw new Error(`Decomposition failed: ${errors.join(', ') || 'unknown error'}`);
@@ -233,27 +260,13 @@ export async function decompose(
     clearTimeout(abortTimer);
   }
 
-  logger.info(`[decomposer] Query completed, resultText length=${resultText.length}`);
-
-  if (!resultText) {
-    throw new Error('Decomposition returned no result');
+  if (!structured || !structured.tasks) {
+    throw new Error('Decomposition returned no structured output');
   }
 
-  // Extract JSON from the result (may be wrapped in markdown fences)
-  let jsonStr = resultText;
-  const fenceMatch = resultText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch) {
-    jsonStr = fenceMatch[1];
-  }
+  logger.info(`[decomposer] Decomposed into ${structured.tasks.length} raw tasks`);
 
-  let raw: RawTask[];
-  try {
-    raw = JSON.parse(jsonStr.trim());
-  } catch (e) {
-    throw new Error(`Failed to parse decomposition JSON: ${(e as Error).message}\nRaw: ${jsonStr.slice(0, 500)}`);
-  }
-
-  const tasks = validateTasks(raw, branchPrefix);
-  logger.info(`[decomposer] Decomposed into ${tasks.length} tasks`);
+  const tasks = validateTasks(structured.tasks, branchPrefix);
+  logger.info(`[decomposer] Validated ${tasks.length} tasks`);
   return tasks;
 }
