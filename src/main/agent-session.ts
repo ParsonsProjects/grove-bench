@@ -389,14 +389,23 @@ class AgentSessionManager {
           if (m.status === 'compacting') {
             emit({ type: 'status', message: 'Compacting conversation...' });
           }
-          // Sync permission mode from SDK
-          if (m.permissionMode) {
-            emit({ type: 'mode_sync', mode: m.permissionMode });
+          // Sync permission mode from SDK (check both camelCase and snake_case)
+          const modeValue = m.permissionMode ?? m.permission_mode;
+          if (modeValue) {
+            emit({ type: 'mode_sync', mode: modeValue });
           }
         } else if (message.subtype === 'local_command_output') {
           const content = (message as any).content;
           if (content) {
             emit({ type: 'status', message: content });
+            // Detect mode changes from slash command output
+            if (/mode.*plan/i.test(content) || /plan mode/i.test(content)) {
+              emit({ type: 'mode_sync', mode: 'plan' });
+            } else if (/mode.*code/i.test(content) || /code mode/i.test(content) || /default mode/i.test(content)) {
+              emit({ type: 'mode_sync', mode: 'default' });
+            } else if (/mode.*accept/i.test(content) || /acceptEdits/i.test(content) || /edit mode/i.test(content)) {
+              emit({ type: 'mode_sync', mode: 'acceptEdits' });
+            }
           }
         } else if (message.subtype === 'task_started') {
           const m = message as any;
@@ -480,6 +489,15 @@ class AgentSessionManager {
             files: (m.files ?? []).map((f: any) => ({ filename: f.filename, fileId: f.file_id })),
             failed: m.failed ?? [],
           });
+        } else {
+          // Log unhandled system subtypes to help debug missing events
+          const m = message as any;
+          logger.debug(`[handleMessage] session=${session.id} unhandled system subtype=${message.subtype} keys=${Object.keys(m).join(',')}`);
+          // Try to extract permission mode from any system message
+          const modeVal = m.permissionMode ?? m.permission_mode ?? m.mode;
+          if (modeVal && typeof modeVal === 'string') {
+            emit({ type: 'mode_sync', mode: modeVal as any });
+          }
         }
         break;
       }
