@@ -4,7 +4,6 @@
   import { messageStore } from './stores/messages.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
-  import OrchestrationPanel from './components/OrchestrationPanel.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
@@ -13,7 +12,7 @@
 
   async function restoreWorktrees() {
     const runningSessions = await window.groveBench.listSessions();
-    const runningIds = new Set(runningSessions.filter((s) => s.status === 'running').map((s) => s.id));
+    const runningMap = new Map(runningSessions.filter((s) => s.status === 'running').map((s) => [s.id, s]));
 
     for (const repo of [...store.repos]) {
       try {
@@ -26,14 +25,18 @@
         for (const wt of worktrees) {
           if (store.sessions.find((s) => s.id === wt.id)) continue;
 
-          const isRunning = runningIds.has(wt.id);
+          const runningSession = runningMap.get(wt.id);
+          const isRunning = !!runningSession;
+          const isChild = !!runningSession?.parentSessionId;
           store.addSession({
             id: wt.id,
             branch: wt.branch,
             repoPath: repo,
             status: isRunning ? 'running' : 'stopped',
             direct: wt.direct,
-          });
+            parentSessionId: runningSession?.parentSessionId ?? null,
+            orchJobId: runningSession?.orchJobId ?? null,
+          }, !isChild); // don't auto-focus child sessions
 
           if (isRunning) {
             // Just reattach the window — history replay and subscription
@@ -48,8 +51,8 @@
       }
     }
 
-    // After restoring all sessions, select the first running one
-    const firstRunning = store.sessions.find((s) => s.status === 'running');
+    // After restoring all sessions, select the first running one (prefer non-child)
+    const firstRunning = store.sessions.find((s) => s.status === 'running' && !s.parentSessionId);
     if (firstRunning) {
       store.activeSessionId = firstRunning.id;
     }
@@ -168,6 +171,9 @@
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
   });
+
+  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running'));
+  let hasTabContent = $derived(openSessions.length > 0);
 </script>
 
 <PrerequisiteCheck />
@@ -178,9 +184,7 @@
   <Sidebar />
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if orchStore.activeJobId && !store.activeSessionId}
-      <OrchestrationPanel jobId={orchStore.activeJobId} />
-    {:else if store.sessions.length === 0}
+    {#if !hasTabContent && store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
@@ -193,7 +197,7 @@
           <p class="text-xs">Add a repository and create an agent to get started.</p>
         </div>
       </div>
-    {:else if !store.activeSession}
+    {:else if !hasTabContent}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
@@ -208,75 +212,94 @@
       </div>
     {:else}
       <!-- Tab bar -->
-      {@const openSessions = store.sessions.filter((s) => s.status === 'running')}
-      {#if openSessions.length > 0}
-        <div class="flex items-center bg-card border-b border-border shrink-0">
-          {#each openSessions as session (session.id)}
-            {@const isActive = store.activeSessionId === session.id}
-            {@const running = messageStore.getIsRunning(session.id)}
-            {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
-            {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
-            {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
-            <button
-              draggable="true"
-              ondragstart={(e) => handleTabDragStart(e, session.id)}
-              ondragover={(e) => handleTabDragOver(e, session.id)}
-              ondrop={(e) => handleTabDrop(e, session.id)}
-              ondragend={handleTabDragEnd}
-              ondragleave={() => { if (dropTargetId === session.id) dropTargetId = null; }}
-              onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
-              class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab
-                {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
-                {dragTabId === session.id ? 'opacity-40' : ''}
-                {isDragOver ? 'border-l-2 border-l-primary' : ''}"
+      <div class="flex items-center bg-card border-b border-border shrink-0 overflow-x-auto">
+        {#each openSessions as session (session.id)}
+          {@const isActive = store.activeSessionId === session.id}
+          {@const running = messageStore.getIsRunning(session.id)}
+          {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
+          {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
+          {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
+          {@const orchJob = session.orchJobId ? orchStore.jobs.find(j => j.id === session.orchJobId) : null}
+          <button
+            draggable="true"
+            ondragstart={(e) => handleTabDragStart(e, session.id)}
+            ondragover={(e) => handleTabDragOver(e, session.id)}
+            ondrop={(e) => handleTabDrop(e, session.id)}
+            ondragend={handleTabDragEnd}
+            ondragleave={() => { if (dropTargetId === session.id) dropTargetId = null; }}
+            onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
+            class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
+              {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
+              {dragTabId === session.id ? 'opacity-40' : ''}
+              {isDragOver ? 'border-l-2 border-l-primary' : ''}"
+          >
+            {#if !isActive && running}
+              <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
+            {:else if !isActive && hasPending}
+              <span class="w-1.5 h-1.5 shrink-0 bg-amber-500 animate-pulse"></span>
+            {:else if needsAttention}
+              <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash rounded-full"></span>
+            {:else}
+              <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
+            {/if}
+            {#if orchJob}
+              <svg class="w-3 h-3 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="m4.2 4.2 2.8 2.8"/><path d="m17 17 2.8 2.8"/><path d="m4.2 19.8 2.8-2.8"/><path d="m17 7 2.8-2.8"/></svg>
+            {/if}
+            {#if store.repos.length > 1}
+              <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
+              <span class="text-muted-foreground/40">/</span>
+            {/if}
+            <span class="truncate">{session.branch}</span>
+            {#if orchJob && orchJob.tasks.length > 0}
+              <span class="text-[10px] text-muted-foreground/60 shrink-0">{orchJob.tasks.filter(t => t.status === 'completed').length}/{orchJob.tasks.length}</span>
+            {/if}
+            <span
+              role="button"
+              tabindex="-1"
+              onclick={(e) => { e.stopPropagation(); closeTab(session.id); }}
+              onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); closeTab(session.id); } }}
+              class="ml-1 w-4 h-4 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-muted opacity-0 group-hover/tab:opacity-100 transition-all cursor-pointer"
             >
-              {#if !isActive && running}
-                <span class="w-3 h-3 shrink-0 border-[1.5px] border-primary border-t-transparent rounded-full animate-spin"></span>
-              {:else if !isActive && hasPending}
-                <span class="w-1.5 h-1.5 shrink-0 bg-amber-500 animate-pulse rounded-full"></span>
-              {:else if needsAttention}
-                <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash rounded-full"></span>
-              {:else}
-                <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
-              {/if}
-              {#if store.repos.length > 1}
-                <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
-                <span class="text-muted-foreground/40">/</span>
-              {/if}
-              <span class="truncate">{session.branch}</span>
-              <span
-                role="button"
-                tabindex="-1"
-                onclick={(e) => { e.stopPropagation(); closeTab(session.id); }}
-                onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); closeTab(session.id); } }}
-                class="ml-1 w-4 h-4 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-muted opacity-0 group-hover/tab:opacity-100 transition-all cursor-pointer"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </span>
-            </button>
-          {/each}
-        </div>
-      {/if}
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </span>
+          </button>
+        {/each}
+      </div>
 
       <!-- Active session -->
-      {#each store.sessions as session (session.id)}
-        <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-          {#if session.status === 'running'}
-            <WorkspacePane sessionId={session.id} />
-          {:else}
-            <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
-              {#each Array(20) as _, i}
-                <span
-                  class="blue-pixel absolute rounded-[1px]"
-                  style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
-                ></span>
-              {/each}
-              <div class="w-5 h-5 border-2 border-border border-t-transparent animate-spin relative z-10"></div>
-              <span class="ml-3 text-sm relative z-10">Starting agent...</span>
-            </div>
-          {/if}
+      {#if store.activeSessionId}
+        <!-- Active session -->
+        {#each store.sessions as session (session.id)}
+          <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
+            {#if session.status === 'running'}
+              <WorkspacePane sessionId={session.id} />
+            {:else}
+              <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
+                {#each Array(20) as _, i}
+                  <span
+                    class="blue-pixel absolute rounded-[1px]"
+                    style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
+                  ></span>
+                {/each}
+                <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
+                <span class="ml-3 text-sm relative z-10">Starting agent...</span>
+              </div>
+            {/if}
+          </div>
+        {/each}
+      {:else}
+        <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
+          {#each Array(20) as _, i}
+            <span
+              class="blue-pixel absolute rounded-[1px]"
+              style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
+            ></span>
+          {/each}
+          <div class="text-center relative z-10">
+            <p class="text-sm">Select a tab to view</p>
+          </div>
         </div>
-      {/each}
+      {/if}
     {/if}
   </main>
 </div>

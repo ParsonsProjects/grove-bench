@@ -1,9 +1,11 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import { killProcessOnPort } from './port-killer.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // The Agent SDK is ESM-only; Electron's main process is CJS.
 // Use Function constructor to create a dynamic import that Rollup/Vite
@@ -58,6 +60,16 @@ interface ManagedSession {
   toolUseMap: Map<string, string>;
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
+  /** Parent session ID for nesting (orch subtasks). */
+  parentSessionId: string | null;
+  /** Associated orchestration job ID. */
+  orchJobId: string | null;
+  /** Permission mode for the SDK query. */
+  permissionMode: 'default' | 'plan' | 'acceptEdits';
+  /** Extra system prompt appended to the default claude_code preset. */
+  appendSystemPrompt: string | null;
+  /** Path to append-only event log on disk. */
+  eventLogPath: string;
 }
 
 /**
@@ -94,9 +106,12 @@ export interface SessionCompletionResult {
   durationMs?: number;
 }
 
+const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
+  private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
   async createSession(opts: {
     id: string;
@@ -105,6 +120,10 @@ class AgentSessionManager {
     repoPath: string;
     window: BrowserWindow;
     resumeClaudeSessionId?: string;
+    permissionMode?: 'default' | 'plan' | 'acceptEdits';
+    parentSessionId?: string | null;
+    orchJobId?: string | null;
+    appendSystemPrompt?: string | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -138,15 +157,36 @@ class AgentSessionManager {
       detectedPorts: new Set(),
       toolUseMap: new Map(),
       lastResult: null,
+      parentSessionId: opts.parentSessionId ?? null,
+      orchJobId: opts.orchJobId ?? null,
+      permissionMode: opts.permissionMode || 'default',
+      appendSystemPrompt: opts.appendSystemPrompt ?? null,
+      eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
     };
 
     this.sessions.set(id, session);
 
-    // Emit helper — always reads session.window so it picks up re-attached windows.
-    // Also buffers every event so they can be replayed after renderer reload.
+    // Ensure events directory exists
+    try { fs.mkdirSync(EVENTS_DIR, { recursive: true }); } catch { /* already exists */ }
+
+    // Emit helper — buffers events and persists them to JSONL on disk.
     const emit = (event: AgentEvent) => {
       logger.debug(`[emit] session=${id} event.type=${event.type}`);
       session.eventHistory.push(event);
+
+      // Persist to disk (fire-and-forget, non-blocking)
+      try {
+        fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
+      } catch { /* non-fatal */ }
+
+      // Notify registered listeners (used by orchestrator for progress events)
+      const listeners = this.eventListeners.get(id);
+      if (listeners) {
+        for (const cb of listeners) {
+          try { cb(event); } catch { /* non-fatal */ }
+        }
+      }
+
       const w = session.window;
       if (!w.isDestroyed()) {
         const channel = `${IPC.AGENT_EVENT}:${id}`;
@@ -186,6 +226,8 @@ class AgentSessionManager {
       status: session.status,
       agentType: session.agentType,
       createdAt: session.createdAt,
+      parentSessionId: session.parentSessionId,
+      orchJobId: session.orchJobId,
     };
   }
 
@@ -209,8 +251,10 @@ class AgentSessionManager {
         abortController,
         includePartialMessages: true,
         settingSources: ['user', 'project', 'local'],
-        systemPrompt: { type: 'preset', preset: 'claude_code' },
-        permissionMode: 'default',
+        systemPrompt: session.appendSystemPrompt
+          ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
+          : { type: 'preset', preset: 'claude_code' },
+        permissionMode: session.permissionMode,
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
@@ -244,6 +288,8 @@ class AgentSessionManager {
               toolInput: input,
               toolUseId: options.toolUseID,
               requestId,
+              decisionReason: options.decisionReason,
+              suggestions: options.suggestions,
             });
           });
         },
@@ -339,15 +385,101 @@ class AgentSessionManager {
             preTokens: meta.pre_tokens ?? 0,
           });
         } else if (message.subtype === 'status') {
-          const status = (message as any).status;
-          if (status === 'compacting') {
+          const m = message as any;
+          if (m.status === 'compacting') {
             emit({ type: 'status', message: 'Compacting conversation...' });
+          }
+          // Sync permission mode from SDK
+          if (m.permissionMode) {
+            emit({ type: 'mode_sync', mode: m.permissionMode });
           }
         } else if (message.subtype === 'local_command_output') {
           const content = (message as any).content;
           if (content) {
             emit({ type: 'status', message: content });
           }
+        } else if (message.subtype === 'task_started') {
+          const m = message as any;
+          emit({
+            type: 'task_started',
+            taskId: m.task_id ?? '',
+            toolUseId: m.tool_use_id,
+            description: m.description ?? '',
+            taskType: m.task_type,
+          });
+        } else if (message.subtype === 'task_progress') {
+          const m = message as any;
+          const usage = m.usage ?? {};
+          emit({
+            type: 'task_progress',
+            taskId: m.task_id ?? '',
+            toolUseId: m.tool_use_id,
+            description: m.description ?? '',
+            summary: m.summary,
+            lastToolName: m.last_tool_name,
+            totalTokens: usage.total_tokens ?? 0,
+            toolUses: usage.tool_uses ?? 0,
+            durationMs: usage.duration_ms ?? 0,
+          });
+        } else if (message.subtype === 'task_notification') {
+          const m = message as any;
+          const usage = m.usage ?? {};
+          emit({
+            type: 'task_notification',
+            taskId: m.task_id ?? '',
+            toolUseId: m.tool_use_id,
+            taskStatus: m.status ?? 'completed',
+            summary: m.summary ?? '',
+            outputFile: m.output_file ?? '',
+            totalTokens: usage.total_tokens,
+            toolUses: usage.tool_uses,
+            durationMs: usage.duration_ms,
+          });
+        } else if (message.subtype === 'hook_started') {
+          const m = message as any;
+          emit({
+            type: 'hook_event',
+            subtype: 'started',
+            hookId: m.hook_id ?? '',
+            hookName: m.hook_name ?? '',
+            hookEvent: m.hook_event ?? '',
+          });
+        } else if (message.subtype === 'hook_progress') {
+          const m = message as any;
+          emit({
+            type: 'hook_event',
+            subtype: 'progress',
+            hookId: m.hook_id ?? '',
+            hookName: m.hook_name ?? '',
+            hookEvent: m.hook_event ?? '',
+            output: m.output || m.stdout || m.stderr || '',
+          });
+        } else if (message.subtype === 'hook_response') {
+          const m = message as any;
+          emit({
+            type: 'hook_event',
+            subtype: 'response',
+            hookId: m.hook_id ?? '',
+            hookName: m.hook_name ?? '',
+            hookEvent: m.hook_event ?? '',
+            output: m.output || m.stdout || m.stderr || '',
+            outcome: m.outcome ?? 'success',
+            exitCode: m.exit_code,
+          });
+        } else if (message.subtype === 'elicitation_complete') {
+          const m = message as any;
+          emit({
+            type: 'elicitation_complete',
+            serverName: m.mcp_server_name ?? '',
+            elicitationId: m.elicitation_id ?? '',
+          });
+        } else if (message.subtype === 'files_persisted') {
+          const m = message as any;
+          emit({
+            type: 'files_persisted',
+            files: (m.files ?? []).map((f: any) => ({ filename: f.filename, fileId: f.file_id })),
+            failed: m.failed ?? [],
+          });
         }
         break;
       }
@@ -490,6 +622,49 @@ class AgentSessionManager {
         break;
       }
 
+      case 'auth_status': {
+        const m = message as any;
+        emit({
+          type: 'auth_status',
+          isAuthenticating: m.isAuthenticating ?? false,
+          output: m.output ?? [],
+          authError: m.error,
+        });
+        break;
+      }
+
+      case 'tool_use_summary': {
+        const m = message as any;
+        emit({
+          type: 'tool_use_summary',
+          summary: m.summary ?? '',
+          toolUseIds: m.preceding_tool_use_ids ?? [],
+        });
+        break;
+      }
+
+      case 'rate_limit_event': {
+        const m = message as any;
+        const info = m.rate_limit_info ?? {};
+        emit({
+          type: 'rate_limit',
+          status: info.status ?? 'allowed',
+          resetsAt: info.resets_at ?? info.resetsAt,
+          utilization: info.utilization,
+          rateLimitType: info.rate_limit_type ?? info.rateLimitType,
+        });
+        break;
+      }
+
+      case 'prompt_suggestion': {
+        const m = message as any;
+        emit({
+          type: 'prompt_suggestion',
+          suggestion: m.suggestion ?? '',
+        });
+        break;
+      }
+
       default:
         // Ignore other message types
         break;
@@ -552,7 +727,11 @@ class AgentSessionManager {
       if (decision.behavior === 'allowAlways') {
         session.alwaysAllowedTools.add(pending.toolName);
       }
-      pending.resolve({ behavior: 'allow', updatedInput: pending.toolInput });
+      const result: any = { behavior: 'allow', updatedInput: pending.toolInput };
+      if (decision.updatedPermissions) {
+        result.updatedPermissions = decision.updatedPermissions;
+      }
+      pending.resolve(result);
     } else {
       pending.resolve({
         behavior: 'deny',
@@ -579,6 +758,24 @@ class AgentSessionManager {
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;
+    }
+  }
+
+  async setThinking(id: string, enabled: boolean): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryInstance) return;
+    try {
+      await session.queryInstance.setMaxThinkingTokens(enabled ? null : 0);
+    } catch (e) {
+      logger.warn(`Failed to set thinking for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  renameBranch(id: string, newBranch: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.branch = newBranch;
     }
   }
 
@@ -612,8 +809,9 @@ class AgentSessionManager {
       );
     }
 
-    // Clean up completion callback
+    // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
+    this.eventListeners.delete(id);
 
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, 500));
@@ -635,6 +833,8 @@ class AgentSessionManager {
       status: s.status,
       agentType: s.agentType,
       createdAt: s.createdAt,
+      parentSessionId: s.parentSessionId,
+      orchJobId: s.orchJobId,
     }));
   }
 
@@ -662,9 +862,26 @@ class AgentSessionManager {
     this.completionCallbacks.set(id, callback);
   }
 
-  /** Return all buffered events for replay after renderer reload. */
+  /** Register a listener for all events on a session (used by orchestrator for progress). */
+  onEvent(id: string, callback: (event: AgentEvent) => void): void {
+    const list = this.eventListeners.get(id) ?? [];
+    list.push(callback);
+    this.eventListeners.set(id, list);
+  }
+
+  /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
   getEventHistory(id: string): AgentEvent[] {
-    return this.sessions.get(id)?.eventHistory ?? [];
+    const session = this.sessions.get(id);
+    if (session) return session.eventHistory;
+
+    // Fall back to reading from disk
+    const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
+    try {
+      const data = fs.readFileSync(logPath, 'utf-8');
+      return data.split('\n').filter(Boolean).map(line => JSON.parse(line));
+    } catch {
+      return [];
+    }
   }
 
   get count(): number {

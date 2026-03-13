@@ -3,13 +3,16 @@ import { IPC } from '../shared/types.js';
 import type { OrchJob, OrchTask, OrchCreateOpts, OrchEvent, OrchJobStatus, OrchTaskStatus } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
-import { decompose } from './decomposer.js';
-import { git } from './git.js';
+import { validateTasks, detectOverlaps } from './decomposer.js';
+import { git, mergeNoCommit, abortMerge } from './git.js';
 import { logger } from './logger.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
+
+const SPAWN_STAGGER_MS = 2500;
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 interface ManagedOrchJob {
   job: OrchJob;
@@ -22,6 +25,9 @@ const PERSISTENCE_FILE = path.join(app.getPath('userData'), 'worktrees', 'orches
 
 class Orchestrator {
   private jobs = new Map<string, ManagedOrchJob>();
+  private taskTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Worktree ID for the merge integration branch, keyed by job ID */
+  private mergeWorktrees = new Map<string, string>();
 
   private emit(managed: ManagedOrchJob, event: OrchEvent) {
     const { job, window: win } = managed;
@@ -37,7 +43,7 @@ class Orchestrator {
       managed.job.completedAt = Date.now();
     }
     this.emit(managed, { type: 'orch_job_status', jobId: managed.job.id, status });
-    this.persist();
+    this.persistNow();
   }
 
   private updateTaskStatus(managed: ManagedOrchJob, taskId: string, status: OrchTaskStatus, error?: string) {
@@ -47,14 +53,88 @@ class Orchestrator {
     if (error) task.error = error;
     if (status === 'completed' || status === 'failed' || status === 'cancelled') {
       task.completedAt = Date.now();
+      if (task.startedAt) {
+        task.durationMs = Date.now() - task.startedAt;
+      }
     }
     this.emit(managed, { type: 'orch_task_status', jobId: managed.job.id, taskId, status, error });
     this.persist();
   }
 
-  async createJob(opts: OrchCreateOpts, window: BrowserWindow): Promise<{ jobId: string }> {
+  // ─── Task Timeout Management ───
+
+  private startTaskTimer(managed: ManagedOrchJob, task: OrchTask) {
+    const timeoutMs = task.timeoutMs ?? managed.job.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (timeoutMs <= 0) return; // no timeout
+
+    const timer = setTimeout(async () => {
+      this.taskTimers.delete(task.id);
+      logger.warn(`[orch] Task ${task.id} timed out after ${timeoutMs}ms`);
+
+      if (task.sessionId) {
+        try {
+          await sessionManager.destroySession(task.sessionId);
+        } catch { /* best effort */ }
+      }
+
+      this.updateTaskStatus(managed, task.id, 'failed', `Task timed out after ${Math.round(timeoutMs / 1000)}s`);
+      this.emit(managed, { type: 'orch_task_timeout', jobId: managed.job.id, taskId: task.id });
+
+      // Cancel dependents and check completion
+      this.cancelDependents(managed);
+      this.checkJobCompletion(managed);
+    }, timeoutMs);
+
+    this.taskTimers.set(task.id, timer);
+  }
+
+  private clearTaskTimer(taskId: string) {
+    const timer = this.taskTimers.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      this.taskTimers.delete(taskId);
+    }
+  }
+
+  private clearAllTimers(job: OrchJob) {
+    for (const task of job.tasks) {
+      this.clearTaskTimer(task.id);
+    }
+  }
+
+  // ─── Circuit Breaker ───
+
+  private checkCircuitBreaker(managed: ManagedOrchJob): boolean {
+    const threshold = managed.job.circuitBreakerThreshold;
+    if (threshold === null || threshold === undefined) return false;
+
+    const failedCount = managed.job.tasks.filter(t => t.status === 'failed').length;
+    const totalCount = managed.job.tasks.length;
+
+    if (totalCount > 0 && failedCount / totalCount >= threshold) {
+      logger.warn(`[orch] Circuit breaker triggered for job ${managed.job.id}: ${failedCount}/${totalCount} failed`);
+      this.emit(managed, { type: 'orch_circuit_breaker', jobId: managed.job.id, failedCount, totalCount });
+
+      for (const task of managed.job.tasks) {
+        if (task.status === 'pending' || task.status === 'running' || task.status === 'spawning') {
+          this.clearTaskTimer(task.id);
+          if (task.sessionId && (task.status === 'running' || task.status === 'spawning')) {
+            sessionManager.destroySession(task.sessionId).catch(() => {});
+          }
+          this.updateTaskStatus(managed, task.id, 'cancelled', 'Circuit breaker triggered');
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // ─── Job Creation ───
+
+  async createJob(opts: OrchCreateOpts, window: BrowserWindow): Promise<{ jobId: string; planSessionId: string }> {
     const jobId = `orch_${randomUUID().slice(0, 8)}`;
     const jobIdShort = jobId.slice(5); // strip "orch_"
+    const planSessionId = `plan_${jobId}`;
 
     // Determine base branch
     let baseBranch = opts.baseBranch;
@@ -73,40 +153,142 @@ class Orchestrator {
       completedAt: null,
       planDurationMs: null,
       totalCostUsd: null,
+      planSessionId,
+      overlapWarnings: [],
+      mergeResults: [],
+      defaultTimeoutMs: opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
+      circuitBreakerThreshold: opts.circuitBreakerThreshold ?? null,
     };
 
     const managed: ManagedOrchJob = { job, window };
     this.jobs.set(jobId, managed);
 
-    // Return immediately so the renderer can subscribe to events before decomposition starts
-    // Decomposition runs in the background
-    setImmediate(() => {
-      this.emit(managed, { type: 'orch_plan_start', jobId });
-      const planStart = Date.now();
-      decompose(opts.goal, opts.repoPath, baseBranch, jobIdShort)
-        .then((tasks) => {
-          for (const task of tasks) {
-            task.jobId = jobId;
-            task.baseBranch = baseBranch;
-          }
-          job.tasks = tasks;
-          job.planDurationMs = Date.now() - planStart;
-          job.status = 'planned';
-          this.emit(managed, { type: 'orch_plan_complete', jobId, tasks });
-          this.persist();
-        })
-        .catch((err) => {
-          const errMsg = (err as Error).message || String(err);
-          logger.error(`[orch] Decomposition failed for job ${jobId}:`, err);
-          job.status = 'failed';
-          job.planDurationMs = Date.now() - planStart;
-          this.emit(managed, { type: 'orch_plan_error', jobId, error: errMsg });
-          this.persist();
-        });
+    const branchPrefix = `orch/${jobIdShort}`;
+
+    const orchSystemPrompt = `You are a task orchestrator. When the user gives you a goal, analyze the codebase and break it down into 2-5 independent tasks that can be executed by separate AI coding agents, each working in their own isolated git worktree branch.
+
+Branch prefix for all tasks: ${branchPrefix}
+
+When you are ready, output a JSON array of tasks inside a fenced code block:
+\`\`\`json
+[{
+  "description": "short description",
+  "branchName": "${branchPrefix}/the-branch-name",
+  "scope": ["src/file1.ts", "src/dir/"],
+  "priority": 1,
+  "parallelizable": true,
+  "dependsOn": [],
+  "instruction": "Detailed instruction for the agent..."
+}]
+\`\`\`
+
+Rules:
+- Each task must be self-contained and executable by a single agent
+- Minimize overlap between tasks (agents should touch different files when possible)
+- Each task's instruction should be detailed enough for an agent to execute without additional context
+- Branch names must be valid git branch names (use hyphens, prefix with ${branchPrefix}/)
+- dependsOn references task IDs (task_1, task_2, etc.)
+- Mark tasks as parallelizable: true if they can run concurrently`;
+
+    await sessionManager.createSession({
+      id: planSessionId,
+      branch: `orch: ${opts.goal.slice(0, 40)}`,
+      cwd: opts.repoPath,
+      repoPath: opts.repoPath,
+      window,
+      permissionMode: 'plan',
+      orchJobId: jobId,
+      appendSystemPrompt: orchSystemPrompt,
     });
 
-    return { jobId };
+    const planStart = Date.now();
+
+    sessionManager.onComplete(planSessionId, (result) => {
+      this.handlePlanComplete(managed, result, branchPrefix, baseBranch, planStart);
+    });
+
+    sessionManager.sendMessage(planSessionId, opts.goal);
+    logger.info(`[orch] Created orchestrator session ${planSessionId} for job ${jobId} (plan mode)`);
+    this.persist();
+
+    return { jobId, planSessionId };
   }
+
+  private async handlePlanComplete(
+    managed: ManagedOrchJob,
+    result: { sessionId: string; isError: boolean; totalCostUsd?: number },
+    branchPrefix: string,
+    baseBranch: string,
+    planStart: number,
+  ) {
+    const { job } = managed;
+    job.planDurationMs = Date.now() - planStart;
+
+    if (result.isError) {
+      job.status = 'failed';
+      this.emit(managed, { type: 'orch_plan_error', jobId: job.id, error: 'Planning agent failed' });
+      this.persistNow();
+      return;
+    }
+
+    try {
+      const history = sessionManager.getEventHistory(job.planSessionId!);
+      let resultText = '';
+
+      for (const event of history) {
+        if ((event as any).type === 'result' && (event as any).result) {
+          resultText = (event as any).result;
+        }
+      }
+
+      if (!resultText) {
+        throw new Error('Planning agent returned no result text');
+      }
+
+      let jsonStr = resultText;
+      const fenceMatch = resultText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+      if (fenceMatch) {
+        jsonStr = fenceMatch[1];
+      }
+
+      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        jsonStr = arrayMatch[0];
+      }
+
+      const raw: import('./decomposer.js').RawTask[] = JSON.parse(jsonStr.trim());
+      const tasks = validateTasks(raw, branchPrefix);
+
+      for (const task of tasks) {
+        task.jobId = job.id;
+        task.baseBranch = baseBranch;
+      }
+
+      // Detect overlapping scopes
+      const warnings = detectOverlaps(tasks);
+      job.overlapWarnings = warnings;
+
+      job.tasks = tasks;
+      job.status = 'planned';
+      this.emit(managed, { type: 'orch_plan_complete', jobId: job.id, tasks });
+
+      if (warnings.length > 0) {
+        this.emit(managed, { type: 'orch_overlap_warning', jobId: job.id, warnings });
+        logger.warn(`[orch] Job ${job.id}: ${warnings.length} overlap warning(s) detected`);
+      }
+
+      logger.info(`[orch] Plan complete for job ${job.id}: ${tasks.length} tasks`);
+    } catch (err) {
+      const errMsg = (err as Error).message || String(err);
+      logger.error(`[orch] Failed to parse plan result for job ${job.id}:`, err);
+      job.status = 'failed';
+      this.emit(managed, { type: 'orch_plan_error', jobId: job.id, error: errMsg });
+    }
+
+    this.persistNow();
+  }
+
+  // ─── Plan Approval & Task Spawning ───
 
   async approvePlan(jobId: string, editedTasks?: Partial<OrchTask>[]): Promise<void> {
     const managed = this.jobs.get(jobId);
@@ -115,7 +297,6 @@ class Orchestrator {
       throw new Error(`Job ${jobId} is not in 'planned' state (current: ${managed.job.status})`);
     }
 
-    // Apply user edits if provided
     if (editedTasks) {
       for (const edit of editedTasks) {
         if (!edit.id) continue;
@@ -128,7 +309,6 @@ class Orchestrator {
     }
 
     this.updateJobStatus(managed, 'spawning');
-    // Spawn tasks (don't await — run in background)
     this.spawnTasks(managed).catch((err) => {
       logger.error(`[orch] spawnTasks failed for job ${jobId}:`, err);
       this.updateJobStatus(managed, 'failed');
@@ -138,7 +318,6 @@ class Orchestrator {
   private async spawnTasks(managed: ManagedOrchJob) {
     const { job } = managed;
 
-    // Determine which tasks are ready (no unfinished dependencies)
     const spawnReady = () => {
       return job.tasks.filter((t) => {
         if (t.status !== 'pending') return false;
@@ -153,14 +332,12 @@ class Orchestrator {
       this.updateTaskStatus(managed, task.id, 'spawning');
 
       try {
-        // Create worktree
         const worktree = await worktreeManager.create({
           repoPath: job.repoPath,
           branchName: task.branchName,
           baseBranch: task.baseBranch,
         });
 
-        // Copy untracked files
         try {
           const config = await worktreeManager.getRepoConfig(job.repoPath);
           if (config.copyFiles.length > 0) {
@@ -168,27 +345,48 @@ class Orchestrator {
           }
         } catch { /* non-fatal */ }
 
-        // Create session
         const session = await sessionManager.createSession({
           id: worktree.id,
           branch: worktree.branch,
           cwd: worktree.path,
           repoPath: job.repoPath,
           window: managed.window,
+          parentSessionId: job.planSessionId,
         });
 
         task.sessionId = session.id;
+        task.startedAt = Date.now();
         this.updateTaskStatus(managed, task.id, 'running');
 
-        // Register completion callback BEFORE sending to avoid race
+        // Start timeout timer
+        this.startTaskTimer(managed, task);
+
+        this.emit(managed, {
+          type: 'orch_task_session',
+          jobId: job.id,
+          taskId: task.id,
+          sessionId: session.id,
+          branch: worktree.branch,
+          repoPath: job.repoPath,
+          parentSessionId: job.planSessionId!,
+        });
+
         sessionManager.onComplete(session.id, (result) => {
           this.handleTaskComplete(managed, task, result);
         });
 
-        // Wait for system_init before sending the instruction
-        await this.waitForReady(session.id, 30_000);
+        // Subscribe to agent events for progress updates
+        sessionManager.onEvent(session.id, (event) => {
+          if (event.type === 'activity' && event.activity === 'tool_starting' && event.toolName) {
+            this.emit(managed, {
+              type: 'orch_task_progress',
+              jobId: job.id,
+              taskId: task.id,
+              summary: `Using ${event.toolName}`,
+            });
+          }
+        });
 
-        // Send the task instruction
         sessionManager.sendMessage(session.id, task.instruction);
       } catch (err) {
         const errMsg = (err as Error).message || String(err);
@@ -198,40 +396,28 @@ class Orchestrator {
       }
     };
 
-    // Initial spawn of all ready tasks
+    // Initial spawn with stagger
     this.updateJobStatus(managed, 'running');
     const ready = spawnReady();
     if (ready.length === 0 && job.tasks.every((t) => t.status === 'pending')) {
-      // All tasks have unsatisfied deps — shouldn't happen after validation
       this.updateJobStatus(managed, 'failed');
       return;
     }
-    await Promise.all(ready.map(spawnTask));
 
-    // Store for dependent task spawning and retries
+    // Stagger spawning to reduce resource contention
+    for (let i = 0; i < ready.length; i++) {
+      if (i > 0) {
+        await new Promise(r => setTimeout(r, SPAWN_STAGGER_MS));
+      }
+      // Fire-and-forget (don't await individual spawns)
+      spawnTask(ready[i]).catch((err) => {
+        logger.error(`[orch] Failed to spawn task ${ready[i].id}:`, err);
+        this.updateTaskStatus(managed, ready[i].id, 'failed', (err as Error).message);
+      });
+    }
+
     managed.spawnTask = spawnTask;
     managed.spawnReady = spawnReady;
-  }
-
-  private waitForReady(sessionId: string, timeoutMs: number): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Session init timeout')), timeoutMs);
-      const check = () => {
-        const session = sessionManager.getSession(sessionId);
-        if (!session) {
-          clearTimeout(timer);
-          reject(new Error('Session was destroyed before becoming ready'));
-          return;
-        }
-        if ((session as any).status === 'running') {
-          clearTimeout(timer);
-          resolve();
-        } else {
-          setTimeout(check, 200);
-        }
-      };
-      check();
-    });
   }
 
   private handleTaskComplete(
@@ -239,6 +425,9 @@ class Orchestrator {
     task: OrchTask,
     result: { sessionId: string; isError: boolean; totalCostUsd?: number; durationMs?: number },
   ) {
+    // Clear timeout timer
+    this.clearTaskTimer(task.id);
+
     if (result.isError) {
       this.updateTaskStatus(managed, task.id, 'failed', 'Agent encountered an error');
     } else {
@@ -246,19 +435,38 @@ class Orchestrator {
       this.updateTaskStatus(managed, task.id, 'completed');
     }
 
-    // Try to spawn dependent tasks
+    // Check circuit breaker before spawning more
+    if (this.checkCircuitBreaker(managed)) {
+      this.checkJobCompletion(managed);
+      return;
+    }
+
+    // Spawn dependent tasks with stagger
     const { spawnReady, spawnTask } = managed;
     if (spawnReady && spawnTask) {
       const ready = spawnReady();
-      for (const t of ready) {
-        spawnTask(t).catch((err) => {
-          logger.error(`[orch] Failed to spawn dependent task ${t.id}:`, err);
-          this.updateTaskStatus(managed, t.id, 'failed', (err as Error).message);
-        });
+      const spawnWithStagger = async () => {
+        for (let i = 0; i < ready.length; i++) {
+          if (i > 0) {
+            await new Promise(r => setTimeout(r, SPAWN_STAGGER_MS));
+          }
+          spawnTask(ready[i]).catch((err) => {
+            logger.error(`[orch] Failed to spawn dependent task ${ready[i].id}:`, err);
+            this.updateTaskStatus(managed, ready[i].id, 'failed', (err as Error).message);
+          });
+        }
+      };
+      if (ready.length > 0) {
+        spawnWithStagger().catch(() => {});
       }
     }
 
     // Cancel tasks whose dependencies failed
+    this.cancelDependents(managed);
+    this.checkJobCompletion(managed);
+  }
+
+  private cancelDependents(managed: ManagedOrchJob) {
     for (const t of managed.job.tasks) {
       if (t.status !== 'pending') continue;
       const hasFailed = t.dependsOn.some((depId) => {
@@ -269,8 +477,6 @@ class Orchestrator {
         this.updateTaskStatus(managed, t.id, 'cancelled', 'Dependency failed');
       }
     }
-
-    this.checkJobCompletion(managed);
   }
 
   private checkJobCompletion(managed: ManagedOrchJob) {
@@ -280,14 +486,18 @@ class Orchestrator {
     );
     if (!allDone) return;
 
-    const allCompleted = tasks.every((t) => t.status === 'completed');
-    const allFailed = tasks.every((t) => t.status === 'failed' || t.status === 'cancelled');
-
     // Sum costs
     managed.job.totalCostUsd = tasks.reduce((sum, t) => sum + (t.costUsd ?? 0), 0);
 
+    const allCompleted = tasks.every((t) => t.status === 'completed');
+    const allFailed = tasks.every((t) => t.status === 'failed' || t.status === 'cancelled');
+
     if (allCompleted) {
-      this.updateJobStatus(managed, 'completed');
+      // Transition to merge phase instead of directly completing
+      this.runMergePhase(managed).catch((err) => {
+        logger.error(`[orch] Merge phase failed for job ${managed.job.id}:`, err);
+        this.updateJobStatus(managed, 'partial_failure');
+      });
     } else if (allFailed) {
       this.updateJobStatus(managed, 'failed');
     } else {
@@ -295,11 +505,197 @@ class Orchestrator {
     }
   }
 
+  // ─── Merge Phase ───
+
+  private async runMergePhase(managed: ManagedOrchJob) {
+    const { job } = managed;
+    this.updateJobStatus(managed, 'merging');
+    this.emit(managed, { type: 'orch_merge_start', jobId: job.id });
+
+    const integrationBranch = `orch/${job.id.slice(5)}/integration`;
+
+    try {
+      // Create integration branch from base
+      const worktree = await worktreeManager.create({
+        repoPath: job.repoPath,
+        branchName: integrationBranch,
+        baseBranch: job.baseBranch,
+      });
+
+      this.mergeWorktrees.set(job.id, worktree.id);
+
+      // Merge tasks in priority order
+      const completedTasks = job.tasks
+        .filter(t => t.status === 'completed')
+        .sort((a, b) => a.priority - b.priority);
+
+      let allMerged = true;
+      job.mergeResults = [];
+
+      for (const task of completedTasks) {
+        const result = await mergeNoCommit(worktree.path, task.branchName);
+
+        if (result.success) {
+          task.mergeStatus = 'merged';
+          const mergeResult = { taskId: task.id, status: 'merged' as const };
+          job.mergeResults.push(mergeResult);
+          this.emit(managed, { type: 'orch_merge_task', jobId: job.id, taskId: task.id, status: 'merged' });
+          logger.info(`[orch] Merged task ${task.id} (${task.branchName})`);
+        } else {
+          allMerged = false;
+          const conflictFiles = result.conflicts?.join(', ') || 'unknown files';
+          task.mergeStatus = 'conflict';
+          task.mergeError = `Merge conflict in: ${conflictFiles}`;
+          const mergeResult = { taskId: task.id, status: 'conflict' as const, error: task.mergeError };
+          job.mergeResults.push(mergeResult);
+
+          this.emit(managed, {
+            type: 'orch_merge_task',
+            jobId: job.id,
+            taskId: task.id,
+            status: 'conflict',
+            error: task.mergeError,
+          });
+
+          // Abort merge and stop — subsequent merges would be on dirty state
+          await abortMerge(worktree.path);
+          logger.warn(`[orch] Merge conflict for task ${task.id}: ${conflictFiles}`);
+          break;
+        }
+      }
+
+      this.emit(managed, { type: 'orch_merge_complete', jobId: job.id, allMerged });
+
+      if (allMerged) {
+        this.updateJobStatus(managed, 'completed');
+        logger.info(`[orch] All tasks merged successfully for job ${job.id}`);
+      } else {
+        this.updateJobStatus(managed, 'partial_failure');
+        logger.warn(`[orch] Merge incomplete for job ${job.id} — conflicts detected`);
+      }
+    } catch (err) {
+      const errMsg = (err as Error).message || String(err);
+      logger.error(`[orch] Merge phase error for job ${job.id}:`, err);
+      this.updateJobStatus(managed, 'partial_failure');
+    }
+
+    this.persistNow();
+  }
+
+  async startMerge(jobId: string): Promise<void> {
+    const managed = this.jobs.get(jobId);
+    if (!managed) throw new Error(`Job ${jobId} not found`);
+
+    // Allow re-merge from partial_failure or completed states
+    const completedTasks = managed.job.tasks.filter(t => t.status === 'completed');
+    if (completedTasks.length === 0) {
+      throw new Error('No completed tasks to merge');
+    }
+
+    // Clean up previous merge worktree if exists
+    const oldMergeWt = this.mergeWorktrees.get(jobId);
+    if (oldMergeWt) {
+      try {
+        await worktreeManager.remove(oldMergeWt, true);
+      } catch { /* best effort */ }
+      this.mergeWorktrees.delete(jobId);
+    }
+
+    // Reset merge status on all tasks
+    for (const task of managed.job.tasks) {
+      task.mergeStatus = null;
+      task.mergeError = null;
+    }
+    managed.job.mergeResults = [];
+
+    await this.runMergePhase(managed);
+  }
+
+  async resolveConflict(jobId: string, taskId: string): Promise<void> {
+    const managed = this.jobs.get(jobId);
+    if (!managed) throw new Error(`Job ${jobId} not found`);
+
+    const task = managed.job.tasks.find(t => t.id === taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (task.mergeStatus !== 'conflict') {
+      throw new Error(`Task ${taskId} has no merge conflict`);
+    }
+
+    const mergeWtId = this.mergeWorktrees.get(jobId);
+    if (!mergeWtId) throw new Error('No merge worktree found — re-run merge first');
+
+    const worktree = worktreeManager.getWorktree(mergeWtId);
+    if (!worktree) throw new Error('Merge worktree not found');
+
+    // Spawn a merge-resolution agent in the integration worktree
+    const mergeSessionId = `merge_${jobId}_${taskId}`;
+    const session = await sessionManager.createSession({
+      id: mergeSessionId,
+      branch: worktree.branch,
+      cwd: worktree.path,
+      repoPath: managed.job.repoPath,
+      window: managed.window,
+      permissionMode: 'acceptEdits',
+    });
+
+    const conflictPrompt = `You are resolving a merge conflict. The branch "${task.branchName}" failed to merge cleanly into the integration branch.
+
+Conflict details: ${task.mergeError}
+
+Please:
+1. Run \`git merge --no-ff ${task.branchName}\` to start the merge
+2. Examine the conflict markers in the affected files
+3. Resolve each conflict by choosing the correct changes (or combining them)
+4. Stage the resolved files with \`git add\`
+5. Complete the merge with \`git commit\`
+
+Focus on making a correct merge that preserves all intended changes from both sides.`;
+
+    sessionManager.onComplete(mergeSessionId, () => {
+      // After merge agent finishes, update the task's merge status
+      task.mergeStatus = 'merged';
+      task.mergeError = null;
+      const existingResult = managed.job.mergeResults.find(r => r.taskId === taskId);
+      if (existingResult) {
+        existingResult.status = 'merged';
+        delete existingResult.error;
+      }
+      this.emit(managed, { type: 'orch_merge_task', jobId, taskId, status: 'merged' });
+
+      // Check if all conflicts are now resolved
+      const allResolved = managed.job.tasks
+        .filter(t => t.status === 'completed')
+        .every(t => t.mergeStatus === 'merged');
+
+      if (allResolved) {
+        this.emit(managed, { type: 'orch_merge_complete', jobId, allMerged: true });
+        this.updateJobStatus(managed, 'completed');
+      }
+
+      this.persistNow();
+    });
+
+    sessionManager.sendMessage(mergeSessionId, conflictPrompt);
+
+    this.emit(managed, {
+      type: 'orch_task_session',
+      jobId,
+      taskId,
+      sessionId: mergeSessionId,
+      branch: worktree.branch,
+      repoPath: managed.job.repoPath,
+      parentSessionId: managed.job.planSessionId!,
+    });
+  }
+
+  // ─── Cancel / Retry / Remove ───
+
   async cancelJob(jobId: string): Promise<void> {
     const managed = this.jobs.get(jobId);
     if (!managed) throw new Error(`Job ${jobId} not found`);
 
-    // Destroy all running sessions
+    this.clearAllTimers(managed.job);
+
     for (const task of managed.job.tasks) {
       if (task.sessionId && (task.status === 'running' || task.status === 'spawning')) {
         try {
@@ -324,7 +720,6 @@ class Orchestrator {
       throw new Error(`Task ${taskId} is not in a retryable state`);
     }
 
-    // Destroy old session/worktree if they exist
     if (task.sessionId) {
       try {
         await sessionManager.destroySession(task.sessionId);
@@ -338,13 +733,15 @@ class Orchestrator {
     task.error = null;
     task.completedAt = null;
     task.costUsd = null;
+    task.startedAt = null;
+    task.durationMs = null;
+    task.mergeStatus = null;
+    task.mergeError = null;
 
-    // Update job status back to running
     if (managed.job.status !== 'running') {
       this.updateJobStatus(managed, 'running');
     }
 
-    // If spawnTask doesn't exist (e.g., after persistence reload), re-init spawn infra
     if (!managed.spawnTask) {
       this.spawnTasks(managed).catch((err) => {
         logger.error(`[orch] Retry spawnTasks failed for job ${jobId}:`, err);
@@ -360,6 +757,41 @@ class Orchestrator {
     });
   }
 
+  async removeJob(jobId: string): Promise<void> {
+    const managed = this.jobs.get(jobId);
+    if (!managed) throw new Error(`Job ${jobId} not found`);
+
+    if (managed.job.status === 'running' || managed.job.status === 'spawning' || managed.job.status === 'merging') {
+      await this.cancelJob(jobId);
+    }
+
+    // Clean up merge worktree
+    const mergeWt = this.mergeWorktrees.get(jobId);
+    if (mergeWt) {
+      try { await worktreeManager.remove(mergeWt, true); } catch { /* best effort */ }
+      this.mergeWorktrees.delete(jobId);
+    }
+
+    if (managed.job.planSessionId) {
+      try {
+        await sessionManager.destroySession(managed.job.planSessionId);
+      } catch { /* best effort */ }
+    }
+
+    for (const task of managed.job.tasks) {
+      if (task.sessionId) {
+        try {
+          await sessionManager.destroySession(task.sessionId);
+          await worktreeManager.remove(task.sessionId, true);
+        } catch { /* best effort */ }
+      }
+    }
+
+    this.jobs.delete(jobId);
+    this.persist();
+    logger.info(`[orch] Removed job ${jobId}`);
+  }
+
   listJobs(): OrchJob[] {
     return [...this.jobs.values()].map((m) => m.job);
   }
@@ -373,12 +805,20 @@ class Orchestrator {
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   private persist() {
-    // Debounce: coalesce rapid status updates into a single write
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
       this.doPersist();
     }, 500);
+  }
+
+  /** Flush persistence immediately — use for critical transitions */
+  private persistNow() {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    this.doPersist();
   }
 
   private async doPersist() {
@@ -400,7 +840,28 @@ class Orchestrator {
       const raw = await fs.readFile(PERSISTENCE_FILE, 'utf-8');
       const data = JSON.parse(raw) as Record<string, OrchJob>;
       for (const [id, job] of Object.entries(data)) {
-        // Mark any previously running tasks as failed (app restarted)
+        // Backcompat: add new fields if missing
+        if (!('planSessionId' in job)) (job as any).planSessionId = null;
+        if (!('overlapWarnings' in job)) (job as any).overlapWarnings = [];
+        if (!('mergeResults' in job)) (job as any).mergeResults = [];
+        if (!('defaultTimeoutMs' in job)) (job as any).defaultTimeoutMs = DEFAULT_TIMEOUT_MS;
+        if (!('circuitBreakerThreshold' in job)) (job as any).circuitBreakerThreshold = null;
+
+        // Backcompat: add new task fields
+        for (const task of job.tasks) {
+          if (!('startedAt' in task)) (task as any).startedAt = null;
+          if (!('durationMs' in task)) (task as any).durationMs = null;
+          if (!('timeoutMs' in task)) (task as any).timeoutMs = null;
+          if (!('mergeStatus' in task)) (task as any).mergeStatus = null;
+          if (!('mergeError' in task)) (task as any).mergeError = null;
+        }
+
+        // Mark planning/merging jobs as failed on restart
+        if (job.status === 'planning' || job.status === 'merging') {
+          job.status = 'failed';
+          job.completedAt = Date.now();
+        }
+        // Mark running tasks as failed
         for (const task of job.tasks) {
           if (task.status === 'running' || task.status === 'spawning') {
             task.status = 'failed';
@@ -409,7 +870,7 @@ class Orchestrator {
           }
         }
         // Recalculate job status
-        const allDone = job.tasks.every((t) =>
+        const allDone = job.tasks.length > 0 && job.tasks.every((t) =>
           t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
         );
         if (allDone && job.status === 'running') {
@@ -429,9 +890,14 @@ class Orchestrator {
   }
 
   async cleanup() {
-    // Cancel all running jobs
+    // Clear all timers
+    for (const timer of this.taskTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.taskTimers.clear();
+
     for (const [, managed] of this.jobs) {
-      if (managed.job.status === 'running' || managed.job.status === 'spawning') {
+      if (managed.job.status === 'running' || managed.job.status === 'spawning' || managed.job.status === 'merging') {
         for (const task of managed.job.tasks) {
           if (task.status === 'running' || task.status === 'spawning') {
             task.status = 'failed';
@@ -443,7 +909,6 @@ class Orchestrator {
         managed.job.completedAt = Date.now();
       }
     }
-    // Flush immediately on cleanup (bypass debounce)
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;

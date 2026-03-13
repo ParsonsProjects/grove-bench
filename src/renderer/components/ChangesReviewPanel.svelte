@@ -118,7 +118,7 @@
       ></span>
     {/each}
     <div class="flex items-center gap-2 relative z-10">
-      <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+      <span class="w-2.5 h-2.5 bg-primary animate-pulse"></span>
       Agent is working... changes will appear when the turn completes.
     </div>
   </div>
@@ -216,7 +216,7 @@
                   title="Revert this file to its state before the agent's changes"
                 >
                   {#if reverting}
-                    <span class="w-2.5 h-2.5 border border-destructive border-t-transparent rounded-full animate-spin inline-block"></span>
+                    <span class="w-2 h-2 bg-destructive animate-pulse inline-block"></span>
                   {:else}
                     Revert
                   {/if}

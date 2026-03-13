@@ -59,12 +59,38 @@ export interface ChatPermissionMessage {
   toolUseId: string;
   resolved: boolean;
   decision?: 'allow' | 'deny';
+  decisionReason?: string;
+  suggestions?: unknown[];
 }
 
 export interface ChatThinkingMessage {
   kind: 'thinking';
   id: string;
   thinking: string;
+}
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionItem {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+export interface ChatQuestionMessage {
+  kind: 'question';
+  id: string;
+  requestId: string;
+  toolUseId: string;
+  questions: QuestionItem[];
+  resolved: boolean;
+  response?: string;
+  /** Exact labels that were selected, for accurate resolved-state rendering */
+  selectedLabels?: string[];
 }
 
 export type ChatMessage =
@@ -75,7 +101,8 @@ export type ChatMessage =
   | ChatErrorMessage
   | ChatResultMessage
   | ChatPermissionMessage
-  | ChatThinkingMessage;
+  | ChatThinkingMessage
+  | ChatQuestionMessage;
 
 // ─── Store ───
 
@@ -112,6 +139,9 @@ class MessageStore {
   /** Current permission mode per session */
   modeBySession = $state<Record<string, PermissionMode>>({});
 
+  /** Whether thinking/extended reasoning is enabled per session */
+  thinkingBySession = $state<Record<string, boolean>>({});
+
   /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
   usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
 
@@ -133,8 +163,20 @@ class MessageStore {
   /** Detected dev server ports per session */
   devServersBySession = $state<Record<string, { port: number; url: string }[]>>({});
 
+  /** Rate limit state per session */
+  rateLimitBySession = $state<Record<string, { status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }>>({});
+
+  /** Prompt suggestions per session (from SDK) */
+  promptSuggestionsBySession = $state<Record<string, string[]>>({});
+
+  /** Background task tracking per session */
+  backgroundTasksBySession = $state<Record<string, Record<string, { taskId: string; description: string; taskType?: string; summary?: string; lastToolName?: string; status: 'running' | 'completed' | 'failed' | 'stopped'; totalTokens: number; toolUses: number; durationMs: number }>>>({});
+
   /** Files that have been reverted in the changes review panel */
   revertedFilesBySession = $state<Record<string, Set<string>>>({});
+
+  /** Active tab per session (survives component remount) */
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan'>>({});
 
   private cleanups = new Map<string, () => void>();
 
@@ -166,6 +208,15 @@ class MessageStore {
     return this.modeBySession[sessionId] ?? 'default';
   }
 
+  getThinking(sessionId: string): boolean {
+    return this.thinkingBySession[sessionId] ?? true;
+  }
+
+  async setThinking(sessionId: string, enabled: boolean) {
+    this.thinkingBySession[sessionId] = enabled;
+    await window.groveBench.setThinking(sessionId, enabled);
+  }
+
   getUsage(sessionId: string) {
     return this.usageBySession[sessionId] ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
@@ -186,8 +237,32 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' {
+    return this.activeTabBySession[sessionId] ?? 'activity';
+  }
+
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan') {
+    this.activeTabBySession[sessionId] = tab;
+  }
+
   getDevServers(sessionId: string): { port: number; url: string }[] {
     return this.devServersBySession[sessionId] ?? [];
+  }
+
+  getRateLimit(sessionId: string) {
+    return this.rateLimitBySession[sessionId] ?? null;
+  }
+
+  getPromptSuggestions(sessionId: string): string[] {
+    return this.promptSuggestionsBySession[sessionId] ?? [];
+  }
+
+  clearPromptSuggestions(sessionId: string) {
+    this.promptSuggestionsBySession[sessionId] = [];
+  }
+
+  getBackgroundTasks(sessionId: string) {
+    return Object.values(this.backgroundTasksBySession[sessionId] ?? {});
   }
 
   /** Get all currently pending tool calls with their progress info. */
@@ -329,6 +404,8 @@ class MessageStore {
     });
     this.isRunning[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
+    // Clear stale suggestions when user sends a new message
+    this.promptSuggestionsBySession[sessionId] = [];
   }
 
   /** Ingest a raw AgentEvent from the main process */
@@ -367,6 +444,7 @@ class MessageStore {
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
         // Clear streaming text (it was a preview) and push the finalized message.
+        this.isRunning[sessionId] = true;
         this.streamingText[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'text',
@@ -377,15 +455,23 @@ class MessageStore {
         break;
 
       case 'partial_text':
+        this.isRunning[sessionId] = true;
         this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
         break;
 
       case 'assistant_tool_use':
+        this.isRunning[sessionId] = true;
         // If partial text was streaming but no assistant_text arrived to finalize it
         // (e.g., the assistant switched from text to tool_use mid-message), flush it.
         // Guard: only flush if there IS accumulated streaming text.
         if (this.streamingText[sessionId]) {
           this.flushStreamingText(sessionId);
+        }
+        // Sync mode when LLM calls mode-changing tools
+        if (event.toolName === 'EnterPlanMode') {
+          this.modeBySession[sessionId] = 'plan';
+        } else if (event.toolName === 'ExitPlanMode') {
+          this.modeBySession[sessionId] = 'default';
         }
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -421,38 +507,66 @@ class MessageStore {
           delete prog[event.toolUseId];
           this.toolProgressBySession[sessionId] = { ...prog };
         }
-        // Also mark any matching permission request as resolved (handles replay after refresh)
+        // Also mark any matching permission or question request as resolved (handles replay after refresh)
         const msgs2 = this.messagesBySession[sessionId] ?? [];
-        const permIdx = msgs2.findIndex(
-          (m) => m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved,
+        const interactiveIdx = msgs2.findIndex(
+          (m) => (m.kind === 'permission' || m.kind === 'question') && m.toolUseId === event.toolUseId && !m.resolved,
         );
-        if (permIdx >= 0) {
-          const updated = { ...(msgs2[permIdx] as ChatPermissionMessage) };
-          updated.resolved = true;
-          updated.decision = event.isError ? 'deny' : 'allow';
-          this.messagesBySession[sessionId] = [
-            ...msgs2.slice(0, permIdx),
-            updated,
-            ...msgs2.slice(permIdx + 1),
-          ];
+        if (interactiveIdx >= 0) {
+          const msg = msgs2[interactiveIdx];
+          if (msg.kind === 'permission') {
+            const updated = { ...(msg as ChatPermissionMessage) };
+            updated.resolved = true;
+            updated.decision = event.isError ? 'deny' : 'allow';
+            this.messagesBySession[sessionId] = [
+              ...msgs2.slice(0, interactiveIdx),
+              updated,
+              ...msgs2.slice(interactiveIdx + 1),
+            ];
+          } else if (msg.kind === 'question') {
+            const updated = { ...(msg as ChatQuestionMessage) };
+            updated.resolved = true;
+            this.messagesBySession[sessionId] = [
+              ...msgs2.slice(0, interactiveIdx),
+              updated,
+              ...msgs2.slice(interactiveIdx + 1),
+            ];
+          }
         }
         break;
       }
 
       case 'permission_request':
         this.flushStreamingText(sessionId);
-        this.pushMessage(sessionId, {
-          kind: 'permission',
-          id: nextId(),
-          requestId: event.requestId,
-          toolName: event.toolName,
-          toolInput: event.toolInput,
-          toolUseId: event.toolUseId,
-          resolved: false,
-        });
+        // Detect AskUserQuestion tool — render as an interactive question, not a permission gate
+        if (event.toolName === 'AskUserQuestion') {
+          const input = event.toolInput as Record<string, unknown>;
+          const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
+          this.pushMessage(sessionId, {
+            kind: 'question',
+            id: nextId(),
+            requestId: event.requestId,
+            toolUseId: event.toolUseId,
+            questions,
+            resolved: false,
+          });
+        } else {
+          this.pushMessage(sessionId, {
+            kind: 'permission',
+            id: nextId(),
+            requestId: event.requestId,
+            toolName: event.toolName,
+            toolInput: event.toolInput,
+            toolUseId: event.toolUseId,
+            resolved: false,
+            decisionReason: event.decisionReason,
+            suggestions: event.suggestions,
+          });
+        }
         break;
 
       case 'thinking':
+        this.isRunning[sessionId] = true;
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
@@ -535,6 +649,9 @@ class MessageStore {
       }
 
       case 'activity':
+        if (event.activity !== 'idle') {
+          this.isRunning[sessionId] = true;
+        }
         this.activityBySession[sessionId] = {
           activity: event.activity,
           toolName: event.toolName,
@@ -562,13 +679,162 @@ class MessageStore {
         this.isRunning[sessionId] = false;
         this.activityBySession[sessionId] = { activity: 'idle' };
         break;
+
+      case 'rate_limit':
+        this.rateLimitBySession[sessionId] = {
+          status: event.status,
+          resetsAt: event.resetsAt,
+          utilization: event.utilization,
+          rateLimitType: event.rateLimitType,
+        };
+        if (event.status === 'rejected') {
+          this.pushMessage(sessionId, {
+            kind: 'system',
+            id: nextId(),
+            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString()}` : ''}`,
+          });
+        }
+        break;
+
+      case 'prompt_suggestion':
+        if (event.suggestion) {
+          const existing = this.promptSuggestionsBySession[sessionId] ?? [];
+          this.promptSuggestionsBySession[sessionId] = [...existing, event.suggestion];
+        }
+        break;
+
+      case 'task_started': {
+        const tasks = this.backgroundTasksBySession[sessionId] ?? {};
+        tasks[event.taskId] = {
+          taskId: event.taskId,
+          description: event.description,
+          taskType: event.taskType,
+          status: 'running',
+          totalTokens: 0,
+          toolUses: 0,
+          durationMs: 0,
+        };
+        this.backgroundTasksBySession[sessionId] = { ...tasks };
+        this.pushMessage(sessionId, {
+          kind: 'system',
+          id: nextId(),
+          text: `Background task started: ${event.description}${event.taskType ? ` (${event.taskType})` : ''}`,
+        });
+        break;
+      }
+
+      case 'task_progress': {
+        const tasks2 = this.backgroundTasksBySession[sessionId] ?? {};
+        const existing = tasks2[event.taskId];
+        tasks2[event.taskId] = {
+          ...(existing ?? { taskId: event.taskId, status: 'running' }),
+          description: event.description,
+          summary: event.summary,
+          lastToolName: event.lastToolName,
+          totalTokens: event.totalTokens,
+          toolUses: event.toolUses,
+          durationMs: event.durationMs,
+        };
+        this.backgroundTasksBySession[sessionId] = { ...tasks2 };
+        break;
+      }
+
+      case 'task_notification': {
+        const tasks3 = this.backgroundTasksBySession[sessionId] ?? {};
+        const prev = tasks3[event.taskId];
+        tasks3[event.taskId] = {
+          ...(prev ?? { taskId: event.taskId, description: '' }),
+          status: event.taskStatus,
+          summary: event.summary,
+          totalTokens: event.totalTokens ?? prev?.totalTokens ?? 0,
+          toolUses: event.toolUses ?? prev?.toolUses ?? 0,
+          durationMs: event.durationMs ?? prev?.durationMs ?? 0,
+        };
+        this.backgroundTasksBySession[sessionId] = { ...tasks3 };
+        const label = event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped';
+        this.pushMessage(sessionId, {
+          kind: 'system',
+          id: nextId(),
+          text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
+        });
+        break;
+      }
+
+      case 'auth_status':
+        if (event.authError) {
+          this.pushMessage(sessionId, {
+            kind: 'error',
+            id: nextId(),
+            text: `Authentication error: ${event.authError}`,
+          });
+        } else if (event.isAuthenticating) {
+          this.pushMessage(sessionId, {
+            kind: 'system',
+            id: nextId(),
+            text: event.output.length > 0 ? event.output.join('\n') : 'Authenticating...',
+          });
+        }
+        break;
+
+      case 'tool_use_summary':
+        if (event.summary) {
+          this.pushMessage(sessionId, {
+            kind: 'text',
+            id: nextId(),
+            text: event.summary,
+            uuid: '',
+          });
+        }
+        break;
+
+      case 'hook_event':
+        // Only show hook responses with errors or meaningful output
+        if (event.subtype === 'response' && event.outcome === 'error') {
+          this.pushMessage(sessionId, {
+            kind: 'system',
+            id: nextId(),
+            text: `Hook "${event.hookName}" (${event.hookEvent}) failed${event.exitCode !== undefined ? ` (exit ${event.exitCode})` : ''}${event.output ? `: ${event.output}` : ''}`,
+          });
+        }
+        break;
+
+      case 'elicitation_complete':
+        // Informational — log to system messages
+        this.pushMessage(sessionId, {
+          kind: 'system',
+          id: nextId(),
+          text: `MCP server "${event.serverName}" elicitation complete`,
+        });
+        break;
+
+      case 'files_persisted':
+        // Only show if there were failures
+        if (event.failed.length > 0) {
+          this.pushMessage(sessionId, {
+            kind: 'system',
+            id: nextId(),
+            text: `Failed to persist: ${event.failed.map((f) => `${f.filename} (${f.error})`).join(', ')}`,
+          });
+        }
+        break;
+
+      case 'mode_sync':
+        this.modeBySession[sessionId] = event.mode;
+        break;
     }
   }
 
   /** Send a slash command (e.g. /compact, /clear) */
   sendCommand(sessionId: string, command: string) {
-    if (command.trim() === '/clear') {
+    const trimmed = command.trim();
+    if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
+    }
+    // Sync mode when user issues mode-changing slash commands
+    if (trimmed === '/plan') {
+      this.modeBySession[sessionId] = 'plan';
+    } else if (trimmed === '/code') {
+      this.modeBySession[sessionId] = 'default';
     }
     this.pushMessage(sessionId, {
       kind: 'user',
@@ -579,8 +845,43 @@ class MessageStore {
     window.groveBench.sendMessage(sessionId, command);
   }
 
+  /** Resolve a question from Claude (AskUserQuestion) by sending the answer as a deny message.
+   *  We use 'deny' because the permission system feeds the message text back to Claude as
+   *  tool error output, which is how the SDK receives the user's answer. */
+  resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    const idx = msgs.findIndex(
+      (m) => m.kind === 'question' && m.requestId === requestId,
+    );
+    if (idx >= 0) {
+      const updated = { ...(msgs[idx] as ChatQuestionMessage) };
+      updated.resolved = true;
+      updated.response = response;
+      updated.selectedLabels = selectedLabels;
+      this.messagesBySession[sessionId] = [
+        ...msgs.slice(0, idx),
+        updated,
+        ...msgs.slice(idx + 1),
+      ];
+    }
+
+    // Send the answer back through the permission system — "deny" with the answer as message
+    // so Claude receives the user's response as tool feedback
+    const permDecision: PermissionDecision = {
+      requestId,
+      behavior: 'deny',
+      message: response,
+    };
+    window.groveBench.respondToPermission(sessionId, permDecision);
+  }
+
   /** Resolve a permission request in the UI */
-  resolvePermission(sessionId: string, requestId: string, decision: 'allow' | 'deny' | 'allowAlways') {
+  resolvePermission(
+    sessionId: string,
+    requestId: string,
+    decision: 'allow' | 'deny' | 'allowAlways',
+    opts?: { message?: string; updatedPermissions?: unknown[] },
+  ) {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const idx = msgs.findIndex(
       (m) => m.kind === 'permission' && m.requestId === requestId,
@@ -599,7 +900,8 @@ class MessageStore {
     const permDecision: PermissionDecision = {
       requestId,
       behavior: decision,
-      message: decision === 'deny' ? 'User denied permission' : undefined,
+      message: decision === 'deny' ? (opts?.message || 'User denied permission') : undefined,
+      updatedPermissions: opts?.updatedPermissions,
     };
     window.groveBench.respondToPermission(sessionId, permDecision);
   }

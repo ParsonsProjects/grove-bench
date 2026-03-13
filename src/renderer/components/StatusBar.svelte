@@ -27,6 +27,7 @@
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
+  let thinking = $derived(messageStore.getThinking(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
@@ -104,12 +105,26 @@
 
   let devServers = $derived(messageStore.getDevServers(sessionId));
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
+  let rateLimit = $derived(messageStore.getRateLimit(sessionId));
+  let backgroundTasks = $derived(messageStore.getBackgroundTasks(sessionId));
+  let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
+
+  function formatResetTime(epoch: number): string {
+    const now = Date.now() / 1000;
+    const diff = epoch - now;
+    if (diff <= 0) return 'now';
+    if (diff < 60) return `${Math.round(diff)}s`;
+    if (diff < 3600) return `${Math.round(diff / 60)}m`;
+    return `${Math.round(diff / 3600)}h`;
+  }
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
+  let bgTasksExpanded = $state(false);
 
   // Refs for click-outside detection on popovers
   let modelPickerRef = $state<HTMLDivElement | null>(null);
   let tasksRef = $state<HTMLDivElement | null>(null);
+  let bgTasksRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
 
   let lastResult = $derived.by(() => {
@@ -137,6 +152,10 @@
       e.preventDefault();
       messageStore.cycleMode(sessionId);
     }
+    if (e.altKey && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      messageStore.setThinking(sessionId, !messageStore.getThinking(sessionId));
+    }
   }
 
   function handleClickOutside(e: MouseEvent) {
@@ -146,6 +165,9 @@
     }
     if (tasksExpanded && tasksRef && !tasksRef.contains(target)) {
       tasksExpanded = false;
+    }
+    if (bgTasksExpanded && bgTasksRef && !bgTasksRef.contains(target)) {
+      bgTasksExpanded = false;
     }
     if (contextExpanded && contextRef && !contextRef.contains(target)) {
       contextExpanded = false;
@@ -214,6 +236,15 @@
     {modeLabels[mode] ?? mode}
   </button>
 
+  <button
+    onclick={() => messageStore.setThinking(sessionId, !thinking)}
+    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent
+      {thinking ? 'text-purple-400 border-purple-400/40' : 'text-muted-foreground/50 border-muted-foreground/20'}"
+    title="Toggle extended thinking (Alt+T)"
+  >
+    {thinking ? 'Thinking' : 'No Think'}
+  </button>
+
   <span class="flex items-center gap-1.5">
     {#if isRunning}
       <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
@@ -241,7 +272,7 @@
         class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
         title="Background tasks — click for details"
       >
-        <span class="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></span>
+        <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse"></span>
         {pendingTools.length} task{pendingTools.length > 1 ? 's' : ''}
       </button>
 
@@ -251,12 +282,82 @@
           <div class="space-y-1.5 max-h-48 overflow-y-auto">
             {#each pendingTools as task}
               <div class="flex items-center gap-2">
-                <span class="w-2 h-2 border border-yellow-400 border-t-transparent rounded-full animate-spin shrink-0"></span>
+                <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse shrink-0"></span>
                 <span class="text-yellow-400 font-medium shrink-0">{task.toolName}</span>
                 <span class="text-muted-foreground truncate flex-1">{task.summary}</span>
                 {#if task.elapsedSeconds && task.elapsedSeconds > 0}
                   <span class="text-muted-foreground/60 shrink-0">{Math.round(task.elapsedSeconds)}s</span>
                 {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if rateLimit && rateLimit.status !== 'allowed'}
+    <span class="flex items-center gap-1 {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}">
+      <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
+      {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
+      {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
+      {#if rateLimit.resetsAt}
+        <span class="text-muted-foreground">resets {formatResetTime(rateLimit.resetsAt)}</span>
+      {/if}
+    </span>
+  {/if}
+
+  {#if backgroundTasks.length > 0}
+    <div class="relative" bind:this={bgTasksRef}>
+      <button
+        onclick={() => bgTasksExpanded = !bgTasksExpanded}
+        class="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+        title="Background tasks — click for details"
+      >
+        {#if runningBgTasks.length > 0}
+          <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse"></span>
+        {:else}
+          <span class="w-1.5 h-1.5 bg-blue-400/50"></span>
+        {/if}
+        {runningBgTasks.length > 0
+          ? `${runningBgTasks.length} bg task${runningBgTasks.length > 1 ? 's' : ''}`
+          : `${backgroundTasks.length} bg task${backgroundTasks.length > 1 ? 's' : ''}`}
+      </button>
+
+      {#if bgTasksExpanded}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-80 z-50">
+          <div class="font-medium text-foreground mb-2">Background Tasks</div>
+          <div class="space-y-2 max-h-64 overflow-y-auto">
+            {#each backgroundTasks as task}
+              <div class="border border-border/50 p-2 rounded-sm">
+                <div class="flex items-center gap-2 mb-1">
+                  {#if task.status === 'running'}
+                    <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse shrink-0"></span>
+                  {:else if task.status === 'completed'}
+                    <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+                  {:else}
+                    <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>
+                  {/if}
+                  <span class="text-foreground font-medium truncate flex-1">{task.description || task.taskId}</span>
+                  <span class="text-muted-foreground/60 shrink-0 capitalize">{task.status}</span>
+                </div>
+                {#if task.summary}
+                  <p class="text-muted-foreground text-[10px] mb-1 line-clamp-2">{task.summary}</p>
+                {/if}
+                <div class="flex items-center gap-3 text-[10px] text-muted-foreground/60">
+                  {#if task.lastToolName}
+                    <span class="text-yellow-400">{task.lastToolName}</span>
+                  {/if}
+                  {#if task.toolUses > 0}
+                    <span>{task.toolUses} tool use{task.toolUses !== 1 ? 's' : ''}</span>
+                  {/if}
+                  {#if task.totalTokens > 0}
+                    <span>{formatTokens(task.totalTokens)} tokens</span>
+                  {/if}
+                  {#if task.durationMs > 0}
+                    <span>{(task.durationMs / 1000).toFixed(1)}s</span>
+                  {/if}
+                </div>
               </div>
             {/each}
           </div>
@@ -497,5 +598,6 @@
     <span>Ctrl+R find</span>
     <span>Ctrl+F search</span>
     <span>Alt+M mode</span>
+    <span>Alt+T think</span>
   </span>
 </div>

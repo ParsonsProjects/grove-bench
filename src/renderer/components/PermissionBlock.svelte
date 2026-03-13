@@ -10,6 +10,8 @@
     toolInput,
     resolved,
     decision,
+    decisionReason,
+    suggestions,
   }: {
     sessionId: string;
     requestId: string;
@@ -17,14 +19,18 @@
     toolInput: unknown;
     resolved: boolean;
     decision?: 'allow' | 'deny';
+    decisionReason?: string;
+    suggestions?: unknown[];
   } = $props();
 
   let expanded = $state(false);
   let sideBySide = $state(false);
+  let replyText = $state('');
 
   let input = $derived(toolInput as Record<string, unknown>);
   let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
   let isBashTool = $derived(toolName === 'Bash');
+  let isExitPlanMode = $derived(toolName === 'ExitPlanMode');
   let filePath = $derived(isEditTool ? String(input?.file_path ?? input?.filePath ?? '') : '');
   let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
@@ -37,8 +43,29 @@
     messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
   }
 
-  function deny() {
-    messageStore.resolvePermission(sessionId, requestId, 'deny');
+  /** Execute and clear — allow with SDK suggestions to exit plan mode */
+  function approveAndClear() {
+    messageStore.resolvePermission(sessionId, requestId, 'allow', {
+      updatedPermissions: suggestions,
+    });
+  }
+
+  function deny(message?: string) {
+    messageStore.resolvePermission(sessionId, requestId, 'deny', { message });
+  }
+
+  function sendReply() {
+    const text = replyText.trim();
+    if (!text) return;
+    deny(text);
+    replyText = '';
+  }
+
+  function handleReplyKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendReply();
+    }
   }
 
   function openInEditor() {
@@ -70,8 +97,8 @@
 
 <div class="py-1 my-1 border-l-4 {borderColor} pl-3">
   <div class="flex items-center gap-2 text-xs">
-    <span class="text-yellow-400 font-bold">permission</span>
-    <span class="text-foreground">{toolName}</span>
+    <span class="text-yellow-400 font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
+    <span class="text-foreground">{isExitPlanMode ? 'Claude wants to execute the plan' : toolName}</span>
     {#if filePath}
       <button
         onclick={openInEditor}
@@ -90,6 +117,10 @@
       </button>
     {/if}
   </div>
+
+  {#if decisionReason}
+    <div class="text-xs text-muted-foreground mt-1">{decisionReason}</div>
+  {/if}
 
   <!-- Command preview for Bash -->
   {#if isBashTool && bashCommand}
@@ -118,19 +149,57 @@
 
   {#if resolved}
     <div class="text-xs mt-1 {decision === 'allow' ? 'text-green-400' : 'text-destructive'}">
-      {decision === 'allow' ? 'allowed' : 'denied'}
+      {#if isExitPlanMode}
+        {decision === 'allow' ? 'plan executed' : 'kept planning'}
+      {:else}
+        {decision === 'allow' ? 'allowed' : 'denied'}
+      {/if}
     </div>
   {:else}
-    <div class="flex gap-2 mt-2">
-      <Button variant="outline" size="sm" onclick={approve} class="text-green-400 border-green-600 hover:bg-green-900/30">
-        Allow
-      </Button>
-      <Button variant="outline" size="sm" onclick={approveAlways} class="text-green-400 border-green-600 hover:bg-green-900/30">
-        Always Allow
-      </Button>
-      <Button variant="outline" size="sm" onclick={deny} class="text-destructive border-destructive hover:bg-destructive/10">
-        Deny
-      </Button>
-    </div>
+    {#if isExitPlanMode}
+      <div class="flex gap-2 mt-2 flex-wrap">
+        {#if suggestions && suggestions.length > 0}
+          <Button variant="outline" size="sm" onclick={approveAndClear} class="text-green-400 border-green-600 hover:bg-green-900/30">
+            Execute and clear
+          </Button>
+        {/if}
+        <Button variant="outline" size="sm" onclick={approve} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          Execute
+        </Button>
+        <Button variant="outline" size="sm" onclick={() => deny()} class="text-destructive border-destructive hover:bg-destructive/10">
+          No
+        </Button>
+      </div>
+      <div class="flex gap-2 mt-2 items-center">
+        <input
+          type="text"
+          bind:value={replyText}
+          onkeydown={handleReplyKeydown}
+          placeholder="Reply to continue planning..."
+          class="flex-1 text-xs bg-card border border-border px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={sendReply}
+          disabled={!replyText.trim()}
+          class="text-muted-foreground border-border hover:text-foreground shrink-0"
+        >
+          Send
+        </Button>
+      </div>
+    {:else}
+      <div class="flex gap-2 mt-2">
+        <Button variant="outline" size="sm" onclick={approve} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          Allow
+        </Button>
+        <Button variant="outline" size="sm" onclick={approveAlways} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          Always Allow
+        </Button>
+        <Button variant="outline" size="sm" onclick={() => deny()} class="text-destructive border-destructive hover:bg-destructive/10">
+          Deny
+        </Button>
+      </div>
+    {/if}
   {/if}
 </div>

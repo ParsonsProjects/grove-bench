@@ -42,6 +42,10 @@ export interface SessionInfo {
   status: SessionStatus;
   agentType: 'claude-code';
   createdAt: number;
+  /** If set, this session is a child of the given parent (e.g. orch subtask). */
+  parentSessionId?: string | null;
+  /** If set, this session is the orchestrator for the given job. */
+  orchJobId?: string | null;
 }
 
 // ─── Prerequisites ───
@@ -74,7 +78,7 @@ export type AgentEvent =
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   | { type: 'result'; subtype: string; result?: string; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[] }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
@@ -85,13 +89,34 @@ export type AgentEvent =
   | { type: 'devserver_detected'; port: number; url: string }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
-  | { type: 'process_exit'; exitCode?: number };
+  | { type: 'process_exit'; exitCode?: number }
+  // Rate limiting
+  | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }
+  // Background tasks (Agent tool sub-tasks)
+  | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
+  | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
+  | { type: 'task_notification'; taskId: string; toolUseId?: string; taskStatus: 'completed' | 'failed' | 'stopped'; summary: string; outputFile: string; totalTokens?: number; toolUses?: number; durationMs?: number }
+  // Auth status
+  | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
+  // Tool use summary (after compaction)
+  | { type: 'tool_use_summary'; summary: string; toolUseIds: string[] }
+  // Prompt suggestions
+  | { type: 'prompt_suggestion'; suggestion: string }
+  // Hook execution
+  | { type: 'hook_event'; subtype: 'started' | 'progress' | 'response'; hookId: string; hookName: string; hookEvent: string; output?: string; outcome?: string; exitCode?: number }
+  // MCP elicitation complete
+  | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
+  // Files persisted to disk
+  | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
+  // Permission mode sync (from SDK status messages)
+  | { type: 'mode_sync'; mode: PermissionMode };
 
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
   behavior: 'allow' | 'deny' | 'allowAlways';
   message?: string; // denial message
+  updatedPermissions?: unknown[]; // PermissionUpdate[] from SDK suggestions
 }
 
 // ─── PR Info ───
@@ -140,8 +165,8 @@ export interface PluginListResult {
 
 // ─── Orchestration ───
 
-export type OrchJobStatus = 'planning' | 'planned' | 'spawning' | 'running' | 'completed' | 'partial_failure' | 'failed' | 'cancelled';
-export type OrchTaskStatus = 'pending' | 'spawning' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type OrchJobStatus = 'planning' | 'planned' | 'spawning' | 'running' | 'merging' | 'completed' | 'partial_failure' | 'failed' | 'cancelled';
+export type OrchTaskStatus = 'pending' | 'spawning' | 'running' | 'completed' | 'failed' | 'cancelled' | 'merge_conflict';
 
 export interface OrchTask {
   id: string;
@@ -160,6 +185,23 @@ export interface OrchTask {
   completedAt: number | null;
   error: string | null;
   costUsd: number | null;
+  startedAt: number | null;
+  durationMs: number | null;
+  timeoutMs: number | null;
+  mergeStatus: 'pending' | 'merged' | 'conflict' | null;
+  mergeError: string | null;
+}
+
+export interface OrchOverlapWarning {
+  taskA: string;
+  taskB: string;
+  files: string[];
+}
+
+export interface OrchMergeResult {
+  taskId: string;
+  status: 'merged' | 'conflict';
+  error?: string;
 }
 
 export interface OrchJob {
@@ -173,12 +215,19 @@ export interface OrchJob {
   completedAt: number | null;
   planDurationMs: number | null;
   totalCostUsd: number | null;
+  planSessionId: string | null;
+  overlapWarnings: OrchOverlapWarning[];
+  mergeResults: OrchMergeResult[];
+  defaultTimeoutMs: number;
+  circuitBreakerThreshold: number | null;
 }
 
 export interface OrchCreateOpts {
   repoPath: string;
   goal: string;
   baseBranch?: string;
+  defaultTimeoutMs?: number;
+  circuitBreakerThreshold?: number;
 }
 
 export type OrchEvent =
@@ -187,7 +236,14 @@ export type OrchEvent =
   | { type: 'orch_plan_error'; jobId: string; error: string }
   | { type: 'orch_task_status'; jobId: string; taskId: string; status: OrchTaskStatus; error?: string }
   | { type: 'orch_job_status'; jobId: string; status: OrchJobStatus }
-  | { type: 'orch_task_progress'; jobId: string; taskId: string; summary: string };
+  | { type: 'orch_task_progress'; jobId: string; taskId: string; summary: string }
+  | { type: 'orch_task_session'; jobId: string; taskId: string; sessionId: string; branch: string; repoPath: string; parentSessionId: string }
+  | { type: 'orch_overlap_warning'; jobId: string; warnings: OrchOverlapWarning[] }
+  | { type: 'orch_merge_start'; jobId: string }
+  | { type: 'orch_merge_task'; jobId: string; taskId: string; status: 'merged' | 'conflict'; error?: string }
+  | { type: 'orch_merge_complete'; jobId: string; allMerged: boolean }
+  | { type: 'orch_task_timeout'; jobId: string; taskId: string }
+  | { type: 'orch_circuit_breaker'; jobId: string; failedCount: number; totalCount: number };
 
 // ─── IPC API (exposed via contextBridge) ───
 
@@ -209,6 +265,7 @@ export interface GroveBenchAPI {
 
   // Branch operations
   listBranches(repoPath: string): Promise<string[]>;
+  renameBranch(sessionId: string, newBranchName: string): Promise<{ branch: string }>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -228,6 +285,9 @@ export interface GroveBenchAPI {
 
   // Model control
   setModel(sessionId: string, model?: string): Promise<void>;
+
+  // Thinking control
+  setThinking(sessionId: string, enabled: boolean): Promise<void>;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -255,11 +315,14 @@ export interface GroveBenchAPI {
   pluginDisable(pluginId: string): Promise<void>;
 
   // Orchestration
-  createOrchJob(opts: OrchCreateOpts): Promise<{ jobId: string }>;
+  createOrchJob(opts: OrchCreateOpts): Promise<{ jobId: string; planSessionId: string }>;
   approveOrchPlan(jobId: string, editedTasks?: Partial<OrchTask>[]): Promise<void>;
   cancelOrchJob(jobId: string): Promise<void>;
+  removeOrchJob(jobId: string): Promise<void>;
   listOrchJobs(): Promise<OrchJob[]>;
   retryOrchTask(jobId: string, taskId: string): Promise<void>;
+  mergeOrchJob(jobId: string): Promise<void>;
+  resolveOrchConflict(jobId: string, taskId: string): Promise<void>;
   onOrchEvent(jobId: string, callback: (event: OrchEvent) => void): () => void;
   offOrchEvent(jobId: string): void;
 
@@ -289,6 +352,7 @@ export const IPC = {
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   BRANCH_LIST: 'branch:list',
+  BRANCH_RENAME: 'branch:rename',
   PREREQUISITES_CHECK: 'prerequisites:check',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
@@ -305,6 +369,7 @@ export const IPC = {
   FILE_DIFF: 'file:diff',
   PR_INFO: 'pr:info',
   AGENT_SET_MODEL: 'agent:setModel',
+  AGENT_SET_THINKING: 'agent:setThinking',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',
@@ -319,5 +384,8 @@ export const IPC = {
   ORCH_CANCEL: 'orch:cancel',
   ORCH_LIST: 'orch:list',
   ORCH_RETRY_TASK: 'orch:retryTask',
+  ORCH_REMOVE: 'orch:remove',
+  ORCH_MERGE: 'orch:merge',
+  ORCH_RESOLVE_CONFLICT: 'orch:resolveConflict',
   ORCH_EVENT: 'orch:event',
 } as const;

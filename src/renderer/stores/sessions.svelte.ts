@@ -17,6 +17,10 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** If set, this session is a child of the given parent (e.g. orch subtask). */
+  parentSessionId?: string | null;
+  /** If set, this session is the orchestrator for the given job. */
+  orchJobId?: string | null;
 }
 
 class SessionStore {
@@ -63,13 +67,25 @@ class SessionStore {
     return this.sessions.filter((s) => s.repoPath === path);
   }
 
+  /** Top-level sessions (no parent) for a repo. */
+  topLevelSessionsForRepo(path: string): SessionEntry[] {
+    return this.sessions.filter((s) => s.repoPath === path && !s.parentSessionId);
+  }
+
+  /** Child sessions of a given parent. */
+  childSessions(parentId: string): SessionEntry[] {
+    return this.sessions.filter((s) => s.parentSessionId === parentId);
+  }
+
   repoDisplayName(path: string): string {
     return path.split(/[/\\]/).pop() || path;
   }
 
-  addSession(entry: SessionEntry) {
+  addSession(entry: SessionEntry, focus = true) {
     this.sessions = [...this.sessions, entry];
-    this.activeSessionId = entry.id;
+    if (focus) {
+      this.activeSessionId = entry.id;
+    }
   }
 
   removeSession(id: string) {
@@ -95,6 +111,12 @@ class SessionStore {
   updateStatus(id: string, status: SessionStatus) {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, status } : s
+    );
+  }
+
+  updateBranch(id: string, branch: string) {
+    this.sessions = this.sessions.map((s) =>
+      s.id === id ? { ...s, branch } : s
     );
   }
 

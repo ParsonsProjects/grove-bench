@@ -50,7 +50,7 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let isReady = $derived(messageStore.getIsReady(sessionId));
   let canSend = $derived(!isRunning);
-  let activity = $derived(messageStore.getActivity(sessionId));
+  let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 
   function handleSubmit() {
     const text = value.trim();
@@ -125,11 +125,19 @@
 
     value = '';
     attachedFiles = [];
+    messageStore.clearPromptSuggestions(sessionId);
     closePicker();
     closeCommandPicker();
     userResized = false;
     if (container) container.style.height = '';
     if (textarea) textarea.style.height = '';
+  }
+
+  function useSuggestion(suggestion: string) {
+    value = suggestion;
+    messageStore.clearPromptSuggestions(sessionId);
+    textarea?.focus();
+    handleInput();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -456,21 +464,18 @@
     </div>
   {/if}
 
-  <!-- Activity status bar when running -->
-  {#if isRunning}
-    <div class="flex items-center gap-2 px-4 pt-2 pb-1 text-xs text-muted-foreground">
-      <span class="inline-block w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-      <span>
-        {#if activity.activity === 'tool_starting' && activity.toolName}
-          Running {activity.toolName}{activity.elapsedSeconds ? ` (${activity.elapsedSeconds}s)` : ''}
-        {:else if activity.activity === 'thinking'}
-          Thinking...
-        {:else if activity.activity === 'generating'}
-          Writing...
-        {:else}
-          Working...
-        {/if}
-      </span>
+  <!-- Prompt suggestions -->
+  {#if promptSuggestions.length > 0 && !isRunning}
+    <div class="flex flex-wrap gap-1.5 px-4 pt-2">
+      {#each promptSuggestions as suggestion}
+        <button
+          onclick={() => useSuggestion(suggestion)}
+          class="text-xs px-2.5 py-1 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors truncate max-w-80"
+          title={suggestion}
+        >
+          {suggestion}
+        </button>
+      {/each}
     </div>
   {/if}
 

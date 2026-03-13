@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
-import { git, isGitRepo } from './git.js';
+import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists } from './git.js';
 import { logger } from './logger.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 
@@ -323,6 +323,51 @@ export class WorktreeManager {
         // Source doesn't exist, skip
       }
     }
+  }
+
+  async renameBranch(id: string, newName: string): Promise<string> {
+    const info = this.worktrees.get(id);
+    if (!info) {
+      // Fall back to manifest
+      const manifest = await this.loadManifest();
+      const entry = manifest[id];
+      if (!entry) throw new Error(`Worktree ${id} not found`);
+      throw new Error(`Session ${id} is not active`);
+    }
+
+    if (info.direct) {
+      throw new Error('Cannot rename branch for direct sessions');
+    }
+
+    const oldName = info.branch;
+    if (oldName === newName) return newName;
+
+    // Validate new name
+    const valid = await validateBranchName(newName);
+    if (!valid) throw new Error(`Invalid branch name: "${newName}"`);
+
+    // Check new name doesn't already exist
+    const exists = await branchExists(info.repoPath, newName);
+    if (exists) throw new Error(`Branch "${newName}" already exists`);
+
+    // Check branch hasn't been pushed
+    const hasRemote = await branchHasRemote(info.repoPath, oldName);
+    if (hasRemote) throw new Error(`Branch "${oldName}" has been pushed to a remote and cannot be renamed`);
+
+    // Rename via git (run in the worktree so it renames the checked-out branch)
+    await gitRenameBranch(info.path, oldName, newName);
+
+    // Update in-memory
+    info.branch = newName;
+
+    // Update manifest
+    await this.withManifest((manifest) => {
+      if (manifest[id]) {
+        manifest[id].branch = newName;
+      }
+    });
+
+    return newName;
   }
 
   getWorktree(id: string): WorktreeInfo | undefined {

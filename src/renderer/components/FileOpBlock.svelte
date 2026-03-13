@@ -55,7 +55,7 @@
       <CopyButton text={filePath} class="opacity-0 group-hover/fop-hdr:opacity-100 shrink-0" />
     {/if}
     {#if pending}
-      <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0"></span>
+      <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
     {:else if isError}
       <span class="text-destructive">error</span>
     {:else if result !== undefined}

@@ -188,6 +188,12 @@ export function registerHandlers() {
     return listBranches(repoPath);
   });
 
+  ipcMain.handle(IPC.BRANCH_RENAME, async (_event, sessionId: string, newBranchName: string) => {
+    const newName = await worktreeManager.renameBranch(sessionId, newBranchName);
+    sessionManager.renameBranch(sessionId, newName);
+    return { branch: newName };
+  });
+
   // ─── Worktrees ───
 
   ipcMain.handle(IPC.WORKTREE_LIST, async (_event, repoPath: string) => {
@@ -216,6 +222,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_SET_MODEL, (_event, sessionId: string, model?: string) => {
     return sessionManager.setModel(sessionId, model);
+  });
+
+  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, enabled: boolean) => {
+    return sessionManager.setThinking(sessionId, enabled);
   });
 
   ipcMain.on(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
@@ -406,6 +416,18 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.ORCH_RETRY_TASK, async (_event, jobId: string, taskId: string) => {
     return orchestrator.retryTask(jobId, taskId);
+  });
+
+  ipcMain.handle(IPC.ORCH_REMOVE, async (_event, jobId: string) => {
+    return orchestrator.removeJob(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_MERGE, async (_event, jobId: string) => {
+    return orchestrator.startMerge(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_RESOLVE_CONFLICT, async (_event, jobId: string, taskId: string) => {
+    return orchestrator.resolveConflict(jobId, taskId);
   });
 
   // ─── Window controls ───

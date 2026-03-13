@@ -1,4 +1,4 @@
-import type { OrchTask } from '../shared/types.js';
+import type { OrchTask, OrchOverlapWarning } from '../shared/types.js';
 import { git } from './git.js';
 import { logger } from './logger.js';
 import * as fs from 'node:fs/promises';
@@ -17,7 +17,7 @@ async function getQuery() {
   return _query;
 }
 
-interface RawTask {
+export interface RawTask {
   description: string;
   branchName: string;
   scope: string[];
@@ -27,7 +27,7 @@ interface RawTask {
   instruction: string;
 }
 
-const DECOMPOSE_PROMPT = `You are a task decomposer for a coding project. Given a high-level goal and codebase structure, break it down into 2-5 independent tasks that can be executed by separate AI coding agents, each working in their own isolated git worktree branch.
+export const DECOMPOSE_PROMPT = `You are a task decomposer for a coding project. Given a high-level goal and codebase structure, break it down into 2-5 independent tasks that can be executed by separate AI coding agents, each working in their own isolated git worktree branch.
 
 Rules:
 - Each task must be self-contained and executable by a single agent
@@ -49,7 +49,7 @@ Respond with ONLY a JSON array (no markdown fences, no explanation):
   "instruction": "Detailed instruction for the agent..."
 }]`;
 
-async function gatherContext(repoPath: string): Promise<string> {
+export async function gatherContext(repoPath: string): Promise<string> {
   // Get file listing
   let files: string;
   try {
@@ -87,7 +87,7 @@ async function gatherContext(repoPath: string): Promise<string> {
   return context;
 }
 
-function validateTasks(raw: RawTask[], branchPrefix: string): OrchTask[] {
+export function validateTasks(raw: RawTask[], branchPrefix: string): OrchTask[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new Error('Decomposition returned empty or invalid task list');
   }
@@ -131,6 +131,11 @@ function validateTasks(raw: RawTask[], branchPrefix: string): OrchTask[] {
       completedAt: null,
       error: null,
       costUsd: null,
+      startedAt: null,
+      durationMs: null,
+      timeoutMs: null,
+      mergeStatus: null,
+      mergeError: null,
     });
   }
 
@@ -160,6 +165,21 @@ function validateTasks(raw: RawTask[], branchPrefix: string): OrchTask[] {
   return tasks;
 }
 
+export function detectOverlaps(tasks: OrchTask[]): OrchOverlapWarning[] {
+  const warnings: OrchOverlapWarning[] = [];
+  for (let i = 0; i < tasks.length; i++) {
+    for (let j = i + 1; j < tasks.length; j++) {
+      const overlap = tasks[i].scope.filter(s =>
+        tasks[j].scope.some(s2 => s === s2 || s.startsWith(s2) || s2.startsWith(s))
+      );
+      if (overlap.length > 0) {
+        warnings.push({ taskA: tasks[i].id, taskB: tasks[j].id, files: overlap });
+      }
+    }
+  }
+  return warnings;
+}
+
 export async function decompose(
   goal: string,
   repoPath: string,
@@ -176,31 +196,44 @@ export async function decompose(
   const queryFn = await getQuery();
   const abortController = new AbortController();
 
+  // Abort after 90 seconds to prevent hanging forever
+  const abortTimer = setTimeout(() => {
+    logger.warn('[decomposer] Aborting — 90s timeout reached');
+    abortController.abort();
+  }, 90_000);
+
   let resultText = '';
 
-  const q = queryFn({
-    prompt,
-    options: {
-      cwd: repoPath,
-      abortController,
-      permissionMode: 'plan',
-      model: 'sonnet',
-      systemPrompt: { type: 'preset', preset: 'claude_code' },
-      env: {
-        ...process.env,
-        CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+  try {
+    const q = queryFn({
+      prompt,
+      options: {
+        cwd: repoPath,
+        abortController,
+        permissionMode: 'plan',
+        model: 'sonnet',
+        systemPrompt: { type: 'preset', preset: 'claude_code' },
+        env: {
+          ...process.env,
+          CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+        },
       },
-    },
-  });
+    });
 
-  for await (const message of q) {
-    if (message.type === 'result' && !message.is_error) {
-      resultText = (message as any).result || '';
-    } else if (message.type === 'result' && message.is_error) {
-      const errors = (message as any).errors || [];
-      throw new Error(`Decomposition failed: ${errors.join(', ') || 'unknown error'}`);
+    for await (const message of q) {
+      logger.debug(`[decomposer] message type=${message.type}`);
+      if (message.type === 'result' && !message.is_error) {
+        resultText = (message as any).result || '';
+      } else if (message.type === 'result' && message.is_error) {
+        const errors = (message as any).errors || [];
+        throw new Error(`Decomposition failed: ${errors.join(', ') || 'unknown error'}`);
+      }
     }
+  } finally {
+    clearTimeout(abortTimer);
   }
+
+  logger.info(`[decomposer] Query completed, resultText length=${resultText.length}`);
 
   if (!resultText) {
     throw new Error('Decomposition returned no result');

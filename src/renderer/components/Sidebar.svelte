@@ -15,14 +15,19 @@
   let orchDefaultRepo = $state('');
   let showPlugins = $state(false);
   let newAgentDefaultRepo = $state('');
+  let showCreateDropdown = $state(false);
   let confirmDestroyId = $state<string | null>(null);
+  let confirmRemoveOrch = $state<string | null>(null);
+  let removingOrch = $state<string | null>(null);
   let destroying = $state<string | null>(null);
   let confirmRemoveRepo = $state<string | null>(null);
   let deleteBranchOnDestroy = $state(false);
+  let renamingSessionId = $state<string | null>(null);
+  let renameValue = $state('');
+  let renameError = $state<string | null>(null);
 
   function focusSession(id: string) {
     store.activeSessionId = id;
-    orchStore.activeJobId = null;
   }
 
   function openNewAgent(defaultRepo = '') {
@@ -60,6 +65,41 @@
       store.setError(e.message || String(e));
     }
     confirmRemoveRepo = null;
+  }
+
+  function startRename(sessionId: string, currentBranch: string) {
+    renamingSessionId = sessionId;
+    renameValue = currentBranch;
+    renameError = null;
+  }
+
+  async function confirmRename() {
+    if (!renamingSessionId) return;
+    const newName = renameValue.trim();
+    if (!newName) { cancelRename(); return; }
+
+    const session = store.sessions.find(s => s.id === renamingSessionId);
+    if (session && newName === session.branch) { cancelRename(); return; }
+
+    try {
+      const result = await window.groveBench.renameBranch(renamingSessionId, newName);
+      store.updateBranch(renamingSessionId, result.branch);
+      renamingSessionId = null;
+      renameError = null;
+    } catch (e: any) {
+      renameError = e.message || String(e);
+    }
+  }
+
+  function cancelRename() {
+    renamingSessionId = null;
+    renameValue = '';
+    renameError = null;
+  }
+
+  function handleRenameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') { e.preventDefault(); confirmRename(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
   }
 
   const statusColor: Record<string, string> = {
@@ -108,61 +148,91 @@
           </div>
         </div>
 
-        <!-- Sessions under this repo -->
-        {#each repoSessions as session (session.id)}
-          <button
-            onclick={() => focusSession(session.id)}
-            class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
-              {store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-          >
-            <div class="flex items-center gap-2 min-w-0">
-              {#if destroying === session.id}
-                <span class="w-2 h-2 border border-muted-foreground border-t-transparent rounded-full animate-spin shrink-0"></span>
-              {:else}
-                <span class="w-2 h-2 {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
+        <!-- Sessions under this repo (top-level only) -->
+        {#each store.topLevelSessionsForRepo(repo) as session (session.id)}
+          {@const children = store.childSessions(session.id)}
+          {@const orchJob = session.orchJobId ? orchStore.jobs.find(j => j.id === session.orchJobId) : null}
+          {#if renamingSessionId === session.id}
+            <div class="pl-4 pr-2 py-1 flex flex-col gap-1">
+              <input
+                type="text"
+                bind:value={renameValue}
+                onkeydown={handleRenameKeydown}
+                onblur={cancelRename}
+                class="w-full text-sm bg-card border border-primary px-1.5 py-0.5 text-foreground focus:outline-none"
+                autofocus
+              />
+              {#if renameError}
+                <span class="text-[10px] text-destructive">{renameError}</span>
               {/if}
-              {#if session.direct}
-                <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
-              {:else}
-                <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
-              {/if}
-              <span class="text-sm truncate">{session.branch}</span>
             </div>
-            <span
-              role="button"
-              tabindex="-1"
-              onclick={(e) => { e.stopPropagation(); requestDestroy(session.id); }}
-              onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') requestDestroy(session.id); }}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer transition-colors shrink-0"
+          {:else}
+            <button
+              onclick={() => focusSession(session.id)}
+              ondblclick={() => { if (!session.direct && !session.orchJobId) startRename(session.id, session.branch); }}
+              class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
+                {store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-            </span>
-          </button>
+              <div class="flex items-center gap-2 min-w-0">
+                {#if destroying === session.id}
+                  <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
+                {:else}
+                  <span class="w-2 h-2 {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
+                {/if}
+                {#if orchJob}
+                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="m4.2 4.2 2.8 2.8"/><path d="m17 17 2.8 2.8"/><path d="m4.2 19.8 2.8-2.8"/><path d="m17 7 2.8-2.8"/></svg>
+                {:else if session.direct}
+                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
+                {:else}
+                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree — double-click to rename"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
+                {/if}
+                <span class="text-sm truncate">{session.branch}</span>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                {#if orchJob && orchJob.tasks.length > 0}
+                  <span class="text-[10px] text-muted-foreground">{orchJob.tasks.filter(t => t.status === 'completed').length}/{orchJob.tasks.length}</span>
+                {/if}
+                <span
+                  role="button"
+                  tabindex="-1"
+                  onclick={(e) => { e.stopPropagation(); orchJob ? (confirmRemoveOrch = orchJob.id) : requestDestroy(session.id); }}
+                  onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') orchJob ? (confirmRemoveOrch = orchJob.id) : requestDestroy(session.id); }}
+                  class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer transition-colors shrink-0"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </span>
+              </div>
+            </button>
+          {/if}
+
+          <!-- Nested child sessions (orch subtasks) -->
+          {#each children as child (child.id)}
+            <button
+              onclick={() => focusSession(child.id)}
+              class="w-full flex items-center justify-between pl-8 pr-2 py-1 text-left group/child transition-colors
+                {store.activeSessionId === child.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+            >
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="w-1.5 h-1.5 {statusColor[child.status] || 'bg-neutral-500'} {child.status === 'running' && messageStore.getIsRunning(child.id) ? 'animate-pulse' : ''} shrink-0"></span>
+                <svg class="w-3 h-3 shrink-0 text-muted-foreground/60" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
+                <span class="text-xs truncate text-muted-foreground">{child.branch}</span>
+              </div>
+              <span
+                role="button"
+                tabindex="-1"
+                onclick={(e) => { e.stopPropagation(); requestDestroy(child.id); }}
+                onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') requestDestroy(child.id); }}
+                class="w-4 h-4 flex items-center justify-center text-muted-foreground/30 hover:text-destructive opacity-0 group-hover/child:opacity-100 cursor-pointer transition-colors shrink-0"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </span>
+            </button>
+          {/each}
         {/each}
 
-        {#if repoSessions.length === 0 && orchStore.jobsForRepo(repo).length === 0}
+        {#if store.topLevelSessionsForRepo(repo).length === 0}
           <p class="text-xs text-muted-foreground/50 pl-4 py-1">No agents</p>
         {/if}
-
-        <!-- Orchestration jobs under this repo -->
-        {#each orchStore.jobsForRepo(repo) as orchJob (orchJob.id)}
-          {@const isActiveOrch = orchStore.activeJobId === orchJob.id}
-          {@const orchCompleted = orchJob.tasks.filter(t => t.status === 'completed').length}
-          {@const orchTotal = orchJob.tasks.length}
-          {@const orchRunning = orchJob.status === 'running' || orchJob.status === 'spawning'}
-          <button
-            onclick={() => { orchStore.activeJobId = orchJob.id; store.activeSessionId = null; }}
-            class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/orch transition-colors
-              {isActiveOrch ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-          >
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="w-2 h-2 shrink-0 {orchJob.status === 'completed' ? 'bg-green-500' : orchJob.status === 'failed' || orchJob.status === 'partial_failure' ? 'bg-red-500' : orchRunning ? 'bg-primary animate-pulse' : orchJob.status === 'planning' || orchJob.status === 'planned' ? 'bg-blue-500' : 'bg-neutral-500'}"></span>
-              <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="m4.2 4.2 2.8 2.8"/><path d="m17 17 2.8 2.8"/><path d="m4.2 19.8 2.8-2.8"/><path d="m17 7 2.8-2.8"/></svg>
-              <span class="text-sm truncate">{orchJob.goal.slice(0, 30)}{orchJob.goal.length > 30 ? '...' : ''}</span>
-            </div>
-            <span class="text-xs text-muted-foreground shrink-0">{orchCompleted}/{orchTotal}</span>
-          </button>
-        {/each}
       </div>
     {/each}
 
@@ -175,23 +245,40 @@
   <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
     <AddRepoButton />
     <div class="flex gap-2">
-      <Button
-        onclick={() => openNewAgent()}
-        disabled={!store.canCreate}
-        class="flex-1"
-        size="sm"
-      >
-        + Agent
-      </Button>
-      <Button
-        onclick={() => { orchDefaultRepo = store.repos[0] || ''; showOrchestrate = true; }}
-        disabled={!store.canCreate}
-        variant="secondary"
-        class="flex-1"
-        size="sm"
-      >
-        Orchestrate
-      </Button>
+      <div class="flex flex-1 relative">
+        <Button
+          onclick={() => openNewAgent()}
+          disabled={!store.canCreate}
+          class="flex-1 rounded-r-none border-r-0"
+          size="sm"
+        >
+          + Agent
+        </Button>
+        <Button
+          onclick={() => showCreateDropdown = !showCreateDropdown}
+          disabled={!store.canCreate}
+          class="rounded-l-none px-1.5 border-l border-l-primary-foreground/20"
+          size="sm"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" fill="currentColor" viewBox="0 0 16 16"><path d="M3 5h10L8 11z"/></svg>
+        </Button>
+        {#if showCreateDropdown}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="fixed inset-0 z-40"
+            onclick={() => showCreateDropdown = false}
+            onkeydown={(e) => e.key === 'Escape' && (showCreateDropdown = false)}
+          ></div>
+          <div class="absolute bottom-full left-0 mb-1 w-full bg-popover border border-border rounded-md shadow-lg z-50 py-1">
+            <button
+              class="w-full text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+              onclick={() => { orchDefaultRepo = store.repos[0] || ''; showOrchestrate = true; showCreateDropdown = false; }}
+            >
+              Orchestrate
+            </button>
+          </div>
+        {/if}
+      </div>
       <Button
         onclick={() => showPlugins = true}
         variant="ghost"
@@ -245,6 +332,57 @@
         </Button>
         <Button variant="destructive" onclick={confirmDestroy}>
           Destroy
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Remove orchestration confirmation dialog -->
+{#if confirmRemoveOrch}
+  {@const orchJobToRemove = orchStore.jobs.find(j => j.id === confirmRemoveOrch)}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmRemoveOrch = null; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Remove Orchestration?</Dialog.Title>
+        <Dialog.Description>
+          This will remove the orchestration job
+          {#if orchJobToRemove}
+            "<span class="text-foreground font-medium">{orchJobToRemove.goal.slice(0, 50)}</span>"
+          {/if}
+          and destroy all its agent sessions and worktrees.
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmRemoveOrch = null}>
+          Cancel
+        </Button>
+        <Button
+          variant="destructive"
+          disabled={removingOrch === confirmRemoveOrch}
+          onclick={async () => {
+            const id = confirmRemoveOrch;
+            if (!id) return;
+            removingOrch = id;
+            try {
+              await window.groveBench.removeOrchJob(id);
+              // Remove the orchestrator session and its children
+              const orchSession = store.sessions.find(s => s.orchJobId === id);
+              if (orchSession) {
+                // Remove child sessions
+                const children = store.childSessions(orchSession.id);
+                for (const child of children) {
+                  store.removeSession(child.id);
+                }
+                store.removeSession(orchSession.id);
+              }
+              orchStore.removeJob(id);
+            } catch { /* best effort */ }
+            removingOrch = null;
+            confirmRemoveOrch = null;
+          }}
+        >
+          {removingOrch === confirmRemoveOrch ? 'Removing...' : 'Remove'}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>

@@ -52,3 +52,41 @@ export async function validateBranchName(name: string): Promise<boolean> {
     return false;
   }
 }
+
+export async function mergeNoCommit(cwd: string, branch: string): Promise<{ success: boolean; conflicts?: string[] }> {
+  try {
+    await git(['merge', '--no-commit', '--no-ff', branch], cwd);
+    await git(['commit', '-m', `Merge ${branch}`], cwd);
+    return { success: true };
+  } catch {
+    // Check for conflict markers
+    try {
+      const status = await git(['status', '--porcelain'], cwd);
+      const conflicts = status.split('\n')
+        .filter(l => /^(UU|AA|DD|DU|UD|AU|UA)\s/.test(l))
+        .map(l => l.slice(3).trim());
+      return { success: false, conflicts };
+    } catch {
+      return { success: false, conflicts: [] };
+    }
+  }
+}
+
+export async function abortMerge(cwd: string): Promise<void> {
+  try {
+    await git(['merge', '--abort'], cwd);
+  } catch { /* no merge in progress */ }
+}
+
+export async function branchHasRemote(cwd: string, branch: string): Promise<boolean> {
+  try {
+    const output = await git(['branch', '-r', '--list', `*/${branch}`], cwd);
+    return output.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<void> {
+  await git(['branch', '-m', oldName, newName], cwd);
+}

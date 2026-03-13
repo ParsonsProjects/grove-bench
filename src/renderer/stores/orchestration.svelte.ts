@@ -1,4 +1,5 @@
-import type { OrchJob, OrchEvent, OrchTaskStatus, OrchJobStatus } from '../../shared/types.js';
+import type { OrchJob, OrchEvent, OrchTaskStatus, OrchJobStatus, OrchOverlapWarning } from '../../shared/types.js';
+import { store } from './sessions.svelte.js';
 
 class OrchestrationStore {
   jobs = $state<OrchJob[]>([]);
@@ -66,7 +67,60 @@ class OrchestrationStore {
         this.updateJob(event.jobId, { status: event.status });
         break;
       }
+      case 'orch_task_session': {
+        if (!store.sessions.find((s) => s.id === event.sessionId)) {
+          store.addSession({
+            id: event.sessionId,
+            branch: event.branch,
+            repoPath: event.repoPath,
+            status: 'running',
+            parentSessionId: event.parentSessionId,
+          }, false);
+        }
+        break;
+      }
+      case 'orch_overlap_warning': {
+        this.updateJob(event.jobId, { overlapWarnings: event.warnings });
+        break;
+      }
+      case 'orch_merge_start': {
+        this.updateJob(event.jobId, { status: 'merging' });
+        break;
+      }
+      case 'orch_merge_task': {
+        // Update task's merge status
+        this.jobs = this.jobs.map((j) => {
+          if (j.id !== event.jobId) return j;
+          return {
+            ...j,
+            tasks: j.tasks.map((t) =>
+              t.id === event.taskId
+                ? { ...t, mergeStatus: event.status, mergeError: event.error ?? null }
+                : t
+            ),
+            mergeResults: [...j.mergeResults, { taskId: event.taskId, status: event.status, error: event.error }],
+          };
+        });
+        break;
+      }
+      case 'orch_merge_complete': {
+        // Job status will be updated by the orch_job_status event
+        break;
+      }
+      case 'orch_task_timeout': {
+        this.updateTaskStatus(event.jobId, event.taskId, 'failed', 'Task timed out');
+        break;
+      }
+      case 'orch_circuit_breaker': {
+        // Tasks will be individually cancelled via orch_task_status events
+        break;
+      }
     }
+  }
+
+  /** Find the orch job associated with a session (if any). */
+  jobForSession(sessionId: string): OrchJob | undefined {
+    return this.jobs.find((j) => j.planSessionId === sessionId);
   }
 
   subscribe(jobId: string) {
@@ -93,7 +147,7 @@ class OrchestrationStore {
         if (!this.jobs.find((j) => j.id === job.id)) {
           this.jobs = [...this.jobs, job];
           // Subscribe to events for any still-active jobs
-          if (job.status === 'running' || job.status === 'spawning') {
+          if (job.status === 'running' || job.status === 'spawning' || job.status === 'merging') {
             this.subscribe(job.id);
           }
         }

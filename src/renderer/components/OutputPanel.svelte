@@ -5,6 +5,7 @@
   import AssistantTextBlock from './AssistantTextBlock.svelte';
   import ToolCallBlock from './ToolCallBlock.svelte';
   import PermissionBlock from './PermissionBlock.svelte';
+  import QuestionBlock from './QuestionBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -17,6 +18,8 @@
 
   let messages = $derived(messageStore.getMessages(sessionId));
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  let activity = $derived(messageStore.getActivity(sessionId));
 
   // Message search state
   let searchOpen = $state(false);
@@ -59,6 +62,19 @@
     window.removeEventListener('keydown', handleSearchKeydown);
   });
 
+  // Re-enable auto-scroll when the user sends a message
+  let prevMsgCount = $state(0);
+  $effect(() => {
+    const len = messages.length;
+    if (len > prevMsgCount) {
+      const last = messages[len - 1];
+      if (last?.kind === 'user') {
+        shouldAutoScroll = true;
+      }
+    }
+    prevMsgCount = len;
+  });
+
   $effect(() => {
     const _len = messages.length;
     const _st = streamingText;
@@ -76,14 +92,22 @@
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
   }
+
+  function scrollToBottom() {
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      shouldAutoScroll = true;
+    }
+  }
 </script>
 
 {#if searchOpen}
   <MessageSearchBar {sessionId} onclose={closeSearch} onmatchchange={handleSearchMatch} />
 {/if}
 
+<div class="flex-1 relative overflow-hidden">
 <div
-  class="pixel-bg flex-1 overflow-y-auto px-4 py-3 relative"
+  class="pixel-bg h-full overflow-y-auto px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
 >
@@ -143,6 +167,18 @@
           toolInput={msg.toolInput}
           resolved={msg.resolved}
           decision={msg.decision}
+          decisionReason={msg.decisionReason}
+          suggestions={msg.suggestions}
+        />
+
+      {:else if msg.kind === 'question'}
+        <QuestionBlock
+          {sessionId}
+          requestId={msg.requestId}
+          questions={msg.questions}
+          resolved={msg.resolved}
+          response={msg.response}
+          selectedLabels={msg.selectedLabels}
         />
 
       {:else if msg.kind === 'thinking'}
@@ -179,7 +215,33 @@
       <MarkdownBlock content={streamingText} />
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
+  {:else if isRunning}
+    <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <span class="inline-block w-2.5 h-2.5 bg-primary animate-pulse"></span>
+      {#if activity.activity === 'thinking'}
+        <span class="text-purple-400">Thinking...</span>
+      {:else if activity.activity === 'tool_starting'}
+        <span class="text-yellow-400">
+          Running {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0} ({Math.round(activity.elapsedSeconds)}s){/if}
+        </span>
+      {:else if activity.activity === 'generating'}
+        <span class="text-primary">Writing...</span>
+      {:else}
+        <span>Working...</span>
+      {/if}
+    </div>
   {/if}
 
   <div class="h-1"></div>
+</div>
+
+{#if !shouldAutoScroll}
+  <button
+    onclick={scrollToBottom}
+    class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 px-2 py-1 text-xs bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shadow-md"
+    title="Scroll to bottom"
+  >
+    &darr; Bottom
+  </button>
+{/if}
 </div>

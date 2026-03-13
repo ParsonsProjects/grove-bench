@@ -24,6 +24,8 @@ const api: GroveBenchAPI = {
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
+  renameBranch: (sessionId: string, newBranchName: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
 
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
@@ -52,6 +54,10 @@ const api: GroveBenchAPI = {
   // Model control
   setModel: (sessionId: string, model?: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
+
+  // Thinking control
+  setThinking: (sessionId: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, enabled),
 
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
@@ -102,10 +108,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.ORCH_APPROVE, jobId, editedTasks),
   cancelOrchJob: (jobId: string) =>
     ipcRenderer.invoke(IPC.ORCH_CANCEL, jobId),
+  removeOrchJob: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_REMOVE, jobId),
   listOrchJobs: () =>
     ipcRenderer.invoke(IPC.ORCH_LIST),
   retryOrchTask: (jobId: string, taskId: string) =>
     ipcRenderer.invoke(IPC.ORCH_RETRY_TASK, jobId, taskId),
+  mergeOrchJob: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_MERGE, jobId),
+  resolveOrchConflict: (jobId: string, taskId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_RESOLVE_CONFLICT, jobId, taskId),
   onOrchEvent: (jobId: string, callback: (event: import('../shared/types.js').OrchEvent) => void) => {
     const channel = `${IPC.ORCH_EVENT}:${jobId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').OrchEvent) =>

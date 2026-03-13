@@ -22,10 +22,18 @@
   let branchSearch = $state('');
   let branchDropdownOpen = $state(false);
   let branchDropdownEl: HTMLDivElement | undefined = $state();
+  let baseDropdownOpen = $state(false);
+  let baseDropdownEl: HTMLDivElement | undefined = $state();
+  let baseSearch = $state('');
+  let baseBranches = $state<string[]>([]);
+  let loadingBaseBranches = $state(false);
 
   function handleWindowClick(e: MouseEvent) {
     if (branchDropdownOpen && branchDropdownEl && !branchDropdownEl.contains(e.target as Node)) {
       branchDropdownOpen = false;
+    }
+    if (baseDropdownOpen && baseDropdownEl && !baseDropdownEl.contains(e.target as Node)) {
+      baseDropdownOpen = false;
     }
   }
 
@@ -49,6 +57,12 @@
     return avail.filter((b) => b.toLowerCase().includes(q));
   });
 
+  let filteredBaseBranches = $derived.by(() => {
+    const q = (baseSearch || baseBranch).toLowerCase().trim();
+    if (!q) return baseBranches;
+    return baseBranches.filter((b) => b.toLowerCase().includes(q));
+  });
+
   async function fetchBranches() {
     if (!selectedRepo) return;
     loadingBranches = true;
@@ -67,9 +81,24 @@
     }
   }
 
+  async function fetchBaseBranches() {
+    if (!selectedRepo) return;
+    loadingBaseBranches = true;
+    try {
+      baseBranches = await window.groveBench.listBranches(selectedRepo);
+    } catch {
+      baseBranches = [];
+    } finally {
+      loadingBaseBranches = false;
+    }
+  }
+
   $effect(() => {
     if (mode === 'existing' && selectedRepo) {
       fetchBranches();
+    }
+    if (mode === 'new' && selectedRepo) {
+      fetchBaseBranches();
     }
   });
 
@@ -194,12 +223,57 @@
 
         <div>
           <Label for="base" class="mb-1 block">Base Branch (optional)</Label>
-          <Input
-            id="base"
-            type="text"
-            bind:value={baseBranch}
-            placeholder="defaults to current HEAD"
-          />
+          {#if loadingBaseBranches}
+            <div class="w-full bg-secondary text-muted-foreground px-3 py-2 text-sm border border-input">
+              Loading branches...
+            </div>
+          {:else}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="relative" bind:this={baseDropdownEl} onkeydown={(e) => {
+              if (e.key === 'Escape') { baseDropdownOpen = false; }
+            }}>
+              <div class="flex items-center bg-background border border-input">
+                <input
+                  type="text"
+                  class="flex-1 bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none"
+                  placeholder="branch, tag, or commit hash"
+                  bind:value={baseBranch}
+                  onfocus={() => { baseDropdownOpen = true; baseSearch = ''; }}
+                  oninput={() => { baseSearch = baseBranch; baseDropdownOpen = true; }}
+                />
+                <button
+                  type="button"
+                  class="px-2 py-2 text-muted-foreground hover:text-foreground shrink-0"
+                  onclick={() => { baseDropdownOpen = !baseDropdownOpen; baseSearch = ''; }}
+                >
+                  <svg class="h-4 w-4 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+              </div>
+              {#if baseDropdownOpen && baseBranches.length > 0}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md overflow-hidden">
+                  <div class="max-h-48 overflow-y-auto p-1">
+                    {#each filteredBaseBranches as branch}
+                      <button
+                        type="button"
+                        class="w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent transition-colors flex items-center gap-2 {branch === baseBranch ? 'bg-accent' : ''}"
+                        onclick={() => { baseBranch = branch; baseDropdownOpen = false; baseSearch = ''; }}
+                      >
+                        {#if branch === baseBranch}
+                          <svg class="h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                        {:else}
+                          <span class="w-4 shrink-0"></span>
+                        {/if}
+                        <span class="truncate">{branch}</span>
+                      </button>
+                    {:else}
+                      <div class="px-2 py-4 text-sm text-muted-foreground text-center">No branches match</div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
       {:else}
         <div>
