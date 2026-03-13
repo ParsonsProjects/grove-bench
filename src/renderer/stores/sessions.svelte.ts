@@ -1,4 +1,4 @@
-import type { SessionInfo, PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
+import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
 
 const REPOS_KEY = 'grove-bench:repos';
 
@@ -16,15 +16,16 @@ interface SessionEntry {
   branch: string;
   repoPath: string;
   status: SessionStatus;
+  direct?: boolean;
 }
 
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>(loadRepos());
   activeSessionId = $state<string | null>(null);
-  prerequisites = $state<PrerequisiteStatus | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
+  prerequisites = $state<PrerequisiteStatus | null>(null);
 
   get count() {
     return this.sessions.length;
@@ -74,8 +75,21 @@ class SessionStore {
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
     if (this.activeSessionId === id) {
-      this.activeSessionId = this.sessions[0]?.id ?? null;
+      // Prefer a running session, fall back to any session
+      const next = this.sessions.find((s) => s.status === 'running')
+        ?? this.sessions[0];
+      this.activeSessionId = next?.id ?? null;
     }
+  }
+
+  reorderSession(fromId: string, toId: string) {
+    const sessions = [...this.sessions];
+    const fromIdx = sessions.findIndex((s) => s.id === fromId);
+    const toIdx = sessions.findIndex((s) => s.id === toId);
+    if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+    const [moved] = sessions.splice(fromIdx, 1);
+    sessions.splice(toIdx, 0, moved);
+    this.sessions = sessions;
   }
 
   updateStatus(id: string, status: SessionStatus) {

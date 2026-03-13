@@ -14,6 +14,8 @@ interface ManifestEntry {
   repoPath: string;
   branch: string;
   createdAt: number;
+  claudeSessionId?: string;
+  direct?: boolean;
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -110,6 +112,51 @@ export class WorktreeManager {
     return info;
   }
 
+  /**
+   * Register a "direct" session — runs on the repo checkout, no worktree created.
+   * Still tracked in the manifest for session ID persistence.
+   */
+  async registerDirect(repoPath: string, branch: string): Promise<WorktreeInfo> {
+    const id = crypto.randomUUID().slice(0, 8);
+
+    const info: WorktreeInfo = {
+      id,
+      path: repoPath,
+      branch,
+      repoPath,
+      createdAt: Date.now(),
+      direct: true,
+    };
+
+    this.worktrees.set(id, info);
+
+    await this.withManifest((manifest) => {
+      manifest[id] = {
+        repoPath,
+        branch,
+        createdAt: info.createdAt,
+        direct: true,
+      };
+    });
+
+    return info;
+  }
+
+  /** Persist the Claude SDK session ID so it can be resumed after restart. */
+  async saveClaudeSessionId(worktreeId: string, claudeSessionId: string): Promise<void> {
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].claudeSessionId = claudeSessionId;
+      }
+    });
+  }
+
+  /** Retrieve the last Claude SDK session ID for a worktree. */
+  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
+    const manifest = await this.loadManifest();
+    return manifest[worktreeId]?.claudeSessionId;
+  }
+
   async remove(id: string, deleteBranch = false): Promise<void> {
     let info = this.worktrees.get(id);
 
@@ -121,33 +168,36 @@ export class WorktreeManager {
       const hash = this.repoHash(entry.repoPath);
       info = {
         id,
-        path: path.join(this.getWorktreeRoot(), hash, id),
+        path: entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id),
         branch: entry.branch,
         repoPath: entry.repoPath,
         createdAt: entry.createdAt,
+        direct: entry.direct,
       };
     }
 
     const { path: wtPath, repoPath, branch } = info;
 
-    // Retry chain for Windows file locking
-    try {
-      await git(['worktree', 'remove', wtPath], repoPath);
-    } catch {
+    if (!info.direct) {
+      // Retry chain for Windows file locking
       try {
-        await git(['worktree', 'remove', '--force', wtPath], repoPath);
+        await git(['worktree', 'remove', wtPath], repoPath);
       } catch {
         try {
-          await fs.rm(wtPath, { recursive: true, force: true });
-          await git(['worktree', 'prune'], repoPath);
-        } catch (e) {
-          console.warn(`Failed to clean up worktree ${id}:`, e);
+          await git(['worktree', 'remove', '--force', wtPath], repoPath);
+        } catch {
+          try {
+            await fs.rm(wtPath, { recursive: true, force: true });
+            await git(['worktree', 'prune'], repoPath);
+          } catch (e) {
+            console.warn(`Failed to clean up worktree ${id}:`, e);
+          }
         }
       }
     }
 
-    // Optionally delete branch
-    if (deleteBranch) {
+    // Optionally delete branch (skip for direct sessions — it's the checked-out branch)
+    if (deleteBranch && !info.direct) {
       try {
         await git(['branch', '-d', branch], repoPath);
       } catch {
@@ -166,16 +216,18 @@ export class WorktreeManager {
       delete manifest[id];
     });
 
-    // Clean up empty repoHash directory
-    const hash = this.repoHash(repoPath);
-    const repoDir = path.join(this.getWorktreeRoot(), hash);
-    try {
-      const entries = await fs.readdir(repoDir);
-      const remaining = entries.filter((e) => e !== CONFIG_FILE);
-      if (remaining.length === 0) {
-        await fs.rm(repoDir, { recursive: true, force: true });
-      }
-    } catch { /* directory may not exist */ }
+    // Clean up empty repoHash directory (skip for direct — no worktree dir was created)
+    if (!info.direct) {
+      const hash = this.repoHash(repoPath);
+      const repoDir = path.join(this.getWorktreeRoot(), hash);
+      try {
+        const entries = await fs.readdir(repoDir);
+        const remaining = entries.filter((e) => e !== CONFIG_FILE);
+        if (remaining.length === 0) {
+          await fs.rm(repoDir, { recursive: true, force: true });
+        }
+      } catch { /* directory may not exist */ }
+    }
   }
 
   async list(repoPath: string): Promise<WorktreeInfo[]> {
@@ -201,6 +253,19 @@ export class WorktreeManager {
       // Return manifest entries for this repo that git still knows about
       for (const [id, entry] of Object.entries(manifest)) {
         if (entry.repoPath !== repoPath) continue;
+
+        // Direct sessions don't have a worktree on disk
+        if (entry.direct) {
+          entries.push({
+            id,
+            path: repoPath,
+            branch: entry.branch,
+            repoPath,
+            createdAt: entry.createdAt,
+            direct: true,
+          });
+          continue;
+        }
 
         const wtPath = path.join(this.getWorktreeRoot(), hash, id);
         const block = gitWorktrees.get(path.resolve(wtPath));
@@ -300,6 +365,7 @@ export class WorktreeManager {
 
       for (const [id, entry] of Object.entries(manifest)) {
         if (entry.repoPath !== repoPath) continue;
+        if (entry.direct) continue; // Direct sessions have no worktree to clean up
 
         const wtPath = path.join(this.getWorktreeRoot(), hash, id);
 
@@ -349,6 +415,113 @@ export class WorktreeManager {
   }
 
   /**
+   * Background sweep: scan the entire worktrees directory for stale entries.
+   * Cleans up:
+   *  1. Manifest entries whose worktree dir no longer exists or git doesn't know about
+   *  2. Directories on disk that aren't in the manifest (leftover from crashes)
+   *  3. Empty repo-hash directories
+   * Skips any worktree that has an active in-memory session.
+   */
+  async sweepStaleWorktrees(): Promise<number> {
+    let totalCleaned = 0;
+    const root = this.getWorktreeRoot();
+
+    // Ensure root exists
+    try {
+      await fs.access(root);
+    } catch {
+      return 0;
+    }
+
+    const manifest = await this.loadManifest();
+
+    // Collect unique repo paths from manifest (non-direct entries only)
+    const repoPaths = new Set<string>();
+    for (const entry of Object.values(manifest)) {
+      if (!entry.direct) {
+        repoPaths.add(entry.repoPath);
+      }
+    }
+
+    // Phase 1: run per-repo orphan cleanup for every known repo
+    for (const repoPath of repoPaths) {
+      try {
+        const cleaned = await this.cleanupOrphans(repoPath);
+        totalCleaned += cleaned;
+      } catch (e) {
+        logger.warn(`Sweep: failed to clean orphans for ${repoPath}:`, e);
+      }
+    }
+
+    // Phase 2: scan for directories on disk that aren't tracked in the manifest at all
+    const activeIds = new Set(this.worktrees.keys());
+    const freshManifest = await this.loadManifest(); // re-read after phase 1 mutations
+
+    try {
+      const hashDirs = await fs.readdir(root);
+      for (const hashDir of hashDirs) {
+        if (hashDir === MANIFEST_FILE) continue;
+        const hashDirPath = path.join(root, hashDir);
+        const stat = await fs.stat(hashDirPath).catch(() => null);
+        if (!stat?.isDirectory()) continue;
+
+        const entries = await fs.readdir(hashDirPath);
+        for (const entry of entries) {
+          if (entry === CONFIG_FILE) continue;
+          const entryPath = path.join(hashDirPath, entry);
+          const entryStat = await fs.stat(entryPath).catch(() => null);
+          if (!entryStat?.isDirectory()) continue;
+
+          // If this directory ID is not in the manifest and not an active session, remove it
+          if (!freshManifest[entry] && !activeIds.has(entry)) {
+            logger.warn(`Sweep: removing untracked worktree directory: ${entryPath}`);
+            try {
+              await fs.rm(entryPath, { recursive: true, force: true });
+              totalCleaned++;
+            } catch (e) {
+              logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);
+            }
+          }
+        }
+
+        // Clean up empty hash directory
+        try {
+          const remaining = (await fs.readdir(hashDirPath)).filter((e) => e !== CONFIG_FILE);
+          if (remaining.length === 0) {
+            await fs.rm(hashDirPath, { recursive: true, force: true });
+          }
+        } catch { /* ignore */ }
+      }
+    } catch (e) {
+      logger.warn('Sweep: failed to scan worktree root:', e);
+    }
+
+    // Phase 3: clean stale direct entries whose repos no longer exist
+    await this.withManifest(async (m) => {
+      for (const [id, entry] of Object.entries(m)) {
+        if (!entry.direct) continue;
+        if (activeIds.has(id)) continue;
+        try {
+          const valid = await isGitRepo(entry.repoPath);
+          if (!valid) {
+            logger.info(`Sweep: removing stale direct entry ${id} (repo gone: ${entry.repoPath})`);
+            delete m[id];
+            totalCleaned++;
+          }
+        } catch {
+          // Can't verify — leave it alone
+        }
+      }
+    });
+
+    if (totalCleaned > 0) {
+      logger.info(`Sweep: cleaned ${totalCleaned} stale worktree(s)`);
+    }
+
+    return totalCleaned;
+  }
+
+  /**
    * Load or initialize per-repo config for auto-copy file lists.
    */
   async getRepoConfig(repoPath: string): Promise<WorktreeRepoConfig> {
@@ -366,7 +539,7 @@ export class WorktreeManager {
           copyFiles.push(pattern);
         } catch { /* doesn't exist */ }
       }
-      const config: WorktreeRepoConfig = { copyFiles, copyDirs: [] };
+      const config: WorktreeRepoConfig = { copyFiles };
       await this.saveRepoConfig(repoPath, config);
       return config;
     }

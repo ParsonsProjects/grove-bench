@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   async function addRepo() {
     const selected = await window.groveBench.addRepo();
@@ -10,9 +11,11 @@
   }
 </script>
 
-<button
+<Button
+  variant="outline"
+  size="sm"
+  class="w-full text-muted-foreground"
   onclick={addRepo}
-  class="w-full px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 rounded text-sm transition-colors border border-neutral-800 text-neutral-400"
 >
   + Add Repository
-</button>
+</Button>

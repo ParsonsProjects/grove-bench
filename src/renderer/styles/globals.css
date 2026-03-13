@@ -1,2 +1,213 @@
 @import "tailwindcss";
-@import "@xterm/xterm/css/xterm.css";
+
+@import "tw-animate-css";
+
+@import "highlight.js/styles/github-dark.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  VS Code "Dark Modern" theme.
+  Colors derived from the VS Code Dark Modern color palette.
+*/
+:root {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+
+  /* Square design: no border-radius */
+  --radius: 0rem;
+
+  /* Editor background: #1f1f1f */
+  --background: oklch(0.208 0 0);
+  --foreground: oklch(0.835 0 0);        /* #cccccc */
+
+  /* Card/panel: #252526 */
+  --card: oklch(0.233 0 0);
+  --card-foreground: oklch(0.835 0 0);
+  --popover: oklch(0.233 0 0);
+  --popover-foreground: oklch(0.835 0 0);
+
+  /* Primary: #0078d4 (VS Code blue) */
+  --primary: oklch(0.541 0.181 254.624);
+  --primary-foreground: oklch(1 0 0);
+
+  /* Secondary: #313131 (input/dropdown bg) */
+  --secondary: oklch(0.279 0 0);
+  --secondary-foreground: oklch(0.835 0 0);
+
+  /* Muted: #313131 bg / #858585 text */
+  --muted: oklch(0.279 0 0);
+  --muted-foreground: oklch(0.576 0 0);
+
+  /* Accent: #04395e (selection highlight) */
+  --accent: oklch(0.310 0.065 245);
+  --accent-foreground: oklch(0.835 0 0);
+
+  /* Destructive: #f14c4c (error red) */
+  --destructive: oklch(0.608 0.220 22);
+
+  /* Borders: #2b2b2b (subtle), input uses #3c3c3c */
+  --border: oklch(0.260 0 0);
+  --input: oklch(0.320 0 0);
+
+  /* Ring: #0078d4 */
+  --ring: oklch(0.541 0.181 254.624);
+
+  /* Chart colors from VS Code terminal palette */
+  --chart-1: oklch(0.541 0.181 254.624);  /* blue */
+  --chart-2: oklch(0.696 0.17 162.48);    /* green */
+  --chart-3: oklch(0.769 0.188 70.08);    /* yellow */
+  --chart-4: oklch(0.627 0.265 303.9);    /* purple */
+  --chart-5: oklch(0.608 0.220 22);       /* red */
+
+  /* Sidebar: #181818 (activity bar bg) */
+  --sidebar: oklch(0.176 0 0);
+  --sidebar-foreground: oklch(0.576 0 0);
+  --sidebar-primary: oklch(0.541 0.181 254.624);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.260 0 0);
+  --sidebar-accent-foreground: oklch(0.835 0 0);
+  --sidebar-border: oklch(0.233 0 0);
+  --sidebar-ring: oklch(0.576 0 0);
+}
+
+/* Keep .dark block for shadcn component compatibility (values same as :root) */
+.dark {
+  --background: oklch(0.208 0 0);
+  --foreground: oklch(0.835 0 0);
+  --card: oklch(0.233 0 0);
+  --card-foreground: oklch(0.835 0 0);
+  --popover: oklch(0.233 0 0);
+  --popover-foreground: oklch(0.835 0 0);
+  --primary: oklch(0.541 0.181 254.624);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.279 0 0);
+  --secondary-foreground: oklch(0.835 0 0);
+  --muted: oklch(0.279 0 0);
+  --muted-foreground: oklch(0.576 0 0);
+  --accent: oklch(0.310 0.065 245);
+  --accent-foreground: oklch(0.835 0 0);
+  --destructive: oklch(0.608 0.220 22);
+  --border: oklch(0.260 0 0);
+  --input: oklch(0.320 0 0);
+  --ring: oklch(0.541 0.181 254.624);
+  --chart-1: oklch(0.541 0.181 254.624);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.608 0.220 22);
+  --sidebar: oklch(0.176 0 0);
+  --sidebar-foreground: oklch(0.576 0 0);
+  --sidebar-primary: oklch(0.541 0.181 254.624);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.260 0 0);
+  --sidebar-accent-foreground: oklch(0.835 0 0);
+  --sidebar-border: oklch(0.233 0 0);
+  --sidebar-ring: oklch(0.576 0 0);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* Scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.320 0 0) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: oklch(0.320 0 0);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.400 0 0);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Pixel-textured empty state background */
+.pixel-bg {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6'%3E%3Crect width='4' height='4' fill='%23ffffff' opacity='0.006'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18'%3E%3Crect x='0' y='0' width='4' height='4' fill='%236888aa' opacity='0.005'/%3E%3Crect x='12' y='6' width='4' height='4' fill='%23ffffff' opacity='0.003'/%3E%3Crect x='6' y='12' width='4' height='4' fill='%236080a0' opacity='0.004'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='42' height='42'%3E%3Crect x='0' y='0' width='4' height='4' fill='%23ffffff' opacity='0.008'/%3E%3Crect x='24' y='12' width='4' height='4' fill='%235a7a9a' opacity='0.005'/%3E%3Crect x='12' y='30' width='4' height='4' fill='%23ffffff' opacity='0.003'/%3E%3Crect x='36' y='24' width='4' height='4' fill='%236888aa' opacity='0.004'/%3E%3C/svg%3E");
+}
+
+.blue-pixel {
+  background: #4a7aaa;
+  opacity: 0;
+  animation: pixel-glow 5s ease-in-out infinite;
+}
+
+@keyframes pixel-glow {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.12; }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  button,
+  [role="button"],
+  a,
+  select,
+  summary,
+  [data-slot="select-trigger"],
+  [data-slot="checkbox"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}

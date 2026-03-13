@@ -54,6 +54,10 @@ function formatMessage(level: string, msg: string, ...args: unknown[]): string {
 }
 
 export const logger = {
+  debug(msg: string, ...args: unknown[]) {
+    const line = formatMessage('DEBUG', msg, ...args);
+    ensureStream().write(line);
+  },
   info(msg: string, ...args: unknown[]) {
     const line = formatMessage('INFO', msg, ...args);
     ensureStream().write(line);

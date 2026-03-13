@@ -1,12 +1,37 @@
-import { createRequire } from 'node:module';
 import { BrowserWindow } from 'electron';
-import { detectShell } from './shell-detect.js';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
+import { logger } from './logger.js';
+import { worktreeManager } from './worktree-manager.js';
+import { killProcessOnPort } from './port-killer.js';
 
-// node-pty is a native module — must be required, not imported
-const require_ = createRequire(import.meta.url);
-const pty = require_('node-pty') as typeof import('node-pty');
+// The Agent SDK is ESM-only; Electron's main process is CJS.
+// Use Function constructor to create a dynamic import that Rollup/Vite
+// won't transform into require().
+const dynamicImport = new Function('specifier', 'return import(specifier)') as
+  (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
+
+let _query: typeof import('@anthropic-ai/claude-agent-sdk').query;
+async function getQuery() {
+  if (!_query) {
+    const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
+    _query = sdk.query;
+  }
+  return _query;
+}
+
+// Re-declare the types we need (type-only imports are erased at runtime)
+type Query = import('@anthropic-ai/claude-agent-sdk').Query;
+type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
+type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
+
+interface PendingPermission {
+  requestId: string;
+  toolName: string;
+  toolUseId: string;
+  toolInput: Record<string, unknown>;
+  resolve: (result: { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string }) => void;
+}
 
 interface ManagedSession {
   id: string;
@@ -16,20 +41,52 @@ interface ManagedSession {
   status: SessionStatus;
   agentType: 'claude-code';
   createdAt: number;
-  ptyProcess: import('node-pty').IPty;
-  dispose: () => void;
+  queryInstance: Query | null;
+  abortController: AbortController;
+  inputController: ReadableStreamDefaultController<SDKUserMessage> | null;
+  inputStream: ReadableStream<SDKUserMessage> | null;
+  pendingPermissions: Map<string, PendingPermission>;
+  /** Tools the user has chosen to always allow for this session */
+  alwaysAllowedTools: Set<string>;
+  claudeSessionId: string | null;
+  window: BrowserWindow;
+  /** Buffered events for replay after renderer reload */
+  eventHistory: AgentEvent[];
+  /** Ports where dev servers were detected — cleaned up on session destroy */
+  detectedPorts: Set<number>;
+  /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
+  toolUseMap: Map<string, string>;
+}
+
+/**
+ * Creates an AsyncIterable from a ReadableStream so we can pass
+ * it to query()'s prompt parameter for multi-turn conversations.
+ */
+function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]() {
+      const reader = stream.getReader();
+      return {
+        async next() {
+          const { done, value } = await reader.read();
+          if (done) return { done: true, value: undefined as any };
+          return { done: false, value };
+        },
+        async return() {
+          reader.releaseLock();
+          return { done: true, value: undefined as any };
+        },
+        async throw(e: unknown) {
+          reader.cancel(e instanceof Error ? e.message : String(e));
+          return { done: true, value: undefined as any };
+        },
+      };
+    },
+  };
 }
 
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
-  private shell: string | null = null;
-
-  private async getShell(): Promise<string> {
-    if (!this.shell) {
-      this.shell = await detectShell();
-    }
-    return this.shell;
-  }
 
   async createSession(opts: {
     id: string;
@@ -37,76 +94,72 @@ class AgentSessionManager {
     cwd: string;
     repoPath: string;
     window: BrowserWindow;
+    resumeClaudeSessionId?: string;
   }): Promise<SessionInfo> {
-    const shell = await this.getShell();
     const { id, branch, cwd, repoPath, window: win } = opts;
 
-    const ptyProcess = pty.spawn(shell, [], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 30,
-      cwd,
-      env: {
-        ...process.env,
-        CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
-      } as Record<string, string>,
+    const abortController = new AbortController();
+
+    // Create a stream for multi-turn input
+    let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
+    const inputStream = new ReadableStream<SDKUserMessage>({
+      start(controller) {
+        inputController = controller;
+      },
     });
-
-    // Batch PTY output at ~16ms intervals to avoid flooding IPC
-    let outputBuffer = '';
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const flush = () => {
-      if (outputBuffer && !win.isDestroyed()) {
-        win.webContents.send(`${IPC.TERM_DATA}:${id}`, outputBuffer);
-        outputBuffer = '';
-      }
-      flushTimer = null;
-    };
-
-    const dataDisposable = ptyProcess.onData((data: string) => {
-      outputBuffer += data;
-      if (!flushTimer) {
-        flushTimer = setTimeout(flush, 16);
-      }
-    });
-
-    const exitDisposable = ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-      const session = this.sessions.get(id);
-      if (session) {
-        session.status = 'stopped';
-      }
-      if (!win.isDestroyed()) {
-        win.webContents.send(
-          `${IPC.TERM_DATA}:${id}`,
-          `\r\n\x1b[31m[Process exited with code ${exitCode}]\x1b[0m\r\n`
-        );
-        win.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-      }
-    });
-
-    const dispose = () => {
-      if (flushTimer) {
-        clearTimeout(flushTimer);
-        flush();
-      }
-      dataDisposable.dispose();
-      exitDisposable.dispose();
-    };
 
     const session: ManagedSession = {
       id,
       branch,
       worktreePath: cwd,
       repoPath,
-      status: 'running',
+      status: 'starting',
       agentType: 'claude-code',
       createdAt: Date.now(),
-      ptyProcess,
-      dispose,
+      queryInstance: null,
+      abortController,
+      inputController,
+      inputStream,
+      pendingPermissions: new Map(),
+      alwaysAllowedTools: new Set(),
+      claudeSessionId: opts.resumeClaudeSessionId || null,
+      window: win,
+      eventHistory: [],
+      detectedPorts: new Set(),
+      toolUseMap: new Map(),
     };
 
     this.sessions.set(id, session);
+
+    // Emit helper — always reads session.window so it picks up re-attached windows.
+    // Also buffers every event so they can be replayed after renderer reload.
+    const emit = (event: AgentEvent) => {
+      logger.debug(`[emit] session=${id} event.type=${event.type}`);
+      session.eventHistory.push(event);
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        const channel = `${IPC.AGENT_EVENT}:${id}`;
+        logger.debug(`[emit] sending on channel=${channel}`);
+        w.webContents.send(channel, event);
+      } else {
+        logger.debug(`[emit] window is destroyed, dropping event`);
+      }
+    };
+
+    // Start the agent query in the background
+    this.runQuery(session, emit).catch((err) => {
+      console.error(`[runQuery] session=${id} FAILED:`, err);
+      const errMsg = String(err.message || err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      emit({ type: 'error', message: isAuthError
+        ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+        : errMsg });
+      session.status = 'error';
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        w.webContents.send(IPC.SESSION_STATUS, id, 'error');
+      }
+    });
 
     return {
       id: session.id,
@@ -119,17 +172,378 @@ class AgentSessionManager {
     };
   }
 
-  write(id: string, data: string): void {
-    const session = this.sessions.get(id);
-    if (session?.status === 'running') {
-      session.ptyProcess.write(data);
+  private async runQuery(
+    session: ManagedSession,
+    emit: (event: AgentEvent) => void,
+  ) {
+    const { id, worktreePath, abortController } = session;
+
+    const pendingPermissions = session.pendingPermissions;
+
+    let permRequestCounter = 0;
+
+    logger.debug(`[runQuery] session=${id} starting`);
+    const queryFn = await getQuery();
+    logger.debug(`[runQuery] session=${id} SDK loaded`);
+    const q = queryFn({
+      prompt: readableStreamToAsyncIterable(session.inputStream!),
+      options: {
+        cwd: worktreePath,
+        abortController,
+        includePartialMessages: true,
+        settingSources: ['user', 'project', 'local'],
+        systemPrompt: { type: 'preset', preset: 'claude_code' },
+        permissionMode: 'default',
+        // Resume previous conversation if we have a saved session ID
+        ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
+        canUseTool: async (toolName, input, options) => {
+          // Auto-approve if user previously chose "Always Allow" for this tool
+          if (session.alwaysAllowedTools.has(toolName)) {
+            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+          }
+          // Forward permission request to renderer and wait for user response.
+          // Times out after 5 minutes to prevent leaked promises if window closes.
+          const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
+          const requestId = `perm_${id}_${++permRequestCounter}`;
+          return new Promise((resolve) => {
+            const timer = setTimeout(() => {
+              pendingPermissions.delete(requestId);
+              resolve({ behavior: 'deny', message: 'Permission request timed out' });
+            }, PERMISSION_TIMEOUT_MS);
+
+            pendingPermissions.set(requestId, {
+              requestId,
+              toolName,
+              toolUseId: options.toolUseID,
+              toolInput: input as Record<string, unknown>,
+              resolve: (result) => {
+                clearTimeout(timer);
+                resolve(result);
+              },
+            });
+            emit({
+              type: 'permission_request',
+              toolName,
+              toolInput: input,
+              toolUseId: options.toolUseID,
+              requestId,
+            });
+          });
+        },
+        env: {
+          ...process.env,
+          CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+        },
+        stderr: (data: string) => {
+          logger.debug(`[claude-stderr] session=${id}: ${data.trim()}`);
+        },
+      },
+    });
+
+    session.queryInstance = q;
+    logger.debug(`[runQuery] session=${id} query created, entering message loop`);
+
+    // Process message stream
+    try {
+      for await (const message of q) {
+        logger.debug(`[runQuery] session=${id} msg type=${message.type}`);
+        if (abortController.signal.aborted) break;
+        this.handleMessage(session, message, emit);
+      }
+      logger.debug(`[runQuery] session=${id} message loop ended normally`);
+    } catch (err) {
+      console.error(`[runQuery] session=${id} message loop error:`, err);
+      const errMsg = (err as Error).message || String(err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      if (isAuthError) {
+        emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+      } else {
+        emit({ type: 'error', message: `Query error: ${errMsg}` });
+      }
+    }
+
+    // Query finished
+    session.status = 'stopped';
+    emit({ type: 'process_exit' });
+    const w = session.window;
+    if (!w.isDestroyed()) {
+      w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
     }
   }
 
-  resize(id: string, cols: number, rows: number): void {
+  private handleMessage(
+    session: ManagedSession,
+    message: SDKMessage,
+    emit: (event: AgentEvent) => void,
+  ) {
+    switch (message.type) {
+      case 'system': {
+        if (message.subtype === 'init') {
+          session.status = 'running';
+          session.claudeSessionId = message.session_id;
+
+          // Persist Claude session ID so we can resume after app restart
+          worktreeManager.saveClaudeSessionId(session.id, message.session_id).catch((e) => {
+            logger.warn(`Failed to persist Claude session ID for ${session.id}:`, e);
+          });
+
+          emit({
+            type: 'system_init',
+            sessionId: message.session_id,
+            model: message.model,
+            tools: message.tools,
+            agents: (message as any).agents,
+            skills: (message as any).skills,
+            slashCommands: (message as any).slash_commands,
+            mcpServers: (message as any).mcp_servers,
+          });
+          const w = session.window;
+          if (!w.isDestroyed()) {
+            w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
+          }
+
+        } else if (message.subtype === 'compact_boundary') {
+          const meta = (message as any).compact_metadata ?? {};
+          emit({
+            type: 'compact_boundary',
+            trigger: meta.trigger ?? 'manual',
+            preTokens: meta.pre_tokens ?? 0,
+          });
+        } else if (message.subtype === 'status') {
+          const status = (message as any).status;
+          if (status === 'compacting') {
+            emit({ type: 'status', message: 'Compacting conversation...' });
+          }
+        } else if (message.subtype === 'local_command_output') {
+          const content = (message as any).content;
+          if (content) {
+            emit({ type: 'status', message: content });
+          }
+        }
+        break;
+      }
+
+      case 'assistant': {
+        const content = message.message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === 'text') {
+              emit({ type: 'assistant_text', text: block.text, uuid: message.uuid });
+            } else if (block.type === 'tool_use') {
+              // Track tool name for matching results later
+              session.toolUseMap.set(block.id, block.name);
+              emit({
+                type: 'assistant_tool_use',
+                toolName: block.name,
+                toolInput: block.input,
+                toolUseId: block.id,
+                uuid: message.uuid,
+              });
+            } else if (block.type === 'thinking') {
+              emit({
+                type: 'thinking',
+                thinking: (block as any).thinking || '',
+                uuid: message.uuid,
+              });
+            }
+          }
+        }
+        // Emit usage info if available
+        const usage = (message.message as any)?.usage;
+        if (usage) {
+          emit({
+            type: 'usage',
+            inputTokens: usage.input_tokens ?? 0,
+            outputTokens: usage.output_tokens ?? 0,
+            cacheReadTokens: usage.cache_read_input_tokens,
+            cacheCreationTokens: usage.cache_creation_input_tokens,
+          });
+        }
+        break;
+      }
+
+      case 'user': {
+        // Tool results come back as user messages
+        const content = message.message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === 'tool_result') {
+              const resultContent = Array.isArray(block.content)
+                ? block.content.map((c: any) => c.text || '').join('')
+                : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+              emit({
+                type: 'tool_result',
+                toolUseId: block.tool_use_id,
+                content: resultContent,
+                isError: block.is_error,
+              });
+              // Detect localhost URLs in Bash tool output
+              const toolName = session.toolUseMap.get(block.tool_use_id);
+              if (toolName === 'Bash' && resultContent) {
+                const portMatches = resultContent.matchAll(
+                  /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
+                );
+                for (const m of portMatches) {
+                  const port = parseInt(m[1], 10);
+                  if (!session.detectedPorts.has(port)) {
+                    session.detectedPorts.add(port);
+                    const url = m[0].replace(/0\.0\.0\.0|\[::\]/, 'localhost');
+                    logger.info(`Dev server detected on port ${port} in session ${session.id}`);
+                    emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
+                  }
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'result': {
+        // Extract contextWindow from modelUsage (first model entry)
+        const modelUsage = (message as any).modelUsage as Record<string, { contextWindow?: number }> | undefined;
+        const contextWindow = modelUsage
+          ? Object.values(modelUsage)[0]?.contextWindow
+          : undefined;
+        emit({
+          type: 'result',
+          subtype: message.subtype,
+          result: 'result' in message ? (message as any).result : undefined,
+          totalCostUsd: message.total_cost_usd,
+          durationMs: message.duration_ms,
+          isError: message.is_error,
+          errors: 'errors' in message ? (message as any).errors : undefined,
+          numTurns: message.num_turns,
+          contextWindow,
+        });
+        break;
+      }
+
+      case 'tool_progress': {
+        const m = message as any;
+        emit({
+          type: 'tool_progress',
+          toolName: m.tool_name ?? '',
+          toolUseId: m.tool_use_id ?? '',
+          elapsedSeconds: m.elapsed_time_seconds ?? 0,
+        });
+        break;
+      }
+
+      case 'stream_event': {
+        // Partial streaming events for real-time text display
+        const event = message.event;
+        if (event.type === 'content_block_delta') {
+          const delta = (event as any).delta;
+          if (delta?.type === 'text_delta' && delta.text) {
+            emit({ type: 'partial_text', text: delta.text });
+          } else if (delta?.type === 'thinking_delta') {
+            emit({ type: 'activity', activity: 'thinking' });
+          }
+        } else if (event.type === 'content_block_start') {
+          const block = (event as any).content_block;
+          if (block?.type === 'thinking') {
+            emit({ type: 'activity', activity: 'thinking' });
+          } else if (block?.type === 'text') {
+            emit({ type: 'activity', activity: 'generating' });
+          } else if (block?.type === 'tool_use') {
+            emit({ type: 'activity', activity: 'tool_starting', toolName: block.name });
+          }
+        } else if (event.type === 'message_start') {
+          emit({ type: 'activity', activity: 'generating' });
+        }
+        break;
+      }
+
+      default:
+        // Ignore other message types
+        break;
+    }
+  }
+
+  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): void {
     const session = this.sessions.get(id);
-    if (session?.status === 'running') {
-      session.ptyProcess.resize(cols, rows);
+    if (!session?.inputController) {
+      logger.debug(`[sendMessage] session=${id} no session or inputController`);
+      return;
+    }
+
+    // Record in event history so user messages survive renderer refresh
+    session.eventHistory.push({ type: 'user_message', text: content });
+
+    // Build content: plain string when no images, content block array when images attached
+    let messageContent: string | Array<Record<string, unknown>> = content;
+    if (images && images.length > 0) {
+      const blocks: Array<Record<string, unknown>> = [];
+      for (const img of images) {
+        blocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: img.mediaType, data: img.data },
+        });
+      }
+      blocks.push({ type: 'text', text: content });
+      messageContent = blocks;
+    }
+
+    const sessionId = session.claudeSessionId ?? '';
+    logger.debug(`[sendMessage] session=${id} enqueuing to SDK, claudeSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
+    try {
+      session.inputController.enqueue({
+        type: 'user',
+        session_id: sessionId,
+        message: {
+          role: 'user',
+          content: messageContent,
+        },
+        parent_tool_use_id: null,
+      } as SDKUserMessage);
+      logger.debug(`[sendMessage] session=${id} enqueued successfully`);
+    } catch (e) {
+      console.error(`[sendMessage] session=${id} enqueue FAILED:`, e);
+      logger.warn(`Failed to send message to session ${id}:`, e);
+    }
+  }
+
+  respondToPermission(id: string, decision: PermissionDecision): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+
+    const pending = session.pendingPermissions.get(decision.requestId);
+    if (!pending) return;
+
+    session.pendingPermissions.delete(decision.requestId);
+
+    if (decision.behavior === 'allow' || decision.behavior === 'allowAlways') {
+      if (decision.behavior === 'allowAlways') {
+        session.alwaysAllowedTools.add(pending.toolName);
+      }
+      pending.resolve({ behavior: 'allow', updatedInput: pending.toolInput });
+    } else {
+      pending.resolve({
+        behavior: 'deny',
+        message: decision.message || 'User denied permission',
+      });
+    }
+  }
+
+  setMode(id: string, mode: string): void {
+    const session = this.sessions.get(id);
+    if (!session?.queryInstance) return;
+    try {
+      session.queryInstance.setPermissionMode(mode as any);
+    } catch (e) {
+      logger.warn(`Failed to set mode for session ${id}:`, e);
+    }
+  }
+
+  async setModel(id: string, model?: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryInstance) return;
+    try {
+      await session.queryInstance.setModel(model);
+    } catch (e) {
+      logger.warn(`Failed to set model for session ${id}:`, e);
+      throw e;
     }
   }
 
@@ -137,13 +551,34 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
 
-    session.dispose();
+    // Abort the query
+    session.abortController.abort();
 
-    if (session.status === 'running') {
-      session.ptyProcess.kill();
-      // Wait for Windows file handles to release
-      await new Promise((r) => setTimeout(r, 500));
+    // Close the input stream
+    try {
+      session.inputController?.close();
+    } catch { /* may already be closed */ }
+
+    // Close the query
+    try {
+      session.queryInstance?.close();
+    } catch { /* may already be closed */ }
+
+    // Resolve any pending permissions as denied
+    for (const [, pending] of session.pendingPermissions) {
+      pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
     }
+
+    // Kill any dev servers that were detected during this session
+    if (session.detectedPorts.size > 0) {
+      logger.info(`Killing ${session.detectedPorts.size} dev server(s) for session ${id}: ports ${[...session.detectedPorts].join(', ')}`);
+      await Promise.all(
+        [...session.detectedPorts].map((port) => killProcessOnPort(port).catch(() => {}))
+      );
+    }
+
+    // Wait for Windows file handles to release
+    await new Promise((r) => setTimeout(r, 500));
 
     this.sessions.delete(id);
   }
@@ -171,6 +606,22 @@ class AgentSessionManager {
 
   getSession(id: string): ManagedSession | undefined {
     return this.sessions.get(id);
+  }
+
+  /**
+   * Re-attach a new BrowserWindow to an existing running session.
+   * Called after renderer reload so that IPC events flow to the new webContents.
+   */
+  reattachWindow(id: string, win: BrowserWindow): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.window = win;
+    }
+  }
+
+  /** Return all buffered events for replay after renderer reload. */
+  getEventHistory(id: string): AgentEvent[] {
+    return this.sessions.get(id)?.eventHistory ?? [];
   }
 
   get count(): number {

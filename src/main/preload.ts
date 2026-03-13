@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -11,6 +11,10 @@ const api: GroveBenchAPI = {
   // Session operations
   createSession: (opts: CreateSessionOpts) =>
     ipcRenderer.invoke(IPC.SESSION_CREATE, opts),
+  resumeSession: (id: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.SESSION_RESUME, id, repoPath),
+  stopSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_STOP, id),
   destroySession: (id: string, deleteBranch?: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
@@ -21,23 +25,62 @@ const api: GroveBenchAPI = {
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
 
-  // Terminal I/O
-  termWrite: (sessionId: string, data: string) =>
-    ipcRenderer.send(IPC.TERM_WRITE, sessionId, data),
-  termResize: (sessionId: string, cols: number, rows: number) =>
-    ipcRenderer.send(IPC.TERM_RESIZE, sessionId, cols, rows),
-  onTermData: (sessionId: string, callback: (data: string) => void) => {
-    const channel = `${IPC.TERM_DATA}:${sessionId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: string) =>
+  // Agent I/O
+  sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
+    ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
+  respondToPermission: (sessionId: string, decision: PermissionDecision) =>
+    ipcRenderer.send(IPC.AGENT_PERMISSION, sessionId, decision),
+  onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
+    const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
       callback(data);
     ipcRenderer.on(channel, handler);
     return () => {
       ipcRenderer.removeListener(channel, handler);
     };
   },
-  offTermData: (sessionId: string) => {
-    ipcRenderer.removeAllListeners(`${IPC.TERM_DATA}:${sessionId}`);
+  offAgentEvent: (sessionId: string) => {
+    ipcRenderer.removeAllListeners(`${IPC.AGENT_EVENT}:${sessionId}`);
   },
+  getEventHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY, sessionId),
+
+  // Mode control
+  setMode: (sessionId: string, mode: string) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_MODE, sessionId, mode),
+
+  // Model control
+  setModel: (sessionId: string, model?: string) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
+
+  // File operations (for @ file picker)
+  listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
+  readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
+  openInEditor: (sessionId: string, filePath: string, line?: number) =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
+
+  // File revert & diff (for changes review)
+  revertFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath),
+  getFileDiff: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
+
+  // PR info
+  getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
+
+  // External links
+  openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
+
+  // Localhost process cleanup
+  killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
+
+  // Plugins
+  pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),
+  pluginInstall: (pluginId: string, scope?: string) =>
+    ipcRenderer.invoke(IPC.PLUGIN_INSTALL, pluginId, scope),
+  pluginUninstall: (pluginId: string) => ipcRenderer.invoke(IPC.PLUGIN_UNINSTALL, pluginId),
+  pluginEnable: (pluginId: string) => ipcRenderer.invoke(IPC.PLUGIN_ENABLE, pluginId),
+  pluginDisable: (pluginId: string) => ipcRenderer.invoke(IPC.PLUGIN_DISABLE, pluginId),
 
   // Prerequisites
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
@@ -60,6 +103,12 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.APP_CLOSING, handler);
     };
   },
+
+  // Window controls
+  winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),
+  winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
+  winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
+  winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
 };
 
 contextBridge.exposeInMainWorld('groveBench', api);
