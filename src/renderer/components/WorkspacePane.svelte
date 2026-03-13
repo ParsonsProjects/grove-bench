@@ -26,12 +26,6 @@
   let approving = $state(false);
   let retrying = $state<string | null>(null);
 
-  // Auto-switch to plan tab when planning completes
-  $effect(() => {
-    if (hasPlan && activeTab === 'activity' && orchJob?.status === 'planned') {
-      messageStore.setActiveTab(sessionId, 'plan');
-    }
-  });
 
   // Kanban columns
   interface KanbanColumn {
@@ -84,19 +78,6 @@
     retrying = null;
   }
 
-  async function handleCancel() {
-    if (!orchJob) return;
-    try {
-      await window.groveBench.cancelOrchJob(orchJob.id);
-      for (const task of orchJob.tasks) {
-        if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
-          orchStore.updateTaskStatus(orchJob.id, task.id, 'cancelled');
-        }
-      }
-      orchStore.updateJob(orchJob.id, { status: 'cancelled', completedAt: Date.now() });
-    } catch { /* best effort */ }
-  }
-
   function depNames(task: OrchTask): string {
     if (!orchJob || task.dependsOn.length === 0) return '';
     return task.dependsOn.map((depId) => {
@@ -115,9 +96,6 @@
   let completedCount = $derived(orchJob?.tasks.filter((t) => t.status === 'completed').length ?? 0);
   let totalCount = $derived(orchJob?.tasks.length ?? 0);
   let totalCost = $derived(orchJob?.tasks.reduce((sum, t) => sum + (t.costUsd ?? 0), 0) ?? 0);
-  let isOrchTerminal = $derived(
-    orchJob?.status === 'completed' || orchJob?.status === 'failed' || orchJob?.status === 'partial_failure' || orchJob?.status === 'cancelled'
-  );
   let progressPct = $derived(totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0);
 
   // Derive whether there's an unresolved permission request
@@ -240,15 +218,6 @@
           </Button>
         {:else if approving}
           <Button size="sm" disabled>Launching...</Button>
-        {/if}
-        {#if !isOrchTerminal && orchJob}
-          <Button
-            variant="destructive"
-            size="sm"
-            onclick={handleCancel}
-          >
-            Cancel
-          </Button>
         {/if}
       </div>
     {/if}

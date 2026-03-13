@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { orchStore } from '../stores/orchestration.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -117,6 +119,26 @@
     if (diff < 3600) return `${Math.round(diff / 60)}m`;
     return `${Math.round(diff / 3600)}h`;
   }
+  // Orchestration
+  let session = $derived(store.sessions.find(s => s.id === sessionId));
+  let orchJob = $derived(session?.orchJobId ? orchStore.jobs.find(j => j.id === session!.orchJobId) : null);
+  let isOrchTerminal = $derived(
+    orchJob?.status === 'completed' || orchJob?.status === 'failed' || orchJob?.status === 'partial_failure' || orchJob?.status === 'cancelled'
+  );
+
+  async function handleCancelOrch() {
+    if (!orchJob) return;
+    try {
+      await window.groveBench.cancelOrchJob(orchJob.id);
+      for (const task of orchJob.tasks) {
+        if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
+          orchStore.updateTaskStatus(orchJob.id, task.id, 'cancelled');
+        }
+      }
+      orchStore.updateJob(orchJob.id, { status: 'cancelled', completedAt: Date.now() });
+    } catch { /* best effort */ }
+  }
+
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
@@ -375,6 +397,16 @@
         </div>
       {/if}
     </div>
+  {/if}
+
+  {#if orchJob && !isOrchTerminal}
+    <button
+      onclick={handleCancelOrch}
+      class="px-1.5 py-0.5 border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors"
+      title="Cancel orchestration job"
+    >
+      Cancel
+    </button>
   {/if}
 
   {#if lastResult?.totalCostUsd !== undefined}

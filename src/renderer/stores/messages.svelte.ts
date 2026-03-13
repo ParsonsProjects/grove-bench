@@ -375,9 +375,11 @@ class MessageStore {
   }
 
   cycleMode(sessionId: string) {
-    const modes = ['default', 'plan', 'acceptEdits'] as const;
     const current = this.getMode(sessionId);
-    const idx = modes.indexOf(current);
+    // Orchestrator mode is fixed — don't cycle
+    if (current === 'orchestrator') return;
+    const modes = ['default', 'plan', 'acceptEdits'] as const;
+    const idx = modes.indexOf(current as typeof modes[number]);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);
   }

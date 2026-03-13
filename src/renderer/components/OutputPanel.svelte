@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { orchStore } from '../stores/orchestration.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import UserPromptBlock from './UserPromptBlock.svelte';
   import AssistantTextBlock from './AssistantTextBlock.svelte';
   import ToolCallBlock from './ToolCallBlock.svelte';
@@ -20,6 +23,28 @@
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
+
+  // Orchestration — inline approve button
+  let session = $derived(store.sessions.find(s => s.id === sessionId));
+  let orchJob = $derived(session?.orchJobId ? orchStore.jobs.find(j => j.id === session!.orchJobId) : null);
+  let showInlineApprove = $derived(orchJob?.status === 'planned' && !isRunning);
+  let approving = $state(false);
+
+  async function handleApprove() {
+    if (!orchJob) return;
+    approving = true;
+    try {
+      const edits = orchJob.tasks.map((t) => ({
+        id: t.id,
+        instruction: t.instruction,
+        description: t.description,
+        branchName: t.branchName,
+      }));
+      await window.groveBench.approveOrchPlan(orchJob.id, edits);
+      orchStore.subscribe(orchJob.id);
+    } catch { /* best effort */ }
+    approving = false;
+  }
 
   // Message search state
   let searchOpen = $state(false);
@@ -207,6 +232,33 @@
         </div>
       {/if}
     </div>
+
+    <!-- Inline approve button after last result when plan is ready -->
+    {#if msg.kind === 'result' && showInlineApprove && msg === messages[messages.length - 1]}
+      <div class="my-3 p-3 border border-primary/30 bg-primary/5">
+        <div class="flex items-center justify-between">
+          <div class="text-sm text-foreground">
+            Plan ready — <span class="text-muted-foreground">{orchJob?.tasks.length} task{(orchJob?.tasks.length ?? 0) !== 1 ? 's' : ''} to launch</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onclick={() => messageStore.setActiveTab(sessionId, 'plan')}
+            >
+              View Plan
+            </Button>
+            {#if approving}
+              <Button size="sm" disabled>Launching...</Button>
+            {:else}
+              <Button size="sm" onclick={handleApprove}>
+                Approve & Launch
+              </Button>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
   {/each}
 
   <!-- Streaming text (live) -->

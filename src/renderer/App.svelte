@@ -57,8 +57,32 @@
       store.activeSessionId = firstRunning.id;
     }
 
-    // Load persisted orchestration jobs
+    // Load persisted orchestration jobs and restore their sidebar sessions
     await orchStore.loadPersistedJobs();
+    for (const job of orchStore.jobs) {
+      // Restore the planning session
+      if (job.planSessionId && !store.sessions.find((s) => s.id === job.planSessionId)) {
+        const isRunning = runningMap.has(job.planSessionId);
+        store.addSession({
+          id: job.planSessionId,
+          branch: `orch: ${job.goal.slice(0, 40)}`,
+          repoPath: job.repoPath,
+          status: isRunning ? 'running' : 'stopped',
+          orchJobId: job.id,
+        }, false);
+        messageStore.setModeLocal(job.planSessionId, 'orchestrator');
+      }
+
+      // Link subtask sessions back to their orch job
+      for (const task of job.tasks) {
+        if (!task.sessionId) continue;
+        const existing = store.sessions.find((s) => s.id === task.sessionId);
+        if (existing) {
+          // Patch in the parent/orch relationship that was lost on refresh
+          existing.parentSessionId = job.planSessionId;
+        }
+      }
+    }
   }
 
   let showSessionFinder = $state(false);
@@ -100,6 +124,8 @@
   $effect(() => {
     const session = store.activeSession;
     if (!session || session.status !== 'stopped' || resumingId === session.id || failedResumeIds.has(session.id)) return;
+    // Orchestrator planning sessions don't have worktrees and can't be resumed
+    if (session.orchJobId) return;
 
     resumingId = session.id;
     const sessionId = session.id;
@@ -172,7 +198,7 @@
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running'));
+  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.orchJobId));
   let hasTabContent = $derived(openSessions.length > 0);
 </script>
 
@@ -271,7 +297,7 @@
         <!-- Active session -->
         {#each store.sessions as session (session.id)}
           <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-            {#if session.status === 'running'}
+            {#if session.status === 'running' || session.orchJobId}
               <WorkspacePane sessionId={session.id} />
             {:else}
               <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">

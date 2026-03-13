@@ -26,8 +26,6 @@ const PERSISTENCE_FILE = path.join(app.getPath('userData'), 'worktrees', 'orches
 class Orchestrator {
   private jobs = new Map<string, ManagedOrchJob>();
   private taskTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Worktree ID for the merge integration branch, keyed by job ID */
-  private mergeWorktrees = new Map<string, string>();
 
   private emit(managed: ManagedOrchJob, event: OrchEvent) {
     const { job, window: win } = managed;
@@ -156,6 +154,7 @@ class Orchestrator {
       planSessionId,
       overlapWarnings: [],
       mergeResults: [],
+      mergeWorktreeId: null,
       defaultTimeoutMs: opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
       circuitBreakerThreshold: opts.circuitBreakerThreshold ?? null,
     };
@@ -218,13 +217,35 @@ TASK DESIGN RULES:
     });
 
     const planStart = Date.now();
+    let planHandled = false;
 
-    sessionManager.onComplete(planSessionId, (result) => {
-      this.handlePlanComplete(managed, result, branchPrefix, baseBranch, planStart);
+    // Listen for result events — multi-turn sessions don't fire onComplete
+    // until the stream closes, so we react to each result event instead.
+    sessionManager.onEvent(planSessionId, (event) => {
+      const ev = event as any;
+      if (ev.type === 'result') {
+        logger.info(`[orch] Plan session result: isError=${ev.isError}, hasStructuredOutput=${!!ev.structured_output}, hasResult=${!!ev.result}, planHandled=${planHandled}`);
+        if (!ev.isError && !planHandled) {
+          planHandled = true;
+          this.handlePlanComplete(managed, ev, branchPrefix, baseBranch, planStart)
+            .catch((err) => {
+              logger.error(`[orch] handlePlanComplete failed:`, err);
+              managed.job.status = 'failed';
+              this.emit(managed, { type: 'orch_plan_error', jobId: managed.job.id, error: (err as Error).message });
+              this.persistNow();
+            });
+        } else if (ev.isError && !planHandled) {
+          planHandled = true;
+          managed.job.planDurationMs = Date.now() - planStart;
+          managed.job.status = 'failed';
+          this.emit(managed, { type: 'orch_plan_error', jobId: managed.job.id, error: 'Planning agent failed' });
+          this.persistNow();
+        }
+      }
     });
 
     sessionManager.sendMessage(planSessionId, opts.goal);
-    logger.info(`[orch] Created orchestrator session ${planSessionId} for job ${jobId} (plan mode)`);
+    logger.info(`[orch] Created orchestrator session ${planSessionId} for job ${jobId}`);
     this.persist();
 
     return { jobId, planSessionId };
@@ -232,7 +253,7 @@ TASK DESIGN RULES:
 
   private async handlePlanComplete(
     managed: ManagedOrchJob,
-    result: { sessionId: string; isError: boolean; totalCostUsd?: number },
+    resultEvent: any,
     branchPrefix: string,
     baseBranch: string,
     planStart: number,
@@ -240,66 +261,38 @@ TASK DESIGN RULES:
     const { job } = managed;
     job.planDurationMs = Date.now() - planStart;
 
-    if (result.isError) {
-      job.status = 'failed';
-      this.emit(managed, { type: 'orch_plan_error', jobId: job.id, error: 'Planning agent failed' });
-      this.persistNow();
-      return;
-    }
-
     try {
-      const history = sessionManager.getEventHistory(job.planSessionId!);
-
       let raw: import('./decomposer.js').RawTask[] | null = null;
 
-      // 1. Try structured_output first (from outputFormat: json_schema)
-      for (const event of history) {
-        const ev = event as any;
-        if (ev.type === 'result' && ev.structured_output) {
-          const so = ev.structured_output;
-          raw = Array.isArray(so) ? so : so.tasks;
-        }
+      // 1. Try structured_output from the result event
+      if (resultEvent.structured_output) {
+        const so = resultEvent.structured_output;
+        logger.info(`[orch] structured_output type=${typeof so}, isArray=${Array.isArray(so)}, keys=${typeof so === 'object' && so ? Object.keys(so).join(',') : 'N/A'}`);
+        raw = Array.isArray(so) ? so : so.tasks;
       }
 
-      // 2. Fallback: extract JSON from text output
-      if (!raw) {
-        let resultText = '';
-        const allAssistantText: string[] = [];
-
-        for (const event of history) {
-          const ev = event as any;
-          if (ev.type === 'result' && ev.result) {
-            resultText = ev.result;
-          }
-          if (ev.type === 'assistant' && ev.message) {
-            allAssistantText.push(ev.message);
-          }
-        }
-
-        const searchText = resultText || allAssistantText.join('\n');
-        if (!searchText) {
-          throw new Error('Planning agent returned no result text');
-        }
-
-        let jsonStr = searchText;
-        const fenceMatches = [...searchText.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?```/g)];
+      // 2. Fallback: extract JSON from result text
+      if (!raw && resultEvent.result) {
+        logger.info(`[orch] Falling back to text extraction, result length=${resultEvent.result.length}`);
+        let jsonStr = resultEvent.result;
+        const fenceMatches = [...jsonStr.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?```/g)];
         if (fenceMatches.length > 0) {
           jsonStr = fenceMatches[fenceMatches.length - 1][1];
         }
-
         const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
           jsonStr = arrayMatch[0];
         }
-
         const parsed = JSON.parse(jsonStr.trim());
         raw = Array.isArray(parsed) ? parsed : parsed.tasks;
       }
 
       if (!raw || !Array.isArray(raw)) {
+        logger.error(`[orch] raw is invalid: ${JSON.stringify(raw).slice(0, 200)}`);
         throw new Error('Planning agent returned no valid task array');
       }
 
+      logger.info(`[orch] Parsed ${raw.length} raw tasks, validating...`);
       const tasks = validateTasks(raw, branchPrefix);
 
       for (const task of tasks) {
@@ -565,7 +558,7 @@ TASK DESIGN RULES:
         baseBranch: job.baseBranch,
       });
 
-      this.mergeWorktrees.set(job.id, worktree.id);
+      job.mergeWorktreeId = worktree.id;
 
       // Merge tasks in priority order
       const completedTasks = job.tasks
@@ -636,12 +629,11 @@ TASK DESIGN RULES:
     }
 
     // Clean up previous merge worktree if exists
-    const oldMergeWt = this.mergeWorktrees.get(jobId);
-    if (oldMergeWt) {
+    if (managed.job.mergeWorktreeId) {
       try {
-        await worktreeManager.remove(oldMergeWt, true);
+        await worktreeManager.remove(managed.job.mergeWorktreeId, true);
       } catch { /* best effort */ }
-      this.mergeWorktrees.delete(jobId);
+      managed.job.mergeWorktreeId = null;
     }
 
     // Reset merge status on all tasks
@@ -664,7 +656,7 @@ TASK DESIGN RULES:
       throw new Error(`Task ${taskId} has no merge conflict`);
     }
 
-    const mergeWtId = this.mergeWorktrees.get(jobId);
+    const mergeWtId = managed.job.mergeWorktreeId;
     if (!mergeWtId) throw new Error('No merge worktree found — re-run merge first');
 
     const worktree = worktreeManager.getWorktree(mergeWtId);
@@ -809,10 +801,9 @@ Focus on making a correct merge that preserves all intended changes from both si
     }
 
     // Clean up merge worktree
-    const mergeWt = this.mergeWorktrees.get(jobId);
-    if (mergeWt) {
-      try { await worktreeManager.remove(mergeWt, true); } catch { /* best effort */ }
-      this.mergeWorktrees.delete(jobId);
+    if (managed.job.mergeWorktreeId) {
+      try { await worktreeManager.remove(managed.job.mergeWorktreeId, true); } catch { /* best effort */ }
+      managed.job.mergeWorktreeId = null;
     }
 
     if (managed.job.planSessionId) {
@@ -889,6 +880,7 @@ Focus on making a correct merge that preserves all intended changes from both si
         if (!('mergeResults' in job)) (job as any).mergeResults = [];
         if (!('defaultTimeoutMs' in job)) (job as any).defaultTimeoutMs = DEFAULT_TIMEOUT_MS;
         if (!('circuitBreakerThreshold' in job)) (job as any).circuitBreakerThreshold = null;
+        if (!('mergeWorktreeId' in job)) (job as any).mergeWorktreeId = null;
 
         // Backcompat: add new task fields
         for (const task of job.tasks) {
