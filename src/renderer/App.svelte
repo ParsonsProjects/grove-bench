@@ -36,7 +36,7 @@
             direct: wt.direct,
             parentSessionId: runningSession?.parentSessionId ?? null,
             orchJobId: runningSession?.orchJobId ?? null,
-          }, !isChild); // don't auto-focus child sessions
+          }, false); // don't focus during restore — selection happens after orch patching
 
           if (isRunning) {
             // Just reattach the window — history replay and subscription
@@ -49,12 +49,6 @@
       } catch {
         store.removeRepo(repo);
       }
-    }
-
-    // After restoring all sessions, select the first running one (prefer non-child)
-    const firstRunning = store.sessions.find((s) => s.status === 'running' && !s.parentSessionId);
-    if (firstRunning) {
-      store.activeSessionId = firstRunning.id;
     }
 
     // Load persisted orchestration jobs and restore their sidebar sessions
@@ -82,6 +76,23 @@
           existing.parentSessionId = job.planSessionId;
         }
       }
+    }
+
+    // Now that orch relationships are patched, select the best session:
+    // 1. First running top-level session (non-child)
+    // 2. First active orch (running/spawning/merging job) orchestrator session
+    // 3. First top-level session
+    const activeOrchJobIds = new Set(
+      orchStore.jobs
+        .filter((j) => j.status === 'running' || j.status === 'spawning' || j.status === 'merging')
+        .map((j) => j.id)
+    );
+    const firstRunning = store.sessions.find((s) => s.status === 'running' && !s.parentSessionId);
+    const firstActiveOrch = store.sessions.find((s) => s.orchJobId && activeOrchJobIds.has(s.orchJobId));
+    const firstTopLevel = store.sessions.find((s) => !s.parentSessionId);
+    const best = firstRunning ?? firstActiveOrch ?? firstTopLevel;
+    if (best) {
+      store.activeSessionId = best.id;
     }
   }
 

@@ -8,12 +8,12 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import PluginPanel from './PluginPanel.svelte';
+  import SettingsPanel from './SettingsPanel.svelte';
 
   let showNewAgent = $state(false);
   let showOrchestrate = $state(false);
   let orchDefaultRepo = $state('');
-  let showPlugins = $state(false);
+  let showSettings = $state(false);
   let newAgentDefaultRepo = $state('');
   let showCreateDropdown = $state(false);
   let confirmDestroyId = $state<string | null>(null);
@@ -103,11 +103,15 @@
   }
 
   const statusColor: Record<string, string> = {
-    running: 'bg-green-500',
+    running: 'bg-primary',
     starting: 'bg-yellow-500',
     stopped: 'bg-neutral-500',
     error: 'bg-red-500',
   };
+
+  function getSessionHasPending(sessionId: string): boolean {
+    return messageStore.getMessages(sessionId).some((m) => m.kind === 'permission' && !m.resolved);
+  }
 </script>
 
 <aside class="w-60 border-r border-sidebar-border flex flex-col bg-sidebar shrink-0">
@@ -176,8 +180,18 @@
               <div class="flex items-center gap-2 min-w-0">
                 {#if destroying === session.id}
                   <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
+                {:else if session.status === 'error'}
+                  <span class="w-2 h-2 bg-red-500 shrink-0"></span>
+                {:else if session.status === 'starting'}
+                  <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
+                {:else if messageStore.getIsRunning(session.id)}
+                  <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
+                {:else if getSessionHasPending(session.id)}
+                  <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse shrink-0"></span>
+                {:else if session.status === 'stopped'}
+                  <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
                 {:else}
-                  <span class="w-2 h-2 {statusColor[session.status] || 'bg-neutral-500'} {session.status === 'running' && messageStore.getIsRunning(session.id) ? 'animate-pulse' : ''} shrink-0"></span>
+                  <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
                 {/if}
                 {#if orchJob}
                   <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="m4.2 4.2 2.8 2.8"/><path d="m17 17 2.8 2.8"/><path d="m4.2 19.8 2.8-2.8"/><path d="m17 7 2.8-2.8"/></svg>
@@ -280,13 +294,13 @@
         {/if}
       </div>
       <Button
-        onclick={() => showPlugins = true}
+        onclick={() => showSettings = true}
         variant="ghost"
         size="sm"
         class="px-2 shrink-0"
-        title="Manage plugins"
+        title="Settings"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M9 0h6v2H9zm6 24H9v-2h6zM0 15V9h2v6zm24-6v6h-2V9zM9 2h2v4H9zm6 20h-2v-4h2zM2 15v-2h4v2zm20-6v2h-4V9zm-9-7h2v4h-2zm-2 20H9v-4h2zM2 11V9h4v2zm20 2v2h-4v-2zM7 4h2v2H7zm10 0h-2v2h2zm0 16h-2v-2h2zM7 20h2v-2H7zM2 2h5v2H2zm20 0h-5v2h5zm0 20h-5v-2h5zM2 22h5v-2H2zM2 2h2v5H2zm20 0h-2v5h2zm0 20h-2v-5h2zM2 22h2v-5H2zM4 7h2v2H4zm16 0h-2v2h2zm0 10h-2v-2h2zM4 17h2v-2H4zm6-9h4v2h-4zm0 6h4v2h-4zm-2-4h2v4H8zm6 0h2v4h-2z"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
       </Button>
     </div>
   </div>
@@ -300,7 +314,7 @@
   <OrchestrationDialog onclose={() => showOrchestrate = false} defaultRepo={orchDefaultRepo} />
 {/if}
 
-<PluginPanel open={showPlugins} onclose={() => showPlugins = false} />
+<SettingsPanel open={showSettings} onclose={() => showSettings = false} />
 
 <!-- Destroy session confirmation dialog -->
 {#if confirmDestroyId}

@@ -58,16 +58,37 @@ export async function mergeNoCommit(cwd: string, branch: string): Promise<{ succ
     await git(['merge', '--no-commit', '--no-ff', branch], cwd);
     await git(['commit', '-m', `Merge ${branch}`], cwd);
     return { success: true };
-  } catch {
-    // Check for conflict markers
+  } catch (mergeErr: any) {
+    // Check for conflict markers via porcelain status
     try {
       const status = await git(['status', '--porcelain'], cwd);
       const conflicts = status.split('\n')
         .filter(l => /^(UU|AA|DD|DU|UD|AU|UA)\s/.test(l))
         .map(l => l.slice(3).trim());
-      return { success: false, conflicts };
+
+      if (conflicts.length > 0) {
+        return { success: false, conflicts };
+      }
+
+      // No UU lines — try to extract conflicted files from diff --name-only --diff-filter=U
+      const diffOutput = await git(['diff', '--name-only', '--diff-filter=U'], cwd).catch(() => '');
+      const diffConflicts = diffOutput.split('\n').map(l => l.trim()).filter(Boolean);
+      if (diffConflicts.length > 0) {
+        return { success: false, conflicts: diffConflicts };
+      }
+
+      // Still nothing — extract info from the merge error message
+      const errMsg = mergeErr?.stderr || mergeErr?.message || String(mergeErr);
+      // Look for "CONFLICT (content): Merge conflict in <file>" patterns
+      const conflictMatches = [...errMsg.matchAll(/CONFLICT[^:]*:\s*Merge conflict in\s+(.+)/g)];
+      if (conflictMatches.length > 0) {
+        return { success: false, conflicts: conflictMatches.map((m: RegExpMatchArray) => m[1].trim()) };
+      }
+
+      return { success: false, conflicts: [errMsg.slice(0, 200)] };
     } catch {
-      return { success: false, conflicts: [] };
+      const errMsg = mergeErr?.stderr || mergeErr?.message || String(mergeErr);
+      return { success: false, conflicts: [errMsg.slice(0, 200)] };
     }
   }
 }

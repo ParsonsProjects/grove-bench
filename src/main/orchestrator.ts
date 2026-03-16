@@ -4,8 +4,10 @@ import type { OrchJob, OrchTask, OrchCreateOpts, OrchEvent, OrchJobStatus, OrchT
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { validateTasks, detectOverlaps, decompose, DECOMPOSE_SCHEMA } from './decomposer.js';
-import { git, mergeNoCommit, abortMerge } from './git.js';
+import { git } from './git.js';
 import { logger } from './logger.js';
+import { isDockerAvailable, ensureSandboxImage, getSDKVersion, killAllContainers, getDockerAuthEnv } from './docker/docker-utils.js';
+import * as settings from './settings.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { app } from 'electron';
@@ -33,6 +35,13 @@ class Orchestrator {
     if (!win.isDestroyed()) {
       win.webContents.send(`${IPC.ORCH_EVENT}:${job.id}`, event);
     }
+  }
+
+  /** Send a status message to the planning session's agent event stream (visible in the orch thread). */
+  private emitPlanStatus(managed: ManagedOrchJob, message: string) {
+    const { job } = managed;
+    if (!job.planSessionId) return;
+    sessionManager.injectEvent(job.planSessionId, { type: 'status', message });
   }
 
   private updateJobStatus(managed: ManagedOrchJob, status: OrchJobStatus) {
@@ -67,12 +76,28 @@ class Orchestrator {
 
     const timer = setTimeout(async () => {
       this.taskTimers.delete(task.id);
+
+      // Guard: task may have completed via onComplete while we were waiting.
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+        logger.debug(`[orch] Timeout fired for task ${task.id} but already in terminal state: ${task.status}`);
+        return;
+      }
+
       logger.warn(`[orch] Task ${task.id} timed out after ${timeoutMs}ms`);
 
       if (task.sessionId) {
         try {
           await sessionManager.destroySession(task.sessionId);
         } catch { /* best effort */ }
+      }
+
+      // Safety net: destroySession currently deletes the onComplete callback
+      // before the for-await loop exits, so onComplete won't fire here.
+      // But if that ordering ever changes, this guard prevents double state
+      // transitions.
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+        logger.debug(`[orch] Task ${task.id} reached terminal state during destroy, skipping timeout failure`);
+        return;
       }
 
       this.updateTaskStatus(managed, task.id, 'failed', `Task timed out after ${Math.round(timeoutMs / 1000)}s`);
@@ -155,8 +180,9 @@ class Orchestrator {
       overlapWarnings: [],
       mergeResults: [],
       mergeWorktreeId: null,
-      defaultTimeoutMs: opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
-      circuitBreakerThreshold: opts.circuitBreakerThreshold ?? null,
+      defaultTimeoutMs: opts.defaultTimeoutMs ?? (settings.getSettings().defaultTaskTimeoutMinutes * 60_000 || DEFAULT_TIMEOUT_MS),
+      circuitBreakerThreshold: opts.circuitBreakerThreshold ?? settings.getSettings().circuitBreakerThreshold ?? null,
+      destroyedSessionIds: [],
     };
 
     const managed: ManagedOrchJob = { job, window };
@@ -354,6 +380,35 @@ TASK DESIGN RULES:
   private async spawnTasks(managed: ManagedOrchJob) {
     const { job } = managed;
 
+    // Check Docker availability and auth compatibility
+    this.emitPlanStatus(managed, 'Preparing subtask environment...');
+    let dockerAvailable = false;
+    let dockerAuthEnv: { key: string; value: string } | null = null;
+    let sdkVersion = getSDKVersion();
+    try {
+      const dockerInstalled = await isDockerAvailable();
+
+      if (dockerInstalled) {
+        dockerAuthEnv = getDockerAuthEnv();
+
+        if (dockerAuthEnv) {
+          this.emitPlanStatus(managed, 'Building Docker sandbox image...');
+          const isDev = !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged;
+          await ensureSandboxImage(sdkVersion, isDev);
+          dockerAvailable = true;
+          logger.info(`[orch] Docker available with ${dockerAuthEnv.key}, subtasks will run in containers`);
+        } else {
+          logger.info(`[orch] Docker available but no container-compatible auth — falling back to in-process`);
+          this.emitPlanStatus(managed, 'No container auth available — running in-process');
+        }
+      } else {
+        logger.info(`[orch] Docker not available, subtasks will run in-process`);
+      }
+    } catch (err) {
+      logger.warn(`[orch] Docker setup failed, falling back to in-process:`, err);
+      dockerAvailable = false;
+    }
+
     const spawnReady = () => {
       return job.tasks.filter((t) => {
         if (t.status !== 'pending') return false;
@@ -366,6 +421,8 @@ TASK DESIGN RULES:
 
     const spawnTask = async (task: OrchTask) => {
       this.updateTaskStatus(managed, task.id, 'spawning');
+      const taskLabel = task.isMergeTask ? 'merge task' : `task ${task.id}`;
+      this.emitPlanStatus(managed, `Spawning ${taskLabel}: ${task.description.slice(0, 60)}`);
 
       try {
         const worktree = await worktreeManager.create({
@@ -388,11 +445,34 @@ TASK DESIGN RULES:
           repoPath: job.repoPath,
           window: managed.window,
           parentSessionId: job.planSessionId,
+          permissionMode: 'acceptEdits',
+          appendSystemPrompt: `IMPORTANT: You are running as an automated subtask agent with a time limit. Follow these rules for Bash commands:
+- Always prefix potentially slow commands with \`timeout 30\` (e.g. \`timeout 30 npx tsc --noEmit\`)
+- Never run interactive commands or commands that wait for user input
+- If a command times out, do not retry it — move on or try a faster alternative
+- Avoid full project builds, linters, or test suites unless specifically instructed
+- Keep bash commands focused and fast`,
+          sandbox: {
+            enabled: true,
+            autoAllowBashIfSandboxed: true,
+            allowUnsandboxedCommands: false,
+            filesystem: {
+              allowWrite: [worktree.path],
+            },
+          },
+          extraEnv: {
+            CI: 'true',
+            npm_config_yes: 'true',
+          },
+          useDocker: dockerAvailable,
+          sdkVersion,
+          dockerAuthEnv: dockerAuthEnv ?? undefined,
         });
 
         task.sessionId = session.id;
         task.startedAt = Date.now();
         this.updateTaskStatus(managed, task.id, 'running');
+        this.emitPlanStatus(managed, `Task ${task.id} is now running`);
 
         // Start timeout timer
         this.startTaskTimer(managed, task);
@@ -407,11 +487,7 @@ TASK DESIGN RULES:
           parentSessionId: job.planSessionId!,
         });
 
-        sessionManager.onComplete(session.id, (result) => {
-          this.handleTaskComplete(managed, task, result);
-        });
-
-        // Subscribe to agent events for progress updates
+        // Track progress events for UI feedback (tool usage indicators)
         sessionManager.onEvent(session.id, (event) => {
           if (event.type === 'activity' && event.activity === 'tool_starting' && event.toolName) {
             this.emit(managed, {
@@ -423,7 +499,22 @@ TASK DESIGN RULES:
           }
         });
 
-        sessionManager.sendMessage(session.id, task.instruction);
+        // Use onComplete for definitive completion detection.
+        // After sending the single instruction we close the input stream,
+        // which causes the SDK's for-await loop to exit naturally and
+        // fire this callback — no race conditions with timeouts.
+        sessionManager.onComplete(session.id, (result) => {
+          logger.info(`[orch] Task ${task.id} completed: isError=${result.isError}`);
+          this.handleTaskComplete(managed, task, result);
+          sessionManager.destroySession(session.id).catch(() => {});
+        });
+
+        const sent = sessionManager.sendMessage(session.id, task.instruction);
+        if (sent) {
+          sessionManager.closeInputStream(session.id);
+        } else {
+          throw new Error('Failed to enqueue task instruction');
+        }
       } catch (err) {
         const errMsg = (err as Error).message || String(err);
         logger.error(`[orch] Failed to spawn task ${task.id}:`, err);
@@ -435,9 +526,31 @@ TASK DESIGN RULES:
     // Initial spawn with stagger
     this.updateJobStatus(managed, 'running');
     const ready = spawnReady();
-    if (ready.length === 0 && job.tasks.every((t) => t.status === 'pending')) {
-      this.updateJobStatus(managed, 'failed');
-      return;
+    logger.info(`[orch] spawnTasks: ${ready.length} ready, ${job.tasks.length} total, statuses: ${job.tasks.map(t => `${t.id}=${t.status}`).join(', ')}`);
+    this.emitPlanStatus(managed, `${ready.length} task(s) ready to spawn`);
+
+    if (ready.length === 0) {
+      // Check if any tasks are already running (deps will resolve naturally)
+      const running = job.tasks.filter(t => t.status === 'running' || t.status === 'spawning');
+      if (running.length > 0) {
+        logger.info(`[orch] No new tasks ready but ${running.length} still running — waiting for deps`);
+        // spawnReady/spawnTask closures are saved below; handleTaskComplete will call spawnReady later
+      } else {
+        // Deadlock: nothing running, nothing ready
+        const pending = job.tasks.filter(t => t.status === 'pending');
+        for (const t of pending) {
+          const unmetDeps = t.dependsOn.filter(depId => {
+            const dep = job.tasks.find(d => d.id === depId);
+            return dep?.status !== 'completed';
+          });
+          if (unmetDeps.length > 0) {
+            logger.warn(`[orch] Task ${t.id} blocked by unmet deps: ${unmetDeps.join(', ')}`);
+          }
+        }
+        this.emitPlanStatus(managed, 'No tasks ready to spawn — check dependencies');
+        this.updateJobStatus(managed, 'failed');
+        return;
+      }
     }
 
     // Stagger spawning to reduce resource contention
@@ -464,11 +577,21 @@ TASK DESIGN RULES:
     // Clear timeout timer
     this.clearTaskTimer(task.id);
 
+    // Guard: if the task already reached a terminal state (e.g. timed out),
+    // don't process the completion callback again.
+    if (task.status === 'failed' || task.status === 'completed' || task.status === 'cancelled') {
+      logger.debug(`[orch] Ignoring completion for task ${task.id} — already in terminal state: ${task.status}`);
+      return;
+    }
+
     if (result.isError) {
       this.updateTaskStatus(managed, task.id, 'failed', 'Agent encountered an error');
+      this.emitPlanStatus(managed, `Task ${task.id} failed`);
     } else {
       task.costUsd = result.totalCostUsd ?? null;
       this.updateTaskStatus(managed, task.id, 'completed');
+      const remaining = managed.job.tasks.filter((t) => !t.isMergeTask && t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled').length;
+      this.emitPlanStatus(managed, `Task ${task.id} completed${remaining > 0 ? ` (${remaining} remaining)` : ''}`);
     }
 
     // Check circuit breaker before spawning more
@@ -528,199 +651,129 @@ TASK DESIGN RULES:
     const allCompleted = tasks.every((t) => t.status === 'completed');
     const allFailed = tasks.every((t) => t.status === 'failed' || t.status === 'cancelled');
 
-    if (allCompleted) {
-      // Transition to merge phase instead of directly completing
-      this.runMergePhase(managed).catch((err) => {
-        logger.error(`[orch] Merge phase failed for job ${managed.job.id}:`, err);
+    // If all non-merge tasks completed, auto-create and spawn a merge task
+    const hasMergeTask = tasks.some((t) => t.isMergeTask);
+    const nonMergeTasks = tasks.filter((t) => !t.isMergeTask);
+    const allNonMergeCompleted = nonMergeTasks.every((t) => t.status === 'completed');
+
+    if (!hasMergeTask && allNonMergeCompleted && nonMergeTasks.length > 0) {
+      // All work tasks completed — spawn a merge task
+      this.createAndSpawnMergeTask(managed).catch((err) => {
+        logger.error(`[orch] Failed to create merge task for job ${managed.job.id}:`, err);
         this.updateJobStatus(managed, 'partial_failure');
       });
+      return;
+    }
+
+    if (allCompleted) {
+      this.emitPlanStatus(managed, 'All tasks completed successfully');
+      this.updateJobStatus(managed, 'completed');
     } else if (allFailed) {
+      this.emitPlanStatus(managed, 'All tasks failed');
       this.updateJobStatus(managed, 'failed');
     } else {
+      const completed = tasks.filter((t) => t.status === 'completed').length;
+      const failed = tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled').length;
+      this.emitPlanStatus(managed, `Job finished: ${completed} completed, ${failed} failed`);
       this.updateJobStatus(managed, 'partial_failure');
     }
   }
 
-  // ─── Merge Phase ───
+  // ─── Merge (as a regular subtask) ───
 
-  private async runMergePhase(managed: ManagedOrchJob) {
+  private async createAndSpawnMergeTask(managed: ManagedOrchJob) {
     const { job } = managed;
-    this.updateJobStatus(managed, 'merging');
+    const jobIdShort = job.id.slice(5);
+    const integrationBranch = `orch/${jobIdShort}/integration`;
+
+    // Build the merge instruction with the list of branches to merge
+    const completedTasks = job.tasks
+      .filter((t) => t.status === 'completed' && !t.isMergeTask)
+      .sort((a, b) => a.priority - b.priority);
+
+    const branchList = completedTasks
+      .map((t, i) => `${i + 1}. \`${t.branchName}\` — ${t.description}`)
+      .join('\n');
+
+    const mergeInstruction = `You are the merge agent. Your job is to merge all completed task branches into this integration branch (based on \`${job.baseBranch}\`).
+
+Merge the following branches IN ORDER using \`git merge --no-ff <branch>\` for each:
+${branchList}
+
+For each branch:
+1. Run \`git merge --no-ff <branch>\`
+2. If the merge succeeds cleanly, move to the next branch
+3. If there are merge conflicts:
+   a. Examine the conflict markers in the affected files
+   b. Resolve each conflict by choosing the correct changes or combining them intelligently
+   c. Stage the resolved files with \`git add <file>\`
+   d. Complete the merge with \`git commit -m "Merge <branch>"\`
+
+After all branches are merged, run a quick sanity check (e.g. \`timeout 30 npx tsc --noEmit\` if TypeScript) to verify the combined result compiles.
+
+IMPORTANT: Merge ALL branches, not just the first one. Do not stop after the first merge.`;
+
+    const mergeTask: OrchTask = {
+      id: `merge_${jobIdShort}`,
+      jobId: job.id,
+      description: 'Merge all task branches into integration branch',
+      branchName: integrationBranch,
+      baseBranch: job.baseBranch,
+      scope: [],
+      priority: 999, // last
+      parallelizable: false,
+      dependsOn: [],
+      sessionId: null,
+      status: 'pending',
+      instruction: mergeInstruction,
+      createdAt: Date.now(),
+      completedAt: null,
+      error: null,
+      costUsd: null,
+      startedAt: null,
+      durationMs: null,
+      timeoutMs: null,
+      mergeStatus: null,
+      mergeError: null,
+      progressSummary: null,
+      isMergeTask: true,
+    };
+
+    job.tasks.push(mergeTask);
+    this.emit(managed, { type: 'orch_plan_complete', jobId: job.id, tasks: job.tasks });
     this.emit(managed, { type: 'orch_merge_start', jobId: job.id });
+    this.emitPlanStatus(managed, 'All tasks completed — spawning merge task to integrate branches');
+    logger.info(`[orch] Created merge task for job ${job.id}`);
 
-    const integrationBranch = `orch/${job.id.slice(5)}/integration`;
-
-    try {
-      // Create integration branch from base
-      const worktree = await worktreeManager.create({
-        repoPath: job.repoPath,
-        branchName: integrationBranch,
-        baseBranch: job.baseBranch,
-      });
-
-      job.mergeWorktreeId = worktree.id;
-
-      // Merge tasks in priority order
-      const completedTasks = job.tasks
-        .filter(t => t.status === 'completed')
-        .sort((a, b) => a.priority - b.priority);
-
-      let allMerged = true;
-      job.mergeResults = [];
-
-      for (const task of completedTasks) {
-        const result = await mergeNoCommit(worktree.path, task.branchName);
-
-        if (result.success) {
-          task.mergeStatus = 'merged';
-          const mergeResult = { taskId: task.id, status: 'merged' as const };
-          job.mergeResults.push(mergeResult);
-          this.emit(managed, { type: 'orch_merge_task', jobId: job.id, taskId: task.id, status: 'merged' });
-          logger.info(`[orch] Merged task ${task.id} (${task.branchName})`);
-        } else {
-          allMerged = false;
-          const conflictFiles = result.conflicts?.join(', ') || 'unknown files';
-          task.mergeStatus = 'conflict';
-          task.mergeError = `Merge conflict in: ${conflictFiles}`;
-          const mergeResult = { taskId: task.id, status: 'conflict' as const, error: task.mergeError };
-          job.mergeResults.push(mergeResult);
-
-          this.emit(managed, {
-            type: 'orch_merge_task',
-            jobId: job.id,
-            taskId: task.id,
-            status: 'conflict',
-            error: task.mergeError,
-          });
-
-          // Abort merge and stop — subsequent merges would be on dirty state
-          await abortMerge(worktree.path);
-          logger.warn(`[orch] Merge conflict for task ${task.id}: ${conflictFiles}`);
-          break;
-        }
-      }
-
-      this.emit(managed, { type: 'orch_merge_complete', jobId: job.id, allMerged });
-
-      if (allMerged) {
-        this.updateJobStatus(managed, 'completed');
-        logger.info(`[orch] All tasks merged successfully for job ${job.id}`);
-      } else {
-        this.updateJobStatus(managed, 'partial_failure');
-        logger.warn(`[orch] Merge incomplete for job ${job.id} — conflicts detected`);
-      }
-    } catch (err) {
-      const errMsg = (err as Error).message || String(err);
-      logger.error(`[orch] Merge phase error for job ${job.id}:`, err);
-      this.updateJobStatus(managed, 'partial_failure');
+    // Spawn using the same mechanism as other tasks
+    if (managed.spawnTask) {
+      await managed.spawnTask(mergeTask);
+    } else {
+      // spawnTask not set (shouldn't happen), fall back to full spawnTasks
+      await this.spawnTasks(managed);
     }
 
-    this.persistNow();
+    this.persist();
   }
 
   async startMerge(jobId: string): Promise<void> {
     const managed = this.jobs.get(jobId);
     if (!managed) throw new Error(`Job ${jobId} not found`);
 
-    // Allow re-merge from partial_failure or completed states
-    const completedTasks = managed.job.tasks.filter(t => t.status === 'completed');
-    if (completedTasks.length === 0) {
-      throw new Error('No completed tasks to merge');
+    // Find existing merge task
+    const mergeTask = managed.job.tasks.find((t) => t.isMergeTask);
+    if (mergeTask) {
+      // Retry the merge task
+      await this.retryTask(jobId, mergeTask.id);
+    } else {
+      // Create a new merge task
+      await this.createAndSpawnMergeTask(managed);
     }
-
-    // Clean up previous merge worktree if exists
-    if (managed.job.mergeWorktreeId) {
-      try {
-        await worktreeManager.remove(managed.job.mergeWorktreeId, true);
-      } catch { /* best effort */ }
-      managed.job.mergeWorktreeId = null;
-    }
-
-    // Reset merge status on all tasks
-    for (const task of managed.job.tasks) {
-      task.mergeStatus = null;
-      task.mergeError = null;
-    }
-    managed.job.mergeResults = [];
-
-    await this.runMergePhase(managed);
   }
 
-  async resolveConflict(jobId: string, taskId: string): Promise<void> {
-    const managed = this.jobs.get(jobId);
-    if (!managed) throw new Error(`Job ${jobId} not found`);
-
-    const task = managed.job.tasks.find(t => t.id === taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
-    if (task.mergeStatus !== 'conflict') {
-      throw new Error(`Task ${taskId} has no merge conflict`);
-    }
-
-    const mergeWtId = managed.job.mergeWorktreeId;
-    if (!mergeWtId) throw new Error('No merge worktree found — re-run merge first');
-
-    const worktree = worktreeManager.getWorktree(mergeWtId);
-    if (!worktree) throw new Error('Merge worktree not found');
-
-    // Spawn a merge-resolution agent in the integration worktree
-    const mergeSessionId = `merge_${jobId}_${taskId}`;
-    const session = await sessionManager.createSession({
-      id: mergeSessionId,
-      branch: worktree.branch,
-      cwd: worktree.path,
-      repoPath: managed.job.repoPath,
-      window: managed.window,
-      permissionMode: 'acceptEdits',
-    });
-
-    const conflictPrompt = `You are resolving a merge conflict. The branch "${task.branchName}" failed to merge cleanly into the integration branch.
-
-Conflict details: ${task.mergeError}
-
-Please:
-1. Run \`git merge --no-ff ${task.branchName}\` to start the merge
-2. Examine the conflict markers in the affected files
-3. Resolve each conflict by choosing the correct changes (or combining them)
-4. Stage the resolved files with \`git add\`
-5. Complete the merge with \`git commit\`
-
-Focus on making a correct merge that preserves all intended changes from both sides.`;
-
-    sessionManager.onComplete(mergeSessionId, () => {
-      // After merge agent finishes, update the task's merge status
-      task.mergeStatus = 'merged';
-      task.mergeError = null;
-      const existingResult = managed.job.mergeResults.find(r => r.taskId === taskId);
-      if (existingResult) {
-        existingResult.status = 'merged';
-        delete existingResult.error;
-      }
-      this.emit(managed, { type: 'orch_merge_task', jobId, taskId, status: 'merged' });
-
-      // Check if all conflicts are now resolved
-      const allResolved = managed.job.tasks
-        .filter(t => t.status === 'completed')
-        .every(t => t.mergeStatus === 'merged');
-
-      if (allResolved) {
-        this.emit(managed, { type: 'orch_merge_complete', jobId, allMerged: true });
-        this.updateJobStatus(managed, 'completed');
-      }
-
-      this.persistNow();
-    });
-
-    sessionManager.sendMessage(mergeSessionId, conflictPrompt);
-
-    this.emit(managed, {
-      type: 'orch_task_session',
-      jobId,
-      taskId,
-      sessionId: mergeSessionId,
-      branch: worktree.branch,
-      repoPath: managed.job.repoPath,
-      parentSessionId: managed.job.planSessionId!,
-    });
+  async resolveConflict(jobId: string, _taskId: string): Promise<void> {
+    // Conflicts are resolved by retrying the merge task
+    await this.startMerge(jobId);
   }
 
   // ─── Cancel / Retry / Remove ───
@@ -745,15 +798,13 @@ Focus on making a correct merge that preserves all intended changes from both si
     this.updateJobStatus(managed, 'cancelled');
   }
 
-  async retryTask(jobId: string, taskId: string): Promise<void> {
-    const managed = this.jobs.get(jobId);
-    if (!managed) throw new Error(`Job ${jobId} not found`);
-
-    const task = managed.job.tasks.find((t) => t.id === taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
+  /** Reset a single task to pending state, cleaning up its session and worktree. */
+  private async resetTask(managed: ManagedOrchJob, task: OrchTask): Promise<void> {
     if (task.status !== 'failed' && task.status !== 'cancelled') {
-      throw new Error(`Task ${taskId} is not in a retryable state`);
+      return;
     }
+
+    logger.info(`[orch] Resetting task ${task.id} (current status: ${task.status}, sessionId: ${task.sessionId})`);
 
     if (task.sessionId) {
       try {
@@ -763,7 +814,6 @@ Focus on making a correct merge that preserves all intended changes from both si
       task.sessionId = null;
     }
 
-    // Reset task state
     task.status = 'pending';
     task.error = null;
     task.completedAt = null;
@@ -772,24 +822,92 @@ Focus on making a correct merge that preserves all intended changes from both si
     task.durationMs = null;
     task.mergeStatus = null;
     task.mergeError = null;
+    task.progressSummary = null;
+    this.updateTaskStatus(managed, task.id, 'pending');
+  }
+
+  async retryTask(jobId: string, taskId: string): Promise<void> {
+    const managed = this.jobs.get(jobId);
+    if (!managed) throw new Error(`Job ${jobId} not found`);
+
+    const task = managed.job.tasks.find((t) => t.id === taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+
+    // Also remove a stale merge task if we're retrying a work task —
+    // the merge task will be auto-created again after all work tasks complete.
+    if (!task.isMergeTask) {
+      const mergeTask = managed.job.tasks.find((t) => t.isMergeTask);
+      if (mergeTask) {
+        await this.resetTask(managed, mergeTask);
+        // Remove the merge task entirely — it will be recreated
+        managed.job.tasks = managed.job.tasks.filter((t) => !t.isMergeTask);
+      }
+    }
+
+    this.emitPlanStatus(managed, `Retrying ${task.isMergeTask ? 'merge task' : `task ${task.id}`}...`);
+    await this.resetTask(managed, task);
 
     if (managed.job.status !== 'running') {
       this.updateJobStatus(managed, 'running');
     }
 
-    if (!managed.spawnTask) {
-      this.spawnTasks(managed).catch((err) => {
-        logger.error(`[orch] Retry spawnTasks failed for job ${jobId}:`, err);
-        this.updateJobStatus(managed, 'failed');
-      });
-      return;
+    this.spawnTasks(managed).catch((err) => {
+      logger.error(`[orch] Retry spawnTasks failed for job ${jobId}:`, err);
+      this.emitPlanStatus(managed, `Retry failed: ${(err as Error).message}`);
+      this.updateJobStatus(managed, 'failed');
+    });
+  }
+
+  async retryAllFailed(jobId: string): Promise<void> {
+    const managed = this.jobs.get(jobId);
+    if (!managed) throw new Error(`Job ${jobId} not found`);
+
+    const failedTasks = managed.job.tasks.filter(
+      (t) => (t.status === 'failed' || t.status === 'cancelled') && !t.isMergeTask
+    );
+    if (failedTasks.length === 0) return;
+
+    // Remove merge task — it will be auto-recreated after all work tasks complete
+    const mergeTask = managed.job.tasks.find((t) => t.isMergeTask);
+    if (mergeTask) {
+      await this.resetTask(managed, mergeTask);
+      managed.job.tasks = managed.job.tasks.filter((t) => !t.isMergeTask);
     }
 
-    managed.spawnTask(task).catch((err) => {
-      logger.error(`[orch] Retry spawn failed for task ${taskId}:`, err);
-      this.updateTaskStatus(managed, taskId, 'failed', (err as Error).message);
-      this.checkJobCompletion(managed);
+    this.emitPlanStatus(managed, `Retrying ${failedTasks.length} failed task(s)...`);
+
+    // Reset all failed tasks first
+    for (const task of failedTasks) {
+      await this.resetTask(managed, task);
+    }
+
+    logger.info(`[orch] After reset, task statuses: ${managed.job.tasks.map(t => `${t.id}=${t.status} deps=[${t.dependsOn.join(',')}]`).join(', ')}`);
+
+    if (managed.job.status !== 'running') {
+      this.updateJobStatus(managed, 'running');
+    }
+
+    // Single spawnTasks call handles all pending tasks
+    this.spawnTasks(managed).catch((err) => {
+      logger.error(`[orch] Retry all spawnTasks failed for job ${jobId}:`, err);
+      this.emitPlanStatus(managed, `Retry failed: ${(err as Error).message}`);
+      this.updateJobStatus(managed, 'failed');
     });
+  }
+
+  /** Mark a subtask session as individually destroyed so removeJob can still clean up its branch. */
+  markSessionDestroyed(sessionId: string): void {
+    for (const managed of this.jobs.values()) {
+      const task = managed.job.tasks.find((t) => t.sessionId === sessionId);
+      if (task) {
+        if (!managed.job.destroyedSessionIds) managed.job.destroyedSessionIds = [];
+        if (!managed.job.destroyedSessionIds.includes(sessionId)) {
+          managed.job.destroyedSessionIds.push(sessionId);
+          this.persist();
+        }
+        return;
+      }
+    }
   }
 
   async removeJob(jobId: string): Promise<void> {
@@ -800,20 +918,25 @@ Focus on making a correct merge that preserves all intended changes from both si
       await this.cancelJob(jobId);
     }
 
-    // Clean up merge worktree
-    if (managed.job.mergeWorktreeId) {
-      try { await worktreeManager.remove(managed.job.mergeWorktreeId, true); } catch { /* best effort */ }
-      managed.job.mergeWorktreeId = null;
-    }
-
     if (managed.job.planSessionId) {
       try {
         await sessionManager.destroySession(managed.job.planSessionId);
       } catch { /* best effort */ }
     }
 
+    const destroyed = new Set(managed.job.destroyedSessionIds ?? []);
+
     for (const task of managed.job.tasks) {
-      if (task.sessionId) {
+      if (!task.sessionId) continue;
+
+      if (destroyed.has(task.sessionId)) {
+        // Worktree already removed — just clean up the branch directly
+        try {
+          await git(['branch', '-D', task.branchName], managed.job.repoPath);
+        } catch {
+          logger.warn(`[orch] Failed to delete branch ${task.branchName} for already-destroyed session ${task.sessionId}`);
+        }
+      } else {
         try {
           await sessionManager.destroySession(task.sessionId);
           await worktreeManager.remove(task.sessionId, true);
@@ -880,6 +1003,7 @@ Focus on making a correct merge that preserves all intended changes from both si
         if (!('mergeResults' in job)) (job as any).mergeResults = [];
         if (!('defaultTimeoutMs' in job)) (job as any).defaultTimeoutMs = DEFAULT_TIMEOUT_MS;
         if (!('circuitBreakerThreshold' in job)) (job as any).circuitBreakerThreshold = null;
+        if (!('destroyedSessionIds' in job)) (job as any).destroyedSessionIds = [];
         if (!('mergeWorktreeId' in job)) (job as any).mergeWorktreeId = null;
 
         // Backcompat: add new task fields
@@ -889,6 +1013,7 @@ Focus on making a correct merge that preserves all intended changes from both si
           if (!('timeoutMs' in task)) (task as any).timeoutMs = null;
           if (!('mergeStatus' in task)) (task as any).mergeStatus = null;
           if (!('mergeError' in task)) (task as any).mergeError = null;
+          if (!('progressSummary' in task)) (task as any).progressSummary = null;
         }
 
         // Mark planning/merging jobs as failed on restart
@@ -896,21 +1021,19 @@ Focus on making a correct merge that preserves all intended changes from both si
           job.status = 'failed';
           job.completedAt = Date.now();
         }
-        // Mark running tasks as failed
+        // Mark non-terminal tasks as failed — in-memory spawn closures are lost on restart
         for (const task of job.tasks) {
-          if (task.status === 'running' || task.status === 'spawning') {
+          if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
             task.status = 'failed';
             task.error = 'App restarted during execution';
             task.completedAt = Date.now();
           }
         }
         // Recalculate job status
-        const allDone = job.tasks.length > 0 && job.tasks.every((t) =>
-          t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
-        );
-        if (allDone && job.status === 'running') {
-          const allCompleted = job.tasks.every((t) => t.status === 'completed');
-          job.status = allCompleted ? 'completed' : 'partial_failure';
+        if (job.status === 'running' || job.status === 'spawning') {
+          const allCompleted = job.tasks.length > 0 && job.tasks.every((t) => t.status === 'completed');
+          const allFailed = job.tasks.length > 0 && job.tasks.every((t) => t.status === 'failed' || t.status === 'cancelled');
+          job.status = allCompleted ? 'completed' : allFailed ? 'failed' : 'partial_failure';
           job.completedAt = Date.now();
         }
 
@@ -925,6 +1048,9 @@ Focus on making a correct merge that preserves all intended changes from both si
   }
 
   async cleanup() {
+    // Kill all Docker containers for subtasks
+    await killAllContainers('grove-subtask-').catch(() => {});
+
     // Clear all timers
     for (const timer of this.taskTimers.values()) {
       clearTimeout(timer);

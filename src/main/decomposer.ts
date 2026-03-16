@@ -152,6 +152,7 @@ export function validateTasks(raw: RawTask[], branchPrefix: string): OrchTask[] 
       timeoutMs: null,
       mergeStatus: null,
       mergeError: null,
+      progressSummary: null,
     });
   }
 

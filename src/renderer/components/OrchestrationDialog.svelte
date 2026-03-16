@@ -6,18 +6,38 @@
   import * as Select from '$lib/components/ui/select/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
+  import { onMount } from 'svelte';
+  import type { DockerStatus } from '../../shared/types.js';
 
   let { onclose, defaultRepo = '' }: { onclose: () => void; defaultRepo?: string } = $props();
 
   let open = $state(true);
   let selectedRepo = $state(defaultRepo || store.repos[0] || '');
   let goal = $state('');
-  let baseBranch = $state('');
+  let baseBranch = $state('main');
   let dialogError = $state('');
   let submitting = $state(false);
+  let dockerStatus = $state<DockerStatus | null>(null);
+  let dockerChecked = $state(false);
+  let proceedWithoutDocker = $state(false);
+  let tokenInput = $state('');
+  let savingToken = $state(false);
+
+  // Check Docker status immediately when the dialog opens
+  onMount(() => {
+    window.groveBench.checkDocker().then((status) => {
+      dockerStatus = status;
+      dockerChecked = true;
+    });
+  });
 
   async function handlePlan() {
     if (!selectedRepo || !goal.trim()) return;
+
+    // If Docker isn't available/authed and user hasn't acknowledged, block submission
+    if (dockerChecked && dockerStatus && (!dockerStatus.available || !dockerStatus.hasAuth) && !proceedWithoutDocker) {
+      return;
+    }
 
     submitting = true;
     dialogError = '';
@@ -120,6 +140,57 @@
           class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
         />
       </div>
+
+      {#if dockerChecked && dockerStatus?.available && dockerStatus.hasAuth}
+        <div class="bg-green-500/10 border border-green-500/50 rounded p-2 text-xs text-green-200 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+          Docker isolation enabled — subtasks will run in containers
+        </div>
+      {:else if dockerChecked && dockerStatus && (!dockerStatus.available || !dockerStatus.hasAuth) && !proceedWithoutDocker}
+        <div class="bg-yellow-500/10 border border-yellow-500/50 rounded p-3 text-xs text-yellow-200 space-y-2">
+          {#if !dockerStatus.available}
+            <p class="font-medium">Docker not available</p>
+          {:else}
+            <p class="font-medium">Docker container auth not configured</p>
+          {/if}
+          <p>Subtask agents will run in-process with software-level path validation
+          but no container boundary.</p>
+          {#if dockerStatus.available && !dockerStatus.hasAuth}
+            <p>To enable Docker isolation, run <code class="font-mono bg-black/30 px-1 rounded select-all">claude setup-token</code> in your terminal and paste the token below:</p>
+            <div class="flex gap-1.5">
+              <input
+                type="password"
+                bind:value={tokenInput}
+                placeholder="sk-ant-oat01-..."
+                class="flex-1 bg-background border border-input px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-ring rounded"
+              />
+              <Button
+                variant="default"
+                size="sm"
+                class="h-auto py-1 text-[11px]"
+                disabled={!tokenInput.trim() || savingToken}
+                onclick={async () => {
+                  savingToken = true;
+                  try {
+                    await window.groveBench.saveDockerToken(tokenInput.trim());
+                    dockerStatus = await window.groveBench.checkDocker();
+                    tokenInput = '';
+                  } catch { /* ignore */ }
+                  savingToken = false;
+                }}
+              >
+                {savingToken ? '...' : 'Save'}
+              </Button>
+            </div>
+          {/if}
+          <div class="flex gap-2 pt-1">
+            <Button variant="secondary" size="sm" onclick={() => { proceedWithoutDocker = true; handlePlan(); }}>
+              Continue without Docker
+            </Button>
+            <Button variant="ghost" size="sm" onclick={() => { open = false; onclose(); }}>Cancel</Button>
+          </div>
+        </div>
+      {/if}
 
       {#if dialogError}
         <div class="bg-destructive/10 border border-destructive/50 p-2 text-xs text-destructive">

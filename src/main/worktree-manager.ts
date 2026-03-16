@@ -82,10 +82,47 @@ export class WorktreeManager {
     await fs.mkdir(path.dirname(wtPath), { recursive: true });
 
     // Create worktree: existing branch or new branch
-    const args = useExisting
-      ? ['worktree', 'add', wtPath, branchName]
-      : ['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])];
-    await git(args, repoPath);
+    if (useExisting) {
+      await git(['worktree', 'add', wtPath, branchName], repoPath);
+    } else {
+      // Pull latest changes for the base branch so the worktree starts up-to-date
+      if (baseBranch) {
+        const hasRemote = await branchHasRemote(repoPath, baseBranch);
+        if (hasRemote) {
+          try {
+            await git(['fetch', 'origin', `${baseBranch}:${baseBranch}`], repoPath);
+          } catch {
+            // fetch may fail if baseBranch is currently checked out (can't update checked-out branch
+            // via fetch refspec) — fall back to fetch + merge approach
+            try {
+              await git(['fetch', 'origin', baseBranch], repoPath);
+            } catch { /* offline or no remote — proceed with local state */ }
+          }
+        }
+      }
+
+      // Delete stale branch from a previous run if it exists (e.g. orch retry)
+      const exists = await branchExists(repoPath, branchName);
+      if (exists) {
+        try {
+          // Find and force-remove any worktree using this branch
+          const wtList = await git(['worktree', 'list', '--porcelain'], repoPath);
+          let staleWtPath: string | null = null;
+          for (const block of wtList.split('\n\n')) {
+            if (block.includes(`branch refs/heads/${branchName}`)) {
+              const pathLine = block.split('\n').find(l => l.startsWith('worktree '));
+              if (pathLine) staleWtPath = pathLine.slice('worktree '.length);
+            }
+          }
+          if (staleWtPath) {
+            await git(['worktree', 'remove', '--force', staleWtPath], repoPath).catch(() => {});
+          }
+          await git(['worktree', 'prune'], repoPath);
+          await git(['branch', '-D', branchName], repoPath);
+        } catch { /* best effort */ }
+      }
+      await git(['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])], repoPath);
+    }
 
     // Generate .claude/settings.local.json with deny rules
     await this.generateClaudeSettings(wtPath);
@@ -372,6 +409,30 @@ export class WorktreeManager {
 
   getWorktree(id: string): WorktreeInfo | undefined {
     return this.worktrees.get(id);
+  }
+
+  /** Look up a worktree by ID, falling back to the manifest if not in memory. */
+  async getWorktreeOrManifest(id: string): Promise<WorktreeInfo | undefined> {
+    const mem = this.worktrees.get(id);
+    if (mem) return mem;
+
+    const manifest = await this.loadManifest();
+    const entry = manifest[id];
+    if (!entry) return undefined;
+
+    const hash = this.repoHash(entry.repoPath);
+    const info: WorktreeInfo = {
+      id,
+      path: entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id),
+      branch: entry.branch,
+      repoPath: entry.repoPath,
+      createdAt: entry.createdAt,
+      direct: entry.direct,
+    };
+
+    // Cache in memory for subsequent lookups
+    this.worktrees.set(id, info);
+    return info;
   }
 
   /** Register a worktree discovered on disk (e.g. surviving a restart) into the internal map so it can be destroyed later. */

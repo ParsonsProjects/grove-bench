@@ -19,10 +19,19 @@
   let scrollContainer: HTMLDivElement;
   let shouldAutoScroll = $state(true);
 
-  let messages = $derived(messageStore.getMessages(sessionId));
+  let allMessages = $derived(messageStore.getMessages(sessionId));
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  let streamingThinking = $derived(messageStore.getStreamingThinking(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
+
+  // Detail toggle — hide tool calls & thinking when off (defaults to summary mode)
+  let showDetails = $derived(messageStore.getShowDetails(sessionId));
+  const detailKinds = new Set(['tool_call', 'thinking']);
+  let messages = $derived(
+    showDetails ? allMessages : allMessages.filter((m) => !detailKinds.has(m.kind))
+  );
+  let hiddenCount = $derived(allMessages.length - messages.length);
 
   // Orchestration — inline approve button
   let session = $derived(store.sessions.find(s => s.id === sessionId));
@@ -131,6 +140,24 @@
 {/if}
 
 <div class="flex-1 relative overflow-hidden">
+<!-- Detail toggle -->
+<button
+  onclick={() => messageStore.setShowDetails(sessionId, !showDetails)}
+  class="absolute top-2 right-3 z-30 flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium border transition-colors
+    {showDetails
+      ? 'bg-card/80 border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50'
+      : 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'}"
+  title={showDetails ? 'Hide tool calls & thinking' : 'Show tool calls & thinking'}
+>
+  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+    {#if showDetails}
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
+    {:else}
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
+    {/if}
+  </svg>
+  {showDetails ? 'Detailed' : 'Summary'}{#if hiddenCount > 0} ({hiddenCount} hidden){/if}
+</button>
 <div
   class="pixel-bg h-full overflow-y-auto px-4 py-3 relative"
   bind:this={scrollContainer}
@@ -261,20 +288,29 @@
     {/if}
   {/each}
 
+  <!-- Streaming thinking (live) -->
+  {#if streamingThinking}
+    {@const lastLine = streamingThinking.trimEnd().split('\n').at(-1)?.trim() || 'thinking...'}
+    <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
+      <span class="inline-block w-1.5 h-3 bg-purple-400 animate-pulse shrink-0"></span>
+      <span class="truncate">{lastLine}</span>
+    </div>
+  {/if}
+
   <!-- Streaming text (live) -->
   {#if streamingText}
     <div class="py-1 text-sm text-foreground">
       <MarkdownBlock content={streamingText} />
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
-  {:else if isRunning}
+  {:else if isRunning && !streamingThinking}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
       <span class="inline-block w-2.5 h-2.5 bg-primary animate-pulse"></span>
       {#if activity.activity === 'thinking'}
         <span class="text-purple-400">Thinking...</span>
       {:else if activity.activity === 'tool_starting'}
         <span class="text-yellow-400">
-          Running {activity.toolName ?? 'tool'}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0} ({Math.round(activity.elapsedSeconds)}s){/if}
+          Running {activity.toolName ?? 'tool'}{#if activity.toolSummary}&nbsp;<span class="text-muted-foreground">{activity.toolSummary}</span>{/if}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
         </span>
       {:else if activity.activity === 'generating'}
         <span class="text-primary">Writing...</span>

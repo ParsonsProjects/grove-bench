@@ -34,7 +34,7 @@ class OrchestrationStore {
         ...j,
         tasks: j.tasks.map((t) =>
           t.id === taskId
-            ? { ...t, status, ...(error !== undefined ? { error } : {}), ...(status === 'completed' || status === 'failed' || status === 'cancelled' ? { completedAt: Date.now() } : {}) }
+            ? { ...t, status, ...(error !== undefined ? { error } : {}), ...(status === 'completed' || status === 'failed' || status === 'cancelled' ? { completedAt: Date.now(), progressSummary: null } : {}) }
             : t
         ),
       };
@@ -105,6 +105,18 @@ class OrchestrationStore {
       }
       case 'orch_merge_complete': {
         // Job status will be updated by the orch_job_status event
+        break;
+      }
+      case 'orch_task_progress': {
+        this.jobs = this.jobs.map((j) => {
+          if (j.id !== event.jobId) return j;
+          return {
+            ...j,
+            tasks: j.tasks.map((t) =>
+              t.id === event.taskId ? { ...t, progressSummary: event.summary } : t
+            ),
+          };
+        });
         break;
       }
       case 'orch_task_timeout': {

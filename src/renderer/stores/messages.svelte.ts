@@ -118,6 +118,9 @@ class MessageStore {
   /** Streaming text that hasn't been finalized yet */
   streamingText = $state<Record<string, string>>({});
 
+  /** Streaming thinking text that hasn't been finalized yet */
+  streamingThinking = $state<Record<string, string>>({});
+
   /** Whether Claude is currently processing for a session */
   isRunning = $state<Record<string, boolean>>({});
 
@@ -125,7 +128,7 @@ class MessageStore {
   pendingClear = $state<Record<string, boolean>>({});
 
   /** Current activity per session (what the LLM is doing right now) */
-  activityBySession = $state<Record<string, { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; elapsedSeconds?: number }>>({});
+  activityBySession = $state<Record<string, { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; elapsedSeconds?: number; toolSummary?: string }>>({});
 
   /** Per-tool progress tracking — maps toolUseId to progress info */
   toolProgressBySession = $state<Record<string, Record<string, { toolName: string; elapsedSeconds: number }>>>({});
@@ -178,6 +181,9 @@ class MessageStore {
   /** Active tab per session (survives component remount) */
   activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan'>>({});
 
+  /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
+  showDetailsBySession = $state<Record<string, boolean>>({});
+
   private cleanups = new Map<string, () => void>();
 
   getMessages(sessionId: string): ChatMessage[] {
@@ -186,6 +192,10 @@ class MessageStore {
 
   getStreamingText(sessionId: string): string {
     return this.streamingText[sessionId] ?? '';
+  }
+
+  getStreamingThinking(sessionId: string): string {
+    return this.streamingThinking[sessionId] ?? '';
   }
 
   getIsRunning(sessionId: string): boolean {
@@ -243,6 +253,14 @@ class MessageStore {
 
   setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan') {
     this.activeTabBySession[sessionId] = tab;
+  }
+
+  getShowDetails(sessionId: string): boolean {
+    return this.showDetailsBySession[sessionId] ?? false;
+  }
+
+  setShowDetails(sessionId: string, show: boolean) {
+    this.showDetailsBySession[sessionId] = show;
   }
 
   getDevServers(sessionId: string): { port: number; url: string }[] {
@@ -402,6 +420,28 @@ class MessageStore {
     }
   }
 
+  /** Reset running state for a session (e.g. after stop is clicked) */
+  markSessionStopped(sessionId: string) {
+    this.flushStreamingText(sessionId);
+    this.streamingThinking[sessionId] = '';
+    this.isRunning[sessionId] = false;
+    this.activityBySession[sessionId] = { activity: 'idle' };
+
+    // Resolve any pending tool calls so spinners don't linger
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let changed = false;
+    const updated = msgs.map((m) => {
+      if (m.kind === 'tool_call' && m.pending) {
+        changed = true;
+        return { ...m, pending: false };
+      }
+      return m;
+    });
+    if (changed) {
+      this.messagesBySession[sessionId] = updated;
+    }
+  }
+
   /** Add a user message to the display */
   addUserMessage(sessionId: string, text: string) {
     this.pushMessage(sessionId, {
@@ -463,11 +503,19 @@ class MessageStore {
 
       case 'partial_text':
         this.isRunning[sessionId] = true;
+        this.streamingThinking[sessionId] = '';
         this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
+        break;
+
+      case 'partial_thinking':
+        this.isRunning[sessionId] = true;
+        this.activityBySession[sessionId] = { activity: 'thinking' };
+        this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + event.text;
         break;
 
       case 'assistant_tool_use':
         this.isRunning[sessionId] = true;
+        this.streamingThinking[sessionId] = '';
         // If partial text was streaming but no assistant_text arrived to finalize it
         // (e.g., the assistant switched from text to tool_use mid-message), flush it.
         // Guard: only flush if there IS accumulated streaming text.
@@ -480,6 +528,11 @@ class MessageStore {
         } else if (event.toolName === 'ExitPlanMode') {
           this.modeBySession[sessionId] = 'default';
         }
+        this.activityBySession[sessionId] = {
+          activity: 'tool_starting',
+          toolName: event.toolName,
+          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput),
+        };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
           id: nextId(),
@@ -574,6 +627,7 @@ class MessageStore {
 
       case 'thinking':
         this.isRunning[sessionId] = true;
+        this.streamingThinking[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
@@ -643,10 +697,12 @@ class MessageStore {
         break;
 
       case 'tool_progress': {
+        const prevSummary = this.activityBySession[sessionId]?.toolSummary;
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
           elapsedSeconds: event.elapsedSeconds,
+          toolSummary: prevSummary,
         };
         // Track per-tool progress
         const prog = this.toolProgressBySession[sessionId] ?? {};
@@ -683,6 +739,7 @@ class MessageStore {
 
       case 'process_exit':
         this.flushStreamingText(sessionId);
+        this.streamingThinking[sessionId] = '';
         this.isRunning[sessionId] = false;
         this.activityBySession[sessionId] = { activity: 'idle' };
         break;
@@ -893,8 +950,12 @@ class MessageStore {
     const idx = msgs.findIndex(
       (m) => m.kind === 'permission' && m.requestId === requestId,
     );
+
+    // Capture the tool name before resolving, so we can sync mode
+    let toolName: string | undefined;
     if (idx >= 0) {
       const updated = { ...(msgs[idx] as ChatPermissionMessage) };
+      toolName = updated.toolName;
       updated.resolved = true;
       updated.decision = decision === 'deny' ? 'deny' : 'allow';
       this.messagesBySession[sessionId] = [
@@ -902,6 +963,11 @@ class MessageStore {
         updated,
         ...msgs.slice(idx + 1),
       ];
+    }
+
+    // When "Always Allow" is used on Edit/Write, sync mode to acceptEdits
+    if (decision === 'allowAlways' && toolName && (toolName === 'Edit' || toolName === 'Write')) {
+      this.modeBySession[sessionId] = 'acceptEdits';
     }
 
     const permDecision: PermissionDecision = {

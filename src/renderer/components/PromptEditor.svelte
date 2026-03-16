@@ -275,6 +275,7 @@
   }
 
   function handleStop() {
+    messageStore.markSessionStopped(sessionId);
     window.groveBench.stopSession(sessionId);
   }
 

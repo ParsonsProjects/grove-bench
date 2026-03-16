@@ -101,6 +101,15 @@ const api: GroveBenchAPI = {
     };
   },
 
+  // Docker
+  checkDocker: () => ipcRenderer.invoke(IPC.DOCKER_CHECK),
+  saveDockerToken: (token: string) => ipcRenderer.invoke(IPC.DOCKER_SAVE_TOKEN, token),
+
+  // Settings
+  getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
+  saveSettings: (s: import('../shared/types.js').GroveBenchSettings) =>
+    ipcRenderer.invoke(IPC.SETTINGS_SAVE, s),
+
   // Orchestration
   createOrchJob: (opts: OrchCreateOpts) =>
     ipcRenderer.invoke(IPC.ORCH_CREATE, opts),
@@ -114,6 +123,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.ORCH_LIST),
   retryOrchTask: (jobId: string, taskId: string) =>
     ipcRenderer.invoke(IPC.ORCH_RETRY_TASK, jobId, taskId),
+  retryAllOrchTasks: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_RETRY_ALL, jobId),
   mergeOrchJob: (jobId: string) =>
     ipcRenderer.invoke(IPC.ORCH_MERGE, jobId),
   resolveOrchConflict: (jobId: string, taskId: string) =>

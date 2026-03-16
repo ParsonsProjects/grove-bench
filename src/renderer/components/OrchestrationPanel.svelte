@@ -185,8 +185,19 @@
   let canMerge = $derived(
     isTerminal && completedCount > 0 && !isMerging
   );
+  let failedTasks = $derived(job?.tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled') ?? []);
   let progressPct = $derived(totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0);
   let planIsRunning = $derived(planSessionId ? messageStore.getIsRunning(planSessionId) : false);
+  let retryingAll = $state(false);
+
+  async function handleRetryAll() {
+    if (!job || failedTasks.length === 0) return;
+    retryingAll = true;
+    try {
+      await window.groveBench.retryAllOrchTasks(job.id);
+    } catch { /* best effort */ }
+    retryingAll = false;
+  }
 </script>
 
 {#if job}
@@ -382,8 +393,8 @@
                           {/if}
                           {#if task.status === 'running' || task.status === 'spawning'}
                             <span class="flex items-center gap-1">
-                              <span class="w-1 h-1 bg-blue-500 rounded-full animate-pulse"></span>
-                              {task.status === 'spawning' ? 'Starting...' : 'Active'}
+                              <span class="w-1 h-1 bg-blue-500 animate-pulse"></span>
+                              {task.status === 'spawning' ? 'Starting...' : task.progressSummary ?? 'Active'}
                             </span>
                           {/if}
                           {#if task.mergeStatus === 'merged'}
@@ -445,9 +456,22 @@
               <span>Plan: {(job.planDurationMs / 1000).toFixed(1)}s</span>
             {/if}
           </div>
-          {#if totalCost > 0}
-            <span>Total cost: ${totalCost.toFixed(4)}</span>
-          {/if}
+          <div class="flex items-center gap-2">
+            {#if totalCost > 0}
+              <span>Total cost: ${totalCost.toFixed(4)}</span>
+            {/if}
+            {#if failedTasks.length > 0}
+              <Button
+                variant="secondary"
+                size="sm"
+                class="h-5 text-[10px] px-1.5"
+                onclick={handleRetryAll}
+                disabled={retryingAll}
+              >
+                {retryingAll ? 'Retrying...' : `Retry All (${failedTasks.length})`}
+              </Button>
+            {/if}
+          </div>
         </div>
       {:else}
         <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">

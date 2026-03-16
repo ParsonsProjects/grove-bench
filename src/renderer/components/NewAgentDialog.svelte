@@ -11,7 +11,7 @@
   let open = $state(true);
   let selectedRepo = $state(defaultRepo || store.repos[0] || '');
   let branchName = $state('');
-  let baseBranch = $state('');
+  let baseBranch = $state('main');
   let creating = $state(false);
   let dialogError = $state('');
 
@@ -50,17 +50,23 @@
     return branches.filter((b) => !used.has(b));
   }
 
+  /** Loose match: every space-separated token must appear somewhere in the branch name. */
+  function looseMatch(branch: string, query: string): boolean {
+    const lower = branch.toLowerCase();
+    return query.split(/\s+/).every((token) => lower.includes(token));
+  }
+
   let filteredBranches = $derived.by(() => {
     const avail = availableBranches();
     const q = branchSearch.toLowerCase().trim();
     if (!q) return avail;
-    return avail.filter((b) => b.toLowerCase().includes(q));
+    return avail.filter((b) => looseMatch(b, q));
   });
 
   let filteredBaseBranches = $derived.by(() => {
     const q = (baseSearch || baseBranch).toLowerCase().trim();
     if (!q) return baseBranches;
-    return baseBranches.filter((b) => b.toLowerCase().includes(q));
+    return baseBranches.filter((b) => looseMatch(b, q));
   });
 
   async function fetchBranches() {

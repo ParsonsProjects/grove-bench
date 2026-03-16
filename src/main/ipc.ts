@@ -9,6 +9,8 @@ import { validateBranchName, branchExists, listBranches, git } from './git.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import { orchestrator } from './orchestrator.js';
+import { checkDockerStatus, getDockerAuthEnv } from './docker/docker-utils.js';
+import * as settings from './settings.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -150,7 +152,7 @@ export function registerHandlers() {
       return { id, branch: `orch plan` };
     }
 
-    const worktree = worktreeManager.getWorktree(id);
+    const worktree = await worktreeManager.getWorktreeOrManifest(id);
     if (!worktree) {
       throw new Error(`Worktree ${id} not found`);
     }
@@ -185,6 +187,8 @@ export function registerHandlers() {
     if (!id.startsWith('plan_')) {
       await worktreeManager.remove(id, deleteBranch);
     }
+    // Mark as soft-deleted on the orch job so removeJob can still clean up the branch
+    orchestrator.markSessionDestroyed(id);
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -222,8 +226,13 @@ export function registerHandlers() {
 
   // ─── Agent I/O ───
 
-  ipcMain.on(IPC.AGENT_SEND, (_event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
-    sessionManager.sendMessage(sessionId, content, images);
+  ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
+    const ok = sessionManager.sendMessage(sessionId, content, images);
+    if (!ok) {
+      // Session is dead — notify renderer so it doesn't stay stuck in "Writing message"
+      const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+      event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
+    }
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
@@ -404,6 +413,36 @@ export function registerHandlers() {
     await execa('claude', ['plugin', 'disable', pluginId]);
   });
 
+  // ─── Settings ───
+
+  ipcMain.handle(IPC.SETTINGS_GET, () => {
+    return settings.getSettings();
+  });
+
+  ipcMain.handle(IPC.SETTINGS_SAVE, (event, data: import('../shared/types.js').GroveBenchSettings) => {
+    settings.saveSettings(data);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    settings.applyImmediateEffects(win, data);
+  });
+
+  // ─── Docker ───
+
+  ipcMain.handle(IPC.DOCKER_CHECK, async () => {
+    const status = await checkDockerStatus();
+    if (status.available) {
+      const auth = getDockerAuthEnv();
+      (status as any).hasAuth = !!auth;
+    }
+    return status;
+  });
+
+  ipcMain.handle(IPC.DOCKER_SAVE_TOKEN, async (_event, token: string) => {
+    const s = settings.getSettings();
+    s.dockerOAuthToken = token.trim();
+    settings.saveSettings(s);
+  });
+
+
   // ─── Orchestration ───
 
   ipcMain.handle(IPC.ORCH_CREATE, async (event, opts: import('../shared/types.js').OrchCreateOpts) => {
@@ -426,6 +465,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.ORCH_RETRY_TASK, async (_event, jobId: string, taskId: string) => {
     return orchestrator.retryTask(jobId, taskId);
+  });
+
+  ipcMain.handle(IPC.ORCH_RETRY_ALL, async (_event, jobId: string) => {
+    return orchestrator.retryAllFailed(jobId);
   });
 
   ipcMain.handle(IPC.ORCH_REMOVE, async (_event, jobId: string) => {

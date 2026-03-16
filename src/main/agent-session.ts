@@ -4,6 +4,8 @@ import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from 
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import { killProcessOnPort } from './port-killer.js';
+import { DockerSession } from './docker/docker-session.js';
+import * as settings from './settings.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -74,8 +76,16 @@ interface ManagedSession {
   allowedTools: Set<string> | null;
   /** Force structured JSON output via json_schema. */
   outputFormat: { type: 'json_schema'; schema: Record<string, unknown> } | null;
+  /** SDK sandbox settings for restricted Bash execution. */
+  sandbox: Record<string, unknown> | null;
+  /** Extra environment variables merged into the SDK query env. */
+  extraEnv: Record<string, string> | null;
   /** Path to append-only event log on disk. */
   eventLogPath: string;
+  /** Whether this session runs inside a Docker container. */
+  useDocker: boolean;
+  /** Docker session instance (null if not dockerized). */
+  dockerSession: DockerSession | null;
 }
 
 /**
@@ -114,6 +124,31 @@ export interface SessionCompletionResult {
 
 const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
 
+/**
+ * Match a tool rule pattern against a tool call.
+ * Patterns: "Bash" matches all Bash, "Bash(npm run *)" matches commands starting with "npm run ".
+ * Glob-style * wildcards are supported.
+ */
+function matchToolRule(pattern: string, toolName: string, toolCall: string): boolean {
+  // Simple tool name match (no parentheses)
+  if (!pattern.includes('(')) {
+    return toolName === pattern || toolName.startsWith(pattern);
+  }
+  // Pattern with specifier: ToolName(specifier)
+  const match = pattern.match(/^([^(]+)\((.+)\)$/);
+  if (!match) return false;
+  const [, ruleTool, specifier] = match;
+  if (ruleTool !== toolName) return false;
+  if (specifier === '*') return true;
+  // Convert glob pattern to regex
+  const escaped = specifier.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  try {
+    return new RegExp(`^${escaped}$`).test(toolCall.slice(toolName.length + 1, -1) || '');
+  } catch {
+    return false;
+  }
+}
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
@@ -136,6 +171,16 @@ class AgentSessionManager {
     allowedTools?: string[] | null;
     /** Force structured JSON output via json_schema. */
     outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
+    /** SDK sandbox settings for restricted Bash execution. */
+    sandbox?: Record<string, unknown> | null;
+    /** Extra environment variables for the SDK query. */
+    extraEnv?: Record<string, string> | null;
+    /** Run the SDK query inside a Docker container for isolation. */
+    useDocker?: boolean;
+    /** SDK version string for Docker image tagging. */
+    sdkVersion?: string;
+    /** Auth env var for Docker containers. */
+    dockerAuthEnv?: { key: string; value: string };
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -148,6 +193,14 @@ class AgentSessionManager {
         inputController = controller;
       },
     });
+
+    // Apply settings defaults for values not explicitly provided
+    const appSettings = settings.getSettings();
+    const effectivePermissionMode = opts.permissionMode
+      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
+      || 'default';
+    const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+    const effectiveUseDocker = opts.useDocker ?? appSettings.enableDockerByDefault;
 
     const session: ManagedSession = {
       id,
@@ -171,12 +224,16 @@ class AgentSessionManager {
       lastResult: null,
       parentSessionId: opts.parentSessionId ?? null,
       orchJobId: opts.orchJobId ?? null,
-      permissionMode: opts.permissionMode || 'default',
-      appendSystemPrompt: opts.appendSystemPrompt ?? null,
+      permissionMode: effectivePermissionMode,
+      appendSystemPrompt: effectiveAppendPrompt,
       customSystemPrompt: opts.customSystemPrompt ?? null,
       allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
       outputFormat: opts.outputFormat ?? null,
+      sandbox: opts.sandbox ?? null,
+      extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
+      useDocker: effectiveUseDocker,
+      dockerSession: null,
     };
 
     this.sessions.set(id, session);
@@ -212,26 +269,31 @@ class AgentSessionManager {
       }
     };
 
-    // Start the agent query in the background
-    this.runQuery(session, emit).catch((err) => {
-      console.error(`[runQuery] session=${id} FAILED:`, err);
-      const errMsg = String(err.message || err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
-      emit({ type: 'error', message: isAuthError
-        ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
-        : errMsg });
-      session.status = 'error';
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(IPC.SESSION_STATUS, id, 'error');
-      }
-      // Fire completion callback on error
-      const errCb = this.completionCallbacks.get(id);
-      if (errCb) {
-        this.completionCallbacks.delete(id);
-        errCb({ sessionId: id, isError: true });
-      }
-    });
+    if (session.useDocker) {
+      // Docker path: run SDK inside a container
+      this.runDockerSession(session, emit, opts.sdkVersion || '0.2.72', opts.dockerAuthEnv);
+    } else {
+      // In-process path: run SDK directly
+      this.runQuery(session, emit).catch((err) => {
+        console.error(`[runQuery] session=${id} FAILED:`, err);
+        const errMsg = String(err.message || err);
+        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+        emit({ type: 'error', message: isAuthError
+          ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+          : errMsg });
+        session.status = 'error';
+        const w = session.window;
+        if (!w.isDestroyed()) {
+          w.webContents.send(IPC.SESSION_STATUS, id, 'error');
+        }
+        // Fire completion callback on error
+        const errCb = this.completionCallbacks.get(id);
+        if (errCb) {
+          this.completionCallbacks.delete(id);
+          errCb({ sessionId: id, isError: true });
+        }
+      });
+    }
 
     return {
       id: session.id,
@@ -243,6 +305,7 @@ class AgentSessionManager {
       createdAt: session.createdAt,
       parentSessionId: session.parentSessionId,
       orchJobId: session.orchJobId,
+      dockerized: session.useDocker || undefined,
     };
   }
 
@@ -274,12 +337,48 @@ class AgentSessionManager {
         permissionMode: session.permissionMode,
         // Force structured JSON output if configured
         ...(session.outputFormat ? { outputFormat: session.outputFormat } : {}),
+        // Sandbox settings for restricted Bash execution
+        ...(session.sandbox ? { sandbox: session.sandbox } : {}),
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
           // If an allowedTools whitelist is set, deny anything not in it
           if (session.allowedTools && !session.allowedTools.has(toolName)) {
             return { behavior: 'deny', message: `Tool "${toolName}" is not allowed in this session` };
+          }
+          // Check settings-level deny/allow rules
+          const currentSettings = settings.getSettings();
+          const toolCall = typeof (input as any)?.command === 'string'
+            ? `${toolName}(${(input as any).command})`
+            : toolName;
+          for (const rule of currentSettings.toolDenyRules) {
+            if (matchToolRule(rule.pattern, toolName, toolCall)) {
+              return { behavior: 'deny', message: `Denied by settings rule: ${rule.pattern}` };
+            }
+          }
+          for (const rule of currentSettings.toolAllowRules) {
+            if (matchToolRule(rule.pattern, toolName, toolCall)) {
+              return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+            }
+          }
+          // Auto-approve Bash for sandboxed sessions (SDK sandbox may not
+          // be active on all platforms, so we enforce it here as fallback)
+          if (session.sandbox && toolName === 'Bash') {
+            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+          }
+          // For sandboxed sessions, validate Edit/Write paths against allowWrite
+          if (session.sandbox && (toolName === 'Edit' || toolName === 'Write')) {
+            const filePath = (input as any).file_path;
+            if (filePath && typeof filePath === 'string') {
+              const allowWrite = (session.sandbox as any)?.filesystem?.allowWrite as string[] | undefined;
+              if (allowWrite && allowWrite.length > 0) {
+                const resolved = path.resolve(filePath);
+                const allowed = allowWrite.some(dir => resolved.startsWith(path.resolve(dir)));
+                if (!allowed) {
+                  return { behavior: 'deny', message: `Path "${filePath}" is outside the allowed write directories` };
+                }
+              }
+            }
           }
           // Auto-approve if user previously chose "Always Allow" for this tool
           if (session.alwaysAllowedTools.has(toolName)) {
@@ -319,6 +418,7 @@ class AgentSessionManager {
         env: {
           ...process.env,
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+          ...(session.extraEnv ?? {}),
         },
         stderr: (data: string) => {
           logger.debug(`[claude-stderr] session=${id}: ${data.trim()}`);
@@ -328,6 +428,9 @@ class AgentSessionManager {
 
     session.queryInstance = q;
     logger.debug(`[runQuery] session=${id} query created, entering message loop`);
+
+    // Show a connecting message in the thread while waiting for system_init
+    emit({ type: 'status', message: `Connecting to Claude Code — ${session.branch} · ${session.permissionMode}` });
 
     // Process message stream
     try {
@@ -367,6 +470,84 @@ class AgentSessionManager {
         durationMs: session.lastResult?.durationMs,
       });
     }
+  }
+
+  private runDockerSession(
+    session: ManagedSession,
+    emit: (event: AgentEvent) => void,
+    sdkVersion: string,
+    authEnv?: { key: string; value: string },
+  ): void {
+    const { id, worktreePath } = session;
+
+    const dockerSession = new DockerSession({
+      sessionId: id,
+      worktreePath,
+      sdkVersion,
+      authEnv: authEnv ?? null,
+      systemPrompt: session.customSystemPrompt
+        ? session.customSystemPrompt
+        : session.appendSystemPrompt
+          ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
+          : { type: 'preset', preset: 'claude_code' },
+      permissionMode: session.permissionMode,
+      sandbox: session.sandbox,
+      extraEnv: session.extraEnv,
+      appendSystemPrompt: session.appendSystemPrompt,
+    });
+
+    session.dockerSession = dockerSession;
+
+    // Show a connecting message in the thread while waiting for system_init
+    emit({ type: 'status', message: `Connecting to Claude Code (Docker) — ${session.branch} · ${session.permissionMode}` });
+
+    // Wire SDK messages → handleMessage
+    let messageCount = 0;
+    dockerSession.onMessage = (message) => {
+      if (session.abortController.signal.aborted) return;
+      messageCount++;
+      if (messageCount === 1) {
+        logger.info(`[docker] session=${id} received first SDK message, type=${(message as any)?.type}`);
+      }
+      this.handleMessage(session, message, emit);
+    };
+
+    // Wire container completion
+    dockerSession.onComplete = (result) => {
+      logger.info(`[docker] session=${id} complete: isError=${result.isError}, error=${result.error ?? 'none'}, messageCount=${messageCount}`);
+      session.status = 'stopped';
+
+      // Surface container errors to the UI before signalling exit
+      if (result.isError && result.error) {
+        emit({ type: 'error', message: result.error });
+      }
+      if (messageCount === 0 && !result.isError) {
+        emit({ type: 'status', message: 'Docker container exited without producing output' });
+      }
+
+      emit({ type: 'process_exit' });
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
+      }
+
+      // Fire completion callback
+      const cb = this.completionCallbacks.get(id);
+      if (cb) {
+        this.completionCallbacks.delete(id);
+        cb({
+          sessionId: id,
+          isError: result.isError,
+          totalCostUsd: session.lastResult?.totalCostUsd,
+          durationMs: session.lastResult?.durationMs,
+        });
+      }
+    };
+
+    // Start the container
+    dockerSession.start();
+    session.status = 'running';
+    emit({ type: 'status', message: 'Starting Docker container...' });
   }
 
   private handleMessage(
@@ -646,8 +827,8 @@ class AgentSessionManager {
           const delta = (event as any).delta;
           if (delta?.type === 'text_delta' && delta.text) {
             emit({ type: 'partial_text', text: delta.text });
-          } else if (delta?.type === 'thinking_delta') {
-            emit({ type: 'activity', activity: 'thinking' });
+          } else if (delta?.type === 'thinking_delta' && delta.thinking) {
+            emit({ type: 'partial_thinking', text: delta.thinking });
           }
         } else if (event.type === 'content_block_start') {
           const block = (event as any).content_block;
@@ -713,11 +894,19 @@ class AgentSessionManager {
     }
   }
 
-  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): void {
+  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): boolean {
     const session = this.sessions.get(id);
+
+    // Docker path: send init message to Docker container
+    if (session?.useDocker && session.dockerSession) {
+      session.eventHistory.push({ type: 'user_message', text: content });
+      session.dockerSession.sendInit(content);
+      return true;
+    }
+
     if (!session?.inputController) {
       logger.debug(`[sendMessage] session=${id} no session or inputController`);
-      return;
+      return false;
     }
 
     // Record in event history so user messages survive renderer refresh
@@ -750,9 +939,11 @@ class AgentSessionManager {
         parent_tool_use_id: null,
       } as SDKUserMessage);
       logger.debug(`[sendMessage] session=${id} enqueued successfully`);
+      return true;
     } catch (e) {
       console.error(`[sendMessage] session=${id} enqueue FAILED:`, e);
       logger.warn(`Failed to send message to session ${id}:`, e);
+      return false;
     }
   }
 
@@ -828,6 +1019,12 @@ class AgentSessionManager {
     // Abort the query
     session.abortController.abort();
 
+    // Kill Docker container if applicable
+    if (session.dockerSession) {
+      await session.dockerSession.abort();
+      session.dockerSession = null;
+    }
+
     // Close the input stream
     try {
       session.inputController?.close();
@@ -877,6 +1074,7 @@ class AgentSessionManager {
       createdAt: s.createdAt,
       parentSessionId: s.parentSessionId,
       orchJobId: s.orchJobId,
+      dockerized: s.useDocker || undefined,
     }));
   }
 
@@ -899,6 +1097,24 @@ class AgentSessionManager {
     }
   }
 
+  /**
+   * Close the input stream for a session, signalling no more messages.
+   * This causes the SDK's `for await` loop to exit naturally, firing
+   * the completion callback. Use for single-shot sessions (subtasks,
+   * merge agents) where only one instruction is sent.
+   */
+  closeInputStream(id: string): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    // Docker sessions don't use the input stream — the init message is the only input
+    if (session.useDocker) return;
+    if (!session.inputController) return;
+    try {
+      session.inputController.close();
+      session.inputController = null;
+    } catch { /* may already be closed */ }
+  }
+
   /** Register a one-time callback for when a session's query completes. */
   onComplete(id: string, callback: (result: SessionCompletionResult) => void): void {
     this.completionCallbacks.set(id, callback);
@@ -909,6 +1125,24 @@ class AgentSessionManager {
     const list = this.eventListeners.get(id) ?? [];
     list.push(callback);
     this.eventListeners.set(id, list);
+  }
+
+  /** Inject an external event into a session's history and broadcast it to the renderer. */
+  injectEvent(id: string, event: AgentEvent): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    session.eventHistory.push(event);
+    const w = session.window;
+    if (!w.isDestroyed()) {
+      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
+    }
+    // Notify internal listeners
+    const listeners = this.eventListeners.get(id);
+    if (listeners) {
+      for (const cb of listeners) {
+        try { cb(event); } catch { /* non-fatal */ }
+      }
+    }
   }
 
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
