@@ -98,6 +98,9 @@
 
   let showSessionFinder = $state(false);
 
+  // Child sessions explicitly opened by the user (click in sidebar)
+  let openedChildSessions = $state<Set<string>>(new Set());
+
   // Track which inactive tabs had a turn complete
   let sessionCompletedWhileInactive = $state<Record<string, boolean>>({});
   let prevRunningState = $state<Record<string, boolean>>({});
@@ -114,11 +117,17 @@
     }
   });
 
-  // Clear flash when switching to a session
+  // Clear flash when switching to a session; open tab for child sessions
   $effect(() => {
     const activeId = store.activeSessionId;
     if (activeId && sessionCompletedWhileInactive[activeId]) {
       delete sessionCompletedWhileInactive[activeId];
+    }
+    if (activeId) {
+      const session = store.sessions.find((s) => s.id === activeId);
+      if (session?.parentSessionId) {
+        openedChildSessions.add(activeId);
+      }
     }
   });
 
@@ -188,6 +197,7 @@
       await window.groveBench.stopSession(id);
     } catch { /* session may already be dead */ }
     store.updateStatus(id, 'stopped');
+    openedChildSessions.delete(id);
     if (store.activeSessionId === id) {
       const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
       store.activeSessionId = next?.id ?? null;
@@ -207,7 +217,7 @@
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.orchJobId));
+  let openSessions = $derived(store.sessions.filter((s) => (!s.parentSessionId || openedChildSessions.has(s.id)) && (s.status === 'running' || s.orchJobId)));
   let hasTabContent = $derived(openSessions.length > 0);
 </script>
 

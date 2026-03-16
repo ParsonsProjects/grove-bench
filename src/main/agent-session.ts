@@ -440,14 +440,19 @@ class AgentSessionManager {
         this.handleMessage(session, message, emit);
       }
       logger.debug(`[runQuery] session=${id} message loop ended normally`);
-    } catch (err) {
-      console.error(`[runQuery] session=${id} message loop error:`, err);
-      const errMsg = (err as Error).message || String(err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+    } catch (err: any) {
+      // Extract as much detail as possible from the SDK error
+      const errMsg = err?.message || String(err);
+      const stderr = err?.stderr || err?.cause?.stderr || '';
+      const exitCode = err?.exitCode ?? err?.code ?? '';
+      const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
+      logger.error(`[runQuery] session=${id} message loop error (exit=${exitCode}):`, detail);
+
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
       if (isAuthError) {
         emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
       } else {
-        emit({ type: 'error', message: `Query error: ${errMsg}` });
+        emit({ type: 'error', message: detail.slice(0, 500) });
       }
     }
 
@@ -567,8 +572,9 @@ class AgentSessionManager {
           });
           // Also save on the orch job for plan sessions (which have no worktree manifest entry)
           if (session.id.startsWith('plan_')) {
-            const { orchestrator } = require('./orchestrator.js');
-            orchestrator.savePlanClaudeSessionId(session.id, message.session_id);
+            import('./orchestrator.js').then(({ orchestrator }) => {
+              orchestrator.savePlanClaudeSessionId(session.id, message.session_id);
+            }).catch(() => {});
           }
 
           emit({

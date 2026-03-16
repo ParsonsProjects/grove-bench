@@ -142,12 +142,12 @@
       </div>
 
       {#if dockerChecked && dockerStatus?.available && dockerStatus.hasAuth}
-        <div class="bg-green-500/10 border border-green-500/50 rounded p-2 text-xs text-green-200 flex items-center gap-2">
+        <div class="bg-green-500/10 border border-green-500/50 p-2 text-xs text-green-200 flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
           Docker isolation enabled — subtasks will run in containers
         </div>
       {:else if dockerChecked && dockerStatus && (!dockerStatus.available || !dockerStatus.hasAuth) && !proceedWithoutDocker}
-        <div class="bg-yellow-500/10 border border-yellow-500/50 rounded p-3 text-xs text-yellow-200 space-y-2">
+        <div class="bg-yellow-500/10 border border-yellow-500/50 p-3 text-xs text-yellow-200 space-y-2">
           {#if !dockerStatus.available}
             <p class="font-medium">Docker not available</p>
           {:else}

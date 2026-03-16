@@ -144,6 +144,16 @@
     resolvingConflict = null;
   }
 
+  function scopeLabel(s: string): string {
+    const trimmed = s.replace(/\/+$/, '');
+    const parts = trimmed.split('/').filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : s;
+  }
+
+  function validScope(task: OrchTask): string[] {
+    return task.scope.filter((s) => s && s.trim().length > 0);
+  }
+
   function depNames(task: OrchTask): string {
     if (!job || task.dependsOn.length === 0) return '';
     return task.dependsOn
@@ -364,13 +374,13 @@
                         </div>
                       {/if}
 
-                      {#if task.scope.length > 0}
+                      {#if validScope(task).length > 0}
                         <div class="flex flex-wrap gap-1 mb-1.5">
-                          {#each task.scope.slice(0, 2) as s}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm font-mono">{s.split('/').pop()}</span>
+                          {#each validScope(task).slice(0, 2) as s}
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm font-mono">{scopeLabel(s)}</span>
                           {/each}
-                          {#if task.scope.length > 2}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm">+{task.scope.length - 2}</span>
+                          {#if validScope(task).length > 2}
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm">+{validScope(task).length - 2}</span>
                           {/if}
                         </div>
                       {/if}

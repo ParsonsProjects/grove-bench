@@ -173,6 +173,7 @@
           {:else}
             <button
               onclick={() => focusSession(session.id)}
+              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); orchJob ? (confirmRemoveOrch = orchJob.id) : requestDestroy(session.id); } }}
               ondblclick={() => { if (!session.direct && !session.orchJobId) startRename(session.id, session.branch); }}
               class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
                 {store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
@@ -223,6 +224,7 @@
           {#each children as child (child.id)}
             <button
               onclick={() => focusSession(child.id)}
+              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); child.parentSessionId?.startsWith('plan_') ? store.removeSession(child.id) : requestDestroy(child.id); } }}
               class="w-full flex items-center justify-between pl-8 pr-2 py-1 text-left group/child transition-colors
                 {store.activeSessionId === child.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >

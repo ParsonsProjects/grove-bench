@@ -250,14 +250,16 @@ TASK DESIGN RULES:
     sessionManager.onEvent(planSessionId, (event) => {
       const ev = event as any;
       if (ev.type === 'result') {
-        logger.info(`[orch] Plan session result: isError=${ev.isError}, hasStructuredOutput=${!!ev.structured_output}, hasResult=${!!ev.result}, planHandled=${planHandled}`);
+        logger.info(`[orch] Plan session result: isError=${ev.isError}, hasStructuredOutput=${!!ev.structured_output}, hasResult=${!!ev.result}, resultLen=${ev.result?.length ?? 0}, planHandled=${planHandled}`);
         if (!ev.isError && !planHandled) {
           planHandled = true;
           this.handlePlanComplete(managed, ev, branchPrefix, baseBranch, planStart)
             .catch((err) => {
+              const errMsg = (err as Error).message;
               logger.error(`[orch] handlePlanComplete failed:`, err);
               managed.job.status = 'failed';
-              this.emit(managed, { type: 'orch_plan_error', jobId: managed.job.id, error: (err as Error).message });
+              this.emit(managed, { type: 'orch_plan_error', jobId: managed.job.id, error: errMsg });
+              this.emitPlanStatus(managed, `Plan parsing failed: ${errMsg}`);
               this.persistNow();
             });
         } else if (ev.isError && !planHandled) {
@@ -314,8 +316,9 @@ TASK DESIGN RULES:
       }
 
       if (!raw || !Array.isArray(raw)) {
-        logger.error(`[orch] raw is invalid: ${JSON.stringify(raw).slice(0, 200)}`);
-        throw new Error('Planning agent returned no valid task array');
+        const snippet = resultEvent.result?.slice(0, 300) || '(no result text)';
+        logger.error(`[orch] raw is invalid: ${JSON.stringify(raw).slice(0, 200)}, result snippet: ${snippet}`);
+        throw new Error(`Planning agent did not return a valid task array. The agent may have provided analysis without the required JSON output format.`);
       }
 
       logger.info(`[orch] Parsed ${raw.length} raw tasks, validating...`);
@@ -345,6 +348,7 @@ TASK DESIGN RULES:
       logger.error(`[orch] Failed to parse plan result for job ${job.id}:`, err);
       job.status = 'failed';
       this.emit(managed, { type: 'orch_plan_error', jobId: job.id, error: errMsg });
+      this.emitPlanStatus(managed, `Failed to parse plan: ${errMsg}`);
     }
 
     this.persistNow();

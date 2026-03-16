@@ -146,12 +146,12 @@
 
     <!-- Error -->
     {#if settingsStore.error}
-      <div class="mt-2 text-xs text-destructive bg-destructive/10 rounded px-3 py-2">
+      <div class="mt-2 text-xs text-destructive bg-destructive/10 px-3 py-2">
         {settingsStore.error}
       </div>
     {/if}
     {#if tab === 'plugins' && pluginStore.error}
-      <div class="mt-2 text-xs text-destructive bg-destructive/10 rounded px-3 py-2">
+      <div class="mt-2 text-xs text-destructive bg-destructive/10 px-3 py-2">
         {pluginStore.error}
       </div>
     {/if}
@@ -197,7 +197,7 @@
             {#if settingsStore.draft.toolAllowRules.length > 0}
               <div class="flex flex-wrap gap-1 mb-2">
                 {#each settingsStore.draft.toolAllowRules as rule, i (i)}
-                  <span class="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-xs rounded">
+                  <span class="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-xs">
                     <code>{rule.pattern}</code>
                     <button onclick={() => settingsStore.removeToolAllowRule(i)} class="text-muted-foreground hover:text-destructive">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -225,7 +225,7 @@
             {#if settingsStore.draft.toolDenyRules.length > 0}
               <div class="flex flex-wrap gap-1 mb-2">
                 {#each settingsStore.draft.toolDenyRules as rule, i (i)}
-                  <span class="inline-flex items-center gap-1 bg-destructive/10 px-2 py-0.5 text-xs rounded">
+                  <span class="inline-flex items-center gap-1 bg-destructive/10 px-2 py-0.5 text-xs">
                     <code>{rule.pattern}</code>
                     <button onclick={() => settingsStore.removeToolDenyRule(i)} class="text-muted-foreground hover:text-destructive">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -290,7 +290,7 @@
             {#if settingsStore.draft.workingDirectories.length > 0}
               <div class="flex flex-col gap-1 mb-2">
                 {#each settingsStore.draft.workingDirectories as dir, i (i)}
-                  <div class="flex items-center justify-between bg-muted px-2 py-1 text-xs rounded">
+                  <div class="flex items-center justify-between bg-muted px-2 py-1 text-xs">
                     <code class="truncate">{dir}</code>
                     <button onclick={() => settingsStore.removeWorkingDirectory(i)} class="text-muted-foreground hover:text-destructive ml-2 shrink-0">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -392,7 +392,7 @@
             {#if settingsStore.draft.sandboxAllowedDomains.length > 0}
               <div class="flex flex-wrap gap-1 mb-2">
                 {#each settingsStore.draft.sandboxAllowedDomains as domain, i (i)}
-                  <span class="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-xs rounded">
+                  <span class="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-xs">
                     {domain}
                     <button onclick={() => settingsStore.removeSandboxDomain(i)} class="text-muted-foreground hover:text-destructive">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
