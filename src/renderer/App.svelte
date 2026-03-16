@@ -135,8 +135,6 @@
   $effect(() => {
     const session = store.activeSession;
     if (!session || session.status !== 'stopped' || resumingId === session.id || failedResumeIds.has(session.id)) return;
-    // Orchestrator planning sessions don't have worktrees and can't be resumed
-    if (session.orchJobId) return;
 
     resumingId = session.id;
     const sessionId = session.id;
@@ -265,6 +263,7 @@
             ondragend={handleTabDragEnd}
             ondragleave={() => { if (dropTargetId === session.id) dropTargetId = null; }}
             onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
+            onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(session.id); } }}
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
               {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
               {dragTabId === session.id ? 'opacity-40' : ''}

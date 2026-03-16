@@ -39,9 +39,56 @@ export async function branchExists(cwd: string, branch: string): Promise<boolean
   }
 }
 
+/** Check if a branch exists locally OR as a remote-tracking ref. */
+export async function branchExistsAnywhere(cwd: string, branch: string): Promise<boolean> {
+  // Check local first
+  if (await branchExists(cwd, branch)) return true;
+  // Check remote-tracking refs (e.g. origin/feat/API-1388)
+  try {
+    const output = await execa('git', ['branch', '-r', '--format=%(refname:short)'], { cwd });
+    const remotes = output.stdout.split('\n').map(l => l.trim()).filter(Boolean);
+    return remotes.some(ref => {
+      // Strip remote name prefix (e.g. "origin/feat/foo" → "feat/foo")
+      const slash = ref.indexOf('/');
+      return slash !== -1 && ref.slice(slash + 1) === branch;
+    });
+  } catch {
+    return false;
+  }
+}
+
 export async function listBranches(cwd: string): Promise<string[]> {
-  const output = await git(['branch', '--format=%(refname:short)'], cwd);
-  return output.split('\n').map(l => l.trim()).filter(Boolean);
+  // Fetch latest remote refs (non-blocking — proceed with local cache on failure)
+  try { await git(['fetch', '--prune'], cwd); } catch { /* offline or no remote */ }
+
+  // Get remote names so we can strip their prefix from remote-tracking branches
+  let remotes: string[] = [];
+  try {
+    const remotesOut = await git(['remote'], cwd);
+    remotes = remotesOut.split('\n').map(r => r.trim()).filter(Boolean);
+  } catch { /* no remotes */ }
+
+  const output = await git(['branch', '-a', '--format=%(refname:short)'], cwd);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of output.split('\n')) {
+    let name = raw.trim();
+    if (!name) continue;
+    // Skip HEAD pointers like "origin/HEAD"
+    if (name.endsWith('/HEAD')) continue;
+    // Strip remote prefix (e.g. "origin/feature/foo" → "feature/foo")
+    for (const remote of remotes) {
+      if (name.startsWith(`${remote}/`)) {
+        name = name.slice(remote.length + 1);
+        break;
+      }
+    }
+    if (!seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+  }
+  return result;
 }
 
 export async function validateBranchName(name: string): Promise<boolean> {

@@ -5,7 +5,7 @@ import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, Session
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
-import { validateBranchName, branchExists, listBranches, git } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git } from './git.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import { orchestrator } from './orchestrator.js';
@@ -84,13 +84,13 @@ export function registerHandlers() {
       return { id: session.id, branch: session.branch };
     }
 
-    const exists = await branchExists(opts.repoPath, opts.branchName);
-
     if (opts.useExisting) {
+      const exists = await branchExistsAnywhere(opts.repoPath, opts.branchName);
       if (!exists) {
         throw new Error(`Branch "${opts.branchName}" does not exist`);
       }
     } else {
+      const exists = await branchExists(opts.repoPath, opts.branchName);
       const validName = await validateBranchName(opts.branchName);
       if (!validName) {
         throw new Error(`Invalid branch name: "${opts.branchName}"`);
@@ -145,11 +145,28 @@ export function registerHandlers() {
       return { id: s.id, branch: s.branch };
     }
 
-    // Orchestrator planning sessions (plan_orch_*) run in the repo root, not a worktree.
-    // They are managed by the orchestrator and should not be resumed as normal sessions.
+    // Orchestrator planning sessions run in the repo root, not a worktree.
+    // Resume them as direct sessions.
     if (id.startsWith('plan_')) {
-      logger.info(`Skipping resume for orchestrator planning session: ${id}`);
-      return { id, branch: `orch plan` };
+      const job = orchestrator.getJobByPlanSession(id);
+      if (!job) {
+        throw new Error(`No orchestration job found for plan session ${id}`);
+      }
+      const claudeSessionId = orchestrator.getPlanClaudeSessionId(id);
+      logger.info(`Resuming orch planning session: id=${id}, repo=${job.repoPath}, claudeSession=${claudeSessionId ?? 'none'}`);
+
+      const session = await sessionManager.createSession({
+        id,
+        branch: `orch: ${job.goal.slice(0, 40)}`,
+        cwd: job.repoPath,
+        repoPath: job.repoPath,
+        window: win,
+        resumeClaudeSessionId: claudeSessionId,
+        permissionMode: 'acceptEdits',
+        orchJobId: job.id,
+      });
+
+      return { id: session.id, branch: session.branch };
     }
 
     const worktree = await worktreeManager.getWorktreeOrManifest(id);
@@ -343,18 +360,31 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath);
-    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
+    // Sanitize: strip Docker container paths (/workspace/...) and make relative
+    let relPath = filePath.replace(/^\/workspace\//, '');
+    const normalWt = path.normalize(worktree.path) + path.sep;
+    if (path.normalize(relPath).startsWith(normalWt)) {
+      relPath = path.relative(worktree.path, relPath);
+    }
+    const resolved = path.resolve(worktree.path, relPath);
+    if (!path.normalize(resolved).startsWith(normalWt)) {
       throw new Error('Path traversal not allowed');
     }
-    await git(['checkout', '--', filePath], worktree.path);
+    await git(['checkout', '--', relPath], worktree.path);
   });
 
   ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath);
-    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
+    // Sanitize: strip Docker container paths (/workspace/...) and make relative
+    let relPath = filePath.replace(/^\/workspace\//, '');
+    // Also strip the host worktree prefix if it's an absolute path
+    const normalWt = path.normalize(worktree.path) + path.sep;
+    if (path.normalize(relPath).startsWith(normalWt)) {
+      relPath = path.relative(worktree.path, relPath);
+    }
+    const resolved = path.resolve(worktree.path, relPath);
+    if (!path.normalize(resolved).startsWith(normalWt)) {
       throw new Error('Path traversal not allowed');
     }
     // Get unified diff of this file vs HEAD

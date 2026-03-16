@@ -227,16 +227,28 @@
                 {store.activeSessionId === child.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >
               <div class="flex items-center gap-2 min-w-0">
-                <span class="w-1.5 h-1.5 {statusColor[child.status] || 'bg-neutral-500'} {child.status === 'running' && messageStore.getIsRunning(child.id) ? 'animate-pulse' : ''} shrink-0"></span>
+                {#if child.status === 'error'}
+                  <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>
+                {:else if child.status === 'starting'}
+                  <span class="w-1.5 h-1.5 bg-yellow-500 animate-pulse shrink-0"></span>
+                {:else if messageStore.getIsRunning(child.id)}
+                  <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
+                {:else if getSessionHasPending(child.id)}
+                  <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse shrink-0"></span>
+                {:else if child.status === 'stopped'}
+                  <span class="w-1.5 h-1.5 bg-neutral-500 shrink-0"></span>
+                {:else}
+                  <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+                {/if}
                 <svg class="w-3 h-3 shrink-0 text-muted-foreground/60" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
                 <span class="text-xs truncate text-muted-foreground">{child.branch}</span>
               </div>
               <span
                 role="button"
                 tabindex="-1"
-                onclick={(e) => { e.stopPropagation(); requestDestroy(child.id); }}
-                onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') requestDestroy(child.id); }}
-                class="w-4 h-4 flex items-center justify-center text-muted-foreground/30 hover:text-destructive opacity-0 group-hover/child:opacity-100 cursor-pointer transition-colors shrink-0"
+                onclick={(e) => { e.stopPropagation(); child.parentSessionId?.startsWith('plan_') ? store.removeSession(child.id) : requestDestroy(child.id); }}
+                onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') (child.parentSessionId?.startsWith('plan_') ? store.removeSession(child.id) : requestDestroy(child.id)); }}
+                class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/child:opacity-100 cursor-pointer transition-colors shrink-0"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </span>

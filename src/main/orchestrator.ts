@@ -695,7 +695,9 @@ TASK DESIGN RULES:
       .map((t, i) => `${i + 1}. \`${t.branchName}\` — ${t.description}`)
       .join('\n');
 
-    const mergeInstruction = `You are the merge agent. Your job is to merge all completed task branches into this integration branch (based on \`${job.baseBranch}\`).
+    const mergeInstruction = `You are the integration agent. Your job is to merge all completed task branches into this integration branch (based on \`${job.baseBranch}\`), then review the combined result for correctness.
+
+## Phase 1: Merge
 
 Merge the following branches IN ORDER using \`git merge --no-ff <branch>\` for each:
 ${branchList}
@@ -709,9 +711,22 @@ For each branch:
    c. Stage the resolved files with \`git add <file>\`
    d. Complete the merge with \`git commit -m "Merge <branch>"\`
 
-After all branches are merged, run a quick sanity check (e.g. \`timeout 30 npx tsc --noEmit\` if TypeScript) to verify the combined result compiles.
+IMPORTANT: Merge ALL branches, not just the first one. Do not stop after the first merge.
 
-IMPORTANT: Merge ALL branches, not just the first one. Do not stop after the first merge.`;
+## Phase 2: Review
+
+After all branches are merged, review the combined changes:
+
+1. Run \`git diff ${job.baseBranch}...HEAD --stat\` to see all changed files
+2. Review the actual diffs of key files for:
+   - Duplicate imports or declarations introduced by separate tasks
+   - Inconsistent naming or patterns across task boundaries
+   - Missing or broken cross-references (e.g. task A added a function, task B should call it)
+   - Type errors or interface mismatches between changes from different tasks
+3. Run a build/type check (e.g. \`timeout 60 npx tsc --noEmit\` for TypeScript) to catch compile errors
+4. Fix any issues found — commit fixes as a separate "integration fixes" commit
+
+If everything looks clean, confirm with a brief summary of what was merged and any fixes applied.`;
 
     const mergeTask: OrchTask = {
       id: `merge_${jobIdShort}`,
@@ -955,6 +970,34 @@ IMPORTANT: Merge ALL branches, not just the first one. Do not stop after the fir
 
   getJob(jobId: string): OrchJob | undefined {
     return this.jobs.get(jobId)?.job;
+  }
+
+  getJobByPlanSession(planSessionId: string): OrchJob | undefined {
+    for (const managed of this.jobs.values()) {
+      if (managed.job.planSessionId === planSessionId) return managed.job;
+    }
+    return undefined;
+  }
+
+  /** Save the Claude SDK session ID on the orch job for plan session resumption. */
+  savePlanClaudeSessionId(planSessionId: string, claudeSessionId: string): void {
+    for (const managed of this.jobs.values()) {
+      if (managed.job.planSessionId === planSessionId) {
+        (managed.job as any).planClaudeSessionId = claudeSessionId;
+        this.persist();
+        return;
+      }
+    }
+  }
+
+  /** Get the saved Claude SDK session ID for a plan session. */
+  getPlanClaudeSessionId(planSessionId: string): string | undefined {
+    for (const managed of this.jobs.values()) {
+      if (managed.job.planSessionId === planSessionId) {
+        return (managed.job as any).planClaudeSessionId;
+      }
+    }
+    return undefined;
   }
 
   // ─── Persistence ───

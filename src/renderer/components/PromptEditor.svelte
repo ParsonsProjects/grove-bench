@@ -187,6 +187,22 @@
       return;
     }
 
+    // Ctrl+C with no selection clears the input (terminal-style)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      const sel = window.getSelection()?.toString() || '';
+      if (!sel && value.length > 0) {
+        e.preventDefault();
+        value = '';
+        attachedFiles = [];
+        closePicker();
+        closeCommandPicker();
+        userResized = false;
+        if (container) container.style.height = '';
+        if (textarea) textarea.style.height = '';
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();

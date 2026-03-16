@@ -1,5 +1,6 @@
 import type { OrchJob, OrchEvent, OrchTaskStatus, OrchJobStatus, OrchOverlapWarning } from '../../shared/types.js';
 import { store } from './sessions.svelte.js';
+import { messageStore } from './messages.svelte.js';
 
 class OrchestrationStore {
   jobs = $state<OrchJob[]>([]);
@@ -76,6 +77,8 @@ class OrchestrationStore {
             status: 'running',
             parentSessionId: event.parentSessionId,
           }, false);
+          // Subtask agents run in acceptEdits mode
+          messageStore.setModeLocal(event.sessionId, 'acceptEdits');
         }
         break;
       }

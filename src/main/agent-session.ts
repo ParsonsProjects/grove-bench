@@ -218,7 +218,7 @@ class AgentSessionManager {
       alwaysAllowedTools: new Set(),
       claudeSessionId: opts.resumeClaudeSessionId || null,
       window: win,
-      eventHistory: [],
+      eventHistory: this.loadEventHistory(id),
       detectedPorts: new Set(),
       toolUseMap: new Map(),
       lastResult: null,
@@ -565,6 +565,11 @@ class AgentSessionManager {
           worktreeManager.saveClaudeSessionId(session.id, message.session_id).catch((e) => {
             logger.warn(`Failed to persist Claude session ID for ${session.id}:`, e);
           });
+          // Also save on the orch job for plan sessions (which have no worktree manifest entry)
+          if (session.id.startsWith('plan_')) {
+            const { orchestrator } = require('./orchestrator.js');
+            orchestrator.savePlanClaudeSessionId(session.id, message.session_id);
+          }
 
           emit({
             type: 'system_init',
@@ -1145,12 +1150,8 @@ class AgentSessionManager {
     }
   }
 
-  /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
-  getEventHistory(id: string): AgentEvent[] {
-    const session = this.sessions.get(id);
-    if (session) return session.eventHistory;
-
-    // Fall back to reading from disk
+  /** Load event history from the disk JSONL log for a session. */
+  private loadEventHistory(id: string): AgentEvent[] {
     const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
     try {
       const data = fs.readFileSync(logPath, 'utf-8');
@@ -1158,6 +1159,13 @@ class AgentSessionManager {
     } catch {
       return [];
     }
+  }
+
+  /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
+  getEventHistory(id: string): AgentEvent[] {
+    const session = this.sessions.get(id);
+    if (session) return session.eventHistory;
+    return this.loadEventHistory(id);
   }
 
   get count(): number {
