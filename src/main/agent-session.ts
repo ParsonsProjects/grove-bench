@@ -5,6 +5,8 @@ import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import { killProcessOnPort } from './port-killer.js';
 import { DockerSession } from './docker/docker-session.js';
+import { DevServer } from './dev-server.js';
+import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -88,6 +90,8 @@ interface ManagedSession {
   dockerSession: DockerSession | null;
   /** User-assigned display name — shown instead of branch when set. */
   displayName: string | null;
+  /** Host-managed dev server instance. */
+  devServer: DevServer | null;
 }
 
 /**
@@ -237,6 +241,7 @@ class AgentSessionManager {
       useDocker: effectiveUseDocker,
       dockerSession: null,
       displayName: null,
+      devServer: null,
     };
 
     this.sessions.set(id, session);
@@ -1041,6 +1046,44 @@ class AgentSessionManager {
     }
   }
 
+  /** Start a host-managed dev server for the given session. */
+  async startDevServer(sessionId: string, overrideCommand?: string): Promise<{ port: number; url: string } | null> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+    // Stop existing dev server if any
+    await this.stopDevServer(sessionId);
+
+    // Resolve command via fallback chain: override → settings → auto-detect
+    const command = overrideCommand
+      || settings.getSettings().devCommand
+      || await detectDevCommand(session.worktreePath);
+
+    if (!command) throw new Error('No dev command configured and none detected from package.json');
+
+    const devServer = new DevServer(sessionId, session.worktreePath, command, (info) => {
+      // Emit devserver_detected event through the existing channel
+      session.detectedPorts.add(info.port);
+      const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
+      session.eventHistory.push(event);
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
+      }
+    });
+
+    session.devServer = devServer;
+    return devServer.start();
+  }
+
+  /** Stop the host-managed dev server for the given session. */
+  async stopDevServer(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.devServer) return;
+    await session.devServer.stop();
+    session.devServer = null;
+  }
+
   /** Kill dev servers detected during this session and clear the port set. */
   private async killDetectedPorts(session: ManagedSession): Promise<void> {
     if (session.detectedPorts.size === 0) return;
@@ -1078,6 +1121,12 @@ class AgentSessionManager {
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
       pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
+    }
+
+    // Stop host-managed dev server
+    if (session.devServer) {
+      await session.devServer.stop();
+      session.devServer = null;
     }
 
     // Kill any dev servers not already cleaned up on query completion

@@ -23,6 +23,7 @@
   let isPlanning = $derived(job?.status === 'planning');
   let hasPlan = $derived((job?.tasks.length ?? 0) > 0);
   let approving = $state(false);
+  let expandedTaskId = $state<string | null>(null);
 
   // Auto-switch to plan tab when planning completes
   $effect(() => {
@@ -162,6 +163,18 @@
         return dep ? dep.description.slice(0, 20) : depId;
       })
       .join(', ');
+  }
+
+  function fullDepNames(task: OrchTask): string[] {
+    if (!job || task.dependsOn.length === 0) return [];
+    return task.dependsOn.map((depId) => {
+      const dep = job!.tasks.find((t) => t.id === depId);
+      return dep ? dep.description : depId;
+    });
+  }
+
+  function toggleExpand(taskId: string) {
+    expandedTaskId = expandedTaskId === taskId ? null : taskId;
   }
 
   function elapsed(task: OrchTask): string {
@@ -334,6 +347,21 @@
           </div>
         </div>
 
+        <!-- Refine hint (only in planned state) -->
+        {#if job.status === 'planned'}
+          <div class="px-4 py-2 bg-primary/5 border-b border-primary/20 shrink-0 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-primary shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            <p class="text-xs text-muted-foreground">
+              Review the plan below. Want to add, remove, or edit tasks?
+              <button
+                onclick={() => activeTab = 'activity'}
+                class="text-primary hover:underline font-medium ml-0.5"
+              >Switch to Activity</button>
+              to discuss changes with the agent before launching.
+            </p>
+          </div>
+        {/if}
+
         <!-- Kanban board -->
         <div class="pixel-bg flex-1 overflow-auto p-3 relative">
           {#each Array(20) as _, i}
@@ -356,12 +384,23 @@
 
                 <div class="flex-1 flex flex-col gap-2 overflow-y-auto min-h-0 pr-1">
                   {#each colTasks as task (task.id)}
-                    <div class="border border-border bg-card p-2.5 hover:border-muted-foreground/30 transition-colors group">
+                    <div
+                      class="border border-border bg-card p-2.5 hover:border-muted-foreground/30 transition-colors group cursor-pointer {expandedTaskId === task.id ? 'border-primary/40' : ''}"
+                      onclick={() => toggleExpand(task.id)}
+                      role="button"
+                      tabindex="0"
+                      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                    >
                       <div class="flex items-center gap-1.5 mb-1">
                         {#if task.mergeStatus}
                           <span class="w-2 h-2 shrink-0 {mergeStatusIcon(task)}" title="Merge: {task.mergeStatus}"></span>
                         {/if}
-                        <p class="text-sm font-medium text-foreground leading-snug">{task.description}</p>
+                        <p class="text-sm font-medium text-foreground leading-snug flex-1">{task.description}</p>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                          class="shrink-0 text-muted-foreground/50 transition-transform {expandedTaskId === task.id ? 'rotate-180' : ''}"
+                        ><polyline points="6 9 12 15 18 9"/></svg>
                       </div>
                       <p class="text-xs text-muted-foreground font-mono truncate mb-1.5" title={task.branchName}>
                         {task.branchName.split('/').pop()}
@@ -379,18 +418,67 @@
                           {#each validScope(task).slice(0, 2) as s}
                             <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground font-mono">{scopeLabel(s)}</span>
                           {/each}
-                          {#if validScope(task).length > 2}
+                          {#if validScope(task).length > 2 && expandedTaskId !== task.id}
                             <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground">+{validScope(task).length - 2}</span>
+                          {/if}
+                          {#if expandedTaskId === task.id}
+                            {#each validScope(task).slice(2) as s}
+                              <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground font-mono">{scopeLabel(s)}</span>
+                            {/each}
                           {/if}
                         </div>
                       {/if}
 
                       {#if task.error}
-                        <div class="text-xs text-destructive mb-1.5 line-clamp-2">{task.error}</div>
+                        <div class="text-xs text-destructive mb-1.5 {expandedTaskId === task.id ? '' : 'line-clamp-2'}">{task.error}</div>
                       {/if}
 
                       {#if task.mergeError}
-                        <div class="text-xs text-orange-500 mb-1.5 line-clamp-2">{task.mergeError}</div>
+                        <div class="text-xs text-orange-500 mb-1.5 {expandedTaskId === task.id ? '' : 'line-clamp-2'}">{task.mergeError}</div>
+                      {/if}
+
+                      <!-- Expanded details -->
+                      {#if expandedTaskId === task.id}
+                        <div class="mt-2 pt-2 border-t border-border/50 space-y-2">
+                          {#if task.instruction}
+                            <div>
+                              <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-0.5">Instruction</p>
+                              <p class="text-xs text-foreground/80 whitespace-pre-wrap">{task.instruction}</p>
+                            </div>
+                          {/if}
+                          <div>
+                            <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-0.5">Branch</p>
+                            <p class="text-xs text-foreground/80 font-mono break-all">{task.branchName}</p>
+                          </div>
+                          {#if validScope(task).length > 0}
+                            <div>
+                              <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-0.5">Scope</p>
+                              <div class="flex flex-wrap gap-1">
+                                {#each validScope(task) as s}
+                                  <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground font-mono">{s}</span>
+                                {/each}
+                              </div>
+                            </div>
+                          {/if}
+                          {#if fullDepNames(task).length > 0}
+                            <div>
+                              <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-0.5">Dependencies</p>
+                              {#each fullDepNames(task) as dep}
+                                <p class="text-xs text-foreground/80">{dep}</p>
+                              {/each}
+                            </div>
+                          {/if}
+                          <div class="flex gap-4">
+                            <div>
+                              <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-0.5">Priority</p>
+                              <p class="text-xs text-foreground/80">{task.priority}</p>
+                            </div>
+                            <div>
+                              <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-0.5">Parallel</p>
+                              <p class="text-xs text-foreground/80">{task.parallelizable ? 'Yes' : 'No'}</p>
+                            </div>
+                          </div>
+                        </div>
                       {/if}
 
                       <div class="flex items-center justify-between mt-1 pt-1 border-t border-border/50">
@@ -413,7 +501,8 @@
                             <span class="text-orange-500">Conflict</span>
                           {/if}
                         </div>
-                        <div class="flex items-center gap-1">
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <div class="flex items-center gap-1" onclick={(e) => e.stopPropagation()} role="group">
                           {#if task.sessionId}
                             <button
                               onclick={() => focusTask(task.sessionId)}

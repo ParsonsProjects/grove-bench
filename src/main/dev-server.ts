@@ -1,0 +1,149 @@
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { logger } from './logger.js';
+
+const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/;
+const DETECT_TIMEOUT_MS = 30_000;
+/** Allow common dev commands but reject shell metacharacters. */
+const SAFE_COMMAND_RE = /^[\w./@:=+, -]+$/;
+
+export interface DevServerInfo {
+  port: number;
+  url: string;
+}
+
+export class DevServer {
+  private proc: ChildProcess | null = null;
+  private _port: number | null = null;
+
+  constructor(
+    private sessionId: string,
+    private cwd: string,
+    private command: string,
+    private onDetected: (info: DevServerInfo) => void,
+  ) {}
+
+  get isRunning(): boolean {
+    return this.proc !== null && this.proc.exitCode === null;
+  }
+
+  get port(): number | null {
+    return this._port;
+  }
+
+  /** Start the dev server process. Resolves when the URL is detected or after timeout. */
+  start(): Promise<DevServerInfo | null> {
+    // Validate command to prevent shell injection
+    if (!SAFE_COMMAND_RE.test(this.command)) {
+      throw new Error(`Dev command contains invalid characters: "${this.command}"`);
+    }
+
+    return new Promise((resolve) => {
+      let resolved = false;
+
+      const isWin = process.platform === 'win32';
+      this.proc = spawn(this.command, [], {
+        cwd: this.cwd,
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // On Windows, spawn in a new process group so we can kill the tree
+        ...(isWin ? { windowsHide: true } : {}),
+      });
+
+      const pid = this.proc.pid;
+      logger.info(`[dev-server] session=${this.sessionId} started pid=${pid} cmd="${this.command}"`);
+
+      const handleData = (data: Buffer) => {
+        const text = data.toString();
+        if (this._port) return; // already detected
+        const match = text.match(URL_RE);
+        if (match) {
+          const port = parseInt(match[1], 10);
+          this._port = port;
+          const url = `http://localhost:${port}`;
+          logger.info(`[dev-server] session=${this.sessionId} detected port ${port}`);
+          // Stop listening — no need to scan further output
+          this.proc?.stdout?.removeListener('data', handleData);
+          this.proc?.stderr?.removeListener('data', handleData);
+          this.onDetected({ port, url });
+          if (!resolved) {
+            resolved = true;
+            resolve({ port, url });
+          }
+        }
+      };
+
+      this.proc.stdout?.on('data', handleData);
+      this.proc.stderr?.on('data', handleData);
+
+      this.proc.on('error', (err) => {
+        logger.error(`[dev-server] session=${this.sessionId} error:`, err);
+        if (!resolved) {
+          resolved = true;
+          resolve(null);
+        }
+      });
+
+      this.proc.on('exit', (code) => {
+        logger.info(`[dev-server] session=${this.sessionId} exited code=${code}`);
+        this.proc = null;
+        if (!resolved) {
+          resolved = true;
+          resolve(null);
+        }
+      });
+
+      // Timeout — resolve with null but keep process running
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          logger.info(`[dev-server] session=${this.sessionId} URL detection timed out after ${DETECT_TIMEOUT_MS}ms`);
+          resolve(null);
+        }
+      }, DETECT_TIMEOUT_MS);
+    });
+  }
+
+  /** Stop the dev server process. */
+  stop(): Promise<void> {
+    const proc = this.proc;
+    if (!proc || proc.exitCode !== null) {
+      this.proc = null;
+      return Promise.resolve();
+    }
+
+    const pid = proc.pid;
+    logger.info(`[dev-server] session=${this.sessionId} stopping pid=${pid}`);
+
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        proc.removeListener('exit', finish);
+        this.proc = null;
+        resolve();
+      };
+
+      proc.once('exit', finish);
+
+      if (process.platform === 'win32' && pid) {
+        // Kill entire process tree on Windows
+        execFile('taskkill', ['/F', '/T', '/PID', String(pid)], () => {
+          setTimeout(finish, 3000);
+        });
+      } else {
+        try {
+          proc.kill('SIGTERM');
+        } catch { /* pid may be invalid */ }
+        setTimeout(() => {
+          try {
+            if (this.proc && this.proc.exitCode === null) {
+              proc.kill('SIGKILL');
+            }
+          } catch { /* already dead */ }
+        }, 2000);
+        setTimeout(finish, 3000);
+      }
+    });
+  }
+}

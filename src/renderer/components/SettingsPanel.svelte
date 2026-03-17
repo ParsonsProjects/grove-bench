@@ -270,6 +270,21 @@
 
           <Separator />
 
+          <!-- Dev Server Command -->
+          <div>
+            <Label for="settings-dev-command" class="mb-1 block">Dev Server Command</Label>
+            <input
+              id="settings-dev-command"
+              type="text"
+              bind:value={settingsStore.draft.devCommand}
+              placeholder="npm run dev  (auto-detected if blank)"
+              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p class="text-xs text-muted-foreground mt-1">Command to start the dev server. Leave blank to auto-detect from package.json.</p>
+          </div>
+
+          <Separator />
+
           <!-- System Prompt Append -->
           <div>
             <Label for="settings-prompt" class="mb-1 block">System Prompt Append</Label>

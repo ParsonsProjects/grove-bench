@@ -4,7 +4,7 @@ import type { OrchJob, OrchTask, OrchCreateOpts, OrchEvent, OrchJobStatus, OrchT
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { validateTasks, detectOverlaps, decompose, DECOMPOSE_SCHEMA } from './decomposer.js';
-import { git } from './git.js';
+import { git, getGitIdentity } from './git.js';
 import { logger } from './logger.js';
 import { isDockerAvailable, ensureSandboxImage, getSDKVersion, killAllContainers, getDockerAuthEnv } from './docker/docker-utils.js';
 import * as settings from './settings.js';
@@ -14,7 +14,7 @@ import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
 
 const SPAWN_STAGGER_MS = 2500;
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 interface ManagedOrchJob {
   job: OrchJob;
@@ -77,7 +77,7 @@ class Orchestrator {
       lines.push('');
     }
 
-    lines.push('*Approve & Launch from the Plan tab to start execution.*');
+    lines.push('*Approve & Launch from the Plan tab to start execution, or ask me to add, remove, or edit tasks.*');
 
     sessionManager.injectEvent(job.planSessionId, {
       type: 'assistant_text',
@@ -267,7 +267,12 @@ TASK DESIGN RULES:
 - Branch names must be valid git branch names (use hyphens, prefix with ${branchPrefix}/)
 - dependsOn references task IDs: task_1, task_2, etc. (assigned in array order)
 - Set parallelizable: false only if a task truly cannot start until another finishes
-- Instructions should be specific: mention exact file paths, function signatures, and expected behavior`;
+- Instructions should be specific: mention exact file paths, function signatures, and expected behavior
+
+PLAN REFINEMENT:
+After outputting the initial plan, the user may ask you to add, remove, or edit tasks.
+When this happens, output the COMPLETE updated task array as a fenced JSON code block (same format as above).
+Always include ALL tasks in the updated array, not just the changed ones.`;
 
     await sessionManager.createSession({
       id: planSessionId,
@@ -310,6 +315,13 @@ TASK DESIGN RULES:
           managed.job.status = 'failed';
           this.emit(managed, { type: 'orch_plan_error', jobId: managed.job.id, error: 'Planning agent failed' });
           this.persistNow();
+        } else if (!ev.isError && planHandled && managed.job.status === 'planned') {
+          // Subsequent result while still in planned state — user refined the plan via chat.
+          // Try to parse updated tasks; if successful, replace the current plan.
+          this.handlePlanUpdate(managed, ev, branchPrefix, baseBranch)
+            .catch((err) => {
+              logger.warn(`[orch] Plan update parse failed (non-fatal, keeping current plan):`, (err as Error).message);
+            });
         }
       }
     });
@@ -399,6 +411,74 @@ TASK DESIGN RULES:
     this.persistNow();
   }
 
+  /**
+   * Handle a subsequent result from the planning session while the job is still
+   * in 'planned' state (user refined the plan via Activity chat).
+   * Attempts to parse the result as an updated task list. If successful, replaces
+   * the current tasks and re-emits orch_plan_complete so the UI updates.
+   */
+  private async handlePlanUpdate(
+    managed: ManagedOrchJob,
+    resultEvent: any,
+    branchPrefix: string,
+    baseBranch: string,
+  ) {
+    const { job } = managed;
+    let raw: import('./decomposer.js').RawTask[] | null = null;
+
+    // Try structured_output first
+    if (resultEvent.structured_output) {
+      const so = resultEvent.structured_output;
+      raw = Array.isArray(so) ? so : so.tasks;
+    }
+
+    // Fallback: extract JSON from result text
+    if (!raw && resultEvent.result) {
+      let jsonStr = resultEvent.result;
+      const fenceMatches = [...jsonStr.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?```/g)];
+      if (fenceMatches.length > 0) {
+        jsonStr = fenceMatches[fenceMatches.length - 1][1];
+      }
+      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        jsonStr = arrayMatch[0];
+      }
+      try {
+        const parsed = JSON.parse(jsonStr.trim());
+        raw = Array.isArray(parsed) ? parsed : parsed.tasks;
+      } catch {
+        // Not valid JSON — the agent responded with plain text (no plan update)
+        logger.debug(`[orch] Plan update: no JSON found in result, ignoring`);
+        return;
+      }
+    }
+
+    if (!raw || !Array.isArray(raw) || raw.length === 0) {
+      logger.debug(`[orch] Plan update: no valid task array found, ignoring`);
+      return;
+    }
+
+    const tasks = validateTasks(raw, branchPrefix);
+    for (const task of tasks) {
+      task.jobId = job.id;
+      task.baseBranch = baseBranch;
+    }
+
+    const warnings = detectOverlaps(tasks);
+    job.overlapWarnings = warnings;
+    job.tasks = tasks;
+
+    this.emit(managed, { type: 'orch_plan_complete', jobId: job.id, tasks });
+    this.emitPlanSummary(managed, tasks, warnings);
+
+    if (warnings.length > 0) {
+      this.emit(managed, { type: 'orch_overlap_warning', jobId: job.id, warnings });
+    }
+
+    logger.info(`[orch] Plan updated for job ${job.id}: ${tasks.length} tasks`);
+    this.persistNow();
+  }
+
   // ─── Plan Approval & Task Spawning ───
 
   async approvePlan(jobId: string, editedTasks?: Partial<OrchTask>[]): Promise<void> {
@@ -428,6 +508,9 @@ TASK DESIGN RULES:
 
   private async spawnTasks(managed: ManagedOrchJob) {
     const { job } = managed;
+
+    // Resolve the user's git identity from the host repo for use in containers/worktrees
+    const gitIdentity = await getGitIdentity(job.repoPath);
 
     // Check Docker availability and auth compatibility
     this.emitPlanStatus(managed, 'Preparing subtask environment...');
@@ -495,7 +578,16 @@ TASK DESIGN RULES:
           window: managed.window,
           parentSessionId: job.planSessionId,
           permissionMode: 'acceptEdits',
-          appendSystemPrompt: `IMPORTANT: You are running as an automated subtask agent with a time limit. Follow these rules for Bash commands:
+          appendSystemPrompt: `IMPORTANT: You are running as an automated subtask agent with a time limit. Follow these rules:
+
+GIT COMMITS (CRITICAL):
+- You MUST commit all your changes before finishing. This is essential — uncommitted work will be lost.
+- After completing your work, run: git add -A && git commit -m "feat: <brief description of what you did>"
+- If you make multiple logical changes, you may use multiple commits.
+- VERIFY your commit landed: run \`git log --oneline -1\` to confirm your commit is the HEAD.
+- Do NOT push — the orchestrator handles integration.
+
+BASH COMMANDS:
 - Always prefix potentially slow commands with \`timeout 30\` (e.g. \`timeout 30 npx tsc --noEmit\`)
 - Never run interactive commands or commands that wait for user input
 - If a command times out, do not retry it — move on or try a faster alternative
@@ -512,6 +604,10 @@ TASK DESIGN RULES:
           extraEnv: {
             CI: 'true',
             npm_config_yes: 'true',
+            GIT_AUTHOR_NAME: gitIdentity.name,
+            GIT_AUTHOR_EMAIL: gitIdentity.email,
+            GIT_COMMITTER_NAME: gitIdentity.name,
+            GIT_COMMITTER_EMAIL: gitIdentity.email,
           },
           useDocker: dockerAvailable,
           sdkVersion,
@@ -552,8 +648,16 @@ TASK DESIGN RULES:
         // After sending the single instruction we close the input stream,
         // which causes the SDK's for-await loop to exit naturally and
         // fire this callback — no race conditions with timeouts.
-        sessionManager.onComplete(session.id, (result) => {
+        sessionManager.onComplete(session.id, async (result) => {
           logger.info(`[orch] Task ${task.id} completed: isError=${result.isError}`);
+
+          // Safety net: auto-commit any uncommitted changes the agent left behind.
+          // Without this, the branch stays at the base commit and the merge task
+          // has nothing to integrate.
+          if (!result.isError && !task.isMergeTask) {
+            await this.autoCommitWorktree(task);
+          }
+
           this.handleTaskComplete(managed, task, result);
           sessionManager.destroySession(session.id).catch(() => {});
         });
@@ -616,6 +720,43 @@ TASK DESIGN RULES:
 
     managed.spawnTask = spawnTask;
     managed.spawnReady = spawnReady;
+  }
+
+  /**
+   * Safety net: if a task agent finished without committing its changes,
+   * auto-commit them so the merge task has something to integrate.
+   */
+  private async autoCommitWorktree(task: OrchTask) {
+    if (!task.sessionId) return;
+    const wt = worktreeManager.getWorktree(task.sessionId);
+    if (!wt) return;
+
+    try {
+      // Guard: verify the worktree is on the expected task branch, not main.
+      // Git worktrees guarantee branch isolation, but we check defensively.
+      const currentBranch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'], wt.path)).trim();
+      if (currentBranch !== task.branchName) {
+        logger.error(`[orch] Task ${task.id}: worktree on branch '${currentBranch}' but expected '${task.branchName}' — skipping auto-commit to avoid committing to wrong branch`);
+        return;
+      }
+
+      // Check for uncommitted changes (staged + unstaged + untracked)
+      const status = (await git(['status', '--porcelain'], wt.path)).trim();
+      if (!status) {
+        logger.debug(`[orch] Task ${task.id}: worktree clean, no auto-commit needed`);
+        return;
+      }
+
+      logger.warn(`[orch] Task ${task.id}: agent left uncommitted changes on '${currentBranch}', auto-committing`);
+      await git(['add', '-A'], wt.path);
+      await git(['commit', '-m', `feat: ${task.description} (auto-committed by orchestrator)`], wt.path);
+
+      // Verify the commit landed on the right branch
+      const head = (await git(['rev-parse', '--short', 'HEAD'], wt.path)).trim();
+      logger.info(`[orch] Task ${task.id}: auto-committed as ${head} on branch '${currentBranch}'`);
+    } catch (err) {
+      logger.error(`[orch] Task ${task.id}: auto-commit failed:`, err);
+    }
   }
 
   private handleTaskComplete(
@@ -864,7 +1005,9 @@ If everything looks clean, confirm with a brief summary of what was merged and a
 
   /** Reset a single task to pending state, cleaning up its session and worktree. */
   private async resetTask(managed: ManagedOrchJob, task: OrchTask): Promise<void> {
-    if (task.status !== 'failed' && task.status !== 'cancelled') {
+    logger.info(`[orch] resetTask called: taskId=${task.id}, status=${task.status}`);
+    if (task.status !== 'failed' && task.status !== 'cancelled' && task.status !== 'completed') {
+      logger.info(`[orch] resetTask: skipping — status ${task.status} not resettable`);
       return;
     }
 
@@ -873,7 +1016,7 @@ If everything looks clean, confirm with a brief summary of what was merged and a
     if (task.sessionId) {
       try {
         await sessionManager.destroySession(task.sessionId);
-        await worktreeManager.remove(task.sessionId);
+        await worktreeManager.remove(task.sessionId, true);
       } catch { /* best effort */ }
       task.sessionId = null;
     }
@@ -896,6 +1039,8 @@ If everything looks clean, confirm with a brief summary of what was merged and a
 
     const task = managed.job.tasks.find((t) => t.id === taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
+
+    logger.info(`[orch] retryTask called: jobId=${jobId}, taskId=${taskId}, taskStatus=${task.status}, jobStatus=${managed.job.status}`);
 
     // Also remove a stale merge task if we're retrying a work task —
     // the merge task will be auto-created again after all work tasks complete.
@@ -1113,12 +1258,16 @@ If everything looks clean, confirm with a brief summary of what was merged and a
           job.status = 'failed';
           job.completedAt = Date.now();
         }
-        // Mark non-terminal tasks as failed — in-memory spawn closures are lost on restart
-        for (const task of job.tasks) {
-          if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
-            task.status = 'failed';
-            task.error = 'App restarted during execution';
-            task.completedAt = Date.now();
+        // Mark non-terminal tasks as failed — in-memory spawn closures are lost on restart.
+        // Skip jobs that were never launched (still in 'planned' state) — their
+        // pending tasks should stay pending so the user can still approve them.
+        if (job.status !== 'planned') {
+          for (const task of job.tasks) {
+            if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
+              task.status = 'failed';
+              task.error = 'App restarted during execution';
+              task.completedAt = Date.now();
+            }
           }
         }
         // Recalculate job status

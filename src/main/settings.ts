@@ -29,6 +29,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultContainerImage: '',
   dockerOAuthToken: '',
 
+  // Dev Server
+  devCommand: '',
+
   // General
   defaultBaseBranch: 'main',
   theme: 'system',

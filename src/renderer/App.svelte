@@ -144,7 +144,9 @@
     const sessionId = session.id;
     window.groveBench.resumeSession(session.id, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
-      messageStore.subscribe(result.id);
+      // Don't subscribe here — WorkspacePane handles history replay + subscription
+      // on mount. Subscribing here would race with mount and cause isReady to be
+      // set before history replay, resulting in an empty chat.
       failedResumeIds.delete(sessionId);
     }).catch((e: any) => {
       store.setError(e.message || String(e));
@@ -191,19 +193,19 @@
     const session = store.sessions.find((s) => s.id === id);
     const isOrchChild = session?.parentSessionId?.startsWith('plan_');
 
+    // Remove from tab bar immediately (prevents flicker)
+    openedChildSessions.delete(id);
+    if (store.activeSessionId === id) {
+      const next = store.sessions.find((s) => s.id !== id && (s.status === 'running' || s.orchJobId));
+      store.activeSessionId = next?.id ?? null;
+    }
+
     if (!isOrchChild) {
-      // Normal session — stop the backend
+      // Normal session — update status immediately, then stop backend
+      store.updateStatus(id, 'stopped');
       try {
         await window.groveBench.stopSession(id);
       } catch { /* session may already be dead */ }
-      store.updateStatus(id, 'stopped');
-    }
-
-    // Just hide from the tab bar
-    openedChildSessions.delete(id);
-    if (store.activeSessionId === id) {
-      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
-      store.activeSessionId = next?.id ?? null;
     }
   }
 

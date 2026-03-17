@@ -135,7 +135,7 @@
         "
       ></span>
     {/each}
-    <span class="relative z-10">No file changes in the last turn.</span>
+    <span class="relative z-10">No file changes in this thread.</span>
   </div>
 {:else}
   <div class="flex-1 overflow-y-auto">

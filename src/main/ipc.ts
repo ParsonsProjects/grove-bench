@@ -362,6 +362,16 @@ export function registerHandlers() {
     return killProcessOnPort(port);
   });
 
+  // ─── Dev Server ───
+
+  ipcMain.handle(IPC.DEV_SERVER_START, async (_event, sessionId: string, command?: string) => {
+    return sessionManager.startDevServer(sessionId, command || undefined);
+  });
+
+  ipcMain.handle(IPC.DEV_SERVER_STOP, async (_event, sessionId: string) => {
+    return sessionManager.stopDevServer(sessionId);
+  });
+
   // ─── File revert & diff (for changes review panel) ───
 
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string) => {

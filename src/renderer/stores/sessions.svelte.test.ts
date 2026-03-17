@@ -1,20 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-
-// Mock localStorage before importing the store
-const localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: vi.fn((key: string) => store[key] ?? null),
-    setItem: vi.fn((key: string, value: string) => { store[key] = value; }),
-    removeItem: vi.fn((key: string) => { delete store[key]; }),
-    clear: vi.fn(() => { store = {}; }),
-  };
-})();
-Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
-
-// We need to test the SessionStore class. Since it's instantiated as a singleton with
-// Svelte 5 runes ($state), we'll test the exported `store` instance.
-// Svelte 5 runes compile to regular JS in node via the svelte plugin.
+import { localStorageMock } from '../__mocks__/setup.js';
 import { store } from './sessions.svelte.js';
 import type { SessionStatus } from '../../shared/types.js';
 
@@ -40,16 +25,10 @@ function makeSession(overrides: Partial<SessionEntry> = {}): SessionEntry {
 
 describe('SessionStore', () => {
   beforeEach(() => {
-    // Reset store state between tests
-    // Remove all sessions
-    while (store.sessions.length > 0) {
-      const id = store.sessions[0].id;
-      store.sessions = store.sessions.filter(s => s.id !== id);
-    }
+    store.sessions = [];
     store.activeSessionId = null;
     store.error = null;
     store.creating = false;
-    // Reset repos
     store.repos = [];
     localStorageMock.clear();
   });

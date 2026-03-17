@@ -35,6 +35,7 @@ export default defineConfig({
           name: 'renderer',
           include: ['src/renderer/**/*.test.ts'],
           environment: 'jsdom',
+          setupFiles: ['src/renderer/__mocks__/setup.ts'],
         },
         resolve: {
           alias: {

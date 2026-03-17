@@ -158,3 +158,16 @@ export async function branchHasRemote(cwd: string, branch: string): Promise<bool
 export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<void> {
   await git(['branch', '-m', oldName, newName], cwd);
 }
+
+/** Read the user's git identity from the repo (or global) config, with fallbacks. */
+export async function getGitIdentity(cwd: string): Promise<{ name: string; email: string }> {
+  let name = 'Grove Orchestrator';
+  let email = 'grove-orchestrator@localhost';
+  try {
+    name = (await git(['config', 'user.name'], cwd)).trim() || name;
+  } catch { /* not set */ }
+  try {
+    email = (await git(['config', 'user.email'], cwd)).trim() || email;
+  } catch { /* not set */ }
+  return { name, email };
+}

@@ -146,6 +146,11 @@ for await (const line of rl) {
 
       // Wrap query() call in a timeout to detect hangs
       const queryStarted = Date.now();
+      // Log periodic progress while waiting for first message
+      let progressInterval = setInterval(() => {
+        const elapsed = Math.round((Date.now() - queryStarted) / 1000);
+        log(`Still waiting for first SDK message... ${elapsed}s elapsed`);
+      }, 10_000);
       const queryTimeout = setTimeout(() => {
         const elapsed = Math.round((Date.now() - queryStarted) / 1000);
         log(`WARNING: SDK query() has not yielded any messages after ${elapsed}s — may be stuck on auth or API connection`);
@@ -158,6 +163,7 @@ for await (const line of rl) {
         prompt: asyncIterable,
         options: {
           cwd: '/workspace',
+          pathToClaudeCodeExecutable: '/usr/local/bin/claude',
           abortController,
           settingSources: ['project'],
           systemPrompt: systemPrompt || { type: 'preset', preset: 'claude_code' },
@@ -180,6 +186,7 @@ for await (const line of rl) {
       for await (const message of q) {
         if (msgCount === 0) {
           clearTimeout(queryTimeout);
+          clearInterval(progressInterval);
           log(`First SDK message received after ${Date.now() - queryStarted}ms, type=${message?.type}`);
         }
         if (abortController.signal.aborted) break;

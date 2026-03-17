@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   sandboxAllowedDomains: [],
   defaultContainerImage: '',
   dockerOAuthToken: '',
+  devCommand: '',
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
@@ -40,7 +41,7 @@ class SettingsStore {
     try {
       const s = await window.groveBench.getSettings();
       this.current = s;
-      this.draft = structuredClone(s);
+      this.draft = JSON.parse(JSON.stringify(s));
     } catch (e: any) {
       this.error = e.message || String(e);
     } finally {
@@ -53,7 +54,7 @@ class SettingsStore {
     this.error = null;
     try {
       await window.groveBench.saveSettings($state.snapshot(this.draft));
-      this.current = structuredClone(this.draft);
+      this.current = $state.snapshot(this.draft) as GroveBenchSettings;
     } catch (e: any) {
       this.error = e.message || String(e);
     } finally {
@@ -62,7 +63,7 @@ class SettingsStore {
   }
 
   reset() {
-    this.draft = structuredClone(this.current);
+    this.draft = $state.snapshot(this.current) as GroveBenchSettings;
     this.error = null;
   }
 

@@ -331,6 +331,10 @@ export interface GroveBenchAPI {
   // Localhost process cleanup
   killPort(port: number): Promise<void>;
 
+  // Dev server
+  startDevServer(sessionId: string, command?: string): Promise<{ port: number; url: string } | null>;
+  stopDevServer(sessionId: string): Promise<void>;
+
   // Plugins
   pluginList(): Promise<PluginListResult>;
   pluginInstall(pluginId: string, scope?: string): Promise<void>;
@@ -408,6 +412,10 @@ export interface GroveBenchSettings {
   /** Long-lived OAuth token for Docker containers (from `claude setup-token`). */
   dockerOAuthToken: string;
 
+  // Dev Server
+  /** Default dev command (e.g. 'npm run dev'). Auto-detected from package.json if blank. */
+  devCommand: string;
+
   // General
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
@@ -468,6 +476,8 @@ export const IPC = {
   ORCH_MERGE: 'orch:merge',
   ORCH_RESOLVE_CONFLICT: 'orch:resolveConflict',
   ORCH_EVENT: 'orch:event',
+  DEV_SERVER_START: 'devServer:start',
+  DEV_SERVER_STOP: 'devServer:stop',
   DOCKER_CHECK: 'docker:check',
   DOCKER_SAVE_TOKEN: 'docker:saveToken',
   SETTINGS_GET: 'settings:get',

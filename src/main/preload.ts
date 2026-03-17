@@ -82,6 +82,12 @@ const api: GroveBenchAPI = {
   // Localhost process cleanup
   killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
 
+  // Dev server
+  startDevServer: (sessionId: string, command?: string) =>
+    ipcRenderer.invoke(IPC.DEV_SERVER_START, sessionId, command),
+  stopDevServer: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.DEV_SERVER_STOP, sessionId),
+
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),
   pluginInstall: (pluginId: string, scope?: string) =>

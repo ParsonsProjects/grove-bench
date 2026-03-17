@@ -283,6 +283,14 @@ class MessageStore {
     return Object.values(this.backgroundTasksBySession[sessionId] ?? {});
   }
 
+  /** Remove a completed/failed/stopped background task from the list */
+  removeBackgroundTask(sessionId: string, taskId: string) {
+    const tasks = this.backgroundTasksBySession[sessionId];
+    if (!tasks?.[taskId]) return;
+    const { [taskId]: _, ...rest } = tasks;
+    this.backgroundTasksBySession[sessionId] = rest;
+  }
+
   /** Get all currently pending tool calls with their progress info. */
   getPendingTools(sessionId: string): { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] {
     const msgs = this.messagesBySession[sessionId] ?? [];
@@ -314,49 +322,61 @@ class MessageStore {
   }
 
   /**
-   * Get all file changes from the last completed turn, grouped by file path.
-   * A "turn" is everything between the last user message and the following result.
+   * Get all file changes across the entire thread, grouped by file path.
+   * Each file keeps only the edits from its most recent turn (the last turn
+   * that touched it), so changes persist across conversation continuations
+   * until the file is updated by newer edits.
    */
   getLastTurnFileChanges(sessionId: string): { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[] {
     const msgs = this.messagesBySession[sessionId] ?? [];
     if (msgs.length === 0) return [];
 
-    // Find the last result message (marks end of turn)
-    let resultIdx = -1;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].kind === 'result') { resultIdx = i; break; }
-    }
-    if (resultIdx < 0) return [];
+    // Must have at least one completed turn (result message)
+    const hasResult = msgs.some(m => m.kind === 'result');
+    if (!hasResult) return [];
 
-    // Find the user message before that result (marks start of turn)
-    let userIdx = -1;
-    for (let i = resultIdx - 1; i >= 0; i--) {
-      if (msgs[i].kind === 'user') { userIdx = i; break; }
-    }
-    // If no user message found, start from beginning
-    const startIdx = userIdx >= 0 ? userIdx : 0;
+    // Split messages into turns (user → result boundaries)
+    // Each turn's edits for a file supersede earlier turns' edits for the same file
+    const byFile = new Map<string, { edits: ChatToolCallMessage[]; turnIndex: number }>();
+    let turnIndex = 0;
+    let inTurn = false;
 
-    // Collect all Edit/Write tool calls in this turn range
-    const turnMsgs = msgs.slice(startIdx, resultIdx + 1);
-    const editCalls = turnMsgs.filter(
-      (m): m is ChatToolCallMessage =>
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+
+      if (m.kind === 'user') {
+        turnIndex++;
+        inTurn = true;
+        continue;
+      }
+
+      if (m.kind === 'result') {
+        inTurn = false;
+        continue;
+      }
+
+      if (
+        inTurn &&
         m.kind === 'tool_call' &&
         (m.toolName === 'Edit' || m.toolName === 'Write') &&
         !m.isError
-    );
+      ) {
+        const input = m.toolInput as Record<string, unknown>;
+        const fp = String(input?.file_path ?? input?.filePath ?? '');
+        if (!fp) continue;
 
-    // Group by file path
-    const byFile = new Map<string, ChatToolCallMessage[]>();
-    for (const call of editCalls) {
-      const input = call.toolInput as Record<string, unknown>;
-      const fp = String(input?.file_path ?? input?.filePath ?? '');
-      if (!fp) continue;
-      const existing = byFile.get(fp) ?? [];
-      existing.push(call);
-      byFile.set(fp, existing);
+        const existing = byFile.get(fp);
+        if (existing && existing.turnIndex === turnIndex) {
+          // Same turn — accumulate edits
+          existing.edits.push(m);
+        } else {
+          // New turn for this file — replace previous edits
+          byFile.set(fp, { edits: [m], turnIndex });
+        }
+      }
     }
 
-    return [...byFile.entries()].map(([filePath, edits]) => ({
+    return [...byFile.entries()].map(([filePath, { edits }]) => ({
       filePath,
       toolName: edits[edits.length - 1].toolName,
       toolInput: edits[edits.length - 1].toolInput,
@@ -977,6 +997,19 @@ class MessageStore {
       updatedPermissions: opts?.updatedPermissions,
     };
     window.groveBench.respondToPermission(sessionId, permDecision);
+  }
+
+  /** Clear all in-memory state for a session so history can be replayed cleanly.
+   *  Also unsubscribes any existing listener to avoid duplicate subscriptions. */
+  clearSession(sessionId: string) {
+    this.unsubscribe(sessionId);
+    this.messagesBySession[sessionId] = [];
+    this.streamingText[sessionId] = '';
+    this.streamingThinking[sessionId] = '';
+    this.isReady[sessionId] = false;
+    this.activityBySession[sessionId] = { activity: 'idle' };
+    this.toolProgressBySession[sessionId] = {};
+    // Preserve isRunning — caller controls this based on history
   }
 
   /** Subscribe to events from the main process for a session */

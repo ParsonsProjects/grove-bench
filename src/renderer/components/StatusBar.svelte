@@ -106,6 +106,7 @@
   });
 
   let devServers = $derived(messageStore.getDevServers(sessionId));
+  let devServerStarting = $state(false);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let rateLimit = $derived(messageStore.getRateLimit(sessionId));
   let backgroundTasks = $derived(messageStore.getBackgroundTasks(sessionId));
@@ -378,6 +379,15 @@
                   {/if}
                   <span class="text-foreground font-medium truncate flex-1">{task.description || task.taskId}</span>
                   <span class="text-muted-foreground/60 shrink-0 capitalize">{task.status}</span>
+                  {#if task.status !== 'running'}
+                    <button
+                      onclick={() => messageStore.removeBackgroundTask(sessionId, task.taskId)}
+                      class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
+                      title="Dismiss"
+                    >
+                      &times;
+                    </button>
+                  {/if}
                 </div>
                 {#if task.summary}
                   <p class="text-muted-foreground text-[10px] mb-1 line-clamp-2">{task.summary}</p>
@@ -442,6 +452,27 @@
         </button>
       </span>
     {/each}
+  {:else}
+    <button
+      onclick={async () => {
+        if (devServerStarting) return;
+        devServerStarting = true;
+        try {
+          await window.groveBench.startDevServer(sessionId);
+        } catch (e: any) {
+          console.error('Failed to start dev server:', e?.message ?? e);
+        } finally {
+          devServerStarting = false;
+        }
+      }}
+      class="flex items-center gap-1 text-muted-foreground/60 hover:text-green-400 transition-colors"
+      class:opacity-50={devServerStarting}
+      disabled={devServerStarting}
+      title={devServerStarting ? 'Starting dev server...' : 'Start dev server'}
+    >
+      <span class="w-1.5 h-1.5 rounded-full {devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
+      {devServerStarting ? 'Starting...' : 'Dev'}
+    </button>
   {/if}
 
   {#if showContext}

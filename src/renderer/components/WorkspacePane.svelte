@@ -8,6 +8,8 @@
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import MarkdownBlock from './MarkdownBlock.svelte';
   import type { OrchTask, OrchTaskStatus } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -74,12 +76,37 @@
     retrying = taskId;
     try {
       await window.groveBench.retryOrchTask(orchJob.id, taskId);
-    } catch { /* best effort */ }
+    } catch (err) {
+      console.error('[WorkspacePane] retryOrchTask failed:', err);
+    }
     retrying = null;
   }
 
   let failedTasks = $derived(orchJob?.tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled') ?? []);
   let retryingAll = $state(false);
+  let selectedTaskId = $state<string | null>(null);
+  let taskDialogOpen = $state(false);
+
+  let selectedTask = $derived(
+    selectedTaskId ? orchJob?.tasks.find((t) => t.id === selectedTaskId) ?? null : null
+  );
+
+  function openTaskDetail(taskId: string) {
+    selectedTaskId = taskId;
+    taskDialogOpen = true;
+  }
+
+  function fullDepNames(task: OrchTask): string[] {
+    if (!orchJob || task.dependsOn.length === 0) return [];
+    return task.dependsOn.map((depId) => {
+      const dep = orchJob!.tasks.find((t) => t.id === depId);
+      return dep ? dep.description : depId;
+    });
+  }
+
+  function validScope(task: OrchTask): string[] {
+    return task.scope.filter((s) => s && s.trim().length > 0);
+  }
 
   async function handleRetryAll() {
     if (!orchJob || failedTasks.length === 0) return;
@@ -134,33 +161,34 @@
   onMount(async () => {
     window.addEventListener('keydown', handleKeydown);
 
-    // Replay history BEFORE subscribing to live events to avoid duplicates.
-    // Events emitted during the tiny gap between replay and subscribe are
-    // negligible and far less disruptive than duplicate messages.
-    if (!messageStore.getIsReady(sessionId)) {
-      try {
-        const history = await window.groveBench.getEventHistory(sessionId);
-        // Skip transient events during replay — partial_text is superseded by
-        // assistant_text, and activity/tool_progress are ephemeral status updates.
-        const skipDuringReplay = new Set([
-          'partial_text', 'activity', 'tool_progress', 'usage',
-        ]);
-        for (const event of history) {
-          if (!skipDuringReplay.has(event.type)) {
-            messageStore.ingestEvent(sessionId, event);
-          }
+    // Always replay history on mount — clear any stale state first to avoid
+    // duplicates. This is critical after refresh/restart where prior state is
+    // lost but isReady might have been set by a leaked event.
+    try {
+      // Clear existing messages so replay starts fresh
+      messageStore.clearSession(sessionId);
+
+      const history = await window.groveBench.getEventHistory(sessionId);
+      // Skip transient events during replay — partial_text is superseded by
+      // assistant_text, and activity/tool_progress are ephemeral status updates.
+      const skipDuringReplay = new Set([
+        'partial_text', 'activity', 'tool_progress', 'usage',
+      ]);
+      for (const event of history) {
+        if (!skipDuringReplay.has(event.type)) {
+          messageStore.ingestEvent(sessionId, event);
         }
-        if (history.length > 0) {
-          const last = history[history.length - 1];
-          if (last.type === 'result' || last.type === 'process_exit') {
-            messageStore.isRunning[sessionId] = false;
-          }
-        }
-        // After replay, resolve any tool_calls still marked pending
-        messageStore.resolveStaleToolCalls(sessionId);
-      } catch (e: any) {
-        messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);
       }
+      if (history.length > 0) {
+        const last = history[history.length - 1];
+        if (last.type === 'result' || last.type === 'process_exit') {
+          messageStore.isRunning[sessionId] = false;
+        }
+      }
+      // After replay, resolve any tool_calls still marked pending
+      messageStore.resolveStaleToolCalls(sessionId);
+    } catch (e: any) {
+      messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);
     }
 
     // Subscribe to live events only after history is replayed
@@ -276,7 +304,13 @@
 
                 <div class="flex-1 flex flex-col gap-2 overflow-y-auto min-h-0 pr-1">
                   {#each colTasks as task (task.id)}
-                    <div class="border border-border bg-card p-2.5 hover:border-muted-foreground/30 transition-colors group">
+                    <div
+                      class="border border-border bg-card p-2.5 hover:border-primary/40 transition-colors group cursor-pointer"
+                      onclick={() => openTaskDetail(task.id)}
+                      role="button"
+                      tabindex="0"
+                      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTaskDetail(task.id); } }}
+                    >
                       <p class="text-sm font-medium text-foreground mb-1 leading-snug">{task.description}</p>
                       <p class="text-xs text-muted-foreground font-mono truncate mb-1.5" title={task.branchName}>
                         {task.branchName.split('/').pop()}
@@ -289,13 +323,13 @@
                         </div>
                       {/if}
 
-                      {#if task.scope.length > 0}
+                      {#if validScope(task).length > 0}
                         <div class="flex flex-wrap gap-1 mb-1.5">
-                          {#each task.scope.slice(0, 2) as s}
+                          {#each validScope(task).slice(0, 2) as s}
                             <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground font-mono">{s.split('/').pop()}</span>
                           {/each}
-                          {#if task.scope.length > 2}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground">+{task.scope.length - 2}</span>
+                          {#if validScope(task).length > 2}
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground">+{validScope(task).length - 2}</span>
                           {/if}
                         </div>
                       {/if}
@@ -319,7 +353,8 @@
                             </span>
                           {/if}
                         </div>
-                        <div class="flex items-center gap-1">
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <div class="flex items-center gap-1" onclick={(e) => e.stopPropagation()} role="group">
                           {#if task.sessionId}
                             <button
                               onclick={() => focusTask(task.sessionId)}
@@ -338,6 +373,14 @@
                             >
                               {retrying === task.id ? '...' : 'Retry'}
                             </Button>
+                          {/if}
+                          {#if task.status === 'completed'}
+                            <button
+                              onclick={() => handleRetry(task.id)}
+                              class="text-[10px] text-primary hover:underline opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              Restart
+                            </button>
                           {/if}
                         </div>
                       </div>
@@ -369,6 +412,14 @@
                 {/if}
               </div>
             </div>
+            <p class="text-xs text-muted-foreground mt-1.5">
+              Want to add, remove, or edit tasks? Discuss changes in the
+              <button
+                onclick={(e) => { e.stopPropagation(); switchTab('activity'); }}
+                class="text-primary hover:underline font-medium"
+              >Activity</button>
+              tab before launching.
+            </p>
           </div>
         {/if}
 
@@ -433,3 +484,100 @@
     </div>
   {/if}
 </div>
+
+<!-- Task detail dialog -->
+<Dialog.Root bind:open={taskDialogOpen}>
+  <Dialog.Content class="sm:max-w-3xl w-full max-h-[80vh] overflow-y-auto">
+    {#if selectedTask}
+      <Dialog.Header>
+        <Dialog.Title>{selectedTask.description}</Dialog.Title>
+        <Dialog.Description>
+          <span class="font-mono text-xs">{selectedTask.branchName}</span>
+          <span class="mx-2 text-muted-foreground/40">|</span>
+          <span class="text-xs capitalize">{selectedTask.status}</span>
+        </Dialog.Description>
+      </Dialog.Header>
+
+      <div class="space-y-4 mt-4">
+        {#if selectedTask.instruction}
+          <div>
+            <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Instruction</p>
+            <div class="bg-muted p-3 text-sm text-foreground/90">
+              <MarkdownBlock content={selectedTask.instruction} />
+            </div>
+          </div>
+        {/if}
+
+        {#if validScope(selectedTask).length > 0}
+          <div>
+            <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Scope</p>
+            <div class="flex flex-wrap gap-1.5">
+              {#each validScope(selectedTask) as s}
+                <span class="text-xs px-1.5 py-0.5 bg-muted text-muted-foreground font-mono">{s}</span>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if fullDepNames(selectedTask).length > 0}
+          <div>
+            <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Dependencies</p>
+            {#each fullDepNames(selectedTask) as dep}
+              <p class="text-sm text-foreground/80">{dep}</p>
+            {/each}
+          </div>
+        {/if}
+
+        <div class="flex gap-6">
+          <div>
+            <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Priority</p>
+            <p class="text-sm text-foreground">{selectedTask.priority}</p>
+          </div>
+          <div>
+            <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Parallelizable</p>
+            <p class="text-sm text-foreground">{selectedTask.parallelizable ? 'Yes' : 'No'}</p>
+          </div>
+          {#if selectedTask.costUsd != null}
+            <div>
+              <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Cost</p>
+              <p class="text-sm text-foreground">${selectedTask.costUsd.toFixed(4)}</p>
+            </div>
+          {/if}
+          {#if elapsed(selectedTask)}
+            <div>
+              <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Duration</p>
+              <p class="text-sm text-foreground">{elapsed(selectedTask)}</p>
+            </div>
+          {/if}
+        </div>
+
+        {#if selectedTask.error}
+          <div>
+            <p class="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">Error</p>
+            <div class="bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">{selectedTask.error}</div>
+          </div>
+        {/if}
+      </div>
+
+      <Dialog.Footer>
+        <div class="flex items-center gap-2">
+          {#if selectedTask.sessionId}
+            <Button size="sm" variant="secondary" onclick={() => { taskDialogOpen = false; focusTask(selectedTask!.sessionId); }}>
+              View Session
+            </Button>
+          {/if}
+          {#if selectedTask.status === 'failed' || selectedTask.status === 'cancelled'}
+            <Button size="sm" onclick={() => { taskDialogOpen = false; handleRetry(selectedTask!.id); }}>
+              Retry
+            </Button>
+          {/if}
+          {#if selectedTask.status === 'completed'}
+            <Button size="sm" variant="secondary" onclick={() => { taskDialogOpen = false; handleRetry(selectedTask!.id); }}>
+              Restart
+            </Button>
+          {/if}
+        </div>
+      </Dialog.Footer>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>
