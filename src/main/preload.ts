@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision, OrchCreateOpts, OrchTask } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -17,6 +17,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_STOP, id),
   destroySession: (id: string, deleteBranch?: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
+  renameSession: (sessionId: string, displayName: string) =>
+    ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations
@@ -24,6 +26,8 @@ const api: GroveBenchAPI = {
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
+  renameBranch: (sessionId: string, newBranchName: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
 
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
@@ -53,6 +57,10 @@ const api: GroveBenchAPI = {
   setModel: (sessionId: string, model?: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
 
+  // Thinking control
+  setThinking: (sessionId: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, enabled),
+
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
@@ -74,6 +82,12 @@ const api: GroveBenchAPI = {
   // Localhost process cleanup
   killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
 
+  // Dev server
+  startDevServer: (sessionId: string, command?: string) =>
+    ipcRenderer.invoke(IPC.DEV_SERVER_START, sessionId, command),
+  stopDevServer: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.DEV_SERVER_STOP, sessionId),
+
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),
   pluginInstall: (pluginId: string, scope?: string) =>
@@ -94,6 +108,51 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.SESSION_STATUS, handler);
     };
   },
+
+  // Docker
+  checkDocker: () => ipcRenderer.invoke(IPC.DOCKER_CHECK),
+  saveDockerToken: (token: string) => ipcRenderer.invoke(IPC.DOCKER_SAVE_TOKEN, token),
+
+  // Settings
+  getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
+  saveSettings: (s: import('../shared/types.js').GroveBenchSettings) =>
+    ipcRenderer.invoke(IPC.SETTINGS_SAVE, s),
+
+  // Orchestration
+  createOrchJob: (opts: OrchCreateOpts) =>
+    ipcRenderer.invoke(IPC.ORCH_CREATE, opts),
+  approveOrchPlan: (jobId: string, editedTasks?: Partial<OrchTask>[]) =>
+    ipcRenderer.invoke(IPC.ORCH_APPROVE, jobId, editedTasks),
+  cancelOrchJob: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_CANCEL, jobId),
+  removeOrchJob: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_REMOVE, jobId),
+  listOrchJobs: () =>
+    ipcRenderer.invoke(IPC.ORCH_LIST),
+  retryOrchTask: (jobId: string, taskId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_RETRY_TASK, jobId, taskId),
+  retryAllOrchTasks: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_RETRY_ALL, jobId),
+  mergeOrchJob: (jobId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_MERGE, jobId),
+  resolveOrchConflict: (jobId: string, taskId: string) =>
+    ipcRenderer.invoke(IPC.ORCH_RESOLVE_CONFLICT, jobId, taskId),
+  onOrchEvent: (jobId: string, callback: (event: import('../shared/types.js').OrchEvent) => void) => {
+    const channel = `${IPC.ORCH_EVENT}:${jobId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').OrchEvent) =>
+      callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+  offOrchEvent: (jobId: string) => {
+    ipcRenderer.removeAllListeners(`${IPC.ORCH_EVENT}:${jobId}`);
+  },
+
+  // App state persistence
+  getActiveTab: () => ipcRenderer.invoke(IPC.APP_STATE_GET_ACTIVE_TAB),
+  setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
 
   // App lifecycle
   onAppClosing: (callback: () => void) => {

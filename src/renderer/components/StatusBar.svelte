@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { orchStore } from '../stores/orchestration.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -27,6 +29,7 @@
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
+  let thinking = $derived(messageStore.getThinking(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
@@ -103,14 +106,51 @@
   });
 
   let devServers = $derived(messageStore.getDevServers(sessionId));
+  let devServerStarting = $state(false);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
+  let rateLimit = $derived(messageStore.getRateLimit(sessionId));
+  let backgroundTasks = $derived(messageStore.getBackgroundTasks(sessionId));
+  let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
+
+  function formatResetTime(epoch: number): string {
+    const now = Date.now() / 1000;
+    const diff = epoch - now;
+    if (diff <= 0) return 'now';
+    if (diff < 60) return `${Math.round(diff)}s`;
+    if (diff < 3600) return `${Math.round(diff / 60)}m`;
+    return `${Math.round(diff / 3600)}h`;
+  }
+  // Orchestration
+  let session = $derived(store.sessions.find(s => s.id === sessionId));
+  let orchJob = $derived(session?.orchJobId ? orchStore.jobs.find(j => j.id === session!.orchJobId) : null);
+  let isOrchTerminal = $derived(
+    orchJob?.status === 'completed' || orchJob?.status === 'failed' || orchJob?.status === 'partial_failure' || orchJob?.status === 'cancelled'
+  );
+
+  async function handleCancelOrch() {
+    if (!orchJob) return;
+    try {
+      await window.groveBench.cancelOrchJob(orchJob.id);
+      for (const task of orchJob.tasks) {
+        if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
+          orchStore.updateTaskStatus(orchJob.id, task.id, 'cancelled');
+        }
+      }
+      orchStore.updateJob(orchJob.id, { status: 'cancelled', completedAt: Date.now() });
+    } catch { /* best effort */ }
+  }
+
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
+  let bgTasksExpanded = $state(false);
+  let shortcutsOpen = $state(false);
 
   // Refs for click-outside detection on popovers
   let modelPickerRef = $state<HTMLDivElement | null>(null);
   let tasksRef = $state<HTMLDivElement | null>(null);
+  let bgTasksRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
+  let shortcutsRef = $state<HTMLDivElement | null>(null);
 
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
@@ -124,18 +164,24 @@
     default: 'Code',
     plan: 'Plan',
     acceptEdits: 'Edit',
+    orchestrator: 'Orchestrator',
   };
 
   const modeColors: Record<string, string> = {
     default: 'text-green-400 border-green-400/40',
     plan: 'text-yellow-400 border-yellow-400/40',
     acceptEdits: 'text-purple-400 border-purple-400/40',
+    orchestrator: 'text-cyan-400 border-cyan-400/40',
   };
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.altKey && e.key.toLowerCase() === 'm') {
+    if (e.altKey && e.key.toLowerCase() === 'm' && mode !== 'orchestrator') {
       e.preventDefault();
       messageStore.cycleMode(sessionId);
+    }
+    if (e.altKey && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      messageStore.setThinking(sessionId, !messageStore.getThinking(sessionId));
     }
   }
 
@@ -147,8 +193,14 @@
     if (tasksExpanded && tasksRef && !tasksRef.contains(target)) {
       tasksExpanded = false;
     }
+    if (bgTasksExpanded && bgTasksRef && !bgTasksRef.contains(target)) {
+      bgTasksExpanded = false;
+    }
     if (contextExpanded && contextRef && !contextRef.contains(target)) {
       contextExpanded = false;
+    }
+    if (shortcutsOpen && shortcutsRef && !shortcutsRef.contains(target)) {
+      shortcutsOpen = false;
     }
   }
 
@@ -206,12 +258,30 @@
     </button>
   {/if}
 
+  {#if mode === 'orchestrator'}
+    <span
+      class="flex items-center gap-1.5 px-1.5 py-0.5 border {modeColors.orchestrator}"
+      title="Orchestrator session — mode is fixed"
+    >
+      Orchestrator
+    </span>
+  {:else}
+    <button
+      onclick={() => messageStore.cycleMode(sessionId)}
+      class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
+      title="Change mode (Alt+M)"
+    >
+      {modeLabels[mode] ?? mode}
+    </button>
+  {/if}
+
   <button
-    onclick={() => messageStore.cycleMode(sessionId)}
-    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
-    title="Change mode (Alt+M)"
+    onclick={() => messageStore.setThinking(sessionId, !thinking)}
+    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent
+      {thinking ? 'text-purple-400 border-purple-400/40' : 'text-muted-foreground/50 border-muted-foreground/20'}"
+    title="Toggle extended thinking (Alt+T)"
   >
-    {modeLabels[mode] ?? mode}
+    {thinking ? 'Thinking' : 'No Think'}
   </button>
 
   <span class="flex items-center gap-1.5">
@@ -265,6 +335,95 @@
     </div>
   {/if}
 
+  {#if rateLimit && rateLimit.status !== 'allowed'}
+    <span class="flex items-center gap-1 {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}">
+      <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
+      {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
+      {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
+      {#if rateLimit.resetsAt}
+        <span class="text-muted-foreground">resets {formatResetTime(rateLimit.resetsAt)}</span>
+      {/if}
+    </span>
+  {/if}
+
+  {#if backgroundTasks.length > 0}
+    <div class="relative" bind:this={bgTasksRef}>
+      <button
+        onclick={() => bgTasksExpanded = !bgTasksExpanded}
+        class="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+        title="Background tasks — click for details"
+      >
+        {#if runningBgTasks.length > 0}
+          <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse"></span>
+        {:else}
+          <span class="w-1.5 h-1.5 bg-blue-400/50"></span>
+        {/if}
+        {runningBgTasks.length > 0
+          ? `${runningBgTasks.length} bg task${runningBgTasks.length > 1 ? 's' : ''}`
+          : `${backgroundTasks.length} bg task${backgroundTasks.length > 1 ? 's' : ''}`}
+      </button>
+
+      {#if bgTasksExpanded}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-80 z-50">
+          <div class="font-medium text-foreground mb-2">Background Tasks</div>
+          <div class="space-y-2 max-h-64 overflow-y-auto">
+            {#each backgroundTasks as task}
+              <div class="border border-border/50 p-2">
+                <div class="flex items-center gap-2 mb-1">
+                  {#if task.status === 'running'}
+                    <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse shrink-0"></span>
+                  {:else if task.status === 'completed'}
+                    <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+                  {:else}
+                    <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>
+                  {/if}
+                  <span class="text-foreground font-medium truncate flex-1">{task.description || task.taskId}</span>
+                  <span class="text-muted-foreground/60 shrink-0 capitalize">{task.status}</span>
+                  {#if task.status !== 'running'}
+                    <button
+                      onclick={() => messageStore.removeBackgroundTask(sessionId, task.taskId)}
+                      class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
+                      title="Dismiss"
+                    >
+                      &times;
+                    </button>
+                  {/if}
+                </div>
+                {#if task.summary}
+                  <p class="text-muted-foreground text-[10px] mb-1 line-clamp-2">{task.summary}</p>
+                {/if}
+                <div class="flex items-center gap-3 text-[10px] text-muted-foreground/60">
+                  {#if task.lastToolName}
+                    <span class="text-yellow-400">{task.lastToolName}</span>
+                  {/if}
+                  {#if task.toolUses > 0}
+                    <span>{task.toolUses} tool use{task.toolUses !== 1 ? 's' : ''}</span>
+                  {/if}
+                  {#if task.totalTokens > 0}
+                    <span>{formatTokens(task.totalTokens)} tokens</span>
+                  {/if}
+                  {#if task.durationMs > 0}
+                    <span>{(task.durationMs / 1000).toFixed(1)}s</span>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if orchJob && !isOrchTerminal}
+    <button
+      onclick={handleCancelOrch}
+      class="px-1.5 py-0.5 border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors"
+      title="Cancel orchestration job"
+    >
+      Cancel
+    </button>
+  {/if}
+
   {#if lastResult?.totalCostUsd !== undefined}
     <span>${lastResult.totalCostUsd.toFixed(4)}</span>
   {/if}
@@ -276,7 +435,7 @@
   {#if devServers.length > 0}
     {#each devServers as server}
       <span class="flex items-center gap-1">
-        <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+        <span class="w-1.5 h-1.5 bg-green-500"></span>
         <button
           onclick={() => window.groveBench.openExternal(server.url)}
           class="text-green-400 hover:text-green-300 hover:underline transition-colors"
@@ -293,6 +452,27 @@
         </button>
       </span>
     {/each}
+  {:else}
+    <button
+      onclick={async () => {
+        if (devServerStarting) return;
+        devServerStarting = true;
+        try {
+          await window.groveBench.startDevServer(sessionId);
+        } catch (e: any) {
+          console.error('Failed to start dev server:', e?.message ?? e);
+        } finally {
+          devServerStarting = false;
+        }
+      }}
+      class="flex items-center gap-1 text-muted-foreground/60 hover:text-green-400 transition-colors"
+      class:opacity-50={devServerStarting}
+      disabled={devServerStarting}
+      title={devServerStarting ? 'Starting dev server...' : 'Start dev server'}
+    >
+      <span class="w-1.5 h-1.5 rounded-full {devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
+      {devServerStarting ? 'Starting...' : 'Dev'}
+    </button>
   {/if}
 
   {#if showContext}
@@ -303,7 +483,7 @@
         title="Context usage — click for details"
       >
         <!-- Mini bar with color-coded fill -->
-        <div class="w-24 h-1.5 bg-muted rounded-full overflow-hidden flex">
+        <div class="w-24 h-1.5 bg-muted overflow-hidden flex">
           {#if cachePercent > 0}
             <div class="h-full bg-blue-500/70 transition-all" style:width="{cachePercent}%"></div>
           {/if}
@@ -322,7 +502,7 @@
           </div>
 
           <!-- Large segmented bar -->
-          <div class="w-full h-3 bg-muted rounded overflow-hidden flex mb-1">
+          <div class="w-full h-3 bg-muted overflow-hidden flex mb-1">
             {#if cachePercent > 0}
               <div class="h-full bg-blue-500/70 transition-all" style:width="{cachePercent}%" title="Cached"></div>
             {/if}
@@ -341,17 +521,17 @@
           <!-- Legend -->
           <div class="flex gap-3 mb-3 text-muted-foreground">
             <span class="flex items-center gap-1">
-              <span class="w-2 h-2 rounded-sm inline-block" style:background-color={barBg}></span>
+              <span class="w-2 h-2 inline-block" style:background-color={barBg}></span>
               Used
             </span>
             {#if cachePercent > 0}
               <span class="flex items-center gap-1">
-                <span class="w-2 h-2 rounded-sm bg-blue-500/70 inline-block"></span>
+                <span class="w-2 h-2 bg-blue-500/70 inline-block"></span>
                 Cached
               </span>
             {/if}
             <span class="flex items-center gap-1">
-              <span class="w-2 h-2 rounded-sm bg-muted inline-block"></span>
+              <span class="w-2 h-2 bg-muted inline-block"></span>
               Free
             </span>
           </div>
@@ -459,7 +639,7 @@
               <div class="mt-1.5 max-h-24 overflow-y-auto space-y-0.5">
                 {#each systemInfo.mcpServers as server}
                   <div class="flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 rounded-full {server.status === 'connected' ? 'bg-green-500' : 'bg-yellow-500'}"></span>
+                    <span class="w-1.5 h-1.5 {server.status === 'connected' ? 'bg-green-500' : 'bg-yellow-500'}"></span>
                     <span class="font-mono text-[10px] text-muted-foreground truncate">{server.name}</span>
                   </div>
                 {/each}
@@ -472,7 +652,7 @@
             <button
               onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
               disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Compact conversation to free context"
             >
               /compact
@@ -480,7 +660,7 @@
             <button
               onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
               disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Clear conversation and start fresh"
             >
               /clear
@@ -493,9 +673,28 @@
     <span class="ml-auto"></span>
   {/if}
 
-  <span class="text-muted-foreground/40 flex gap-3">
-    <span>Ctrl+R find</span>
-    <span>Ctrl+F search</span>
-    <span>Alt+M mode</span>
-  </span>
+  <div class="relative" bind:this={shortcutsRef}>
+    <button
+      onclick={() => shortcutsOpen = !shortcutsOpen}
+      class="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+      title="Keyboard shortcuts"
+    >
+      Keys
+    </button>
+
+    {#if shortcutsOpen}
+      <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-56 z-50">
+        <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
+        <div class="space-y-1.5 text-muted-foreground">
+          <div class="flex justify-between"><span>Session finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
+          <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
+          <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
+          <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
+          <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
+          <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
+          <div class="flex justify-between"><span>Plan tab</span><kbd class="text-foreground">Alt+3</kbd></div>
+        </div>
+      </div>
+    {/if}
+  </div>
 </div>

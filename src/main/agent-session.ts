@@ -1,9 +1,15 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import { killProcessOnPort } from './port-killer.js';
+import { DockerSession } from './docker/docker-session.js';
+import { DevServer } from './dev-server.js';
+import { detectDevCommand } from './dev-command-detector.js';
+import * as settings from './settings.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // The Agent SDK is ESM-only; Electron's main process is CJS.
 // Use Function constructor to create a dynamic import that Rollup/Vite
@@ -56,6 +62,36 @@ interface ManagedSession {
   detectedPorts: Set<number>;
   /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
   toolUseMap: Map<string, string>;
+  /** Last result data for completion callback */
+  lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
+  /** Parent session ID for nesting (orch subtasks). */
+  parentSessionId: string | null;
+  /** Associated orchestration job ID. */
+  orchJobId: string | null;
+  /** Permission mode for the SDK query. */
+  permissionMode: 'default' | 'plan' | 'acceptEdits';
+  /** Extra system prompt appended to the default claude_code preset. */
+  appendSystemPrompt: string | null;
+  /** Fully custom system prompt — overrides the claude_code preset entirely. */
+  customSystemPrompt: string | null;
+  /** If set, only these tools are allowed — everything else is auto-denied. */
+  allowedTools: Set<string> | null;
+  /** Force structured JSON output via json_schema. */
+  outputFormat: { type: 'json_schema'; schema: Record<string, unknown> } | null;
+  /** SDK sandbox settings for restricted Bash execution. */
+  sandbox: Record<string, unknown> | null;
+  /** Extra environment variables merged into the SDK query env. */
+  extraEnv: Record<string, string> | null;
+  /** Path to append-only event log on disk. */
+  eventLogPath: string;
+  /** Whether this session runs inside a Docker container. */
+  useDocker: boolean;
+  /** Docker session instance (null if not dockerized). */
+  dockerSession: DockerSession | null;
+  /** User-assigned display name — shown instead of branch when set. */
+  displayName: string | null;
+  /** Host-managed dev server instance. */
+  devServer: DevServer | null;
 }
 
 /**
@@ -85,8 +121,44 @@ function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): AsyncItera
   };
 }
 
+export interface SessionCompletionResult {
+  sessionId: string;
+  isError: boolean;
+  totalCostUsd?: number;
+  durationMs?: number;
+}
+
+const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
+
+/**
+ * Match a tool rule pattern against a tool call.
+ * Patterns: "Bash" matches all Bash, "Bash(npm run *)" matches commands starting with "npm run ".
+ * Glob-style * wildcards are supported.
+ */
+function matchToolRule(pattern: string, toolName: string, toolCall: string): boolean {
+  // Simple tool name match (no parentheses)
+  if (!pattern.includes('(')) {
+    return toolName === pattern || toolName.startsWith(pattern);
+  }
+  // Pattern with specifier: ToolName(specifier)
+  const match = pattern.match(/^([^(]+)\((.+)\)$/);
+  if (!match) return false;
+  const [, ruleTool, specifier] = match;
+  if (ruleTool !== toolName) return false;
+  if (specifier === '*') return true;
+  // Convert glob pattern to regex
+  const escaped = specifier.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  try {
+    return new RegExp(`^${escaped}$`).test(toolCall.slice(toolName.length + 1, -1) || '');
+  } catch {
+    return false;
+  }
+}
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
+  private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
+  private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
   async createSession(opts: {
     id: string;
@@ -95,6 +167,26 @@ class AgentSessionManager {
     repoPath: string;
     window: BrowserWindow;
     resumeClaudeSessionId?: string;
+    permissionMode?: 'default' | 'plan' | 'acceptEdits';
+    parentSessionId?: string | null;
+    orchJobId?: string | null;
+    appendSystemPrompt?: string | null;
+    /** Fully custom system prompt — overrides the claude_code preset entirely. */
+    customSystemPrompt?: string | null;
+    /** If set, only these tools are allowed — everything else is auto-denied. */
+    allowedTools?: string[] | null;
+    /** Force structured JSON output via json_schema. */
+    outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
+    /** SDK sandbox settings for restricted Bash execution. */
+    sandbox?: Record<string, unknown> | null;
+    /** Extra environment variables for the SDK query. */
+    extraEnv?: Record<string, string> | null;
+    /** Run the SDK query inside a Docker container for isolation. */
+    useDocker?: boolean;
+    /** SDK version string for Docker image tagging. */
+    sdkVersion?: string;
+    /** Auth env var for Docker containers. */
+    dockerAuthEnv?: { key: string; value: string };
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -107,6 +199,14 @@ class AgentSessionManager {
         inputController = controller;
       },
     });
+
+    // Apply settings defaults for values not explicitly provided
+    const appSettings = settings.getSettings();
+    const effectivePermissionMode = opts.permissionMode
+      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
+      || 'default';
+    const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+    const effectiveUseDocker = opts.useDocker ?? appSettings.enableDockerByDefault;
 
     const session: ManagedSession = {
       id,
@@ -124,18 +224,49 @@ class AgentSessionManager {
       alwaysAllowedTools: new Set(),
       claudeSessionId: opts.resumeClaudeSessionId || null,
       window: win,
-      eventHistory: [],
+      eventHistory: this.loadEventHistory(id),
       detectedPorts: new Set(),
       toolUseMap: new Map(),
+      lastResult: null,
+      parentSessionId: opts.parentSessionId ?? null,
+      orchJobId: opts.orchJobId ?? null,
+      permissionMode: effectivePermissionMode,
+      appendSystemPrompt: effectiveAppendPrompt,
+      customSystemPrompt: opts.customSystemPrompt ?? null,
+      allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
+      outputFormat: opts.outputFormat ?? null,
+      sandbox: opts.sandbox ?? null,
+      extraEnv: opts.extraEnv ?? null,
+      eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
+      useDocker: effectiveUseDocker,
+      dockerSession: null,
+      displayName: null,
+      devServer: null,
     };
 
     this.sessions.set(id, session);
 
-    // Emit helper — always reads session.window so it picks up re-attached windows.
-    // Also buffers every event so they can be replayed after renderer reload.
+    // Ensure events directory exists
+    try { fs.mkdirSync(EVENTS_DIR, { recursive: true }); } catch { /* already exists */ }
+
+    // Emit helper — buffers events and persists them to JSONL on disk.
     const emit = (event: AgentEvent) => {
       logger.debug(`[emit] session=${id} event.type=${event.type}`);
       session.eventHistory.push(event);
+
+      // Persist to disk (fire-and-forget, non-blocking)
+      try {
+        fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
+      } catch { /* non-fatal */ }
+
+      // Notify registered listeners (used by orchestrator for progress events)
+      const listeners = this.eventListeners.get(id);
+      if (listeners) {
+        for (const cb of listeners) {
+          try { cb(event); } catch { /* non-fatal */ }
+        }
+      }
+
       const w = session.window;
       if (!w.isDestroyed()) {
         const channel = `${IPC.AGENT_EVENT}:${id}`;
@@ -146,20 +277,31 @@ class AgentSessionManager {
       }
     };
 
-    // Start the agent query in the background
-    this.runQuery(session, emit).catch((err) => {
-      console.error(`[runQuery] session=${id} FAILED:`, err);
-      const errMsg = String(err.message || err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
-      emit({ type: 'error', message: isAuthError
-        ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
-        : errMsg });
-      session.status = 'error';
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(IPC.SESSION_STATUS, id, 'error');
-      }
-    });
+    if (session.useDocker) {
+      // Docker path: run SDK inside a container
+      this.runDockerSession(session, emit, opts.sdkVersion || '0.2.72', opts.dockerAuthEnv);
+    } else {
+      // In-process path: run SDK directly
+      this.runQuery(session, emit).catch((err) => {
+        console.error(`[runQuery] session=${id} FAILED:`, err);
+        const errMsg = String(err.message || err);
+        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+        emit({ type: 'error', message: isAuthError
+          ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+          : errMsg });
+        session.status = 'error';
+        const w = session.window;
+        if (!w.isDestroyed()) {
+          w.webContents.send(IPC.SESSION_STATUS, id, 'error');
+        }
+        // Fire completion callback on error
+        const errCb = this.completionCallbacks.get(id);
+        if (errCb) {
+          this.completionCallbacks.delete(id);
+          errCb({ sessionId: id, isError: true });
+        }
+      });
+    }
 
     return {
       id: session.id,
@@ -169,6 +311,9 @@ class AgentSessionManager {
       status: session.status,
       agentType: session.agentType,
       createdAt: session.createdAt,
+      parentSessionId: session.parentSessionId,
+      orchJobId: session.orchJobId,
+      dockerized: session.useDocker || undefined,
     };
   }
 
@@ -192,18 +337,64 @@ class AgentSessionManager {
         abortController,
         includePartialMessages: true,
         settingSources: ['user', 'project', 'local'],
-        systemPrompt: { type: 'preset', preset: 'claude_code' },
-        permissionMode: 'default',
+        systemPrompt: session.customSystemPrompt
+          ? session.customSystemPrompt
+          : session.appendSystemPrompt
+            ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
+            : { type: 'preset', preset: 'claude_code' },
+        permissionMode: session.permissionMode,
+        // Force structured JSON output if configured
+        ...(session.outputFormat ? { outputFormat: session.outputFormat } : {}),
+        // Sandbox settings for restricted Bash execution
+        ...(session.sandbox ? { sandbox: session.sandbox } : {}),
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
+          // If an allowedTools whitelist is set, deny anything not in it
+          if (session.allowedTools && !session.allowedTools.has(toolName)) {
+            return { behavior: 'deny', message: `Tool "${toolName}" is not allowed in this session` };
+          }
+          // Check settings-level deny/allow rules
+          const currentSettings = settings.getSettings();
+          const toolCall = typeof (input as any)?.command === 'string'
+            ? `${toolName}(${(input as any).command})`
+            : toolName;
+          for (const rule of currentSettings.toolDenyRules) {
+            if (matchToolRule(rule.pattern, toolName, toolCall)) {
+              return { behavior: 'deny', message: `Denied by settings rule: ${rule.pattern}` };
+            }
+          }
+          for (const rule of currentSettings.toolAllowRules) {
+            if (matchToolRule(rule.pattern, toolName, toolCall)) {
+              return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+            }
+          }
+          // Auto-approve Bash for sandboxed sessions (SDK sandbox may not
+          // be active on all platforms, so we enforce it here as fallback)
+          if (session.sandbox && toolName === 'Bash') {
+            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+          }
+          // For sandboxed sessions, validate Edit/Write paths against allowWrite
+          if (session.sandbox && (toolName === 'Edit' || toolName === 'Write')) {
+            const filePath = (input as any).file_path;
+            if (filePath && typeof filePath === 'string') {
+              const allowWrite = (session.sandbox as any)?.filesystem?.allowWrite as string[] | undefined;
+              if (allowWrite && allowWrite.length > 0) {
+                const resolved = path.resolve(filePath);
+                const allowed = allowWrite.some(dir => resolved.startsWith(path.resolve(dir)));
+                if (!allowed) {
+                  return { behavior: 'deny', message: `Path "${filePath}" is outside the allowed write directories` };
+                }
+              }
+            }
+          }
           // Auto-approve if user previously chose "Always Allow" for this tool
           if (session.alwaysAllowedTools.has(toolName)) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
           }
           // Forward permission request to renderer and wait for user response.
-          // Times out after 5 minutes to prevent leaked promises if window closes.
-          const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
+          // Times out after 30 minutes to give users plenty of time to respond.
+          const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
           const requestId = `perm_${id}_${++permRequestCounter}`;
           return new Promise((resolve) => {
             const timer = setTimeout(() => {
@@ -227,12 +418,15 @@ class AgentSessionManager {
               toolInput: input,
               toolUseId: options.toolUseID,
               requestId,
+              decisionReason: options.decisionReason,
+              suggestions: options.suggestions,
             });
           });
         },
         env: {
           ...process.env,
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+          ...(session.extraEnv ?? {}),
         },
         stderr: (data: string) => {
           logger.debug(`[claude-stderr] session=${id}: ${data.trim()}`);
@@ -243,6 +437,9 @@ class AgentSessionManager {
     session.queryInstance = q;
     logger.debug(`[runQuery] session=${id} query created, entering message loop`);
 
+    // Show a connecting message in the thread while waiting for system_init
+    emit({ type: 'status', message: `Connecting to Claude Code — ${session.branch} · ${session.permissionMode}` });
+
     // Process message stream
     try {
       for await (const message of q) {
@@ -251,16 +448,24 @@ class AgentSessionManager {
         this.handleMessage(session, message, emit);
       }
       logger.debug(`[runQuery] session=${id} message loop ended normally`);
-    } catch (err) {
-      console.error(`[runQuery] session=${id} message loop error:`, err);
-      const errMsg = (err as Error).message || String(err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+    } catch (err: any) {
+      // Extract as much detail as possible from the SDK error
+      const errMsg = err?.message || String(err);
+      const stderr = err?.stderr || err?.cause?.stderr || '';
+      const exitCode = err?.exitCode ?? err?.code ?? '';
+      const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
+      logger.error(`[runQuery] session=${id} message loop error (exit=${exitCode}):`, detail);
+
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
       if (isAuthError) {
         emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
       } else {
-        emit({ type: 'error', message: `Query error: ${errMsg}` });
+        emit({ type: 'error', message: detail.slice(0, 500) });
       }
     }
+
+    // Kill any dev servers that were detected during this session
+    await this.killDetectedPorts(session);
 
     // Query finished
     session.status = 'stopped';
@@ -269,6 +474,101 @@ class AgentSessionManager {
     if (!w.isDestroyed()) {
       w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
     }
+
+    // Fire completion callback if registered (used by orchestrator)
+    const cb = this.completionCallbacks.get(id);
+    if (cb) {
+      this.completionCallbacks.delete(id);
+      cb({
+        sessionId: id,
+        isError: session.lastResult?.isError ?? false,
+        totalCostUsd: session.lastResult?.totalCostUsd,
+        durationMs: session.lastResult?.durationMs,
+      });
+    }
+  }
+
+  private runDockerSession(
+    session: ManagedSession,
+    emit: (event: AgentEvent) => void,
+    sdkVersion: string,
+    authEnv?: { key: string; value: string },
+  ): void {
+    const { id, worktreePath } = session;
+
+    const dockerSession = new DockerSession({
+      sessionId: id,
+      worktreePath,
+      repoPath: session.repoPath,
+      sdkVersion,
+      authEnv: authEnv ?? null,
+      systemPrompt: session.customSystemPrompt
+        ? session.customSystemPrompt
+        : session.appendSystemPrompt
+          ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
+          : { type: 'preset', preset: 'claude_code' },
+      permissionMode: session.permissionMode,
+      sandbox: session.sandbox,
+      extraEnv: session.extraEnv,
+      appendSystemPrompt: session.appendSystemPrompt,
+    });
+
+    session.dockerSession = dockerSession;
+
+    // Show a connecting message in the thread while waiting for system_init
+    emit({ type: 'status', message: `Connecting to Claude Code (Docker) — ${session.branch} · ${session.permissionMode}` });
+
+    // Wire SDK messages → handleMessage
+    let messageCount = 0;
+    dockerSession.onMessage = (message) => {
+      if (session.abortController.signal.aborted) return;
+      messageCount++;
+      if (messageCount === 1) {
+        logger.info(`[docker] session=${id} received first SDK message, type=${(message as any)?.type}`);
+      }
+      this.handleMessage(session, message, emit);
+    };
+
+    // Wire container completion
+    dockerSession.onComplete = async (result) => {
+      logger.info(`[docker] session=${id} complete: isError=${result.isError}, error=${result.error ?? 'none'}, messageCount=${messageCount}`);
+
+      // Kill any dev servers that were detected during this session
+      await this.killDetectedPorts(session);
+
+      session.status = 'stopped';
+
+      // Surface container errors to the UI before signalling exit
+      if (result.isError && result.error) {
+        emit({ type: 'error', message: result.error });
+      }
+      if (messageCount === 0 && !result.isError) {
+        emit({ type: 'status', message: 'Docker container exited without producing output' });
+      }
+
+      emit({ type: 'process_exit' });
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
+      }
+
+      // Fire completion callback
+      const cb = this.completionCallbacks.get(id);
+      if (cb) {
+        this.completionCallbacks.delete(id);
+        cb({
+          sessionId: id,
+          isError: result.isError,
+          totalCostUsd: session.lastResult?.totalCostUsd,
+          durationMs: session.lastResult?.durationMs,
+        });
+      }
+    };
+
+    // Start the container
+    dockerSession.start();
+    session.status = 'running';
+    emit({ type: 'status', message: 'Starting Docker container...' });
   }
 
   private handleMessage(
@@ -286,6 +586,12 @@ class AgentSessionManager {
           worktreeManager.saveClaudeSessionId(session.id, message.session_id).catch((e) => {
             logger.warn(`Failed to persist Claude session ID for ${session.id}:`, e);
           });
+          // Also save on the orch job for plan sessions (which have no worktree manifest entry)
+          if (session.id.startsWith('plan_')) {
+            import('./orchestrator.js').then(({ orchestrator }) => {
+              orchestrator.savePlanClaudeSessionId(session.id, message.session_id);
+            }).catch(() => {});
+          }
 
           emit({
             type: 'system_init',
@@ -310,14 +616,118 @@ class AgentSessionManager {
             preTokens: meta.pre_tokens ?? 0,
           });
         } else if (message.subtype === 'status') {
-          const status = (message as any).status;
-          if (status === 'compacting') {
+          const m = message as any;
+          if (m.status === 'compacting') {
             emit({ type: 'status', message: 'Compacting conversation...' });
+          }
+          // Sync permission mode from SDK (check both camelCase and snake_case)
+          const modeValue = m.permissionMode ?? m.permission_mode;
+          if (modeValue) {
+            emit({ type: 'mode_sync', mode: modeValue });
           }
         } else if (message.subtype === 'local_command_output') {
           const content = (message as any).content;
           if (content) {
             emit({ type: 'status', message: content });
+            // Detect mode changes from slash command output
+            if (/mode.*plan/i.test(content) || /plan mode/i.test(content)) {
+              emit({ type: 'mode_sync', mode: 'plan' });
+            } else if (/mode.*code/i.test(content) || /code mode/i.test(content) || /default mode/i.test(content)) {
+              emit({ type: 'mode_sync', mode: 'default' });
+            } else if (/mode.*accept/i.test(content) || /acceptEdits/i.test(content) || /edit mode/i.test(content)) {
+              emit({ type: 'mode_sync', mode: 'acceptEdits' });
+            }
+          }
+        } else if (message.subtype === 'task_started') {
+          const m = message as any;
+          emit({
+            type: 'task_started',
+            taskId: m.task_id ?? '',
+            toolUseId: m.tool_use_id,
+            description: m.description ?? '',
+            taskType: m.task_type,
+          });
+        } else if (message.subtype === 'task_progress') {
+          const m = message as any;
+          const usage = m.usage ?? {};
+          emit({
+            type: 'task_progress',
+            taskId: m.task_id ?? '',
+            toolUseId: m.tool_use_id,
+            description: m.description ?? '',
+            summary: m.summary,
+            lastToolName: m.last_tool_name,
+            totalTokens: usage.total_tokens ?? 0,
+            toolUses: usage.tool_uses ?? 0,
+            durationMs: usage.duration_ms ?? 0,
+          });
+        } else if (message.subtype === 'task_notification') {
+          const m = message as any;
+          const usage = m.usage ?? {};
+          emit({
+            type: 'task_notification',
+            taskId: m.task_id ?? '',
+            toolUseId: m.tool_use_id,
+            taskStatus: m.status ?? 'completed',
+            summary: m.summary ?? '',
+            outputFile: m.output_file ?? '',
+            totalTokens: usage.total_tokens,
+            toolUses: usage.tool_uses,
+            durationMs: usage.duration_ms,
+          });
+        } else if (message.subtype === 'hook_started') {
+          const m = message as any;
+          emit({
+            type: 'hook_event',
+            subtype: 'started',
+            hookId: m.hook_id ?? '',
+            hookName: m.hook_name ?? '',
+            hookEvent: m.hook_event ?? '',
+          });
+        } else if (message.subtype === 'hook_progress') {
+          const m = message as any;
+          emit({
+            type: 'hook_event',
+            subtype: 'progress',
+            hookId: m.hook_id ?? '',
+            hookName: m.hook_name ?? '',
+            hookEvent: m.hook_event ?? '',
+            output: m.output || m.stdout || m.stderr || '',
+          });
+        } else if (message.subtype === 'hook_response') {
+          const m = message as any;
+          emit({
+            type: 'hook_event',
+            subtype: 'response',
+            hookId: m.hook_id ?? '',
+            hookName: m.hook_name ?? '',
+            hookEvent: m.hook_event ?? '',
+            output: m.output || m.stdout || m.stderr || '',
+            outcome: m.outcome ?? 'success',
+            exitCode: m.exit_code,
+          });
+        } else if (message.subtype === 'elicitation_complete') {
+          const m = message as any;
+          emit({
+            type: 'elicitation_complete',
+            serverName: m.mcp_server_name ?? '',
+            elicitationId: m.elicitation_id ?? '',
+          });
+        } else if (message.subtype === 'files_persisted') {
+          const m = message as any;
+          emit({
+            type: 'files_persisted',
+            files: (m.files ?? []).map((f: any) => ({ filename: f.filename, fileId: f.file_id })),
+            failed: m.failed ?? [],
+          });
+        } else {
+          // Log unhandled system subtypes to help debug missing events
+          const m = message as any;
+          logger.debug(`[handleMessage] session=${session.id} unhandled system subtype=${message.subtype} keys=${Object.keys(m).join(',')}`);
+          // Try to extract permission mode from any system message
+          const modeVal = m.permissionMode ?? m.permission_mode ?? m.mode;
+          if (modeVal && typeof modeVal === 'string') {
+            emit({ type: 'mode_sync', mode: modeVal as any });
           }
         }
         break;
@@ -405,10 +815,17 @@ class AgentSessionManager {
         const contextWindow = modelUsage
           ? Object.values(modelUsage)[0]?.contextWindow
           : undefined;
+        // Store for completion callback
+        session.lastResult = {
+          isError: message.is_error,
+          totalCostUsd: message.total_cost_usd,
+          durationMs: message.duration_ms,
+        };
         emit({
           type: 'result',
           subtype: message.subtype,
           result: 'result' in message ? (message as any).result : undefined,
+          structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
           totalCostUsd: message.total_cost_usd,
           durationMs: message.duration_ms,
           isError: message.is_error,
@@ -437,8 +854,8 @@ class AgentSessionManager {
           const delta = (event as any).delta;
           if (delta?.type === 'text_delta' && delta.text) {
             emit({ type: 'partial_text', text: delta.text });
-          } else if (delta?.type === 'thinking_delta') {
-            emit({ type: 'activity', activity: 'thinking' });
+          } else if (delta?.type === 'thinking_delta' && delta.thinking) {
+            emit({ type: 'partial_thinking', text: delta.thinking });
           }
         } else if (event.type === 'content_block_start') {
           const block = (event as any).content_block;
@@ -455,17 +872,68 @@ class AgentSessionManager {
         break;
       }
 
+      case 'auth_status': {
+        const m = message as any;
+        emit({
+          type: 'auth_status',
+          isAuthenticating: m.isAuthenticating ?? false,
+          output: m.output ?? [],
+          authError: m.error,
+        });
+        break;
+      }
+
+      case 'tool_use_summary': {
+        const m = message as any;
+        emit({
+          type: 'tool_use_summary',
+          summary: m.summary ?? '',
+          toolUseIds: m.preceding_tool_use_ids ?? [],
+        });
+        break;
+      }
+
+      case 'rate_limit_event': {
+        const m = message as any;
+        const info = m.rate_limit_info ?? {};
+        emit({
+          type: 'rate_limit',
+          status: info.status ?? 'allowed',
+          resetsAt: info.resets_at ?? info.resetsAt,
+          utilization: info.utilization,
+          rateLimitType: info.rate_limit_type ?? info.rateLimitType,
+        });
+        break;
+      }
+
+      case 'prompt_suggestion': {
+        const m = message as any;
+        emit({
+          type: 'prompt_suggestion',
+          suggestion: m.suggestion ?? '',
+        });
+        break;
+      }
+
       default:
         // Ignore other message types
         break;
     }
   }
 
-  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): void {
+  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): boolean {
     const session = this.sessions.get(id);
+
+    // Docker path: send init message to Docker container
+    if (session?.useDocker && session.dockerSession) {
+      session.eventHistory.push({ type: 'user_message', text: content });
+      session.dockerSession.sendInit(content);
+      return true;
+    }
+
     if (!session?.inputController) {
       logger.debug(`[sendMessage] session=${id} no session or inputController`);
-      return;
+      return false;
     }
 
     // Record in event history so user messages survive renderer refresh
@@ -498,9 +966,11 @@ class AgentSessionManager {
         parent_tool_use_id: null,
       } as SDKUserMessage);
       logger.debug(`[sendMessage] session=${id} enqueued successfully`);
+      return true;
     } catch (e) {
       console.error(`[sendMessage] session=${id} enqueue FAILED:`, e);
       logger.warn(`Failed to send message to session ${id}:`, e);
+      return false;
     }
   }
 
@@ -517,7 +987,11 @@ class AgentSessionManager {
       if (decision.behavior === 'allowAlways') {
         session.alwaysAllowedTools.add(pending.toolName);
       }
-      pending.resolve({ behavior: 'allow', updatedInput: pending.toolInput });
+      const result: any = { behavior: 'allow', updatedInput: pending.toolInput };
+      if (decision.updatedPermissions) {
+        result.updatedPermissions = decision.updatedPermissions;
+      }
+      pending.resolve(result);
     } else {
       pending.resolve({
         behavior: 'deny',
@@ -547,12 +1021,92 @@ class AgentSessionManager {
     }
   }
 
+  async setThinking(id: string, enabled: boolean): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryInstance) return;
+    try {
+      await session.queryInstance.setMaxThinkingTokens(enabled ? null : 0);
+    } catch (e) {
+      logger.warn(`Failed to set thinking for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  renameBranch(id: string, newBranch: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.branch = newBranch;
+    }
+  }
+
+  renameSession(id: string, displayName: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.displayName = displayName || null;
+    }
+  }
+
+  /** Start a host-managed dev server for the given session. */
+  async startDevServer(sessionId: string, overrideCommand?: string): Promise<{ port: number; url: string } | null> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+    // Stop existing dev server if any
+    await this.stopDevServer(sessionId);
+
+    // Resolve command via fallback chain: override → settings → auto-detect
+    const command = overrideCommand
+      || settings.getSettings().devCommand
+      || await detectDevCommand(session.worktreePath);
+
+    if (!command) throw new Error('No dev command configured and none detected from package.json');
+
+    const devServer = new DevServer(sessionId, session.worktreePath, command, (info) => {
+      // Emit devserver_detected event through the existing channel
+      session.detectedPorts.add(info.port);
+      const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
+      session.eventHistory.push(event);
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
+      }
+    });
+
+    session.devServer = devServer;
+    return devServer.start();
+  }
+
+  /** Stop the host-managed dev server for the given session. */
+  async stopDevServer(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.devServer) return;
+    await session.devServer.stop();
+    session.devServer = null;
+  }
+
+  /** Kill dev servers detected during this session and clear the port set. */
+  private async killDetectedPorts(session: ManagedSession): Promise<void> {
+    if (session.detectedPorts.size === 0) return;
+    const ports = [...session.detectedPorts];
+    session.detectedPorts.clear();
+    logger.info(`Killing ${ports.length} dev server(s) for session ${session.id}: ports ${ports.join(', ')}`);
+    await Promise.all(
+      ports.map((port) => killProcessOnPort(port).catch(() => {}))
+    );
+  }
+
   async destroySession(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
 
     // Abort the query
     session.abortController.abort();
+
+    // Kill Docker container if applicable
+    if (session.dockerSession) {
+      await session.dockerSession.abort();
+      session.dockerSession = null;
+    }
 
     // Close the input stream
     try {
@@ -569,13 +1123,18 @@ class AgentSessionManager {
       pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
     }
 
-    // Kill any dev servers that were detected during this session
-    if (session.detectedPorts.size > 0) {
-      logger.info(`Killing ${session.detectedPorts.size} dev server(s) for session ${id}: ports ${[...session.detectedPorts].join(', ')}`);
-      await Promise.all(
-        [...session.detectedPorts].map((port) => killProcessOnPort(port).catch(() => {}))
-      );
+    // Stop host-managed dev server
+    if (session.devServer) {
+      await session.devServer.stop();
+      session.devServer = null;
     }
+
+    // Kill any dev servers not already cleaned up on query completion
+    await this.killDetectedPorts(session);
+
+    // Clean up completion callback and event listeners
+    this.completionCallbacks.delete(id);
+    this.eventListeners.delete(id);
 
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, 500));
@@ -597,6 +1156,10 @@ class AgentSessionManager {
       status: s.status,
       agentType: s.agentType,
       createdAt: s.createdAt,
+      parentSessionId: s.parentSessionId,
+      orchJobId: s.orchJobId,
+      dockerized: s.useDocker || undefined,
+      displayName: s.displayName,
     }));
   }
 
@@ -619,9 +1182,70 @@ class AgentSessionManager {
     }
   }
 
-  /** Return all buffered events for replay after renderer reload. */
+  /**
+   * Close the input stream for a session, signalling no more messages.
+   * This causes the SDK's `for await` loop to exit naturally, firing
+   * the completion callback. Use for single-shot sessions (subtasks,
+   * merge agents) where only one instruction is sent.
+   */
+  closeInputStream(id: string): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    // Docker sessions don't use the input stream — the init message is the only input
+    if (session.useDocker) return;
+    if (!session.inputController) return;
+    try {
+      session.inputController.close();
+      session.inputController = null;
+    } catch { /* may already be closed */ }
+  }
+
+  /** Register a one-time callback for when a session's query completes. */
+  onComplete(id: string, callback: (result: SessionCompletionResult) => void): void {
+    this.completionCallbacks.set(id, callback);
+  }
+
+  /** Register a listener for all events on a session (used by orchestrator for progress). */
+  onEvent(id: string, callback: (event: AgentEvent) => void): void {
+    const list = this.eventListeners.get(id) ?? [];
+    list.push(callback);
+    this.eventListeners.set(id, list);
+  }
+
+  /** Inject an external event into a session's history and broadcast it to the renderer. */
+  injectEvent(id: string, event: AgentEvent): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    session.eventHistory.push(event);
+    const w = session.window;
+    if (!w.isDestroyed()) {
+      w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
+    }
+    // Notify internal listeners
+    const listeners = this.eventListeners.get(id);
+    if (listeners) {
+      for (const cb of listeners) {
+        try { cb(event); } catch { /* non-fatal */ }
+      }
+    }
+  }
+
+  /** Load event history from the disk JSONL log for a session. */
+  private loadEventHistory(id: string): AgentEvent[] {
+    const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
+    try {
+      const data = fs.readFileSync(logPath, 'utf-8');
+      return data.split('\n').filter(Boolean).map(line => JSON.parse(line));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
   getEventHistory(id: string): AgentEvent[] {
-    return this.sessions.get(id)?.eventHistory ?? [];
+    const session = this.sessions.get(id);
+    if (session) return session.eventHistory;
+    return this.loadEventHistory(id);
   }
 
   get count(): number {

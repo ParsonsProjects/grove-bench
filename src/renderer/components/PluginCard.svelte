@@ -28,17 +28,17 @@
   }
 </script>
 
-<div class="border border-border rounded-md p-3 flex flex-col gap-2 bg-card">
+<div class="border border-border p-3 flex flex-col gap-2 bg-card">
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <span class="text-sm font-medium text-foreground truncate">{name}</span>
-        <span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">v{version}</span>
+        <span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 shrink-0">v{version}</span>
         {#if scope}
-          <span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">{scope}</span>
+          <span class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 shrink-0">{scope}</span>
         {/if}
         {#if installed && !enabled}
-          <span class="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded shrink-0">disabled</span>
+          <span class="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 shrink-0">disabled</span>
         {/if}
       </div>
       {#if description}

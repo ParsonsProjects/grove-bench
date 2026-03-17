@@ -45,7 +45,7 @@
   ">
     {#each Array(20) as _, i}
       <span
-        class="blue-pixel absolute rounded-[1px]"
+        class="blue-pixel absolute"
         style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
       ></span>
     {/each}
@@ -68,7 +68,7 @@
       </ul>
       <p class="text-xs text-muted-foreground mt-6 mb-4">Fix the issues above, then re-check.</p>
       <button
-        class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 rounded transition-colors"
+        class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
         onclick={runCheck}
       >
         Re-check

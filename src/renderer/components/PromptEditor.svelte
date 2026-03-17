@@ -50,6 +50,7 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let isReady = $derived(messageStore.getIsReady(sessionId));
   let canSend = $derived(!isRunning);
+  let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 
   function handleSubmit() {
     const text = value.trim();
@@ -124,11 +125,19 @@
 
     value = '';
     attachedFiles = [];
+    messageStore.clearPromptSuggestions(sessionId);
     closePicker();
     closeCommandPicker();
     userResized = false;
     if (container) container.style.height = '';
     if (textarea) textarea.style.height = '';
+  }
+
+  function useSuggestion(suggestion: string) {
+    value = suggestion;
+    messageStore.clearPromptSuggestions(sessionId);
+    textarea?.focus();
+    handleInput();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -176,6 +185,22 @@
       e.preventDefault();
       closeCommandPicker();
       return;
+    }
+
+    // Ctrl+C with no selection clears the input (terminal-style)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      const sel = window.getSelection()?.toString() || '';
+      if (!sel && value.length > 0) {
+        e.preventDefault();
+        value = '';
+        attachedFiles = [];
+        closePicker();
+        closeCommandPicker();
+        userResized = false;
+        if (container) container.style.height = '';
+        if (textarea) textarea.style.height = '';
+        return;
+      }
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -266,6 +291,7 @@
   }
 
   function handleStop() {
+    messageStore.markSessionStopped(sessionId);
     window.groveBench.stopSession(sessionId);
   }
 
@@ -451,6 +477,21 @@
             title="Remove"
           >&times;</button>
         </span>
+      {/each}
+    </div>
+  {/if}
+
+  <!-- Prompt suggestions -->
+  {#if promptSuggestions.length > 0 && !isRunning}
+    <div class="flex flex-wrap gap-1.5 px-4 pt-2">
+      {#each promptSuggestions as suggestion}
+        <button
+          onclick={() => useSuggestion(suggestion)}
+          class="text-xs px-2.5 py-1 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors truncate max-w-80"
+          title={suggestion}
+        >
+          {suggestion}
+        </button>
       {/each}
     </div>
   {/if}

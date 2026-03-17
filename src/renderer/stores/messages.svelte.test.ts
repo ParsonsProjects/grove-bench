@@ -1,0 +1,734 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mockGroveBench } from '../__mocks__/setup.js';
+
+import { messageStore } from './messages.svelte.js';
+import type { AgentEvent } from '../../shared/types.js';
+
+const SID = 'test-session';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Clear messages for our test session
+  messageStore.messagesBySession = {};
+  messageStore.streamingText = {};
+  messageStore.streamingThinking = {};
+  messageStore.isRunning = {};
+  messageStore.isReady = {};
+  messageStore.activityBySession = {};
+  messageStore.toolProgressBySession = {};
+  messageStore.modeBySession = {};
+  messageStore.modelBySession = {};
+  messageStore.usageBySession = {};
+  messageStore.pendingClear = {};
+  messageStore.devServersBySession = {};
+  messageStore.rateLimitBySession = {};
+  messageStore.promptSuggestionsBySession = {};
+  messageStore.backgroundTasksBySession = {};
+  messageStore.contextWindowBySession = {};
+  messageStore.turnsBySession = {};
+  messageStore.thinkingBySession = {};
+});
+
+describe('ingestEvent — system_init', () => {
+  it('marks session as ready and not running', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'claude-sonnet-4-5-20250514',
+      tools: ['Read', 'Edit'],
+    } as AgentEvent);
+
+    expect(messageStore.getIsReady(SID)).toBe(true);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getModel(SID)).toBe('claude-sonnet-4-5-20250514');
+  });
+
+  it('pushes a system message with model name', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'opus',
+      tools: [],
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].kind).toBe('system');
+    expect((msgs[0] as any).text).toContain('opus');
+  });
+
+  it('clears messages on re-init after /clear', () => {
+    messageStore.addUserMessage(SID, 'hello');
+    messageStore.pendingClear[SID] = true;
+
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'opus',
+      tools: [],
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    // Only the re-init system message should remain
+    expect(msgs).toHaveLength(1);
+    expect((msgs[0] as any).text).toContain('cleared');
+  });
+
+  it('stores system info (tools, agents, skills)', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'opus',
+      tools: ['Read', 'Edit'],
+      agents: ['agent1'],
+      skills: ['commit'],
+      slashCommands: ['/help'],
+      mcpServers: [{ name: 'github', status: 'connected' }],
+    } as AgentEvent);
+
+    const info = messageStore.getSystemInfo(SID);
+    expect(info.tools).toEqual(['Read', 'Edit']);
+    expect(info.agents).toEqual(['agent1']);
+    expect(info.skills).toEqual(['commit']);
+  });
+});
+
+describe('ingestEvent — text streaming', () => {
+  it('accumulates partial_text into streaming buffer', () => {
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'Hello ' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'world' } as AgentEvent);
+
+    expect(messageStore.getStreamingText(SID)).toBe('Hello world');
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('clears streaming thinking when partial_text arrives', () => {
+    messageStore.streamingThinking[SID] = 'thinking...';
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'hi' } as AgentEvent);
+    expect(messageStore.getStreamingThinking(SID)).toBe('');
+  });
+
+  it('assistant_text clears streaming and pushes finalized message', () => {
+    messageStore.streamingText[SID] = 'preview text';
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_text',
+      text: 'Final answer',
+      uuid: 'uuid-1',
+    } as AgentEvent);
+
+    expect(messageStore.getStreamingText(SID)).toBe('');
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].kind).toBe('text');
+    expect((msgs[0] as any).text).toBe('Final answer');
+  });
+});
+
+describe('ingestEvent — thinking', () => {
+  it('accumulates partial_thinking', () => {
+    messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'Let me ' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'think...' } as AgentEvent);
+
+    expect(messageStore.getStreamingThinking(SID)).toBe('Let me think...');
+    expect(messageStore.getActivity(SID).activity).toBe('thinking');
+  });
+
+  it('finalized thinking clears streaming and pushes message', () => {
+    messageStore.streamingThinking[SID] = 'preview';
+    messageStore.ingestEvent(SID, {
+      type: 'thinking',
+      thinking: 'Full thought',
+      uuid: 'uuid-t',
+    } as AgentEvent);
+
+    expect(messageStore.getStreamingThinking(SID)).toBe('');
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('thinking');
+  });
+});
+
+describe('ingestEvent — tool_use and tool_result', () => {
+  it('pushes a pending tool_call message', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Read',
+      toolInput: { file_path: '/src/foo.ts' },
+      toolUseId: 'tu-1',
+      uuid: 'uuid-2',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].kind).toBe('tool_call');
+    const tc = msgs[0] as any;
+    expect(tc.toolName).toBe('Read');
+    expect(tc.pending).toBe(true);
+  });
+
+  it('flushes streaming text before tool_use', () => {
+    messageStore.streamingText[SID] = 'partial answer';
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Read',
+      toolInput: {},
+      toolUseId: 'tu-2',
+      uuid: 'uuid-3',
+    } as AgentEvent);
+
+    // Streaming text flushed as a text message, then tool call added
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].kind).toBe('text');
+    expect(msgs[1].kind).toBe('tool_call');
+  });
+
+  it('tool_result resolves the matching pending tool_call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-3',
+      uuid: 'uuid-4',
+    } as AgentEvent);
+
+    messageStore.ingestEvent(SID, {
+      type: 'tool_result',
+      toolUseId: 'tu-3',
+      content: 'file1.ts\nfile2.ts',
+      isError: false,
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const tc = msgs[0] as any;
+    expect(tc.pending).toBe(false);
+    expect(tc.result).toBe('file1.ts\nfile2.ts');
+    expect(tc.isError).toBe(false);
+  });
+
+  it('syncs mode when EnterPlanMode tool is used', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'EnterPlanMode',
+      toolInput: {},
+      toolUseId: 'tu-plan',
+      uuid: 'u-plan',
+    } as AgentEvent);
+
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
+  it('syncs mode when ExitPlanMode tool is used', () => {
+    messageStore.modeBySession[SID] = 'plan';
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+      toolUseId: 'tu-exit',
+      uuid: 'u-exit',
+    } as AgentEvent);
+
+    expect(messageStore.getMode(SID)).toBe('default');
+  });
+});
+
+describe('ingestEvent — permission_request', () => {
+  it('pushes permission message for normal tools', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'rm -rf /' },
+      toolUseId: 'tu-perm',
+      requestId: 'req-1',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('permission');
+    const pm = msgs[0] as any;
+    expect(pm.toolName).toBe('Bash');
+    expect(pm.resolved).toBe(false);
+  });
+
+  it('pushes question message for AskUserQuestion', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'AskUserQuestion',
+      toolInput: {
+        questions: [{ question: 'Which framework?', header: 'Choice', options: [], multiSelect: false }],
+      },
+      toolUseId: 'tu-q',
+      requestId: 'req-q',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('question');
+    const q = msgs[0] as any;
+    expect(q.questions).toHaveLength(1);
+    expect(q.resolved).toBe(false);
+  });
+});
+
+describe('ingestEvent — result', () => {
+  it('marks session as not running and idle', () => {
+    messageStore.isRunning[SID] = true;
+    messageStore.ingestEvent(SID, {
+      type: 'result',
+      subtype: 'success',
+      isError: false,
+      totalCostUsd: 0.05,
+      durationMs: 3000,
+    } as AgentEvent);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).toBe('idle');
+  });
+
+  it('flushes streaming text before result', () => {
+    messageStore.streamingText[SID] = 'leftover';
+    messageStore.ingestEvent(SID, {
+      type: 'result',
+      subtype: 'success',
+      isError: false,
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('text');
+    expect(msgs[1].kind).toBe('result');
+  });
+
+  it('stores context window and turns', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'result',
+      subtype: 'success',
+      isError: false,
+      contextWindow: 100000,
+      numTurns: 5,
+    } as AgentEvent);
+
+    expect(messageStore.getContextWindow(SID)).toBe(100000);
+    expect(messageStore.getTurns(SID)).toBe(5);
+  });
+});
+
+describe('ingestEvent — usage', () => {
+  it('tracks input tokens as latest (not cumulative)', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'usage',
+      inputTokens: 1000,
+      outputTokens: 200,
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'usage',
+      inputTokens: 1500,
+      outputTokens: 300,
+    } as AgentEvent);
+
+    const usage = messageStore.getUsage(SID);
+    expect(usage.inputTokens).toBe(1500); // latest, not summed
+    expect(usage.outputTokens).toBe(500); // cumulative
+  });
+});
+
+describe('ingestEvent — error and status', () => {
+  it('pushes error message', () => {
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Something broke' } as AgentEvent);
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('error');
+    expect((msgs[0] as any).text).toBe('Something broke');
+  });
+
+  it('pushes status as system message', () => {
+    messageStore.ingestEvent(SID, { type: 'status', message: 'Loading...' } as AgentEvent);
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('system');
+    expect((msgs[0] as any).text).toBe('Loading...');
+  });
+});
+
+describe('ingestEvent — rate_limit', () => {
+  it('stores rate limit state', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'rate_limit',
+      status: 'allowed_warning',
+      utilization: 0.85,
+    } as AgentEvent);
+
+    const rl = messageStore.getRateLimit(SID);
+    expect(rl!.status).toBe('allowed_warning');
+    expect(rl!.utilization).toBe(0.85);
+  });
+
+  it('pushes system message on rejection', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'rate_limit',
+      status: 'rejected',
+      rateLimitType: 'token',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('system');
+    expect((msgs[0] as any).text).toContain('Rate limited');
+    expect((msgs[0] as any).text).toContain('token');
+  });
+});
+
+describe('ingestEvent — devserver_detected', () => {
+  it('adds dev server', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'devserver_detected',
+      port: 3000,
+      url: 'http://localhost:3000',
+    } as AgentEvent);
+
+    expect(messageStore.getDevServers(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000' }]);
+  });
+
+  it('does not duplicate same port', () => {
+    messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
+
+    expect(messageStore.getDevServers(SID)).toHaveLength(1);
+  });
+});
+
+describe('ingestEvent — compact_boundary', () => {
+  it('pushes compaction system message', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'compact_boundary',
+      trigger: 'auto',
+      preTokens: 150000,
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('system');
+    expect((msgs[0] as any).text).toContain('150k');
+  });
+});
+
+describe('ingestEvent — tool_progress', () => {
+  it('updates activity with tool progress', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'tool_progress',
+      toolName: 'Bash',
+      toolUseId: 'tu-p',
+      elapsedSeconds: 5,
+    } as AgentEvent);
+
+    const activity = messageStore.getActivity(SID);
+    expect(activity.activity).toBe('tool_starting');
+    expect(activity.toolName).toBe('Bash');
+    expect(activity.elapsedSeconds).toBe(5);
+  });
+});
+
+describe('ingestEvent — activity', () => {
+  it('sets running when not idle', () => {
+    messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' } as AgentEvent);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+    expect(messageStore.getActivity(SID).activity).toBe('generating');
+  });
+
+  it('does not set running for idle', () => {
+    messageStore.isRunning[SID] = false;
+    messageStore.ingestEvent(SID, { type: 'activity', activity: 'idle' } as AgentEvent);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+});
+
+describe('ingestEvent — process_exit', () => {
+  it('marks session as stopped', () => {
+    messageStore.isRunning[SID] = true;
+    messageStore.streamingText[SID] = 'leftover';
+    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).toBe('idle');
+  });
+});
+
+describe('ingestEvent — background tasks', () => {
+  it('tracks task lifecycle (started → progress → notification)', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'task_started',
+      taskId: 'bg-1',
+      description: 'Research API',
+      taskType: 'explore',
+    } as AgentEvent);
+
+    let tasks = messageStore.getBackgroundTasks(SID);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].status).toBe('running');
+
+    messageStore.ingestEvent(SID, {
+      type: 'task_progress',
+      taskId: 'bg-1',
+      description: 'Research API',
+      summary: 'Reading docs',
+      totalTokens: 5000,
+      toolUses: 3,
+      durationMs: 10000,
+    } as AgentEvent);
+
+    tasks = messageStore.getBackgroundTasks(SID);
+    expect(tasks[0].summary).toBe('Reading docs');
+    expect(tasks[0].totalTokens).toBe(5000);
+
+    messageStore.ingestEvent(SID, {
+      type: 'task_notification',
+      taskId: 'bg-1',
+      taskStatus: 'completed',
+      summary: 'Found 3 endpoints',
+      totalTokens: 8000,
+      toolUses: 7,
+      durationMs: 25000,
+    } as AgentEvent);
+
+    tasks = messageStore.getBackgroundTasks(SID);
+    expect(tasks[0].status).toBe('completed');
+    expect(tasks[0].summary).toBe('Found 3 endpoints');
+  });
+});
+
+describe('ingestEvent — prompt_suggestion', () => {
+  it('accumulates suggestions', () => {
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Try this' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'prompt_suggestion', suggestion: 'Or this' } as AgentEvent);
+
+    expect(messageStore.getPromptSuggestions(SID)).toEqual(['Try this', 'Or this']);
+  });
+});
+
+describe('ingestEvent — mode_sync', () => {
+  it('syncs mode from SDK', () => {
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan' } as AgentEvent);
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+});
+
+describe('summarizeToolInput (via activity)', () => {
+  it('summarizes Bash command', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Bash',
+      toolInput: { command: 'npm run build' },
+      toolUseId: 'tu-s1',
+      uuid: 'u-s1',
+    } as AgentEvent);
+
+    const activity = messageStore.getActivity(SID);
+    expect(activity.toolSummary).toBe('npm run build');
+  });
+
+  it('summarizes file_path input', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Read',
+      toolInput: { file_path: '/src/index.ts' },
+      toolUseId: 'tu-s2',
+      uuid: 'u-s2',
+    } as AgentEvent);
+
+    const activity = messageStore.getActivity(SID);
+    expect(activity.toolSummary).toBe('/src/index.ts');
+  });
+
+  it('summarizes pattern input', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Grep',
+      toolInput: { pattern: 'TODO' },
+      toolUseId: 'tu-s3',
+      uuid: 'u-s3',
+    } as AgentEvent);
+
+    const activity = messageStore.getActivity(SID);
+    expect(activity.toolSummary).toBe('TODO');
+  });
+
+  it('returns empty for null input', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Unknown',
+      toolInput: null,
+      toolUseId: 'tu-s4',
+      uuid: 'u-s4',
+    } as AgentEvent);
+
+    const activity = messageStore.getActivity(SID);
+    expect(activity.toolSummary).toBe('');
+  });
+});
+
+describe('addUserMessage', () => {
+  it('pushes user message and sets running', () => {
+    messageStore.addUserMessage(SID, 'Fix the bug');
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].kind).toBe('user');
+    expect((msgs[0] as any).text).toBe('Fix the bug');
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('clears prompt suggestions on new message', () => {
+    messageStore.promptSuggestionsBySession[SID] = ['old suggestion'];
+    messageStore.addUserMessage(SID, 'New prompt');
+    expect(messageStore.getPromptSuggestions(SID)).toEqual([]);
+  });
+});
+
+describe('markSessionStopped', () => {
+  it('resets running state and flushes streaming', () => {
+    messageStore.isRunning[SID] = true;
+    messageStore.streamingText[SID] = 'partial';
+    messageStore.markSessionStopped(SID);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).toBe('idle');
+    // Partial text should be flushed as a message
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs[0].kind).toBe('text');
+  });
+
+  it('resolves pending tool calls so spinners stop', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Bash',
+      toolInput: {},
+      toolUseId: 'tu-stop',
+      uuid: 'u-stop',
+    } as AgentEvent);
+
+    messageStore.markSessionStopped(SID);
+
+    const tc = messageStore.getMessages(SID)[0] as any;
+    expect(tc.pending).toBe(false);
+  });
+});
+
+describe('cycleMode', () => {
+  it('cycles default → plan → acceptEdits → default', () => {
+    messageStore.modeBySession[SID] = 'default';
+    messageStore.cycleMode(SID);
+    expect(messageStore.getMode(SID)).toBe('plan');
+
+    messageStore.cycleMode(SID);
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+
+    messageStore.cycleMode(SID);
+    expect(messageStore.getMode(SID)).toBe('default');
+  });
+
+  it('does not cycle orchestrator mode', () => {
+    messageStore.modeBySession[SID] = 'orchestrator';
+    messageStore.cycleMode(SID);
+    expect(messageStore.getMode(SID)).toBe('orchestrator');
+  });
+});
+
+describe('sendCommand', () => {
+  it('sends /clear and sets pendingClear', () => {
+    messageStore.sendCommand(SID, '/clear');
+    expect(messageStore.pendingClear[SID]).toBe(true);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/clear');
+  });
+
+  it('syncs mode on /plan command', () => {
+    messageStore.sendCommand(SID, '/plan');
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
+  it('syncs mode on /code command', () => {
+    messageStore.modeBySession[SID] = 'plan';
+    messageStore.sendCommand(SID, '/code');
+    expect(messageStore.getMode(SID)).toBe('default');
+  });
+});
+
+describe('getLastTurnFileChanges', () => {
+  it('returns empty when no messages', () => {
+    expect(messageStore.getLastTurnFileChanges(SID)).toEqual([]);
+  });
+
+  it('returns empty when no result message', () => {
+    messageStore.addUserMessage(SID, 'edit the file');
+    expect(messageStore.getLastTurnFileChanges(SID)).toEqual([]);
+  });
+
+  it('returns Edit/Write calls from last turn grouped by file', () => {
+    // Simulate a turn: user → tool_call(Edit) → tool_result → tool_call(Edit) → tool_result → result
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'fix bug' },
+      { kind: 'tool_call', id: '2', toolName: 'Edit', toolInput: { file_path: '/src/a.ts', old_string: 'x', new_string: 'y' }, toolUseId: 'e1', uuid: 'u1', pending: false },
+      { kind: 'tool_call', id: '3', toolName: 'Edit', toolInput: { file_path: '/src/a.ts', old_string: 'p', new_string: 'q' }, toolUseId: 'e2', uuid: 'u2', pending: false },
+      { kind: 'tool_call', id: '4', toolName: 'Write', toolInput: { file_path: '/src/b.ts', content: 'new file' }, toolUseId: 'e3', uuid: 'u3', pending: false },
+      { kind: 'tool_call', id: '5', toolName: 'Read', toolInput: { file_path: '/src/c.ts' }, toolUseId: 'r1', uuid: 'u4', pending: false },
+      { kind: 'result', id: '6', subtype: 'success', isError: false },
+    ] as any;
+
+    const changes = messageStore.getLastTurnFileChanges(SID);
+    expect(changes).toHaveLength(2); // /src/a.ts and /src/b.ts (Read excluded)
+    expect(changes.find(c => c.filePath === '/src/a.ts')!.edits).toHaveLength(2);
+    expect(changes.find(c => c.filePath === '/src/b.ts')!.edits).toHaveLength(1);
+  });
+
+  it('excludes errored tool calls', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'edit' },
+      { kind: 'tool_call', id: '2', toolName: 'Edit', toolInput: { file_path: '/src/a.ts' }, toolUseId: 'e1', uuid: 'u1', pending: false, isError: true },
+      { kind: 'result', id: '3', subtype: 'success', isError: false },
+    ] as any;
+
+    expect(messageStore.getLastTurnFileChanges(SID)).toEqual([]);
+  });
+});
+
+describe('resolveStaleToolCalls', () => {
+  it('marks pending tool calls as resolved when session not running', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'tool_call', id: '1', toolName: 'Bash', toolInput: {}, toolUseId: 'tu-stale', uuid: 'u', pending: true },
+    ] as any;
+    messageStore.isRunning[SID] = false;
+
+    messageStore.resolveStaleToolCalls(SID);
+
+    const tc = messageStore.getMessages(SID)[0] as any;
+    expect(tc.pending).toBe(false);
+  });
+
+  it('does not touch pending calls when session is running', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'tool_call', id: '1', toolName: 'Bash', toolInput: {}, toolUseId: 'tu-active', uuid: 'u', pending: true },
+    ] as any;
+    messageStore.isRunning[SID] = true;
+
+    messageStore.resolveStaleToolCalls(SID);
+
+    const tc = messageStore.getMessages(SID)[0] as any;
+    expect(tc.pending).toBe(true);
+  });
+});
+
+describe('getters with defaults', () => {
+  it('getMessages returns empty array for unknown session', () => {
+    expect(messageStore.getMessages('unknown')).toEqual([]);
+  });
+
+  it('getMode returns default for unknown session', () => {
+    expect(messageStore.getMode('unknown')).toBe('default');
+  });
+
+  it('getContextWindow returns 200k default', () => {
+    expect(messageStore.getContextWindow('unknown')).toBe(200000);
+  });
+
+  it('getThinking returns true by default', () => {
+    expect(messageStore.getThinking('unknown')).toBe(true);
+  });
+
+  it('getUsage returns zeros for unknown session', () => {
+    const u = messageStore.getUsage('unknown');
+    expect(u.inputTokens).toBe(0);
+    expect(u.outputTokens).toBe(0);
+  });
+});
+

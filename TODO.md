@@ -52,6 +52,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Drag and drop (files, images into prompt)
 
 ### Agent Capabilities
+- [ ] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`
+- [ ] `/btw` — Ephemeral side question that doesn't enter conversation history. Runs while agent is working, no tool access, shows in dismissible overlay. No SDK support — needs separate `query()` call with `maxTurns: 1`
 - [ ] Commands (slash commands for common actions)
 - [ ] Skills (reusable prompt templates / workflows)
 - [ ] MCP server connections (connect to external MCP servers)

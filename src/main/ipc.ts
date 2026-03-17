@@ -5,9 +5,13 @@ import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, Session
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
-import { validateBranchName, branchExists, listBranches, git } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git } from './git.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
+import { orchestrator } from './orchestrator.js';
+import { checkDockerStatus, getDockerAuthEnv } from './docker/docker-utils.js';
+import * as settings from './settings.js';
+import { loadAppState, saveActiveTab } from './app-state.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -81,13 +85,13 @@ export function registerHandlers() {
       return { id: session.id, branch: session.branch };
     }
 
-    const exists = await branchExists(opts.repoPath, opts.branchName);
-
     if (opts.useExisting) {
+      const exists = await branchExistsAnywhere(opts.repoPath, opts.branchName);
       if (!exists) {
         throw new Error(`Branch "${opts.branchName}" does not exist`);
       }
     } else {
+      const exists = await branchExists(opts.repoPath, opts.branchName);
       const validName = await validateBranchName(opts.branchName);
       if (!validName) {
         throw new Error(`Invalid branch name: "${opts.branchName}"`);
@@ -135,16 +139,40 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
-    const worktree = worktreeManager.getWorktree(id);
-    if (!worktree) {
-      throw new Error(`Worktree ${id} not found`);
-    }
-
     // If already running, just reattach the window so events flow to new webContents
     if (sessionManager.getSession(id)) {
       const s = sessionManager.getSession(id)!;
       sessionManager.reattachWindow(id, win);
       return { id: s.id, branch: s.branch };
+    }
+
+    // Orchestrator planning sessions run in the repo root, not a worktree.
+    // Resume them as direct sessions.
+    if (id.startsWith('plan_')) {
+      const job = orchestrator.getJobByPlanSession(id);
+      if (!job) {
+        throw new Error(`No orchestration job found for plan session ${id}`);
+      }
+      const claudeSessionId = orchestrator.getPlanClaudeSessionId(id);
+      logger.info(`Resuming orch planning session: id=${id}, repo=${job.repoPath}, claudeSession=${claudeSessionId ?? 'none'}`);
+
+      const session = await sessionManager.createSession({
+        id,
+        branch: `orch: ${job.goal.slice(0, 40)}`,
+        cwd: job.repoPath,
+        repoPath: job.repoPath,
+        window: win,
+        resumeClaudeSessionId: claudeSessionId,
+        permissionMode: 'acceptEdits',
+        orchJobId: job.id,
+      });
+
+      return { id: session.id, branch: session.branch };
+    }
+
+    const worktree = await worktreeManager.getWorktreeOrManifest(id);
+    if (!worktree) {
+      throw new Error(`Worktree ${id} not found`);
     }
 
     // Look up saved Claude session ID for conversation resumption
@@ -173,7 +201,12 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
-    await worktreeManager.remove(id, deleteBranch);
+    // Orchestrator planning sessions don't have worktrees
+    if (!id.startsWith('plan_')) {
+      await worktreeManager.remove(id, deleteBranch);
+    }
+    // Mark as soft-deleted on the orch job so removeJob can still clean up the branch
+    orchestrator.markSessionDestroyed(id);
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -181,10 +214,22 @@ export function registerHandlers() {
     return sessionManager.listSessions();
   });
 
+  // ─── Session rename ───
+
+  ipcMain.handle(IPC.SESSION_RENAME, async (_event, sessionId: string, displayName: string) => {
+    sessionManager.renameSession(sessionId, displayName);
+  });
+
   // ─── Branches ───
 
   ipcMain.handle(IPC.BRANCH_LIST, async (_event, repoPath: string) => {
     return listBranches(repoPath);
+  });
+
+  ipcMain.handle(IPC.BRANCH_RENAME, async (_event, sessionId: string, newBranchName: string) => {
+    const newName = await worktreeManager.renameBranch(sessionId, newBranchName);
+    sessionManager.renameBranch(sessionId, newName);
+    return { branch: newName };
   });
 
   // ─── Worktrees ───
@@ -205,8 +250,13 @@ export function registerHandlers() {
 
   // ─── Agent I/O ───
 
-  ipcMain.on(IPC.AGENT_SEND, (_event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
-    sessionManager.sendMessage(sessionId, content, images);
+  ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
+    const ok = sessionManager.sendMessage(sessionId, content, images);
+    if (!ok) {
+      // Session is dead — notify renderer so it doesn't stay stuck in "Writing message"
+      const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+      event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
+    }
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
@@ -215,6 +265,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_SET_MODEL, (_event, sessionId: string, model?: string) => {
     return sessionManager.setModel(sessionId, model);
+  });
+
+  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, enabled: boolean) => {
+    return sessionManager.setThinking(sessionId, enabled);
   });
 
   ipcMain.on(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
@@ -308,23 +362,46 @@ export function registerHandlers() {
     return killProcessOnPort(port);
   });
 
+  // ─── Dev Server ───
+
+  ipcMain.handle(IPC.DEV_SERVER_START, async (_event, sessionId: string, command?: string) => {
+    return sessionManager.startDevServer(sessionId, command || undefined);
+  });
+
+  ipcMain.handle(IPC.DEV_SERVER_STOP, async (_event, sessionId: string) => {
+    return sessionManager.stopDevServer(sessionId);
+  });
+
   // ─── File revert & diff (for changes review panel) ───
 
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath);
-    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
+    // Sanitize: strip Docker container paths (/workspace/...) and make relative
+    let relPath = filePath.replace(/^\/workspace\//, '');
+    const normalWt = path.normalize(worktree.path) + path.sep;
+    if (path.normalize(relPath).startsWith(normalWt)) {
+      relPath = path.relative(worktree.path, relPath);
+    }
+    const resolved = path.resolve(worktree.path, relPath);
+    if (!path.normalize(resolved).startsWith(normalWt)) {
       throw new Error('Path traversal not allowed');
     }
-    await git(['checkout', '--', filePath], worktree.path);
+    await git(['checkout', '--', relPath], worktree.path);
   });
 
   ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath);
-    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
+    // Sanitize: strip Docker container paths (/workspace/...) and make relative
+    let relPath = filePath.replace(/^\/workspace\//, '');
+    // Also strip the host worktree prefix if it's an absolute path
+    const normalWt = path.normalize(worktree.path) + path.sep;
+    if (path.normalize(relPath).startsWith(normalWt)) {
+      relPath = path.relative(worktree.path, relPath);
+    }
+    const resolved = path.resolve(worktree.path, relPath);
+    if (!path.normalize(resolved).startsWith(normalWt)) {
       throw new Error('Path traversal not allowed');
     }
     // Get unified diff of this file vs HEAD
@@ -381,6 +458,86 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
     await execa('claude', ['plugin', 'disable', pluginId]);
+  });
+
+  // ─── Settings ───
+
+  ipcMain.handle(IPC.SETTINGS_GET, () => {
+    return settings.getSettings();
+  });
+
+  ipcMain.handle(IPC.SETTINGS_SAVE, (event, data: import('../shared/types.js').GroveBenchSettings) => {
+    settings.saveSettings(data);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    settings.applyImmediateEffects(win, data);
+  });
+
+  // ─── Docker ───
+
+  ipcMain.handle(IPC.DOCKER_CHECK, async () => {
+    const status = await checkDockerStatus();
+    if (status.available) {
+      const auth = getDockerAuthEnv();
+      (status as any).hasAuth = !!auth;
+    }
+    return status;
+  });
+
+  ipcMain.handle(IPC.DOCKER_SAVE_TOKEN, async (_event, token: string) => {
+    const s = settings.getSettings();
+    s.dockerOAuthToken = token.trim();
+    settings.saveSettings(s);
+  });
+
+
+  // ─── Orchestration ───
+
+  ipcMain.handle(IPC.ORCH_CREATE, async (event, opts: import('../shared/types.js').OrchCreateOpts) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+    return orchestrator.createJob(opts, win);
+  });
+
+  ipcMain.handle(IPC.ORCH_APPROVE, async (_event, jobId: string, editedTasks?: Partial<import('../shared/types.js').OrchTask>[]) => {
+    return orchestrator.approvePlan(jobId, editedTasks);
+  });
+
+  ipcMain.handle(IPC.ORCH_CANCEL, async (_event, jobId: string) => {
+    return orchestrator.cancelJob(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_LIST, async () => {
+    return orchestrator.listJobs();
+  });
+
+  ipcMain.handle(IPC.ORCH_RETRY_TASK, async (_event, jobId: string, taskId: string) => {
+    return orchestrator.retryTask(jobId, taskId);
+  });
+
+  ipcMain.handle(IPC.ORCH_RETRY_ALL, async (_event, jobId: string) => {
+    return orchestrator.retryAllFailed(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_REMOVE, async (_event, jobId: string) => {
+    return orchestrator.removeJob(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_MERGE, async (_event, jobId: string) => {
+    return orchestrator.startMerge(jobId);
+  });
+
+  ipcMain.handle(IPC.ORCH_RESOLVE_CONFLICT, async (_event, jobId: string, taskId: string) => {
+    return orchestrator.resolveConflict(jobId, taskId);
+  });
+
+  // ─── App State ───
+
+  ipcMain.handle(IPC.APP_STATE_GET_ACTIVE_TAB, () => {
+    return loadAppState().activeTabId;
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_ACTIVE_TAB, (_event, id: string | null) => {
+    saveActiveTab(id);
   });
 
   // ─── Window controls ───

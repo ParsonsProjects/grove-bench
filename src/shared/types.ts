@@ -42,6 +42,24 @@ export interface SessionInfo {
   status: SessionStatus;
   agentType: 'claude-code';
   createdAt: number;
+  /** If set, this session is a child of the given parent (e.g. orch subtask). */
+  parentSessionId?: string | null;
+  /** If set, this session is the orchestrator for the given job. */
+  orchJobId?: string | null;
+  /** Whether this session is running inside a Docker container. */
+  dockerized?: boolean;
+  /** User-assigned display name — shown instead of branch when set. */
+  displayName?: string | null;
+}
+
+// ─── Docker ───
+
+export interface DockerStatus {
+  available: boolean;
+  version?: string;
+  error?: string;
+  /** Whether a Docker-compatible auth credential (API key or OAuth token) is available. */
+  hasAuth?: boolean;
 }
 
 // ─── Prerequisites ───
@@ -73,10 +91,11 @@ export type AgentEvent =
   | { type: 'assistant_text'; text: string; uuid: string }
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
-  | { type: 'result'; subtype: string; result?: string; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string }
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[] }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
+  | { type: 'partial_thinking'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
@@ -85,13 +104,34 @@ export type AgentEvent =
   | { type: 'devserver_detected'; port: number; url: string }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
-  | { type: 'process_exit'; exitCode?: number };
+  | { type: 'process_exit'; exitCode?: number }
+  // Rate limiting
+  | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }
+  // Background tasks (Agent tool sub-tasks)
+  | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
+  | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
+  | { type: 'task_notification'; taskId: string; toolUseId?: string; taskStatus: 'completed' | 'failed' | 'stopped'; summary: string; outputFile: string; totalTokens?: number; toolUses?: number; durationMs?: number }
+  // Auth status
+  | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
+  // Tool use summary (after compaction)
+  | { type: 'tool_use_summary'; summary: string; toolUseIds: string[] }
+  // Prompt suggestions
+  | { type: 'prompt_suggestion'; suggestion: string }
+  // Hook execution
+  | { type: 'hook_event'; subtype: 'started' | 'progress' | 'response'; hookId: string; hookName: string; hookEvent: string; output?: string; outcome?: string; exitCode?: number }
+  // MCP elicitation complete
+  | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
+  // Files persisted to disk
+  | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
+  // Permission mode sync (from SDK status messages)
+  | { type: 'mode_sync'; mode: PermissionMode };
 
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
   behavior: 'allow' | 'deny' | 'allowAlways';
   message?: string; // denial message
+  updatedPermissions?: unknown[]; // PermissionUpdate[] from SDK suggestions
 }
 
 // ─── PR Info ───
@@ -138,6 +178,96 @@ export interface PluginListResult {
   available: AvailablePlugin[];
 }
 
+// ─── Orchestration ───
+
+export type OrchJobStatus = 'planning' | 'planned' | 'spawning' | 'running' | 'merging' | 'completed' | 'partial_failure' | 'failed' | 'cancelled';
+export type OrchTaskStatus = 'pending' | 'spawning' | 'running' | 'completed' | 'failed' | 'cancelled' | 'merge_conflict';
+
+export interface OrchTask {
+  id: string;
+  jobId: string;
+  description: string;
+  branchName: string;
+  baseBranch: string;
+  scope: string[];
+  priority: number;
+  parallelizable: boolean;
+  dependsOn: string[];
+  sessionId: string | null;
+  status: OrchTaskStatus;
+  instruction: string;
+  createdAt: number;
+  completedAt: number | null;
+  error: string | null;
+  costUsd: number | null;
+  startedAt: number | null;
+  durationMs: number | null;
+  timeoutMs: number | null;
+  mergeStatus: 'pending' | 'merged' | 'conflict' | null;
+  mergeError: string | null;
+  /** Live progress summary (e.g. "Using Edit") — updated while running */
+  progressSummary: string | null;
+  /** True if this is the auto-generated merge task. */
+  isMergeTask?: boolean;
+}
+
+export interface OrchOverlapWarning {
+  taskA: string;
+  taskB: string;
+  files: string[];
+}
+
+export interface OrchMergeResult {
+  taskId: string;
+  status: 'merged' | 'conflict';
+  error?: string;
+}
+
+export interface OrchJob {
+  id: string;
+  repoPath: string;
+  goal: string;
+  baseBranch: string;
+  tasks: OrchTask[];
+  status: OrchJobStatus;
+  createdAt: number;
+  completedAt: number | null;
+  planDurationMs: number | null;
+  totalCostUsd: number | null;
+  planSessionId: string | null;
+  overlapWarnings: OrchOverlapWarning[];
+  mergeResults: OrchMergeResult[];
+  /** Raw filesystem path to the internal merge worktree (not managed by worktreeManager). */
+  mergeWorktreeId: string | null;
+  defaultTimeoutMs: number;
+  circuitBreakerThreshold: number | null;
+  /** Session IDs whose worktrees were individually destroyed before the job was removed. */
+  destroyedSessionIds: string[];
+}
+
+export interface OrchCreateOpts {
+  repoPath: string;
+  goal: string;
+  baseBranch?: string;
+  defaultTimeoutMs?: number;
+  circuitBreakerThreshold?: number;
+}
+
+export type OrchEvent =
+  | { type: 'orch_plan_start'; jobId: string }
+  | { type: 'orch_plan_complete'; jobId: string; tasks: OrchTask[] }
+  | { type: 'orch_plan_error'; jobId: string; error: string }
+  | { type: 'orch_task_status'; jobId: string; taskId: string; status: OrchTaskStatus; error?: string }
+  | { type: 'orch_job_status'; jobId: string; status: OrchJobStatus }
+  | { type: 'orch_task_progress'; jobId: string; taskId: string; summary: string }
+  | { type: 'orch_task_session'; jobId: string; taskId: string; sessionId: string; branch: string; repoPath: string; parentSessionId: string }
+  | { type: 'orch_overlap_warning'; jobId: string; warnings: OrchOverlapWarning[] }
+  | { type: 'orch_merge_start'; jobId: string }
+  | { type: 'orch_merge_task'; jobId: string; taskId: string; status: 'merged' | 'conflict'; error?: string }
+  | { type: 'orch_merge_complete'; jobId: string; allMerged: boolean }
+  | { type: 'orch_task_timeout'; jobId: string; taskId: string }
+  | { type: 'orch_circuit_breaker'; jobId: string; failedCount: number; totalCount: number };
+
 // ─── IPC API (exposed via contextBridge) ───
 
 export interface GroveBenchAPI {
@@ -151,6 +281,7 @@ export interface GroveBenchAPI {
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   stopSession(id: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
+  renameSession(sessionId: string, displayName: string): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -158,6 +289,7 @@ export interface GroveBenchAPI {
 
   // Branch operations
   listBranches(repoPath: string): Promise<string[]>;
+  renameBranch(sessionId: string, newBranchName: string): Promise<{ branch: string }>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -178,6 +310,9 @@ export interface GroveBenchAPI {
   // Model control
   setModel(sessionId: string, model?: string): Promise<void>;
 
+  // Thinking control
+  setThinking(sessionId: string, enabled: boolean): Promise<void>;
+
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
@@ -196,12 +331,41 @@ export interface GroveBenchAPI {
   // Localhost process cleanup
   killPort(port: number): Promise<void>;
 
+  // Dev server
+  startDevServer(sessionId: string, command?: string): Promise<{ port: number; url: string } | null>;
+  stopDevServer(sessionId: string): Promise<void>;
+
   // Plugins
   pluginList(): Promise<PluginListResult>;
   pluginInstall(pluginId: string, scope?: string): Promise<void>;
   pluginUninstall(pluginId: string): Promise<void>;
   pluginEnable(pluginId: string): Promise<void>;
   pluginDisable(pluginId: string): Promise<void>;
+
+  // Docker
+  checkDocker(): Promise<DockerStatus>;
+  saveDockerToken(token: string): Promise<void>;
+
+  // Settings
+  getSettings(): Promise<GroveBenchSettings>;
+  saveSettings(settings: GroveBenchSettings): Promise<void>;
+
+  // Orchestration
+  createOrchJob(opts: OrchCreateOpts): Promise<{ jobId: string; planSessionId: string }>;
+  approveOrchPlan(jobId: string, editedTasks?: Partial<OrchTask>[]): Promise<void>;
+  cancelOrchJob(jobId: string): Promise<void>;
+  removeOrchJob(jobId: string): Promise<void>;
+  listOrchJobs(): Promise<OrchJob[]>;
+  retryOrchTask(jobId: string, taskId: string): Promise<void>;
+  retryAllOrchTasks(jobId: string): Promise<void>;
+  mergeOrchJob(jobId: string): Promise<void>;
+  resolveOrchConflict(jobId: string, taskId: string): Promise<void>;
+  onOrchEvent(jobId: string, callback: (event: OrchEvent) => void): () => void;
+  offOrchEvent(jobId: string): void;
+
+  // App state persistence
+  getActiveTab(): Promise<string | null>;
+  setActiveTab(id: string | null): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -213,9 +377,54 @@ export interface GroveBenchAPI {
   winIsMaximized(): Promise<boolean>;
 }
 
+// ─── Settings ───
+
+export interface ToolRule {
+  pattern: string; // e.g. "Bash(npm run *)", "Read(/src/**)", "mcp__*"
+}
+
+export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+
+export interface GroveBenchSettings {
+  // Permission & Security
+  defaultPermissionMode: SettingsPermissionMode;
+  toolAllowRules: ToolRule[];
+  toolDenyRules: ToolRule[];
+  disableBypassMode: boolean;
+
+  // Agent Defaults
+  defaultModel: string;
+  extendedThinking: boolean;
+  workingDirectories: string[];
+  defaultSystemPromptAppend: string;
+
+  // Orchestration
+  defaultTaskTimeoutMinutes: number;
+  maxParallelAgents: number;
+  circuitBreakerThreshold: number;
+  autoCleanupStaleWorktrees: boolean;
+  worktreeCleanupIntervalMinutes: number;
+
+  // Docker/Sandbox
+  enableDockerByDefault: boolean;
+  sandboxAllowedDomains: string[];
+  defaultContainerImage: string;
+  /** Long-lived OAuth token for Docker containers (from `claude setup-token`). */
+  dockerOAuthToken: string;
+
+  // Dev Server
+  /** Default dev command (e.g. 'npm run dev'). Auto-detected from package.json if blank. */
+  devCommand: string;
+
+  // General
+  defaultBaseBranch: string;
+  theme: 'system' | 'dark' | 'light';
+  alwaysOnTop: boolean;
+}
+
 // ─── IPC Channel Names ───
 
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits';
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'orchestrator';
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
@@ -226,9 +435,11 @@ export const IPC = {
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
   SESSION_DESTROY: 'session:destroy',
+  SESSION_RENAME: 'session:rename',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   BRANCH_LIST: 'branch:list',
+  BRANCH_RENAME: 'branch:rename',
   PREREQUISITES_CHECK: 'prerequisites:check',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
@@ -245,6 +456,7 @@ export const IPC = {
   FILE_DIFF: 'file:diff',
   PR_INFO: 'pr:info',
   AGENT_SET_MODEL: 'agent:setModel',
+  AGENT_SET_THINKING: 'agent:setThinking',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',
@@ -254,4 +466,22 @@ export const IPC = {
   WIN_MAXIMIZE: 'win:maximize',
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
+  ORCH_CREATE: 'orch:create',
+  ORCH_APPROVE: 'orch:approve',
+  ORCH_CANCEL: 'orch:cancel',
+  ORCH_LIST: 'orch:list',
+  ORCH_RETRY_TASK: 'orch:retryTask',
+  ORCH_RETRY_ALL: 'orch:retryAll',
+  ORCH_REMOVE: 'orch:remove',
+  ORCH_MERGE: 'orch:merge',
+  ORCH_RESOLVE_CONFLICT: 'orch:resolveConflict',
+  ORCH_EVENT: 'orch:event',
+  DEV_SERVER_START: 'devServer:start',
+  DEV_SERVER_STOP: 'devServer:stop',
+  DOCKER_CHECK: 'docker:check',
+  DOCKER_SAVE_TOKEN: 'docker:saveToken',
+  SETTINGS_GET: 'settings:get',
+  SETTINGS_SAVE: 'settings:save',
+  APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
+  APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
 } as const;

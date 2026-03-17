@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
-import { git, isGitRepo } from './git.js';
+import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists } from './git.js';
 import { logger } from './logger.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 
@@ -82,10 +82,47 @@ export class WorktreeManager {
     await fs.mkdir(path.dirname(wtPath), { recursive: true });
 
     // Create worktree: existing branch or new branch
-    const args = useExisting
-      ? ['worktree', 'add', wtPath, branchName]
-      : ['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])];
-    await git(args, repoPath);
+    if (useExisting) {
+      await git(['worktree', 'add', wtPath, branchName], repoPath);
+    } else {
+      // Pull latest changes for the base branch so the worktree starts up-to-date
+      if (baseBranch) {
+        const hasRemote = await branchHasRemote(repoPath, baseBranch);
+        if (hasRemote) {
+          try {
+            await git(['fetch', 'origin', `${baseBranch}:${baseBranch}`], repoPath);
+          } catch {
+            // fetch may fail if baseBranch is currently checked out (can't update checked-out branch
+            // via fetch refspec) — fall back to fetch + merge approach
+            try {
+              await git(['fetch', 'origin', baseBranch], repoPath);
+            } catch { /* offline or no remote — proceed with local state */ }
+          }
+        }
+      }
+
+      // Delete stale branch from a previous run if it exists (e.g. orch retry)
+      const exists = await branchExists(repoPath, branchName);
+      if (exists) {
+        try {
+          // Find and force-remove any worktree using this branch
+          const wtList = await git(['worktree', 'list', '--porcelain'], repoPath);
+          let staleWtPath: string | null = null;
+          for (const block of wtList.split('\n\n')) {
+            if (block.includes(`branch refs/heads/${branchName}`)) {
+              const pathLine = block.split('\n').find(l => l.startsWith('worktree '));
+              if (pathLine) staleWtPath = pathLine.slice('worktree '.length);
+            }
+          }
+          if (staleWtPath) {
+            await git(['worktree', 'remove', '--force', staleWtPath], repoPath).catch(() => {});
+          }
+          await git(['worktree', 'prune'], repoPath);
+          await git(['branch', '-D', branchName], repoPath);
+        } catch { /* best effort */ }
+      }
+      await git(['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])], repoPath);
+    }
 
     // Generate .claude/settings.local.json with deny rules
     await this.generateClaudeSettings(wtPath);
@@ -325,8 +362,77 @@ export class WorktreeManager {
     }
   }
 
+  async renameBranch(id: string, newName: string): Promise<string> {
+    const info = this.worktrees.get(id);
+    if (!info) {
+      // Fall back to manifest
+      const manifest = await this.loadManifest();
+      const entry = manifest[id];
+      if (!entry) throw new Error(`Worktree ${id} not found`);
+      throw new Error(`Session ${id} is not active`);
+    }
+
+    if (info.direct) {
+      throw new Error('Cannot rename branch for direct sessions');
+    }
+
+    const oldName = info.branch;
+    if (oldName === newName) return newName;
+
+    // Validate new name
+    const valid = await validateBranchName(newName);
+    if (!valid) throw new Error(`Invalid branch name: "${newName}"`);
+
+    // Check new name doesn't already exist
+    const exists = await branchExists(info.repoPath, newName);
+    if (exists) throw new Error(`Branch "${newName}" already exists`);
+
+    // Check branch hasn't been pushed
+    const hasRemote = await branchHasRemote(info.repoPath, oldName);
+    if (hasRemote) throw new Error(`Branch "${oldName}" has been pushed to a remote and cannot be renamed`);
+
+    // Rename via git (run in the worktree so it renames the checked-out branch)
+    await gitRenameBranch(info.path, oldName, newName);
+
+    // Update in-memory
+    info.branch = newName;
+
+    // Update manifest
+    await this.withManifest((manifest) => {
+      if (manifest[id]) {
+        manifest[id].branch = newName;
+      }
+    });
+
+    return newName;
+  }
+
   getWorktree(id: string): WorktreeInfo | undefined {
     return this.worktrees.get(id);
+  }
+
+  /** Look up a worktree by ID, falling back to the manifest if not in memory. */
+  async getWorktreeOrManifest(id: string): Promise<WorktreeInfo | undefined> {
+    const mem = this.worktrees.get(id);
+    if (mem) return mem;
+
+    const manifest = await this.loadManifest();
+    const entry = manifest[id];
+    if (!entry) return undefined;
+
+    const hash = this.repoHash(entry.repoPath);
+    const info: WorktreeInfo = {
+      id,
+      path: entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id),
+      branch: entry.branch,
+      repoPath: entry.repoPath,
+      createdAt: entry.createdAt,
+      direct: entry.direct,
+    };
+
+    // Cache in memory for subsequent lookups
+    this.worktrees.set(id, info);
+    return info;
   }
 
   /** Register a worktree discovered on disk (e.g. surviving a restart) into the internal map so it can be destroyed later. */

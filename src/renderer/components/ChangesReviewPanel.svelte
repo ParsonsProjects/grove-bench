@@ -108,7 +108,7 @@
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
     {#each Array(20) as _, i}
       <span
-        class="blue-pixel absolute rounded-[1px]"
+        class="blue-pixel absolute"
         style="
           width: 4px; height: 4px;
           top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
@@ -126,7 +126,7 @@
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
     {#each Array(20) as _, i}
       <span
-        class="blue-pixel absolute rounded-[1px]"
+        class="blue-pixel absolute"
         style="
           width: 4px; height: 4px;
           top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
@@ -135,7 +135,7 @@
         "
       ></span>
     {/each}
-    <span class="relative z-10">No file changes in the last turn.</span>
+    <span class="relative z-10">No file changes in this thread.</span>
   </div>
 {:else}
   <div class="flex-1 overflow-y-auto">

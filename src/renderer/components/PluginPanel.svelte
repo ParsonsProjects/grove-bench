@@ -95,13 +95,13 @@
         type="text"
         bind:value={search}
         placeholder="Search plugins..."
-        class="w-full bg-muted/50 border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
+        class="w-full bg-muted/50 border border-border px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
       />
     </div>
 
     <!-- Error -->
     {#if pluginStore.error}
-      <div class="mt-2 text-xs text-destructive bg-destructive/10 rounded px-3 py-2">
+      <div class="mt-2 text-xs text-destructive bg-destructive/10 px-3 py-2">
         {pluginStore.error}
       </div>
     {/if}
