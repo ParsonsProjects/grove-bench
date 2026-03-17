@@ -3,6 +3,8 @@ import { logger } from './logger.js';
 
 const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/;
 const DETECT_TIMEOUT_MS = 30_000;
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
 /** Allow common dev commands but reject shell metacharacters. */
 const SAFE_COMMAND_RE = /^[\w./@:=+, -]+$/;
 
@@ -53,7 +55,8 @@ export class DevServer {
       logger.info(`[dev-server] session=${this.sessionId} started pid=${pid} cmd="${this.command}"`);
 
       const handleData = (data: Buffer) => {
-        const text = data.toString();
+        const text = data.toString().replace(ANSI_RE, '');
+        logger.debug(`[dev-server] session=${this.sessionId} output: ${text.trim().slice(0, 200)}`);
         if (this._port) return; // already detected
         const match = text.match(URL_RE);
         if (match) {

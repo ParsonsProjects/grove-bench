@@ -107,6 +107,7 @@
 
   let devServers = $derived(messageStore.getDevServers(sessionId));
   let devServerStarting = $state(false);
+  let devServerError = $state<string | null>(null);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let rateLimit = $derived(messageStore.getRateLimit(sessionId));
   let backgroundTasks = $derived(messageStore.getBackgroundTasks(sessionId));
@@ -457,21 +458,29 @@
       onclick={async () => {
         if (devServerStarting) return;
         devServerStarting = true;
+        devServerError = null;
         try {
-          await window.groveBench.startDevServer(sessionId);
+          const result = await window.groveBench.startDevServer(sessionId);
+          if (!result) {
+            devServerError = 'Dev server exited before a URL was detected';
+          }
         } catch (e: any) {
+          devServerError = e?.message ?? 'Failed to start dev server';
           console.error('Failed to start dev server:', e?.message ?? e);
         } finally {
           devServerStarting = false;
+          if (devServerError) {
+            setTimeout(() => { devServerError = null; }, 5000);
+          }
         }
       }}
       class="flex items-center gap-1 text-muted-foreground/60 hover:text-green-400 transition-colors"
       class:opacity-50={devServerStarting}
       disabled={devServerStarting}
-      title={devServerStarting ? 'Starting dev server...' : 'Start dev server'}
+      title={devServerError ?? (devServerStarting ? 'Starting dev server...' : 'Start dev server')}
     >
-      <span class="w-1.5 h-1.5 rounded-full {devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
-      {devServerStarting ? 'Starting...' : 'Dev'}
+      <span class="w-1.5 h-1.5 rounded-full {devServerError ? 'bg-red-500' : devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
+      {devServerError ? 'Failed' : devServerStarting ? 'Starting...' : 'Dev'}
     </button>
   {/if}
 
