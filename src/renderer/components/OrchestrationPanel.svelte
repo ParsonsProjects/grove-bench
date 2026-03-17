@@ -235,7 +235,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
         Plan
         {#if totalCount > 0}
-          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full leading-none font-bold">
+          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
             {completedCount}/{totalCount}
           </span>
         {:else if isPlanning}
@@ -290,7 +290,7 @@
         <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
           {#each Array(20) as _, i}
             <span
-              class="blue-pixel absolute rounded-[1px]"
+              class="blue-pixel absolute"
               style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
             ></span>
           {/each}
@@ -326,9 +326,9 @@
             <p class="text-xs text-muted-foreground truncate" title={job.goal}>{job.goal}</p>
             <span class="text-xs text-muted-foreground shrink-0 ml-2">{completedCount}/{totalCount} tasks</span>
           </div>
-          <div class="h-1.5 bg-muted rounded-full overflow-hidden">
+          <div class="h-1.5 bg-muted overflow-hidden">
             <div
-              class="h-full transition-all duration-500 ease-out rounded-full {job.status === 'failed' || job.status === 'partial_failure' ? 'bg-red-500' : job.status === 'completed' ? 'bg-green-500' : job.status === 'merging' ? 'bg-blue-500 animate-pulse' : 'bg-primary'}"
+              class="h-full transition-all duration-500 ease-out {job.status === 'failed' || job.status === 'partial_failure' ? 'bg-red-500' : job.status === 'completed' ? 'bg-green-500' : job.status === 'merging' ? 'bg-blue-500 animate-pulse' : 'bg-primary'}"
               style="width: {progressPct}%"
             ></div>
           </div>
@@ -338,7 +338,7 @@
         <div class="pixel-bg flex-1 overflow-auto p-3 relative">
           {#each Array(20) as _, i}
             <span
-              class="blue-pixel absolute rounded-[1px]"
+              class="blue-pixel absolute"
               style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
             ></span>
           {/each}
@@ -347,7 +347,7 @@
               {@const colTasks = tasksForColumn(col)}
               <div class="flex-1 flex flex-col min-w-[180px]">
                 <div class="flex items-center gap-2 px-2 py-1.5 mb-2 border-b-2 {col.color}">
-                  <span class="w-2 h-2 shrink-0 rounded-full {col.dotClass}"></span>
+                  <span class="w-2 h-2 shrink-0 {col.dotClass}"></span>
                   <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">{col.label}</span>
                   {#if colTasks.length > 0}
                     <span class="text-xs text-muted-foreground/60 ml-auto">{colTasks.length}</span>
@@ -359,7 +359,7 @@
                     <div class="border border-border bg-card p-2.5 hover:border-muted-foreground/30 transition-colors group">
                       <div class="flex items-center gap-1.5 mb-1">
                         {#if task.mergeStatus}
-                          <span class="w-2 h-2 shrink-0 rounded-full {mergeStatusIcon(task)}" title="Merge: {task.mergeStatus}"></span>
+                          <span class="w-2 h-2 shrink-0 {mergeStatusIcon(task)}" title="Merge: {task.mergeStatus}"></span>
                         {/if}
                         <p class="text-sm font-medium text-foreground leading-snug">{task.description}</p>
                       </div>
@@ -377,10 +377,10 @@
                       {#if validScope(task).length > 0}
                         <div class="flex flex-wrap gap-1 mb-1.5">
                           {#each validScope(task).slice(0, 2) as s}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm font-mono">{scopeLabel(s)}</span>
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground font-mono">{scopeLabel(s)}</span>
                           {/each}
                           {#if validScope(task).length > 2}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm">+{validScope(task).length - 2}</span>
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground">+{validScope(task).length - 2}</span>
                           {/if}
                         </div>
                       {/if}
@@ -487,7 +487,7 @@
         <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
           {#each Array(20) as _, i}
             <span
-              class="blue-pixel absolute rounded-[1px]"
+              class="blue-pixel absolute"
               style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
             ></span>
           {/each}

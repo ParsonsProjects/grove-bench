@@ -367,7 +367,7 @@
           <div class="font-medium text-foreground mb-2">Background Tasks</div>
           <div class="space-y-2 max-h-64 overflow-y-auto">
             {#each backgroundTasks as task}
-              <div class="border border-border/50 p-2 rounded-sm">
+              <div class="border border-border/50 p-2">
                 <div class="flex items-center gap-2 mb-1">
                   {#if task.status === 'running'}
                     <span class="w-1.5 h-1.5 bg-blue-400 animate-pulse shrink-0"></span>
@@ -425,7 +425,7 @@
   {#if devServers.length > 0}
     {#each devServers as server}
       <span class="flex items-center gap-1">
-        <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+        <span class="w-1.5 h-1.5 bg-green-500"></span>
         <button
           onclick={() => window.groveBench.openExternal(server.url)}
           class="text-green-400 hover:text-green-300 hover:underline transition-colors"
@@ -452,7 +452,7 @@
         title="Context usage — click for details"
       >
         <!-- Mini bar with color-coded fill -->
-        <div class="w-24 h-1.5 bg-muted rounded-full overflow-hidden flex">
+        <div class="w-24 h-1.5 bg-muted overflow-hidden flex">
           {#if cachePercent > 0}
             <div class="h-full bg-blue-500/70 transition-all" style:width="{cachePercent}%"></div>
           {/if}
@@ -471,7 +471,7 @@
           </div>
 
           <!-- Large segmented bar -->
-          <div class="w-full h-3 bg-muted rounded overflow-hidden flex mb-1">
+          <div class="w-full h-3 bg-muted overflow-hidden flex mb-1">
             {#if cachePercent > 0}
               <div class="h-full bg-blue-500/70 transition-all" style:width="{cachePercent}%" title="Cached"></div>
             {/if}
@@ -490,17 +490,17 @@
           <!-- Legend -->
           <div class="flex gap-3 mb-3 text-muted-foreground">
             <span class="flex items-center gap-1">
-              <span class="w-2 h-2 rounded-sm inline-block" style:background-color={barBg}></span>
+              <span class="w-2 h-2 inline-block" style:background-color={barBg}></span>
               Used
             </span>
             {#if cachePercent > 0}
               <span class="flex items-center gap-1">
-                <span class="w-2 h-2 rounded-sm bg-blue-500/70 inline-block"></span>
+                <span class="w-2 h-2 bg-blue-500/70 inline-block"></span>
                 Cached
               </span>
             {/if}
             <span class="flex items-center gap-1">
-              <span class="w-2 h-2 rounded-sm bg-muted inline-block"></span>
+              <span class="w-2 h-2 bg-muted inline-block"></span>
               Free
             </span>
           </div>
@@ -608,7 +608,7 @@
               <div class="mt-1.5 max-h-24 overflow-y-auto space-y-0.5">
                 {#each systemInfo.mcpServers as server}
                   <div class="flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 rounded-full {server.status === 'connected' ? 'bg-green-500' : 'bg-yellow-500'}"></span>
+                    <span class="w-1.5 h-1.5 {server.status === 'connected' ? 'bg-green-500' : 'bg-yellow-500'}"></span>
                     <span class="font-mono text-[10px] text-muted-foreground truncate">{server.name}</span>
                   </div>
                 {/each}
@@ -621,7 +621,7 @@
             <button
               onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
               disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Compact conversation to free context"
             >
               /compact
@@ -629,7 +629,7 @@
             <button
               onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
               disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Clear conversation and start fresh"
             >
               /clear

@@ -103,7 +103,7 @@
   <!-- Dissolving blue pixel trail -->
   {#each bluePixels as p}
     <span
-      class="titlebar-pixel absolute rounded-[1px]"
+      class="titlebar-pixel absolute"
       style="
         width: 4px; height: 4px;
         left: {p.left}px;

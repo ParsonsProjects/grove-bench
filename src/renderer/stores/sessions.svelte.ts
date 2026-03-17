@@ -21,6 +21,8 @@ interface SessionEntry {
   parentSessionId?: string | null;
   /** If set, this session is the orchestrator for the given job. */
   orchJobId?: string | null;
+  /** User-assigned display name — shown instead of branch when set. */
+  displayName?: string | null;
 }
 
 class SessionStore {
@@ -117,6 +119,12 @@ class SessionStore {
   updateBranch(id: string, branch: string) {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, branch } : s
+    );
+  }
+
+  updateDisplayName(id: string, displayName: string | null) {
+    this.sessions = this.sessions.map((s) =>
+      s.id === id ? { ...s, displayName } : s
     );
   }
 

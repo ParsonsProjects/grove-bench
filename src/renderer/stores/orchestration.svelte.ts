@@ -161,8 +161,8 @@ class OrchestrationStore {
       for (const job of jobs) {
         if (!this.jobs.find((j) => j.id === job.id)) {
           this.jobs = [...this.jobs, job];
-          // Subscribe to events for any still-active jobs
-          if (job.status === 'running' || job.status === 'spawning' || job.status === 'merging') {
+          // Subscribe to events for any non-completed job (may be retried)
+          if (job.status !== 'completed') {
             this.subscribe(job.id);
           }
         }

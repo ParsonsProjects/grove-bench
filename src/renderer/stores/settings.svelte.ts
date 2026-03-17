@@ -52,7 +52,7 @@ class SettingsStore {
     this.saving = true;
     this.error = null;
     try {
-      await window.groveBench.saveSettings(this.draft);
+      await window.groveBench.saveSettings($state.snapshot(this.draft));
       this.current = structuredClone(this.draft);
     } catch (e: any) {
       this.error = e.message || String(e);

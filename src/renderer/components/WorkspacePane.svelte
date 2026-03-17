@@ -185,7 +185,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
       Activity
       {#if hasPendingPermission}
-        <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
+        <span class="inline-block w-2 h-2 bg-orange-500 animate-pulse"></span>
       {:else if isRunning}
         <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
       {/if}
@@ -201,7 +201,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
         Changes
         {#if hasChanges}
-          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full leading-none font-bold">
+          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
             {fileChanges.length}
           </span>
         {/if}
@@ -218,7 +218,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
         Plan
         {#if totalCount > 0}
-          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 rounded-full leading-none font-bold">
+          <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
             {completedCount}/{totalCount}
           </span>
         {:else if orchJob?.status === 'planning'}
@@ -246,9 +246,9 @@
             <p class="text-xs text-muted-foreground truncate" title={orchJob.goal}>{orchJob.goal}</p>
             <span class="text-xs text-muted-foreground shrink-0 ml-2">{completedCount}/{totalCount} tasks</span>
           </div>
-          <div class="h-1.5 bg-muted rounded-full overflow-hidden">
+          <div class="h-1.5 bg-muted overflow-hidden">
             <div
-              class="h-full transition-all duration-500 ease-out rounded-full {orchJob.status === 'failed' || orchJob.status === 'partial_failure' ? 'bg-red-500' : orchJob.status === 'completed' ? 'bg-green-500' : 'bg-primary'}"
+              class="h-full transition-all duration-500 ease-out {orchJob.status === 'failed' || orchJob.status === 'partial_failure' ? 'bg-red-500' : orchJob.status === 'completed' ? 'bg-green-500' : 'bg-primary'}"
               style="width: {progressPct}%"
             ></div>
           </div>
@@ -258,7 +258,7 @@
         <div class="pixel-bg flex-1 overflow-auto p-3 relative">
           {#each Array(20) as _, i}
             <span
-              class="blue-pixel absolute rounded-[1px]"
+              class="blue-pixel absolute"
               style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
             ></span>
           {/each}
@@ -292,10 +292,10 @@
                       {#if task.scope.length > 0}
                         <div class="flex flex-wrap gap-1 mb-1.5">
                           {#each task.scope.slice(0, 2) as s}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm font-mono">{s.split('/').pop()}</span>
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground font-mono">{s.split('/').pop()}</span>
                           {/each}
                           {#if task.scope.length > 2}
-                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded-sm">+{task.scope.length - 2}</span>
+                            <span class="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground">+{task.scope.length - 2}</span>
                           {/if}
                         </div>
                       {/if}
@@ -314,7 +314,7 @@
                           {/if}
                           {#if task.status === 'running' || task.status === 'spawning'}
                             <span class="flex items-center gap-1">
-                              <span class="w-1 h-1 bg-blue-500 rounded-full animate-pulse"></span>
+                              <span class="w-1 h-1 bg-blue-500 animate-pulse"></span>
                               {task.status === 'spawning' ? 'Starting...' : 'Active'}
                             </span>
                           {/if}
@@ -401,7 +401,7 @@
         <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
           {#each Array(20) as _, i}
             <span
-              class="blue-pixel absolute rounded-[1px]"
+              class="blue-pixel absolute"
               style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
             ></span>
           {/each}

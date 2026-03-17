@@ -44,6 +44,48 @@ class Orchestrator {
     sessionManager.injectEvent(job.planSessionId, { type: 'status', message });
   }
 
+  /** Inject a markdown-formatted plan summary into the planning session thread for user review. */
+  private emitPlanSummary(managed: ManagedOrchJob, tasks: OrchTask[], warnings: OrchOverlapWarning[]) {
+    const { job } = managed;
+    if (!job.planSessionId) return;
+
+    const lines: string[] = [];
+    lines.push(`## Plan: ${tasks.length} task${tasks.length !== 1 ? 's' : ''}`);
+    lines.push('');
+
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      lines.push(`### ${t.id}: ${t.description}`);
+      lines.push(`- **Branch:** \`${t.branchName}\``);
+      if (t.scope.length > 0) {
+        lines.push(`- **Scope:** ${t.scope.map(s => `\`${s}\``).join(', ')}`);
+      }
+      if (t.dependsOn.length > 0) {
+        lines.push(`- **Depends on:** ${t.dependsOn.join(', ')}`);
+      }
+      lines.push(`- **Instruction:** ${t.instruction}`);
+      lines.push('');
+    }
+
+    if (warnings.length > 0) {
+      lines.push('### Overlap Warnings');
+      for (const w of warnings) {
+        const taskADesc = tasks.find(t => t.id === w.taskA)?.description ?? w.taskA;
+        const taskBDesc = tasks.find(t => t.id === w.taskB)?.description ?? w.taskB;
+        lines.push(`- **${taskADesc}** \u2194 **${taskBDesc}**: ${w.files.map(f => `\`${f}\``).join(', ')}`);
+      }
+      lines.push('');
+    }
+
+    lines.push('*Approve & Launch from the Plan tab to start execution.*');
+
+    sessionManager.injectEvent(job.planSessionId, {
+      type: 'assistant_text',
+      text: lines.join('\n'),
+      uuid: `plan_summary_${job.id}`,
+    });
+  }
+
   private updateJobStatus(managed: ManagedOrchJob, status: OrchJobStatus) {
     managed.job.status = status;
     if (status === 'completed' || status === 'failed' || status === 'partial_failure' || status === 'cancelled') {
@@ -336,6 +378,9 @@ TASK DESIGN RULES:
       job.tasks = tasks;
       job.status = 'planned';
       this.emit(managed, { type: 'orch_plan_complete', jobId: job.id, tasks });
+
+      // Inject a markdown summary of the plan into the planning session thread
+      this.emitPlanSummary(managed, tasks, warnings);
 
       if (warnings.length > 0) {
         this.emit(managed, { type: 'orch_overlap_warning', jobId: job.id, warnings });

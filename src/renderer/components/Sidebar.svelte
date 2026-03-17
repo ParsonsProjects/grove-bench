@@ -67,9 +67,13 @@
     confirmRemoveRepo = null;
   }
 
-  function startRename(sessionId: string, currentBranch: string) {
+  function sessionLabel(s: { displayName?: string | null; branch: string }): string {
+    return s.displayName || s.branch;
+  }
+
+  function startRename(sessionId: string, currentLabel: string) {
     renamingSessionId = sessionId;
-    renameValue = currentBranch;
+    renameValue = currentLabel;
     renameError = null;
   }
 
@@ -79,11 +83,11 @@
     if (!newName) { cancelRename(); return; }
 
     const session = store.sessions.find(s => s.id === renamingSessionId);
-    if (session && newName === session.branch) { cancelRename(); return; }
+    if (session && newName === sessionLabel(session)) { cancelRename(); return; }
 
     try {
-      const result = await window.groveBench.renameBranch(renamingSessionId, newName);
-      store.updateBranch(renamingSessionId, result.branch);
+      await window.groveBench.renameSession(renamingSessionId, newName);
+      store.updateDisplayName(renamingSessionId, newName);
       renamingSessionId = null;
       renameError = null;
     } catch (e: any) {
@@ -174,7 +178,7 @@
             <button
               onclick={() => focusSession(session.id)}
               onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); orchJob ? (confirmRemoveOrch = orchJob.id) : requestDestroy(session.id); } }}
-              ondblclick={() => { if (!session.direct && !session.orchJobId) startRename(session.id, session.branch); }}
+              ondblclick={() => startRename(session.id, sessionLabel(session))}
               class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
                 {store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >
@@ -199,9 +203,9 @@
                 {:else if session.direct}
                   <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
                 {:else}
-                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree — double-click to rename"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
+                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
                 {/if}
-                <span class="text-sm truncate">{session.branch}</span>
+                <span class="text-sm truncate">{sessionLabel(session)}</span>
               </div>
               <div class="flex items-center gap-1 shrink-0">
                 {#if orchJob && orchJob.tasks.length > 0}
@@ -222,9 +226,25 @@
 
           <!-- Nested child sessions (orch subtasks) -->
           {#each children as child (child.id)}
+            {#if renamingSessionId === child.id}
+              <div class="pl-8 pr-2 py-1 flex flex-col gap-1">
+                <input
+                  type="text"
+                  bind:value={renameValue}
+                  onkeydown={handleRenameKeydown}
+                  onblur={cancelRename}
+                  class="w-full text-xs bg-card border border-primary px-1.5 py-0.5 text-foreground focus:outline-none"
+                  autofocus
+                />
+                {#if renameError}
+                  <span class="text-[10px] text-destructive">{renameError}</span>
+                {/if}
+              </div>
+            {:else}
             <button
               onclick={() => focusSession(child.id)}
               onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); child.parentSessionId?.startsWith('plan_') ? store.removeSession(child.id) : requestDestroy(child.id); } }}
+              ondblclick={() => startRename(child.id, sessionLabel(child))}
               class="w-full flex items-center justify-between pl-8 pr-2 py-1 text-left group/child transition-colors
                 {store.activeSessionId === child.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >
@@ -243,7 +263,7 @@
                   <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
                 {/if}
                 <svg class="w-3 h-3 shrink-0 text-muted-foreground/60" xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
-                <span class="text-xs truncate text-muted-foreground">{child.branch}</span>
+                <span class="text-xs truncate text-muted-foreground">{sessionLabel(child)}</span>
               </div>
               <span
                 role="button"
@@ -255,6 +275,7 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </span>
             </button>
+            {/if}
           {/each}
         {/each}
 
@@ -297,7 +318,7 @@
             onclick={() => showCreateDropdown = false}
             onkeydown={(e) => e.key === 'Escape' && (showCreateDropdown = false)}
           ></div>
-          <div class="absolute bottom-full left-0 mb-1 w-full bg-popover border border-border rounded-md shadow-lg z-50 py-1">
+          <div class="absolute bottom-full left-0 mb-1 w-full bg-popover border border-border shadow-lg z-50 py-1">
             <button
               class="w-full text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
               onclick={() => { orchDefaultRepo = store.repos[0] || ''; showOrchestrate = true; showCreateDropdown = false; }}

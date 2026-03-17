@@ -257,12 +257,12 @@
               </div>
               {#if baseDropdownOpen && baseBranches.length > 0}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md overflow-hidden">
+                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border shadow-md overflow-hidden">
                   <div class="max-h-48 overflow-y-auto p-1">
                     {#each filteredBaseBranches as branch}
                       <button
                         type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent transition-colors flex items-center gap-2 {branch === baseBranch ? 'bg-accent' : ''}"
+                        class="w-full text-left px-2 py-1.5 text-sm hover:bg-accent transition-colors flex items-center gap-2 {branch === baseBranch ? 'bg-accent' : ''}"
                         onclick={() => { baseBranch = branch; baseDropdownOpen = false; baseSearch = ''; }}
                       >
                         {#if branch === baseBranch}
@@ -309,7 +309,7 @@
               </button>
               {#if branchDropdownOpen}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md overflow-hidden">
+                <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border shadow-md overflow-hidden">
                   <div class="p-2 border-b border-border">
                     <input
                       type="text"
@@ -323,7 +323,7 @@
                     {#each filteredBranches as branch}
                       <button
                         type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-sm hover:bg-accent transition-colors flex items-center gap-2 {branch === selectedBranch ? 'bg-accent' : ''}"
+                        class="w-full text-left px-2 py-1.5 text-sm hover:bg-accent transition-colors flex items-center gap-2 {branch === selectedBranch ? 'bg-accent' : ''}"
                         onclick={() => { selectedBranch = branch; branchDropdownOpen = false; branchSearch = ''; }}
                       >
                         {#if branch === selectedBranch}

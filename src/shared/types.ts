@@ -48,6 +48,8 @@ export interface SessionInfo {
   orchJobId?: string | null;
   /** Whether this session is running inside a Docker container. */
   dockerized?: boolean;
+  /** User-assigned display name — shown instead of branch when set. */
+  displayName?: string | null;
 }
 
 // ─── Docker ───
@@ -279,6 +281,7 @@ export interface GroveBenchAPI {
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   stopSession(id: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
+  renameSession(sessionId: string, displayName: string): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -356,6 +359,10 @@ export interface GroveBenchAPI {
   onOrchEvent(jobId: string, callback: (event: OrchEvent) => void): () => void;
   offOrchEvent(jobId: string): void;
 
+  // App state persistence
+  getActiveTab(): Promise<string | null>;
+  setActiveTab(id: string | null): void;
+
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
 
@@ -420,6 +427,7 @@ export const IPC = {
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
   SESSION_DESTROY: 'session:destroy',
+  SESSION_RENAME: 'session:rename',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   BRANCH_LIST: 'branch:list',
@@ -464,4 +472,6 @@ export const IPC = {
   DOCKER_SAVE_TOKEN: 'docker:saveToken',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
+  APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
+  APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
 } as const;

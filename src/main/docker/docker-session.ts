@@ -9,6 +9,8 @@ type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
 export interface DockerSessionOpts {
   sessionId: string;
   worktreePath: string;
+  /** Path to the main repo (needed to mount .git for worktree support) */
+  repoPath: string;
   sdkVersion: string;
   /** System prompt to pass to the SDK */
   systemPrompt?: unknown;
@@ -47,11 +49,15 @@ export class DockerSession {
 
   /** Start the Docker container */
   start(): void {
-    const { worktreePath, sdkVersion, extraEnv } = this.opts;
+    const { worktreePath, repoPath, sdkVersion, extraEnv, sessionId } = this.opts;
     const tag = `grove-sandbox:${sdkVersion}`;
 
     // Auth env var is resolved by the orchestrator and passed in via opts.authEnv
     const { authEnv } = this.opts;
+
+    // Mount the main repo's .git directory so worktree git refs resolve inside the container.
+    // The worker will rewrite the .git file to point to /repo-git/worktrees/<id>.
+    const repoGitPath = path.join(repoPath, '.git');
 
     const args: string[] = [
       'run', '--rm', '-i',
@@ -60,10 +66,12 @@ export class DockerSession {
       '--tmpfs', '/tmp:rw,size=512m',
       '--tmpfs', '/root:rw,size=256m',
       '-v', `${toDockerPath(worktreePath)}:/workspace`,
+      '-v', `${toDockerPath(repoGitPath)}:/repo-git`,
       '-e', `HOME=/root`,
       '-e', `CI=true`,
       '-e', `npm_config_yes=true`,
       '-e', `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1`,
+      '-e', `GROVE_WORKTREE_ID=${sessionId}`,
     ];
 
     // Pass auth credential

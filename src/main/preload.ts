@@ -17,6 +17,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_STOP, id),
   destroySession: (id: string, deleteBranch?: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
+  renameSession: (sessionId: string, displayName: string) =>
+    ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations
@@ -141,6 +143,10 @@ const api: GroveBenchAPI = {
   offOrchEvent: (jobId: string) => {
     ipcRenderer.removeAllListeners(`${IPC.ORCH_EVENT}:${jobId}`);
   },
+
+  // App state persistence
+  getActiveTab: () => ipcRenderer.invoke(IPC.APP_STATE_GET_ACTIVE_TAB),
+  setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
 
   // App lifecycle
   onAppClosing: (callback: () => void) => {

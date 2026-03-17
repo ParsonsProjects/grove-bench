@@ -143,7 +143,7 @@
 
       {#if dockerChecked && dockerStatus?.available && dockerStatus.hasAuth}
         <div class="bg-green-500/10 border border-green-500/50 p-2 text-xs text-green-200 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+          <span class="w-2 h-2 bg-green-500 shrink-0"></span>
           Docker isolation enabled — subtasks will run in containers
         </div>
       {:else if dockerChecked && dockerStatus && (!dockerStatus.available || !dockerStatus.hasAuth) && !proceedWithoutDocker}
@@ -156,13 +156,13 @@
           <p>Subtask agents will run in-process with software-level path validation
           but no container boundary.</p>
           {#if dockerStatus.available && !dockerStatus.hasAuth}
-            <p>To enable Docker isolation, run <code class="font-mono bg-black/30 px-1 rounded select-all">claude setup-token</code> in your terminal and paste the token below:</p>
+            <p>To enable Docker isolation, run <code class="font-mono bg-black/30 px-1 select-all">claude setup-token</code> in your terminal and paste the token below:</p>
             <div class="flex gap-1.5">
               <input
                 type="password"
                 bind:value={tokenInput}
                 placeholder="sk-ant-oat01-..."
-                class="flex-1 bg-background border border-input px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-ring rounded"
+                class="flex-1 bg-background border border-input px-2 py-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-ring"
               />
               <Button
                 variant="default"

@@ -165,7 +165,7 @@
 >
   {#each Array(20) as _, i}
     <span
-      class="blue-pixel absolute rounded-[1px]"
+      class="blue-pixel absolute"
       style="
         width: 4px; height: 4px;
         top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
@@ -191,8 +191,8 @@
       data-msg-id={msg.id}
       class={isMatch
         ? isCurrent
-          ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10 rounded'
-          : 'ring-1 ring-yellow-500/30 bg-yellow-500/5 rounded'
+          ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10'
+          : 'ring-1 ring-yellow-500/30 bg-yellow-500/5'
         : ''}
     >
       {#if msg.kind === 'user'}

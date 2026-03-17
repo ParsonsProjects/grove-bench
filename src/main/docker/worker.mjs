@@ -48,6 +48,32 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
+// Fix worktree .git reference — the host creates worktrees with absolute Windows paths
+// that don't exist inside the container. We rewrite them to use /repo-git.
+const worktreeId = process.env.GROVE_WORKTREE_ID;
+if (worktreeId) {
+  const fs = await import('node:fs');
+  const gitFile = '/workspace/.git';
+  try {
+    const content = fs.readFileSync(gitFile, 'utf-8');
+    if (content.startsWith('gitdir:')) {
+      // Rewrite to point to the mounted repo .git directory
+      const newGitdir = `/repo-git/worktrees/${worktreeId}`;
+      fs.writeFileSync(gitFile, `gitdir: ${newGitdir}\n`);
+      log(`Fixed .git: gitdir → ${newGitdir}`);
+
+      // Also fix the reverse pointer so git can find the worktree
+      const reverseFile = `${newGitdir}/gitdir`;
+      if (fs.existsSync(reverseFile)) {
+        fs.writeFileSync(reverseFile, '/workspace\n');
+        log(`Fixed reverse gitdir → /workspace`);
+      }
+    }
+  } catch (err) {
+    log(`Warning: could not fix .git file: ${err.message}`);
+  }
+}
+
 // Signal readiness
 send({ type: 'ready' });
 log('Ready, waiting for init message...');

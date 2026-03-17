@@ -86,6 +86,8 @@ interface ManagedSession {
   useDocker: boolean;
   /** Docker session instance (null if not dockerized). */
   dockerSession: DockerSession | null;
+  /** User-assigned display name — shown instead of branch when set. */
+  displayName: string | null;
 }
 
 /**
@@ -234,6 +236,7 @@ class AgentSessionManager {
       eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
       useDocker: effectiveUseDocker,
       dockerSession: null,
+      displayName: null,
     };
 
     this.sessions.set(id, session);
@@ -385,8 +388,8 @@ class AgentSessionManager {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
           }
           // Forward permission request to renderer and wait for user response.
-          // Times out after 5 minutes to prevent leaked promises if window closes.
-          const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
+          // Times out after 30 minutes to give users plenty of time to respond.
+          const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
           const requestId = `perm_${id}_${++permRequestCounter}`;
           return new Promise((resolve) => {
             const timer = setTimeout(() => {
@@ -456,6 +459,9 @@ class AgentSessionManager {
       }
     }
 
+    // Kill any dev servers that were detected during this session
+    await this.killDetectedPorts(session);
+
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
@@ -488,6 +494,7 @@ class AgentSessionManager {
     const dockerSession = new DockerSession({
       sessionId: id,
       worktreePath,
+      repoPath: session.repoPath,
       sdkVersion,
       authEnv: authEnv ?? null,
       systemPrompt: session.customSystemPrompt
@@ -518,8 +525,12 @@ class AgentSessionManager {
     };
 
     // Wire container completion
-    dockerSession.onComplete = (result) => {
+    dockerSession.onComplete = async (result) => {
       logger.info(`[docker] session=${id} complete: isError=${result.isError}, error=${result.error ?? 'none'}, messageCount=${messageCount}`);
+
+      // Kill any dev servers that were detected during this session
+      await this.killDetectedPorts(session);
+
       session.status = 'stopped';
 
       // Surface container errors to the UI before signalling exit
@@ -1023,6 +1034,24 @@ class AgentSessionManager {
     }
   }
 
+  renameSession(id: string, displayName: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.displayName = displayName || null;
+    }
+  }
+
+  /** Kill dev servers detected during this session and clear the port set. */
+  private async killDetectedPorts(session: ManagedSession): Promise<void> {
+    if (session.detectedPorts.size === 0) return;
+    const ports = [...session.detectedPorts];
+    session.detectedPorts.clear();
+    logger.info(`Killing ${ports.length} dev server(s) for session ${session.id}: ports ${ports.join(', ')}`);
+    await Promise.all(
+      ports.map((port) => killProcessOnPort(port).catch(() => {}))
+    );
+  }
+
   async destroySession(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
@@ -1051,13 +1080,8 @@ class AgentSessionManager {
       pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
     }
 
-    // Kill any dev servers that were detected during this session
-    if (session.detectedPorts.size > 0) {
-      logger.info(`Killing ${session.detectedPorts.size} dev server(s) for session ${id}: ports ${[...session.detectedPorts].join(', ')}`);
-      await Promise.all(
-        [...session.detectedPorts].map((port) => killProcessOnPort(port).catch(() => {}))
-      );
-    }
+    // Kill any dev servers not already cleaned up on query completion
+    await this.killDetectedPorts(session);
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
@@ -1086,6 +1110,7 @@ class AgentSessionManager {
       parentSessionId: s.parentSessionId,
       orchJobId: s.orchJobId,
       dockerized: s.useDocker || undefined,
+      displayName: s.displayName,
     }));
   }
 

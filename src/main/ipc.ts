@@ -11,6 +11,7 @@ import { killProcessOnPort } from './port-killer.js';
 import { orchestrator } from './orchestrator.js';
 import { checkDockerStatus, getDockerAuthEnv } from './docker/docker-utils.js';
 import * as settings from './settings.js';
+import { loadAppState, saveActiveTab } from './app-state.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -211,6 +212,12 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_LIST, async (): Promise<SessionInfo[]> => {
     return sessionManager.listSessions();
+  });
+
+  // ─── Session rename ───
+
+  ipcMain.handle(IPC.SESSION_RENAME, async (_event, sessionId: string, displayName: string) => {
+    sessionManager.renameSession(sessionId, displayName);
   });
 
   // ─── Branches ───
@@ -511,6 +518,16 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.ORCH_RESOLVE_CONFLICT, async (_event, jobId: string, taskId: string) => {
     return orchestrator.resolveConflict(jobId, taskId);
+  });
+
+  // ─── App State ───
+
+  ipcMain.handle(IPC.APP_STATE_GET_ACTIVE_TAB, () => {
+    return loadAppState().activeTabId;
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_ACTIVE_TAB, (_event, id: string | null) => {
+    saveActiveTab(id);
   });
 
   // ─── Window controls ───

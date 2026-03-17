@@ -36,6 +36,7 @@
             direct: wt.direct,
             parentSessionId: runningSession?.parentSessionId ?? null,
             orchJobId: runningSession?.orchJobId ?? null,
+            displayName: runningSession?.displayName ?? null,
           }, false); // don't focus during restore — selection happens after orch patching
 
           if (isRunning) {
@@ -78,21 +79,10 @@
       }
     }
 
-    // Now that orch relationships are patched, select the best session:
-    // 1. First running top-level session (non-child)
-    // 2. First active orch (running/spawning/merging job) orchestrator session
-    // 3. First top-level session
-    const activeOrchJobIds = new Set(
-      orchStore.jobs
-        .filter((j) => j.status === 'running' || j.status === 'spawning' || j.status === 'merging')
-        .map((j) => j.id)
-    );
-    const firstRunning = store.sessions.find((s) => s.status === 'running' && !s.parentSessionId);
-    const firstActiveOrch = store.sessions.find((s) => s.orchJobId && activeOrchJobIds.has(s.orchJobId));
-    const firstTopLevel = store.sessions.find((s) => !s.parentSessionId);
-    const best = firstRunning ?? firstActiveOrch ?? firstTopLevel;
-    if (best) {
-      store.activeSessionId = best.id;
+    // Restore persisted active tab, or leave null (intro screen)
+    const persistedTabId = await window.groveBench.getActiveTab();
+    if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
+      store.activeSessionId = persistedTabId;
     }
   }
 
@@ -129,6 +119,11 @@
         openedChildSessions.add(activeId);
       }
     }
+  });
+
+  // Persist active tab across restarts
+  $effect(() => {
+    window.groveBench.setActiveTab(store.activeSessionId);
   });
 
   function handleGlobalKeydown(e: KeyboardEvent) {
@@ -193,10 +188,18 @@
   }
 
   async function closeTab(id: string) {
-    try {
-      await window.groveBench.stopSession(id);
-    } catch { /* session may already be dead */ }
-    store.updateStatus(id, 'stopped');
+    const session = store.sessions.find((s) => s.id === id);
+    const isOrchChild = session?.parentSessionId?.startsWith('plan_');
+
+    if (!isOrchChild) {
+      // Normal session — stop the backend
+      try {
+        await window.groveBench.stopSession(id);
+      } catch { /* session may already be dead */ }
+      store.updateStatus(id, 'stopped');
+    }
+
+    // Just hide from the tab bar
     openedChildSessions.delete(id);
     if (store.activeSessionId === id) {
       const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
@@ -233,7 +236,7 @@
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
-            class="blue-pixel absolute rounded-[1px]"
+            class="blue-pixel absolute"
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
           ></span>
         {/each}
@@ -246,7 +249,7 @@
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
-            class="blue-pixel absolute rounded-[1px]"
+            class="blue-pixel absolute"
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
           ></span>
         {/each}
@@ -276,15 +279,16 @@
             onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(session.id); } }}
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
               {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
+              {hasPending ? 'tab-action-required' : ''}
               {dragTabId === session.id ? 'opacity-40' : ''}
               {isDragOver ? 'border-l-2 border-l-primary' : ''}"
           >
-            {#if !isActive && running}
+            {#if hasPending}
+              <span class="w-2 h-2 shrink-0 bg-orange-500 animate-pulse"></span>
+            {:else if !isActive && running}
               <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
-            {:else if !isActive && hasPending}
-              <span class="w-1.5 h-1.5 shrink-0 bg-amber-500 animate-pulse"></span>
             {:else if needsAttention}
-              <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash rounded-full"></span>
+              <span class="w-1.5 h-1.5 shrink-0 bg-green-400 tab-flash"></span>
             {:else}
               <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
             {/if}
@@ -323,7 +327,7 @@
               <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
                 {#each Array(20) as _, i}
                   <span
-                    class="blue-pixel absolute rounded-[1px]"
+                    class="blue-pixel absolute"
                     style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
                   ></span>
                 {/each}
@@ -337,7 +341,7 @@
         <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
           {#each Array(20) as _, i}
             <span
-              class="blue-pixel absolute rounded-[1px]"
+              class="blue-pixel absolute"
               style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
             ></span>
           {/each}
@@ -364,5 +368,13 @@
   @keyframes tab-flash {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.2; }
+  }
+  :global(.tab-action-required) {
+    animation: tab-glow 1.5s ease-in-out infinite;
+    border-bottom: 2px solid rgb(249 115 22) !important;
+  }
+  @keyframes tab-glow {
+    0%, 100% { box-shadow: inset 0 0 6px 0 rgba(249, 115, 22, 0.15); }
+    50% { box-shadow: inset 0 0 14px 2px rgba(249, 115, 22, 0.3); }
   }
 </style>

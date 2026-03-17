@@ -95,7 +95,7 @@
         type="text"
         bind:value={search}
         placeholder="Search plugins..."
-        class="w-full bg-muted/50 border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
+        class="w-full bg-muted/50 border border-border px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
       />
     </div>
 
