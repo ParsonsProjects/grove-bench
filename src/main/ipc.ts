@@ -11,6 +11,7 @@ import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import * as settings from './settings.js';
 import { loadAppState, saveActiveTab } from './app-state.js';
+import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -142,12 +143,23 @@ export function registerHandlers() {
         // Install npm dependencies if the project has a package.json
         try {
           await fs.access(path.join(worktree.path, 'package.json'));
-          logger.info(`Running npm install in worktree ${worktree.id}...`);
           if (!win.isDestroyed()) {
             win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
           }
-          emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
-          await execa('npm', ['install'], { cwd: worktree.path });
+
+          // Copy node_modules from a sibling worktree if available (fast path)
+          const siblingNm = await worktreeManager.findSiblingNodeModules(opts.repoPath, worktree.id);
+          if (siblingNm) {
+            emitPrelaunch({ type: 'status', message: 'Copying dependencies from sibling…' });
+            logger.info(`Copying node_modules from ${siblingNm} to worktree ${worktree.id}`);
+            await fs.cp(siblingNm, path.join(worktree.path, 'node_modules'), { recursive: true });
+          }
+
+          // Run npm install with shared cache — diffs against copied node_modules or installs fresh
+          const npmCache = await worktreeManager.getNpmCachePath(opts.repoPath);
+          emitPrelaunch({ type: 'status', message: siblingNm ? 'Syncing dependencies…' : 'Installing dependencies…' });
+          logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
+          await execa('npm', ['install', '--prefer-offline', '--cache', npmCache], { cwd: worktree.path });
           logger.info(`npm install completed for worktree ${worktree.id}`);
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {

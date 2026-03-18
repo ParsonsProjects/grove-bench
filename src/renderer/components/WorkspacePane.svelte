@@ -46,6 +46,12 @@
       // Clear existing messages so replay starts fresh
       messageStore.clearSession(sessionId);
 
+      // Subscribe to live events BEFORE replaying history so no events are
+      // missed for sessions that are still being set up (worktree creation,
+      // npm install). History replay below will fill in any prior events, and
+      // ingestEvent is idempotent for duplicate status messages.
+      messageStore.subscribe(sessionId);
+
       // Suppress git status refreshes during replay to avoid N IPC calls
       gitStatusStore.suppressRefresh = true;
       const history = await window.groveBench.getEventHistory(sessionId);
@@ -75,9 +81,6 @@
 
     // Single git status refresh after replay
     gitStatusStore.refresh(sessionId);
-
-    // Subscribe to live events only after history is replayed
-    messageStore.subscribe(sessionId);
   });
 
   onDestroy(() => {
@@ -98,7 +101,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
       Activity
       {#if hasPendingPermission}
-        <span class="inline-block w-2 h-2 bg-orange-500 animate-pulse"></span>
+        <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
       {:else if isRunning}
         <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
       {/if}

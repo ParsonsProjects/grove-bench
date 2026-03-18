@@ -931,7 +931,7 @@ class AgentSessionManager {
   }
 
   /** Start a host-managed dev server for the given session. */
-  async startDevServer(sessionId: string, overrideCommand?: string): Promise<{ port: number; url: string } | null> {
+  async startDevServer(sessionId: string, overrideCommand?: string): Promise<import('../shared/types.js').DevServerResult> {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 

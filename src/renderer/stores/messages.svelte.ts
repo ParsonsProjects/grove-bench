@@ -165,7 +165,7 @@ class MessageStore {
   turnsBySession = $state<Record<string, number>>({});
 
   /** Detected dev server ports per session */
-  devServersBySession = $state<Record<string, { port: number; url: string }[]>>({});
+  devServersBySession = $state<Record<string, { port: number; url: string; status?: 'ok' | 'error' }[]>>({});
 
   /** Rate limit state per session */
   rateLimitBySession = $state<Record<string, { status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }>>({});
@@ -276,7 +276,7 @@ class MessageStore {
     this.draftBySession[sessionId] = text;
   }
 
-  getDevServers(sessionId: string): { port: number; url: string }[] {
+  getDevServers(sessionId: string): { port: number; url: string; status?: 'ok' | 'error' }[] {
     return this.devServersBySession[sessionId] ?? [];
   }
 
@@ -771,7 +771,7 @@ class MessageStore {
       case 'devserver_detected': {
         const servers = this.devServersBySession[sessionId] ?? [];
         if (!servers.some((s) => s.port === event.port)) {
-          this.devServersBySession[sessionId] = [...servers, { port: event.port, url: event.url }];
+          this.devServersBySession[sessionId] = [...servers, { port: event.port, url: event.url, status: 'ok' }];
         }
         break;
       }

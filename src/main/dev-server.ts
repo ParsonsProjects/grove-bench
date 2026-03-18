@@ -1,5 +1,6 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { logger } from './logger.js';
+import type { DevServerSuccess, DevServerResult } from '../shared/types.js';
 
 const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g;
 const DETECT_TIMEOUT_MS = 30_000;
@@ -8,14 +9,15 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 /** Allow common dev commands but reject shell metacharacters. */
 const SAFE_COMMAND_RE = /^[\w./@:=+, -]+$/;
 
-export interface DevServerInfo {
-  port: number;
-  url: string;
-}
+/** @deprecated Use DevServerSuccess from shared/types instead */
+export type DevServerInfo = DevServerSuccess;
+
+const MAX_OUTPUT_LINES = 30;
 
 export class DevServer {
   private proc: ChildProcess | null = null;
   private detectedPorts = new Set<number>();
+  private recentOutput: string[] = [];
 
   constructor(
     private sessionId: string,
@@ -23,6 +25,18 @@ export class DevServer {
     private command: string,
     private onDetected: (info: DevServerInfo) => void,
   ) {}
+
+  private captureOutput(text: string) {
+    const lines = text.split('\n').filter((l) => l.trim());
+    this.recentOutput.push(...lines);
+    if (this.recentOutput.length > MAX_OUTPUT_LINES) {
+      this.recentOutput = this.recentOutput.slice(-MAX_OUTPUT_LINES);
+    }
+  }
+
+  private getRecentOutput(): string {
+    return this.recentOutput.join('\n');
+  }
 
   get isRunning(): boolean {
     return this.proc !== null && this.proc.exitCode === null;
@@ -33,7 +47,7 @@ export class DevServer {
   }
 
   /** Start the dev server process. Resolves when the URL is detected or after timeout. */
-  start(): Promise<DevServerInfo | null> {
+  start(): Promise<DevServerResult> {
     // Validate command to prevent shell injection
     if (!SAFE_COMMAND_RE.test(this.command)) {
       throw new Error(`Dev command contains invalid characters: "${this.command}"`);
@@ -41,6 +55,7 @@ export class DevServer {
 
     return new Promise((resolve) => {
       let resolved = false;
+      this.recentOutput = [];
 
       const isWin = process.platform === 'win32';
       this.proc = spawn(this.command, [], {
@@ -56,6 +71,7 @@ export class DevServer {
 
       const handleData = (data: Buffer) => {
         const text = data.toString().replace(ANSI_RE, '');
+        this.captureOutput(text);
         logger.debug(`[dev-server] session=${this.sessionId} output: ${text.trim().slice(0, 200)}`);
         for (const match of text.matchAll(URL_RE)) {
           const port = parseInt(match[1], 10);
@@ -78,7 +94,7 @@ export class DevServer {
         logger.error(`[dev-server] session=${this.sessionId} error:`, err);
         if (!resolved) {
           resolved = true;
-          resolve(null);
+          resolve({ reason: 'error', exitCode: null, lastOutput: this.getRecentOutput(), errorMessage: err.message });
         }
       });
 
@@ -87,16 +103,16 @@ export class DevServer {
         this.proc = null;
         if (!resolved) {
           resolved = true;
-          resolve(null);
+          resolve({ reason: 'exited', exitCode: code ?? null, lastOutput: this.getRecentOutput() });
         }
       });
 
-      // Timeout — resolve with null but keep process running
+      // Timeout — resolve with failure info but keep process running
       setTimeout(() => {
         if (!resolved) {
           resolved = true;
           logger.info(`[dev-server] session=${this.sessionId} URL detection timed out after ${DETECT_TIMEOUT_MS}ms`);
-          resolve(null);
+          resolve({ reason: 'timeout', exitCode: null, lastOutput: this.getRecentOutput() });
         }
       }, DETECT_TIMEOUT_MS);
     });

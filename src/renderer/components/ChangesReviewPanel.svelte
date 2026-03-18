@@ -26,7 +26,7 @@
 
   // Per-file UI state
   let expandedFiles = $state<Set<string>>(new Set());
-  let sideBySideFiles = $state<Set<string>>(new Set());
+  let sideBySide = $state(false);
   let editHistoryExpanded = $state<Set<string>>(new Set());
   let revertingFiles = $state<Set<string>>(new Set());
   let fileDiffs = $state<Record<string, string>>({});
@@ -92,13 +92,6 @@
     if (next.has(key)) next.delete(key);
     else next.add(key);
     expandedFiles = next;
-  }
-
-  function toggleSideBySide(key: string) {
-    const next = new Set(sideBySideFiles);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    sideBySideFiles = next;
   }
 
   function toggleEditHistory(key: string) {
@@ -170,7 +163,6 @@
 {#snippet fileRow(entry: GitStatusEntry)}
   {@const key = fileKey(entry)}
   {@const expanded = expandedFiles.has(key)}
-  {@const sideBySide = sideBySideFiles.has(key)}
   {@const reverting = revertingFiles.has(key)}
   {@const diffLines = getDiffLines(entry.filePath)}
   {@const badge = statusBadge(entry.status)}
@@ -218,15 +210,6 @@
       {/if}
 
       <div class="ml-auto flex items-center gap-2">
-        {#if expanded && diffLines.length > 0 && entry.status !== 'deleted'}
-          <button
-            onclick={() => toggleSideBySide(key)}
-            class="text-xs text-muted-foreground hover:text-foreground select-none"
-          >
-            {sideBySide ? 'unified' : 'side-by-side'}
-          </button>
-        {/if}
-
         {#if canRevert}
           <button
             onclick={() => revertFile(entry)}
@@ -340,9 +323,16 @@
       {#if untrackedEntries.length > 0}
         <span class="text-xs text-muted-foreground">{untrackedEntries.length} untracked</span>
       {/if}
+      <div class="ml-auto flex items-center gap-2">
+      <button
+        onclick={() => sideBySide = !sideBySide}
+        class="text-xs text-muted-foreground hover:text-foreground select-none"
+      >
+        {sideBySide ? 'unified' : 'side-by-side'}
+      </button>
       <button
         onclick={refreshStatus}
-        class="ml-auto text-muted-foreground hover:text-foreground transition-colors p-0.5"
+        class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
         title="Refresh git status"
         disabled={isLoading}
       >
@@ -350,6 +340,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
         </svg>
       </button>
+      </div>
     </div>
 
     <!-- File sections -->

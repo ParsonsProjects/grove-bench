@@ -189,11 +189,11 @@
                 {:else if messageStore.getIsRunning(session.id)}
                   <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
                 {:else if getSessionHasPending(session.id)}
-                  <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse shrink-0"></span>
+                  <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
                 {:else if session.status === 'stopped'}
                   <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
                 {:else}
-                  <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+                  <span class="w-2 h-2 bg-green-500 shrink-0"></span>
                 {/if}
                 {#if session.direct}
                   <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>

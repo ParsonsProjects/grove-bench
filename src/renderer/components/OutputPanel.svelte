@@ -256,7 +256,7 @@
     </div>
   {:else if isRunning && !streamingThinking}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <span class="inline-block w-2.5 h-2.5 bg-primary animate-pulse"></span>
+      <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget"></span>
       {#if activity.activity === 'thinking'}
         <span class="text-purple-400">Thinking...</span>
       {:else if activity.activity === 'tool_starting'}

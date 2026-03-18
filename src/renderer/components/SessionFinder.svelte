@@ -17,6 +17,8 @@
     repoPath: string;
     status: string;
     firstPrompt: string;
+    isRunning: boolean;
+    hasPending: boolean;
   }
 
   let entries = $derived.by((): SessionEntry[] => {
@@ -31,6 +33,8 @@
         repoPath: s.repoPath,
         status: s.status,
         firstPrompt,
+        isRunning: messageStore.getIsRunning(s.id),
+        hasPending: msgs.some((m) => m.kind === 'permission' && !m.resolved),
       };
     });
   });
@@ -116,8 +120,19 @@
             onmouseenter={() => selectedIndex = i}
           >
             <div class="flex items-center gap-2">
-              <span class="w-1.5 h-1.5 shrink-0
-                {entry.status === 'running' ? 'bg-primary' : entry.status === 'stopped' ? 'bg-muted-foreground/60' : entry.status === 'installing' || entry.status === 'starting' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
+              {#if entry.status === 'error'}
+                <span class="w-2 h-2 bg-red-500 shrink-0"></span>
+              {:else if entry.status === 'starting' || entry.status === 'installing'}
+                <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
+              {:else if entry.isRunning}
+                <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
+              {:else if entry.hasPending}
+                <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
+              {:else if entry.status === 'stopped'}
+                <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
+              {:else}
+                <span class="w-2 h-2 bg-green-500 shrink-0"></span>
+              {/if}
               <span class="text-muted-foreground">{entry.repoName}</span>
               <span class="text-muted-foreground/40">/</span>
               <span class="font-medium truncate">{entry.branch}</span>

@@ -121,13 +121,19 @@
   let borderColor = $derived(
     resolved
       ? (decision === 'allow' ? 'border-green-400' : 'border-destructive')
-      : 'border-yellow-400'
+      : 'border-amber-500'
+  );
+
+  let labelColor = $derived(
+    resolved
+      ? (decision === 'allow' ? 'text-green-400' : 'text-destructive')
+      : 'text-amber-500'
   );
 </script>
 
 <div class="py-1 my-1 border-l-4 {borderColor} pl-3">
   <div class="flex items-center gap-2 text-xs">
-    <span class="text-yellow-400 font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
+    <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
     <span class="text-foreground">{isExitPlanMode ? 'Claude wants to execute the plan' : toolName}</span>
     {#if filePath}
       <button

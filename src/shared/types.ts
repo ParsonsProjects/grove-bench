@@ -5,6 +5,8 @@ export interface WorktreeConfig {
   branchName: string;
   baseBranch?: string;
   useExisting?: boolean;
+  /** Pre-generated ID — if omitted, a random one is created. */
+  id?: string;
 }
 
 export interface WorktreeInfo {
@@ -177,6 +179,22 @@ export interface PluginListResult {
   available: AvailablePlugin[];
 }
 
+// ─── Dev Server ───
+
+export interface DevServerSuccess {
+  port: number;
+  url: string;
+}
+
+export interface DevServerFailure {
+  reason: 'exited' | 'error' | 'timeout';
+  exitCode: number | null;
+  lastOutput: string;
+  errorMessage?: string;
+}
+
+export type DevServerResult = DevServerSuccess | DevServerFailure;
+
 // ─── IPC API (exposed via contextBridge) ───
 
 export interface GroveBenchAPI {
@@ -244,7 +262,7 @@ export interface GroveBenchAPI {
   killPort(port: number): Promise<void>;
 
   // Dev server
-  startDevServer(sessionId: string, command?: string): Promise<{ port: number; url: string } | null>;
+  startDevServer(sessionId: string, command?: string): Promise<DevServerResult>;
   stopDevServer(sessionId: string): Promise<void>;
 
   // Plugins

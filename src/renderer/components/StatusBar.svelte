@@ -150,7 +150,7 @@
   };
 
   const modeColors: Record<string, string> = {
-    default: 'text-green-400 border-green-400/40',
+    default: 'text-blue-400 border-blue-400/40',
     plan: 'text-yellow-400 border-yellow-400/40',
     acceptEdits: 'text-purple-400 border-purple-400/40',
   };
@@ -251,7 +251,7 @@
 
   <span class="flex items-center gap-1.5">
     {#if isRunning}
-      <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+      <span class="w-1.5 h-1.5 {activity.activity === 'thinking' ? 'bg-purple-400' : 'bg-primary'} animate-pulse"></span>
       {#if activity.activity === 'thinking'}
         <span class="text-purple-400">thinking</span>
       {:else if activity.activity === 'tool_starting'}
@@ -274,15 +274,15 @@
       <button
         onclick={() => tasksExpanded = !tasksExpanded}
         class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
-        title="Background tasks — click for details"
+        title="Pending tools — click for details"
       >
         <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse"></span>
-        {pendingTools.length} task{pendingTools.length > 1 ? 's' : ''}
+        {pendingTools.length} tool{pendingTools.length > 1 ? 's' : ''}
       </button>
 
       {#if tasksExpanded}
         <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-80 z-50">
-          <div class="font-medium text-foreground mb-2">Running Tasks</div>
+          <div class="font-medium text-foreground mb-2">Pending Tools</div>
           <div class="space-y-1.5 max-h-48 overflow-y-auto">
             {#each pendingTools as task}
               <div class="flex items-center gap-2">
@@ -391,10 +391,10 @@
     {#if devServers.length > 0}
       <button
         onclick={() => devServersExpanded = !devServersExpanded}
-        class="flex items-center gap-1 text-green-400 hover:text-green-300 transition-colors"
+        class="flex items-center gap-1 {devServers.some(s => s.status === 'error') ? 'text-red-400 hover:text-red-300' : 'text-green-400 hover:text-green-300'} transition-colors"
         title="Dev servers — click for details"
       >
-        <span class="w-1.5 h-1.5 bg-green-500"></span>
+        <span class="w-1.5 h-1.5 {devServers.some(s => s.status === 'error') ? 'bg-red-500' : 'bg-green-500'}"></span>
         {devServers.length === 1
           ? `:${devServers[0].port}`
           : `${devServers.length} servers`}
@@ -407,8 +407,21 @@
           devServerError = null;
           try {
             const result = await window.groveBench.startDevServer(sessionId);
-            if (!result) {
-              devServerError = 'Dev server exited before a URL was detected';
+            if (result && 'reason' in result) {
+              const { reason, exitCode, lastOutput, errorMessage } = result;
+              const lines: string[] = [];
+              if (reason === 'exited') {
+                lines.push(`Dev server exited${exitCode !== null ? ` (code ${exitCode})` : ''} before a URL was detected`);
+              } else if (reason === 'error') {
+                lines.push(`Dev server failed to start: ${errorMessage ?? 'unknown error'}`);
+              } else {
+                lines.push('Dev server timed out — no URL detected');
+              }
+              if (lastOutput) {
+                lines.push(lastOutput.split('\n').slice(-5).join('\n'));
+              }
+              devServerError = lines.join('\n');
+              console.error('Dev server failure:', result);
             }
           } catch (e: any) {
             devServerError = e?.message ?? 'Failed to start dev server';
@@ -416,7 +429,7 @@
           } finally {
             devServerStarting = false;
             if (devServerError) {
-              setTimeout(() => { devServerError = null; }, 5000);
+              setTimeout(() => { devServerError = null; }, 15000);
             }
           }
         }}
@@ -436,7 +449,7 @@
         <div class="space-y-1.5 max-h-48 overflow-y-auto">
           {#each devServers as server}
             <div class="flex items-center gap-2 group">
-              <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+              <span class="w-1.5 h-1.5 {server.status === 'error' ? 'bg-red-500' : 'bg-green-500'} shrink-0"></span>
               <button
                 onclick={() => window.groveBench.openExternal(server.url)}
                 class="text-green-400 hover:text-green-300 hover:underline transition-colors truncate flex-1 text-left"
@@ -653,7 +666,7 @@
               <div class="mt-1.5 max-h-24 overflow-y-auto space-y-0.5">
                 {#each systemInfo.mcpServers as server}
                   <div class="flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 {server.status === 'connected' ? 'bg-green-500' : 'bg-yellow-500'}"></span>
+                    <span class="w-1.5 h-1.5 {server.status === 'connected' ? 'bg-green-500' : 'bg-red-500'}"></span>
                     <span class="font-mono text-[10px] text-muted-foreground truncate">{server.name}</span>
                   </div>
                 {/each}

@@ -8,6 +8,7 @@ import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared
 
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
+const NPM_CACHE_DIR = '.npm-cache';
 const DEFAULT_COPY_PATTERNS = ['.env', '.env.local', '.env.development', '.npmrc', '.nvmrc'];
 
 interface ManifestEntry {
@@ -74,7 +75,7 @@ export class WorktreeManager {
   async create(config: WorktreeConfig): Promise<WorktreeInfo> {
     const { repoPath, branchName, baseBranch, useExisting } = config;
 
-    const id = crypto.randomUUID().slice(0, 8);
+    const id = config.id ?? crypto.randomUUID().slice(0, 8);
     const hash = this.repoHash(repoPath);
     const wtPath = path.join(this.getWorktreeRoot(), hash, id);
 
@@ -259,7 +260,7 @@ export class WorktreeManager {
       const repoDir = path.join(this.getWorktreeRoot(), hash);
       try {
         const entries = await fs.readdir(repoDir);
-        const remaining = entries.filter((e) => e !== CONFIG_FILE);
+        const remaining = entries.filter((e) => e !== CONFIG_FILE && e !== NPM_CACHE_DIR);
         if (remaining.length === 0) {
           await fs.rm(repoDir, { recursive: true, force: true });
         }
@@ -510,7 +511,7 @@ export class WorktreeManager {
       const repoDir = path.join(this.getWorktreeRoot(), hash);
       try {
         const entries = await fs.readdir(repoDir);
-        const remaining = entries.filter((e) => e !== CONFIG_FILE);
+        const remaining = entries.filter((e) => e !== CONFIG_FILE && e !== NPM_CACHE_DIR);
         if (remaining.length === 0) {
           await fs.rm(repoDir, { recursive: true, force: true });
         }
@@ -573,7 +574,7 @@ export class WorktreeManager {
 
         const entries = await fs.readdir(hashDirPath);
         for (const entry of entries) {
-          if (entry === CONFIG_FILE) continue;
+          if (entry === CONFIG_FILE || entry === NPM_CACHE_DIR) continue;
           const entryPath = path.join(hashDirPath, entry);
           const entryStat = await fs.stat(entryPath).catch(() => null);
           if (!entryStat?.isDirectory()) continue;
@@ -659,6 +660,40 @@ export class WorktreeManager {
       path.join(configDir, CONFIG_FILE),
       JSON.stringify(config, null, 2),
     );
+  }
+
+  /**
+   * Return the shared npm cache directory for a repo (at the repo-hash level).
+   * Created on demand.
+   */
+  async getNpmCachePath(repoPath: string): Promise<string> {
+    const hash = this.repoHash(repoPath);
+    const cachePath = path.join(this.getWorktreeRoot(), hash, NPM_CACHE_DIR);
+    await fs.mkdir(cachePath, { recursive: true });
+    return cachePath;
+  }
+
+  /**
+   * Find node_modules in a sibling worktree for the same repo.
+   * Returns the path to node_modules if found, or null.
+   */
+  async findSiblingNodeModules(repoPath: string, excludeId: string): Promise<string | null> {
+    const hash = this.repoHash(repoPath);
+    const repoDir = path.join(this.getWorktreeRoot(), hash);
+
+    try {
+      const entries = await fs.readdir(repoDir);
+      for (const entry of entries) {
+        if (entry === CONFIG_FILE || entry === NPM_CACHE_DIR || entry === excludeId) continue;
+        const nmPath = path.join(repoDir, entry, 'node_modules');
+        try {
+          const stat = await fs.stat(nmPath);
+          if (stat.isDirectory()) return nmPath;
+        } catch { /* doesn't exist */ }
+      }
+    } catch { /* repoDir doesn't exist yet */ }
+
+    return null;
   }
 
   private async generateClaudeSettings(wtPath: string): Promise<void> {

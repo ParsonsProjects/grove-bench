@@ -241,7 +241,7 @@
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running'));
+  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing'));
   let hasTabContent = $derived(openSessions.length > 0);
 </script>
 
@@ -304,7 +304,9 @@
               {dragTabId === session.id ? 'opacity-40' : ''}
               {isDragOver ? 'border-l-2 border-l-primary' : ''}"
           >
-            {#if hasPending}
+            {#if session.status === 'starting' || session.status === 'installing'}
+              <span class="w-2 h-2 shrink-0 bg-yellow-500 animate-pulse"></span>
+            {:else if hasPending}
               <span class="w-2 h-2 shrink-0 bg-orange-500 animate-pulse"></span>
             {:else if !isActive && running}
               <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
@@ -336,7 +338,7 @@
         <!-- Active session -->
         {#each store.sessions as session (session.id)}
           <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-            {#if session.status === 'running'}
+            {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing'}
               <WorkspacePane sessionId={session.id} />
             {:else}
               <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
