@@ -25,6 +25,19 @@ async function getQuery() {
   return _query;
 }
 
+/**
+ * Strip noisy env vars that leak absolute paths into the LLM context,
+ * causing the model to use full paths for simple CLI commands.
+ */
+const ENV_NOISE_PREFIXES = ['npm_', 'NVM_', 'FNM_', 'VSCODE_', 'ELECTRON_'];
+function cleanEnv(): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !ENV_NOISE_PREFIXES.some(p => key.startsWith(p))
+    )
+  );
+}
+
 // Re-declare the types we need (type-only imports are erased at runtime)
 type Query = import('@anthropic-ai/claude-agent-sdk').Query;
 type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
@@ -396,7 +409,7 @@ class AgentSessionManager {
           });
         },
         env: {
-          ...process.env,
+          ...cleanEnv(),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
           ...(session.extraEnv ?? {}),
         },

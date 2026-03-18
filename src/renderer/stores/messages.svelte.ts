@@ -1007,15 +1007,10 @@ class MessageStore {
     // Capture the tool name before resolving, so we can sync mode
     let toolName: string | undefined;
     if (idx >= 0) {
-      const updated = { ...(msgs[idx] as ChatPermissionMessage) };
-      toolName = updated.toolName;
-      updated.resolved = true;
-      updated.decision = decision === 'deny' ? 'deny' : 'allow';
-      this.messagesBySession[sessionId] = [
-        ...msgs.slice(0, idx),
-        updated,
-        ...msgs.slice(idx + 1),
-      ];
+      const msg = msgs[idx] as ChatPermissionMessage;
+      toolName = msg.toolName;
+      msg.resolved = true;
+      msg.decision = decision === 'deny' ? 'deny' : 'allow';
     }
 
     // When "Always Allow" is used on Edit/Write, sync mode to acceptEdits
