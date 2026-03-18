@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
@@ -33,27 +34,51 @@
   // Collapsed sections
   let collapsedSections = $state<Set<string>>(new Set());
 
-  // Track previous entries to auto-expand new files
-  let prevEntryKeys = $state<string>('');
+  // Track previous entry keys to detect new/removed files
+  let prevEntryKeySet = $state<Set<string>>(new Set());
 
   $effect(() => {
-    const key = gitStatus.entries.map(e => `${e.filePath}:${e.staged}`).join('\0');
-    if (gitStatus.entries.length > 0 && key !== prevEntryKeys) {
-      prevEntryKeys = key;
-      expandedFiles = new Set(gitStatus.entries.map(e => fileKey(e)));
-      fileDiffs = {};
-      for (const entry of gitStatus.entries) {
-        loadDiff(entry.filePath);
+    // Only re-run when gitStatus.entries changes (the reactive dependency).
+    // Read expandedFiles and prevEntryKeySet via untrack to avoid an infinite
+    // loop caused by the effect writing back to those same $state variables.
+    const entries = gitStatus.entries;
+    const currentKeys = new Set(entries.map(e => fileKey(e)));
+
+    untrack(() => {
+      if (entries.length === 0 && prevEntryKeySet.size === 0) return;
+
+      // Find new entries (not previously known) — auto-expand and load diffs
+      const newExpanded = new Set(expandedFiles);
+      for (const entry of entries) {
+        const key = fileKey(entry);
+        const isNew = !prevEntryKeySet.has(key);
+        if (isNew) {
+          newExpanded.add(key);
+          loadDiff(entry.filePath);
+        } else {
+          // Reload in background (old value stays visible until new one arrives)
+          loadDiff(entry.filePath, true);
+        }
       }
-    }
+
+      // Remove stale entries from expanded/diffs
+      for (const key of prevEntryKeySet) {
+        if (!currentKeys.has(key)) {
+          newExpanded.delete(key);
+        }
+      }
+
+      expandedFiles = newExpanded;
+      prevEntryKeySet = currentKeys;
+    });
   });
 
   function fileKey(entry: GitStatusEntry): string {
     return `${entry.filePath}:${entry.staged}`;
   }
 
-  async function loadDiff(filePath: string) {
-    if (fileDiffs[filePath] !== undefined) return;
+  async function loadDiff(filePath: string, forceReload = false) {
+    if (!forceReload && fileDiffs[filePath] !== undefined) return;
     try {
       const diff = await window.groveBench.getFileDiff(sessionId, filePath);
       fileDiffs = { ...fileDiffs, [filePath]: diff };
@@ -159,6 +184,7 @@
       <button
         onclick={() => toggleExpanded(key)}
         class="text-muted-foreground hover:text-foreground shrink-0"
+        aria-label="Toggle file diff"
       >
         <svg class="w-3 h-3 transition-transform {expanded ? 'rotate-90' : ''}" fill="currentColor" viewBox="0 0 20 20">
           <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />

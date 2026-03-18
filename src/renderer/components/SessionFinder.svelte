@@ -117,7 +117,7 @@
           >
             <div class="flex items-center gap-2">
               <span class="w-1.5 h-1.5 shrink-0
-                {entry.status === 'running' ? 'bg-primary' : entry.status === 'stopped' ? 'bg-muted-foreground/60' : 'bg-destructive'}"></span>
+                {entry.status === 'running' ? 'bg-primary' : entry.status === 'stopped' ? 'bg-muted-foreground/60' : entry.status === 'installing' || entry.status === 'starting' ? 'bg-yellow-500 animate-pulse' : 'bg-destructive'}"></span>
               <span class="text-muted-foreground">{entry.repoName}</span>
               <span class="text-muted-foreground/40">/</span>
               <span class="font-medium truncate">{entry.branch}</span>

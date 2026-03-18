@@ -6,6 +6,7 @@ import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git } from './git.js';
+import { parseGitStatusPorcelain } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import * as settings from './settings.js';
@@ -65,7 +66,6 @@ export function registerHandlers() {
 
     if (opts.direct) {
       // Direct mode — run on the repo checkout, no worktree
-      // Determine the current branch name
       const branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
       logger.info(`Creating direct session: branch=${branch}, repo=${opts.repoPath}`);
 
@@ -82,6 +82,8 @@ export function registerHandlers() {
       logger.info(`Direct session created: id=${session.id}`);
       return { id: session.id, branch: session.branch };
     }
+
+    // ── Validation (synchronous — errors shown in dialog) ──
 
     if (opts.useExisting) {
       const exists = await branchExistsAnywhere(opts.repoPath, opts.branchName);
@@ -101,36 +103,83 @@ export function registerHandlers() {
 
     logger.info(`Creating session: branch=${opts.branchName}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
 
-    // Create worktree
-    const worktree = await worktreeManager.create({
-      repoPath: opts.repoPath,
-      branchName: opts.branchName,
-      baseBranch: opts.baseBranch,
-      useExisting: opts.useExisting,
-    });
+    // Generate a stable ID up front so the renderer can open a tab immediately
+    const id = crypto.randomUUID().slice(0, 8);
+    const branch = opts.branchName;
 
-    // Auto-copy untracked files (.env, etc.)
-    try {
-      const config = await worktreeManager.getRepoConfig(opts.repoPath);
-      if (config.copyFiles.length > 0) {
-        await worktreeManager.copyUntrackedFiles(worktree.id, config.copyFiles);
-        logger.info(`Copied ${config.copyFiles.length} config file(s) to worktree`);
+    // Helper to emit agent events before the session object exists
+    const emitPrelaunch = (evt: import('../shared/types.js').AgentEvent) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(`${IPC.AGENT_EVENT}:${id}`, evt);
       }
-    } catch (e) {
-      logger.warn('Failed to copy untracked files:', e);
-    }
+    };
 
-    // Start Claude agent in the worktree
-    const session = await sessionManager.createSession({
-      id: worktree.id,
-      branch: worktree.branch,
-      cwd: worktree.path,
-      repoPath: opts.repoPath,
-      window: win,
-    });
+    // Return fast — the dialog can close and a tab can open
+    // Run the heavy work (worktree, npm install, agent start) in the background
+    const setupPromise = (async () => {
+      try {
+        emitPrelaunch({ type: 'status', message: 'Creating worktree…' });
 
-    logger.info(`Session created: id=${session.id}`);
-    return { id: session.id, branch: session.branch };
+        const worktree = await worktreeManager.create({
+          repoPath: opts.repoPath,
+          branchName: opts.branchName,
+          baseBranch: opts.baseBranch,
+          useExisting: opts.useExisting,
+          id,
+        });
+
+        // Auto-copy untracked files (.env, etc.)
+        try {
+          const config = await worktreeManager.getRepoConfig(opts.repoPath);
+          if (config.copyFiles.length > 0) {
+            await worktreeManager.copyUntrackedFiles(worktree.id, config.copyFiles);
+            logger.info(`Copied ${config.copyFiles.length} config file(s) to worktree`);
+          }
+        } catch (e) {
+          logger.warn('Failed to copy untracked files:', e);
+        }
+
+        // Install npm dependencies if the project has a package.json
+        try {
+          await fs.access(path.join(worktree.path, 'package.json'));
+          logger.info(`Running npm install in worktree ${worktree.id}...`);
+          if (!win.isDestroyed()) {
+            win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
+          }
+          emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
+          await execa('npm', ['install'], { cwd: worktree.path });
+          logger.info(`npm install completed for worktree ${worktree.id}`);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+            logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
+          }
+        }
+
+        // Start Claude agent in the worktree
+        emitPrelaunch({ type: 'status', message: 'Starting agent…' });
+        await sessionManager.createSession({
+          id: worktree.id,
+          branch: worktree.branch,
+          cwd: worktree.path,
+          repoPath: opts.repoPath,
+          window: win,
+        });
+
+        logger.info(`Session created: id=${worktree.id}`);
+      } catch (err: any) {
+        const msg = err.message || String(err);
+        logger.error(`Session setup failed for ${id}:`, msg);
+        emitPrelaunch({ type: 'error', message: msg });
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC.SESSION_STATUS, id, 'error');
+        }
+      }
+    })();
+
+    // Don't await — let it run in the background
+    setupPromise.catch(() => {}); // prevent unhandled rejection
+
+    return { id, branch };
   });
 
   ipcMain.handle(IPC.SESSION_RESUME, async (event, id: string, repoPath: string) => {
@@ -421,64 +470,15 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (!worktree) return { entries: [] };
 
-    const raw = await git(['status', '--porcelain=v1', '-z'], worktree.path);
-    if (!raw) return { entries: [] };
-
-    const entries: import('../shared/types.js').GitStatusEntry[] = [];
-    // -z produces NUL-delimited records; renames/copies have two fields: status+newpath \0 oldpath
-    const parts = raw.split('\0').filter(Boolean);
-
-    let i = 0;
-    while (i < parts.length) {
-      const record = parts[i];
-      if (record.length < 3) { i++; continue; }
-
-      const x = record[0]; // index (staged) status
-      const y = record[1]; // worktree (unstaged) status
-      const filePath = record.slice(3);
-
-      // Helper to map status char to GitFileStatus
-      const mapStatus = (c: string): import('../shared/types.js').GitFileStatus => {
-        switch (c) {
-          case 'M': return 'modified';
-          case 'A': return 'added';
-          case 'D': return 'deleted';
-          case 'R': return 'renamed';
-          case 'C': return 'copied';
-          default: return 'modified';
-        }
-      };
-
-      if (x === '?' && y === '?') {
-        entries.push({ filePath, status: 'untracked', staged: false });
-        i++;
-        continue;
-      }
-
-      // Renames and copies have the old path as the next NUL-separated field
-      const isRenameOrCopy = x === 'R' || x === 'C';
-      let origPath: string | undefined;
-      if (isRenameOrCopy) {
-        i++;
-        origPath = parts[i];
-      }
-
-      // Staged change (index column)
-      if (x !== ' ' && x !== '?') {
-        entries.push({ filePath, status: mapStatus(x), staged: true, ...(origPath ? { origPath } : {}) });
-      }
-
-      // Unstaged change (worktree column)
-      if (y !== ' ' && y !== '?') {
-        entries.push({ filePath, status: mapStatus(y), staged: false });
-      }
-
-      i++;
+    try {
+      const raw = await git(['status', '--porcelain=v1', '-z'], worktree.path);
+      return parseGitStatusPorcelain(raw);
+    } catch (e) {
+      logger.warn(`git status failed for session ${sessionId}:`, e);
+      return { entries: [] };
     }
-
-    return { entries };
   });
 
   // ─── PR info ───

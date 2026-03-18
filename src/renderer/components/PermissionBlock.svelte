@@ -2,6 +2,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import MarkdownBlock from './MarkdownBlock.svelte';
 
   let {
     sessionId,
@@ -31,8 +32,10 @@
   let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
   let isBashTool = $derived(toolName === 'Bash');
   let isExitPlanMode = $derived(toolName === 'ExitPlanMode');
+  let isWebFetch = $derived(toolName === 'WebFetch' || toolName === 'mcp__WebFetch' || (typeof input?.url === 'string'));
   let filePath = $derived(isEditTool ? String(input?.file_path ?? input?.filePath ?? '') : '');
   let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
+  let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
 
   function approve() {
@@ -48,6 +51,14 @@
     messageStore.resolvePermission(sessionId, requestId, 'allow', {
       updatedPermissions: suggestions,
     });
+  }
+
+  /** Clear the conversation and re-send the plan as a fresh prompt */
+  function clearAndExecute() {
+    if (!planText) return;
+    const prompt = `Execute the following plan:\n\n${planText}`;
+    messageStore.resolvePermission(sessionId, requestId, 'deny', { message: 'Clearing and restarting with the plan.' });
+    messageStore.clearAndSend(sessionId, prompt);
   }
 
   function deny(message?: string) {
@@ -88,6 +99,25 @@
     return '';
   }
 
+  // For ExitPlanMode, collect the plan text from preceding assistant messages
+  let planText = $derived.by(() => {
+    if (!isExitPlanMode) return '';
+    const msgs = messageStore.getMessages(sessionId);
+    const parts: string[] = [];
+    // Walk backwards from the end to find this permission, then collect text between EnterPlanMode and here
+    let foundSelf = false;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (!foundSelf) {
+        if (m.kind === 'permission' && m.requestId === requestId) foundSelf = true;
+        continue;
+      }
+      if (m.kind === 'tool_call' && m.toolName === 'EnterPlanMode') break;
+      if (m.kind === 'text') parts.unshift(m.text);
+    }
+    return parts.join('\n\n');
+  });
+
   let borderColor = $derived(
     resolved
       ? (decision === 'allow' ? 'border-green-400' : 'border-destructive')
@@ -127,6 +157,11 @@
     <pre class="text-xs text-foreground bg-card/80 border border-border px-3 py-2 mt-1 overflow-x-auto max-h-32 overflow-y-auto font-mono whitespace-pre-wrap break-all">{bashCommand}</pre>
   {/if}
 
+  <!-- URL preview for WebFetch -->
+  {#if isWebFetch && fetchUrl}
+    <div class="text-xs text-blue-400 font-mono mt-1 truncate" title={fetchUrl}>{fetchUrl}</div>
+  {/if}
+
   <!-- Inline diff preview for Edit/Write (only while awaiting approval) -->
   {#if !resolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
@@ -134,7 +169,20 @@
     </div>
   {/if}
 
-  {#if !isEditTool && !isBashTool}
+  {#if isExitPlanMode && planText}
+    <button
+      onclick={() => expanded = !expanded}
+      class="text-xs text-muted-foreground hover:text-foreground mt-1"
+    >
+      {expanded ? 'hide' : 'show'} plan
+    </button>
+
+    {#if expanded}
+      <div class="mt-1 text-sm text-foreground bg-card/50 border border-border p-3 max-h-64 overflow-y-auto">
+        <MarkdownBlock content={planText} />
+      </div>
+    {/if}
+  {:else if !isEditTool && !isBashTool && !isExitPlanMode}
     <button
       onclick={() => expanded = !expanded}
       class="text-xs text-muted-foreground hover:text-foreground mt-1"
@@ -169,6 +217,11 @@
         <Button variant="outline" size="sm" onclick={() => deny()} class="text-destructive border-destructive hover:bg-destructive/10">
           No
         </Button>
+        {#if planText}
+          <Button variant="outline" size="sm" onclick={clearAndExecute} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+            Clear &amp; Execute
+          </Button>
+        {/if}
       </div>
       <div class="flex gap-2 mt-2 items-center">
         <input
@@ -183,7 +236,7 @@
           size="sm"
           onclick={sendReply}
           disabled={!replyText.trim()}
-          class="text-muted-foreground border-border hover:text-foreground shrink-0"
+          class="text-primary border-primary hover:bg-primary/10 disabled:text-muted-foreground disabled:border-border shrink-0"
         >
           Send
         </Button>

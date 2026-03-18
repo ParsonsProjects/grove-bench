@@ -59,6 +59,9 @@
     confirmDestroyId = null;
     destroying = id;
 
+    // Mark stopped immediately so the tab closes right away
+    store.updateStatus(id, 'stopped');
+
     try {
       await window.groveBench.destroySession(id, deleteBranch);
       store.removeSession(id);
@@ -115,6 +118,7 @@
   const statusColor: Record<string, string> = {
     running: 'bg-primary',
     starting: 'bg-yellow-500',
+    installing: 'bg-yellow-500',
     stopped: 'bg-neutral-500',
     error: 'bg-red-500',
   };
@@ -164,21 +168,23 @@
 
         <!-- Sessions under this repo -->
         {#each store.sessionsForRepo(repo) as session (session.id)}
+            {@const isDestroying = destroying === session.id}
             <button
-              onclick={() => focusSession(session.id)}
-              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); requestDestroy(session.id); } }}
-              ondblclick={() => startRename(session.id, sessionLabel(session))}
-              oncontextmenu={(e) => openContextMenu(e, session.id)}
+              onclick={() => !isDestroying && focusSession(session.id)}
+              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
+              ondblclick={() => !isDestroying && startRename(session.id, sessionLabel(session))}
+              oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
+              disabled={isDestroying}
               title={sessionLabel(session)}
               class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
-                {store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+                {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >
               <div class="flex items-center gap-2 min-w-0">
                 {#if destroying === session.id}
                   <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
                 {:else if session.status === 'error'}
                   <span class="w-2 h-2 bg-red-500 shrink-0"></span>
-                {:else if session.status === 'starting'}
+                {:else if session.status === 'starting' || session.status === 'installing'}
                   <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
                 {:else if messageStore.getIsRunning(session.id)}
                   <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
@@ -200,9 +206,10 @@
                 <span
                   role="button"
                   tabindex="-1"
-                  onclick={(e) => { e.stopPropagation(); requestDestroy(session.id); }}
-                  onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') requestDestroy(session.id); }}
-                  class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer transition-colors shrink-0"
+                  onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
+                  onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
+                  class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
+                    {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 </span>
@@ -268,6 +275,7 @@
       <Dialog.Header>
         <Dialog.Title>Rename Agent</Dialog.Title>
       </Dialog.Header>
+      <!-- svelte-ignore a11y_autofocus -->
       <input
         type="text"
         bind:value={renameValue}

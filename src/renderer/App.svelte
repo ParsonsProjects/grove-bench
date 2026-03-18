@@ -391,6 +391,7 @@
       <Dialog.Header>
         <Dialog.Title>Rename Agent</Dialog.Title>
       </Dialog.Header>
+      <!-- svelte-ignore a11y_autofocus -->
       <input
         type="text"
         bind:value={tabRenameValue}

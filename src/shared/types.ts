@@ -32,7 +32,7 @@ export interface CreateSessionOpts {
   direct?: boolean;
 }
 
-export type SessionStatus = 'starting' | 'running' | 'stopped' | 'error';
+export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
 
 export interface SessionInfo {
   id: string;

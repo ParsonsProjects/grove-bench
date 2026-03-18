@@ -189,7 +189,7 @@
                 {#each settingsStore.draft.toolAllowRules as rule, i (i)}
                   <span class="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-xs">
                     <code>{rule.pattern}</code>
-                    <button onclick={() => settingsStore.removeToolAllowRule(i)} class="text-muted-foreground hover:text-destructive">
+                    <button onclick={() => settingsStore.removeToolAllowRule(i)} class="text-muted-foreground hover:text-destructive" aria-label="Remove rule">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
                   </span>
@@ -217,7 +217,7 @@
                 {#each settingsStore.draft.toolDenyRules as rule, i (i)}
                   <span class="inline-flex items-center gap-1 bg-destructive/10 px-2 py-0.5 text-xs">
                     <code>{rule.pattern}</code>
-                    <button onclick={() => settingsStore.removeToolDenyRule(i)} class="text-muted-foreground hover:text-destructive">
+                    <button onclick={() => settingsStore.removeToolDenyRule(i)} class="text-muted-foreground hover:text-destructive" aria-label="Remove rule">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
                   </span>
@@ -297,7 +297,7 @@
                 {#each settingsStore.draft.workingDirectories as dir, i (i)}
                   <div class="flex items-center justify-between bg-muted px-2 py-1 text-xs">
                     <code class="truncate">{dir}</code>
-                    <button onclick={() => settingsStore.removeWorkingDirectory(i)} class="text-muted-foreground hover:text-destructive ml-2 shrink-0">
+                    <button onclick={() => settingsStore.removeWorkingDirectory(i)} class="text-muted-foreground hover:text-destructive ml-2 shrink-0" aria-label="Remove directory">
                       <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
                   </div>

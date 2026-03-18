@@ -186,6 +186,9 @@ class MessageStore {
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
 
+  /** Message to send automatically after a /clear completes (system_init) */
+  private pendingMessageAfterClear: Record<string, string> = {};
+
   private cleanups = new Map<string, () => void>();
 
   getMessages(sessionId: string): ChatMessage[] {
@@ -443,13 +446,17 @@ class MessageStore {
     this.isRunning[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
 
-    // Resolve any pending tool calls so spinners don't linger
+    // Resolve any pending tool calls and permissions so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
     const updated = msgs.map((m) => {
       if (m.kind === 'tool_call' && m.pending) {
         changed = true;
         return { ...m, pending: false };
+      }
+      if (m.kind === 'permission' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true, decision: 'deny' as const };
       }
       return m;
     });
@@ -501,6 +508,14 @@ class MessageStore {
             ? `Conversation cleared — connected to ${event.model}`
             : `Connected to ${event.model}`,
         });
+
+        // If a message was queued to send after clear, fire it now
+        const pendingMsg = this.pendingMessageAfterClear[sessionId];
+        if (wasCleared && pendingMsg) {
+          delete this.pendingMessageAfterClear[sessionId];
+          this.addUserMessage(sessionId, pendingMsg);
+          window.groveBench.sendMessage(sessionId, pendingMsg);
+        }
         break;
       }
 
@@ -939,6 +954,12 @@ class MessageStore {
     });
     this.isRunning[sessionId] = true;
     window.groveBench.sendMessage(sessionId, command);
+  }
+
+  /** Clear the conversation and send a message once the new session is ready. */
+  clearAndSend(sessionId: string, message: string) {
+    this.pendingMessageAfterClear[sessionId] = message;
+    this.sendCommand(sessionId, '/clear');
   }
 
   /** Resolve a question from Claude (AskUserQuestion) by sending the answer as a deny message.

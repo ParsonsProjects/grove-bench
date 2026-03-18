@@ -24,7 +24,7 @@
   let selectedIndex = $state(0);
   let fuse: Fuse<FileEntry> | null = null;
 
-  let cacheKey = `filepicker:${sessionId}`;
+  let cacheKey = $derived(`filepicker:${sessionId}`);
   const CACHE_TTL = 30_000;
 
   const fileCache = new Map<string, { files: FileEntry[]; ts: number }>();

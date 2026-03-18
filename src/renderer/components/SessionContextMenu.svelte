@@ -34,17 +34,19 @@
   }
 
   // Adjust position if menu overflows viewport
-  let adjustedX = $state(x);
-  let adjustedY = $state(y);
+  let offsetX = $state(0);
+  let offsetY = $state(0);
+  let adjustedX = $derived(x + offsetX);
+  let adjustedY = $derived(y + offsetY);
 
   onMount(() => {
     if (menuEl) {
       const rect = menuEl.getBoundingClientRect();
       if (rect.right > window.innerWidth) {
-        adjustedX = window.innerWidth - rect.width - 4;
+        offsetX = window.innerWidth - rect.width - 4 - x;
       }
       if (rect.bottom > window.innerHeight) {
-        adjustedY = window.innerHeight - rect.height - 4;
+        offsetY = window.innerHeight - rect.height - 4 - y;
       }
     }
     document.addEventListener('click', handleDismiss, true);

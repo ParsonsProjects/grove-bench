@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
@@ -9,7 +10,11 @@
   let { onclose, defaultRepo = '' }: { onclose: () => void; defaultRepo?: string } = $props();
 
   let open = $state(true);
-  let selectedRepo = $state(defaultRepo || store.repos[0] || '');
+  let selectedRepo = $state(store.repos[0] || '');
+
+  onMount(() => {
+    if (defaultRepo) selectedRepo = defaultRepo;
+  });
   let branchName = $state('');
   let baseBranch = $state('main');
   let creating = $state(false);
@@ -218,6 +223,7 @@
       {:else if mode === 'new'}
         <div>
           <Label for="branch" class="mb-1 block">Branch Name</Label>
+          <!-- svelte-ignore a11y_autofocus -->
           <Input
             id="branch"
             type="text"
@@ -251,6 +257,7 @@
                   type="button"
                   class="px-2 py-2 text-muted-foreground hover:text-foreground shrink-0"
                   onclick={() => { baseDropdownOpen = !baseDropdownOpen; baseSearch = ''; }}
+                  aria-label="Toggle branch list"
                 >
                   <svg class="h-4 w-4 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
                 </button>
@@ -311,6 +318,7 @@
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div class="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border shadow-md overflow-hidden">
                   <div class="p-2 border-b border-border">
+                    <!-- svelte-ignore a11y_autofocus -->
                     <input
                       type="text"
                       class="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
@@ -364,7 +372,14 @@
           onclick={handleCreate}
           disabled={!canCreate()}
         >
-          {creating ? 'Creating...' : 'Create'}
+          {#if creating}
+            <span class="inline-flex items-center gap-1.5">
+              <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              Creating…
+            </span>
+          {:else}
+            Create
+          {/if}
         </Button>
       </Dialog.Footer>
     </div>

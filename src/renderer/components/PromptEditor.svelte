@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -6,8 +7,13 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let value = $state(messageStore.getDraft(sessionId));
+  let value = $state('');
   let textarea: HTMLTextAreaElement;
+
+  // Restore draft on mount (sessionId is stable per instance)
+  onMount(() => {
+    value = messageStore.getDraft(sessionId);
+  });
 
   // Sync draft to store whenever value changes
   $effect(() => {
@@ -524,7 +530,7 @@
     ></textarea>
 
     {#if isRunning}
-      <Button variant="outline" onclick={handleStop} class="text-muted-foreground hover:text-destructive hover:border-destructive h-auto">
+      <Button variant="outline" onclick={handleStop} class="text-destructive border-destructive hover:bg-destructive/10 h-auto">
         Stop
       </Button>
     {:else}

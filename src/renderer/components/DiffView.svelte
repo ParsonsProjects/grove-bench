@@ -116,27 +116,29 @@
   {#if sideBySide}
     <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
       <table class="w-full border-collapse">
-        {#each rows as row}
-          {#if row.type === 'hunk'}
-            <tr>
-              <td colspan="4" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{row.hunkText}</td>
-            </tr>
-          {:else if row.type === 'context'}
-            <tr>
-              <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.left?.lineNum ?? ''}</td>
-              <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre">{row.left?.text ?? ''}</td>
-              <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
-              <td class="text-muted-foreground px-2 whitespace-pre">{row.right?.text ?? ''}</td>
-            </tr>
-          {:else}
-            <tr>
-              <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.left ? 'bg-red-950/30' : ''}">{row.left?.lineNum ?? ''}</td>
-              <td class="px-2 border-r border-border/30 whitespace-pre {row.left ? 'bg-red-950/30 text-red-300' : ''}">{row.left?.text ?? ''}</td>
-              <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
-              <td class="px-2 whitespace-pre {row.right ? 'bg-green-950/30 text-green-300' : ''}">{row.right?.text ?? ''}</td>
-            </tr>
-          {/if}
-        {/each}
+        <tbody>
+          {#each rows as row}
+            {#if row.type === 'hunk'}
+              <tr>
+                <td colspan="4" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{row.hunkText}</td>
+              </tr>
+            {:else if row.type === 'context'}
+              <tr>
+                <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.left?.lineNum ?? ''}</td>
+                <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre">{row.left?.text ?? ''}</td>
+                <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
+                <td class="text-muted-foreground px-2 whitespace-pre">{row.right?.text ?? ''}</td>
+              </tr>
+            {:else}
+              <tr>
+                <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.left ? 'bg-red-950/30' : ''}">{row.left?.lineNum ?? ''}</td>
+                <td class="px-2 border-r border-border/30 whitespace-pre {row.left ? 'bg-red-950/30 text-red-300' : ''}">{row.left?.text ?? ''}</td>
+                <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
+                <td class="px-2 whitespace-pre {row.right ? 'bg-green-950/30 text-green-300' : ''}">{row.right?.text ?? ''}</td>
+              </tr>
+            {/if}
+          {/each}
+        </tbody>
       </table>
     </div>
   {:else}
