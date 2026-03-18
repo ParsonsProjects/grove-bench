@@ -17,10 +17,6 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
-  /** If set, this session is a child of the given parent (e.g. orch subtask). */
-  parentSessionId?: string | null;
-  /** If set, this session is the orchestrator for the given job. */
-  orchJobId?: string | null;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
 }
@@ -67,16 +63,6 @@ class SessionStore {
 
   sessionsForRepo(path: string): SessionEntry[] {
     return this.sessions.filter((s) => s.repoPath === path);
-  }
-
-  /** Top-level sessions (no parent) for a repo. */
-  topLevelSessionsForRepo(path: string): SessionEntry[] {
-    return this.sessions.filter((s) => s.repoPath === path && !s.parentSessionId);
-  }
-
-  /** Child sessions of a given parent. */
-  childSessions(parentId: string): SessionEntry[] {
-    return this.sessions.filter((s) => s.parentSessionId === parentId);
   }
 
   repoDisplayName(path: string): string {

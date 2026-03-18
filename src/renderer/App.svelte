@@ -8,7 +8,61 @@
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
   import TitleBar from './components/TitleBar.svelte';
-  import { orchStore } from './stores/orchestration.svelte.js';
+  import SessionContextMenu from './components/SessionContextMenu.svelte';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+
+  let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
+
+  function openContextMenu(e: MouseEvent, sessionId: string) {
+    e.preventDefault();
+    contextMenu = { x: e.clientX, y: e.clientY, sessionId };
+  }
+
+  function getContextMenuItems(sessionId: string) {
+    const session = store.sessions.find(s => s.id === sessionId);
+    if (!session) return [];
+    return [
+      { label: 'Rename', icon: 'rename' as const, action: () => startTabRename(sessionId) },
+      { label: 'Open Folder', icon: 'folder' as const, action: () => window.groveBench.openSessionFolder(sessionId) },
+      { label: 'Close Tab', icon: 'close' as const, action: () => closeTab(sessionId), separator: true },
+      { label: 'Destroy Agent', icon: 'destroy' as const, action: () => closeTab(sessionId), variant: 'destructive' as const },
+    ];
+  }
+
+  let tabRenamingId = $state<string | null>(null);
+  let tabRenameValue = $state('');
+  let tabRenameError = $state<string | null>(null);
+
+  function startTabRename(sessionId: string) {
+    const session = store.sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    tabRenamingId = sessionId;
+    tabRenameValue = session.displayName || session.branch;
+    tabRenameError = null;
+  }
+
+  async function confirmTabRename() {
+    if (!tabRenamingId) return;
+    const newName = tabRenameValue.trim();
+    if (!newName) { tabRenamingId = null; return; }
+    const session = store.sessions.find(s => s.id === tabRenamingId);
+    if (session && newName === (session.displayName || session.branch)) { tabRenamingId = null; return; }
+    try {
+      await window.groveBench.renameSession(tabRenamingId, newName);
+      store.updateDisplayName(tabRenamingId, newName);
+      tabRenamingId = null;
+      tabRenameError = null;
+    } catch (e: any) {
+      tabRenameError = e.message || String(e);
+    }
+  }
+
+  function handleRenameDialogKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') { e.preventDefault(); confirmTabRename(); }
+  }
+
+  let restored = $state(false);
 
   async function restoreWorktrees() {
     const runningSessions = await window.groveBench.listSessions();
@@ -27,17 +81,14 @@
 
           const runningSession = runningMap.get(wt.id);
           const isRunning = !!runningSession;
-          const isChild = !!runningSession?.parentSessionId;
           store.addSession({
             id: wt.id,
             branch: wt.branch,
             repoPath: repo,
             status: isRunning ? 'running' : 'stopped',
             direct: wt.direct,
-            parentSessionId: runningSession?.parentSessionId ?? null,
-            orchJobId: runningSession?.orchJobId ?? null,
             displayName: runningSession?.displayName ?? null,
-          }, false); // don't focus during restore — selection happens after orch patching
+          }, false);
 
           if (isRunning) {
             // Just reattach the window — history replay and subscription
@@ -52,44 +103,21 @@
       }
     }
 
-    // Load persisted orchestration jobs and restore their sidebar sessions
-    await orchStore.loadPersistedJobs();
-    for (const job of orchStore.jobs) {
-      // Restore the planning session
-      if (job.planSessionId && !store.sessions.find((s) => s.id === job.planSessionId)) {
-        const isRunning = runningMap.has(job.planSessionId);
-        store.addSession({
-          id: job.planSessionId,
-          branch: `orch: ${job.goal.slice(0, 40)}`,
-          repoPath: job.repoPath,
-          status: isRunning ? 'running' : 'stopped',
-          orchJobId: job.id,
-        }, false);
-        messageStore.setModeLocal(job.planSessionId, 'orchestrator');
-      }
-
-      // Link subtask sessions back to their orch job
-      for (const task of job.tasks) {
-        if (!task.sessionId) continue;
-        const existing = store.sessions.find((s) => s.id === task.sessionId);
-        if (existing) {
-          // Patch in the parent/orch relationship that was lost on refresh
-          existing.parentSessionId = job.planSessionId;
-        }
-      }
-    }
-
-    // Restore persisted active tab, or leave null (intro screen)
+    // Restore persisted active tab, or fall back to first running session
     const persistedTabId = await window.groveBench.getActiveTab();
     if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
       store.activeSessionId = persistedTabId;
+    } else {
+      const firstRunning = store.sessions.find((s) => s.status === 'running');
+      if (firstRunning) {
+        store.activeSessionId = firstRunning.id;
+      }
     }
+
+    restored = true;
   }
 
   let showSessionFinder = $state(false);
-
-  // Child sessions explicitly opened by the user (click in sidebar)
-  let openedChildSessions = $state<Set<string>>(new Set());
 
   // Track which inactive tabs had a turn complete
   let sessionCompletedWhileInactive = $state<Record<string, boolean>>({});
@@ -107,23 +135,20 @@
     }
   });
 
-  // Clear flash when switching to a session; open tab for child sessions
+  // Clear flash when switching to a session
   $effect(() => {
     const activeId = store.activeSessionId;
     if (activeId && sessionCompletedWhileInactive[activeId]) {
       delete sessionCompletedWhileInactive[activeId];
     }
-    if (activeId) {
-      const session = store.sessions.find((s) => s.id === activeId);
-      if (session?.parentSessionId) {
-        openedChildSessions.add(activeId);
-      }
-    }
   });
 
-  // Persist active tab across restarts
+  // Persist active tab across restarts — skip until restore completes
+  // to avoid overwriting the persisted value with null on hot reload
   $effect(() => {
-    window.groveBench.setActiveTab(store.activeSessionId);
+    if (restored) {
+      window.groveBench.setActiveTab(store.activeSessionId);
+    }
   });
 
   function handleGlobalKeydown(e: KeyboardEvent) {
@@ -191,22 +216,16 @@
 
   async function closeTab(id: string) {
     const session = store.sessions.find((s) => s.id === id);
-    const isOrchChild = session?.parentSessionId?.startsWith('plan_');
-
     // Remove from tab bar immediately (prevents flicker)
-    openedChildSessions.delete(id);
     if (store.activeSessionId === id) {
-      const next = store.sessions.find((s) => s.id !== id && (s.status === 'running' || s.orchJobId));
+      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
       store.activeSessionId = next?.id ?? null;
     }
 
-    if (!isOrchChild) {
-      // Normal session — update status immediately, then stop backend
-      store.updateStatus(id, 'stopped');
-      try {
-        await window.groveBench.stopSession(id);
-      } catch { /* session may already be dead */ }
-    }
+    store.updateStatus(id, 'stopped');
+    try {
+      await window.groveBench.stopSession(id);
+    } catch { /* session may already be dead */ }
   }
 
   onMount(() => {
@@ -222,7 +241,7 @@
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => (!s.parentSessionId || openedChildSessions.has(s.id)) && (s.status === 'running' || s.orchJobId)));
+  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running'));
   let hasTabContent = $derived(openSessions.length > 0);
 </script>
 
@@ -269,7 +288,6 @@
           {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
           {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
           {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
-          {@const orchJob = session.orchJobId ? orchStore.jobs.find(j => j.id === session.orchJobId) : null}
           <button
             draggable="true"
             ondragstart={(e) => handleTabDragStart(e, session.id)}
@@ -279,6 +297,7 @@
             ondragleave={() => { if (dropTargetId === session.id) dropTargetId = null; }}
             onclick={() => { store.activeSessionId = session.id; delete sessionCompletedWhileInactive[session.id]; }}
             onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(session.id); } }}
+            oncontextmenu={(e) => openContextMenu(e, session.id)}
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
               {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
               {hasPending ? 'tab-action-required' : ''}
@@ -294,17 +313,11 @@
             {:else}
               <span class="w-1.5 h-1.5 shrink-0 {running ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
             {/if}
-            {#if orchJob}
-              <svg class="w-3 h-3 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="m4.2 4.2 2.8 2.8"/><path d="m17 17 2.8 2.8"/><path d="m4.2 19.8 2.8-2.8"/><path d="m17 7 2.8-2.8"/></svg>
-            {/if}
             {#if store.repos.length > 1}
               <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
               <span class="text-muted-foreground/40">/</span>
             {/if}
-            <span class="truncate">{session.branch}</span>
-            {#if orchJob && orchJob.tasks.length > 0}
-              <span class="text-[10px] text-muted-foreground/60 shrink-0">{orchJob.tasks.filter(t => t.status === 'completed').length}/{orchJob.tasks.length}</span>
-            {/if}
+            <span class="truncate">{session.displayName || session.branch}</span>
             <span
               role="button"
               tabindex="-1"
@@ -323,7 +336,7 @@
         <!-- Active session -->
         {#each store.sessions as session (session.id)}
           <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-            {#if session.status === 'running' || session.orchJobId}
+            {#if session.status === 'running'}
               <WorkspacePane sessionId={session.id} />
             {:else}
               <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
@@ -362,6 +375,39 @@
 {/if}
 
 <ErrorToast />
+
+{#if contextMenu}
+  <SessionContextMenu
+    x={contextMenu.x}
+    y={contextMenu.y}
+    items={getContextMenuItems(contextMenu.sessionId)}
+    onclose={() => contextMenu = null}
+  />
+{/if}
+
+{#if tabRenamingId}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) tabRenamingId = null; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Rename Agent</Dialog.Title>
+      </Dialog.Header>
+      <input
+        type="text"
+        bind:value={tabRenameValue}
+        onkeydown={handleRenameDialogKeydown}
+        class="w-full text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
+        autofocus
+      />
+      {#if tabRenameError}
+        <span class="text-xs text-destructive">{tabRenameError}</span>
+      {/if}
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => tabRenamingId = null}>Cancel</Button>
+        <Button onclick={confirmTabRename}>Rename</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
 
 <style>
   :global(.tab-flash) {

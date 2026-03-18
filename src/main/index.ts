@@ -3,8 +3,6 @@ import path from 'node:path';
 import { registerHandlers } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
-import { orchestrator } from './orchestrator.js';
-import { cleanupOrphanedContainers } from './docker/docker-utils.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
 import * as settings from './settings.js';
 import { logger } from './logger.js';
@@ -66,15 +64,6 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
-    // Load persisted orchestration jobs
-    orchestrator.loadPersistedJobs(mainWindow!).catch((e) => {
-      logger.warn('Failed to load persisted orchestration jobs:', e);
-    });
-
-    // Clean up any orphaned Docker containers from previous crashes (fire-and-forget)
-    cleanupOrphanedContainers().catch((e) => {
-      logger.debug('Orphaned container cleanup skipped (Docker may not be available):', e);
-    });
   });
 
   mainWindow.on('closed', () => {
@@ -87,18 +76,14 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
-  // Run an initial worktree sweep shortly after launch, then on a configurable interval
+  // Run an initial worktree sweep shortly after launch, then every 15 minutes
   const runSweep = () => {
-    const s = settings.getSettings();
-    if (!s.autoCleanupStaleWorktrees) return;
     worktreeManager.sweepStaleWorktrees().catch((e) => {
       logger.warn('Background worktree sweep failed:', e);
     });
   };
-  const getSweepInterval = () => (settings.getSettings().worktreeCleanupIntervalMinutes || 15) * 60_000;
   setTimeout(runSweep, 10_000); // 10s after launch
-  // Use recursive setTimeout so interval can change with settings
-  const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, getSweepInterval());
+  const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
 });
 
@@ -122,7 +107,6 @@ app.on('before-quit', (event) => {
     (async () => {
       try {
         logger.info(`Cleaning up ${sessionManager.count} sessions...`);
-        await orchestrator.cleanup();
         await sessionManager.destroyAll();
         await new Promise((r) => setTimeout(r, 500));
         await worktreeManager.cleanupAll();

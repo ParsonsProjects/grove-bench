@@ -16,14 +16,11 @@ Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
 const mockGroveBench = {
   onAgentEvent: vi.fn(() => vi.fn()),
   offAgentEvent: vi.fn(),
-  onOrchEvent: vi.fn(() => vi.fn()),
-  offOrchEvent: vi.fn(),
   respondToPermission: vi.fn(),
   setMode: vi.fn(),
   setThinking: vi.fn(),
   revertFile: vi.fn(),
   sendMessage: vi.fn(),
-  listOrchJobs: vi.fn(() => Promise.resolve([])),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
 };

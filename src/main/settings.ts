@@ -16,19 +16,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
 
-  // Orchestration
-  defaultTaskTimeoutMinutes: 10,
-  maxParallelAgents: 5,
-  circuitBreakerThreshold: 50,
-  autoCleanupStaleWorktrees: true,
-  worktreeCleanupIntervalMinutes: 15,
-
-  // Docker/Sandbox
-  enableDockerByDefault: false,
-  sandboxAllowedDomains: [],
-  defaultContainerImage: '',
-  dockerOAuthToken: '',
-
   // Dev Server
   devCommand: '',
 
@@ -49,13 +36,8 @@ function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettin
   return { ...DEFAULT_SETTINGS, ...saved };
 }
 
-function validate(s: GroveBenchSettings): void {
-  if (s.defaultTaskTimeoutMinutes < 1) throw new Error('Task timeout must be at least 1 minute');
-  if (s.maxParallelAgents < 1) throw new Error('Max parallel agents must be at least 1');
-  if (s.circuitBreakerThreshold < 0 || s.circuitBreakerThreshold > 100) {
-    throw new Error('Circuit breaker threshold must be between 0 and 100');
-  }
-  if (s.worktreeCleanupIntervalMinutes < 1) throw new Error('Cleanup interval must be at least 1 minute');
+function validate(_s: GroveBenchSettings): void {
+  // Placeholder for future validation
 }
 
 export function loadSettings(): GroveBenchSettings {

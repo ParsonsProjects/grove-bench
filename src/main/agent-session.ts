@@ -4,7 +4,6 @@ import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from 
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import { killProcessOnPort } from './port-killer.js';
-import { DockerSession } from './docker/docker-session.js';
 import { DevServer } from './dev-server.js';
 import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
@@ -64,10 +63,6 @@ interface ManagedSession {
   toolUseMap: Map<string, string>;
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
-  /** Parent session ID for nesting (orch subtasks). */
-  parentSessionId: string | null;
-  /** Associated orchestration job ID. */
-  orchJobId: string | null;
   /** Permission mode for the SDK query. */
   permissionMode: 'default' | 'plan' | 'acceptEdits';
   /** Extra system prompt appended to the default claude_code preset. */
@@ -84,14 +79,12 @@ interface ManagedSession {
   extraEnv: Record<string, string> | null;
   /** Path to append-only event log on disk. */
   eventLogPath: string;
-  /** Whether this session runs inside a Docker container. */
-  useDocker: boolean;
-  /** Docker session instance (null if not dockerized). */
-  dockerSession: DockerSession | null;
   /** User-assigned display name — shown instead of branch when set. */
   displayName: string | null;
   /** Host-managed dev server instance. */
   devServer: DevServer | null;
+  /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
+  stoppedByUser: boolean;
 }
 
 /**
@@ -168,8 +161,6 @@ class AgentSessionManager {
     window: BrowserWindow;
     resumeClaudeSessionId?: string;
     permissionMode?: 'default' | 'plan' | 'acceptEdits';
-    parentSessionId?: string | null;
-    orchJobId?: string | null;
     appendSystemPrompt?: string | null;
     /** Fully custom system prompt — overrides the claude_code preset entirely. */
     customSystemPrompt?: string | null;
@@ -181,12 +172,6 @@ class AgentSessionManager {
     sandbox?: Record<string, unknown> | null;
     /** Extra environment variables for the SDK query. */
     extraEnv?: Record<string, string> | null;
-    /** Run the SDK query inside a Docker container for isolation. */
-    useDocker?: boolean;
-    /** SDK version string for Docker image tagging. */
-    sdkVersion?: string;
-    /** Auth env var for Docker containers. */
-    dockerAuthEnv?: { key: string; value: string };
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -206,7 +191,6 @@ class AgentSessionManager {
       || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
       || 'default';
     const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
-    const effectiveUseDocker = opts.useDocker ?? appSettings.enableDockerByDefault;
 
     const session: ManagedSession = {
       id,
@@ -228,8 +212,6 @@ class AgentSessionManager {
       detectedPorts: new Set(),
       toolUseMap: new Map(),
       lastResult: null,
-      parentSessionId: opts.parentSessionId ?? null,
-      orchJobId: opts.orchJobId ?? null,
       permissionMode: effectivePermissionMode,
       appendSystemPrompt: effectiveAppendPrompt,
       customSystemPrompt: opts.customSystemPrompt ?? null,
@@ -238,10 +220,9 @@ class AgentSessionManager {
       sandbox: opts.sandbox ?? null,
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
-      useDocker: effectiveUseDocker,
-      dockerSession: null,
       displayName: null,
       devServer: null,
+      stoppedByUser: false,
     };
 
     this.sessions.set(id, session);
@@ -259,7 +240,7 @@ class AgentSessionManager {
         fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
       } catch { /* non-fatal */ }
 
-      // Notify registered listeners (used by orchestrator for progress events)
+      // Notify registered listeners (used for progress events)
       const listeners = this.eventListeners.get(id);
       if (listeners) {
         for (const cb of listeners) {
@@ -277,12 +258,7 @@ class AgentSessionManager {
       }
     };
 
-    if (session.useDocker) {
-      // Docker path: run SDK inside a container
-      this.runDockerSession(session, emit, opts.sdkVersion || '0.2.72', opts.dockerAuthEnv);
-    } else {
-      // In-process path: run SDK directly
-      this.runQuery(session, emit).catch((err) => {
+    this.runQuery(session, emit).catch((err) => {
         console.error(`[runQuery] session=${id} FAILED:`, err);
         const errMsg = String(err.message || err);
         const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
@@ -301,7 +277,6 @@ class AgentSessionManager {
           errCb({ sessionId: id, isError: true });
         }
       });
-    }
 
     return {
       id: session.id,
@@ -311,9 +286,6 @@ class AgentSessionManager {
       status: session.status,
       agentType: session.agentType,
       createdAt: session.createdAt,
-      parentSessionId: session.parentSessionId,
-      orchJobId: session.orchJobId,
-      dockerized: session.useDocker || undefined,
     };
   }
 
@@ -467,6 +439,13 @@ class AgentSessionManager {
     // Kill any dev servers that were detected during this session
     await this.killDetectedPorts(session);
 
+    // If the user clicked Stop, don't mark the session as stopped or fire
+    // process_exit — stopQuery will restart the query loop.
+    if (session.stoppedByUser) {
+      session.stoppedByUser = false;
+      return;
+    }
+
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
@@ -475,7 +454,7 @@ class AgentSessionManager {
       w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
     }
 
-    // Fire completion callback if registered (used by orchestrator)
+    // Fire completion callback if registered
     const cb = this.completionCallbacks.get(id);
     if (cb) {
       this.completionCallbacks.delete(id);
@@ -486,89 +465,6 @@ class AgentSessionManager {
         durationMs: session.lastResult?.durationMs,
       });
     }
-  }
-
-  private runDockerSession(
-    session: ManagedSession,
-    emit: (event: AgentEvent) => void,
-    sdkVersion: string,
-    authEnv?: { key: string; value: string },
-  ): void {
-    const { id, worktreePath } = session;
-
-    const dockerSession = new DockerSession({
-      sessionId: id,
-      worktreePath,
-      repoPath: session.repoPath,
-      sdkVersion,
-      authEnv: authEnv ?? null,
-      systemPrompt: session.customSystemPrompt
-        ? session.customSystemPrompt
-        : session.appendSystemPrompt
-          ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
-          : { type: 'preset', preset: 'claude_code' },
-      permissionMode: session.permissionMode,
-      sandbox: session.sandbox,
-      extraEnv: session.extraEnv,
-      appendSystemPrompt: session.appendSystemPrompt,
-    });
-
-    session.dockerSession = dockerSession;
-
-    // Show a connecting message in the thread while waiting for system_init
-    emit({ type: 'status', message: `Connecting to Claude Code (Docker) — ${session.branch} · ${session.permissionMode}` });
-
-    // Wire SDK messages → handleMessage
-    let messageCount = 0;
-    dockerSession.onMessage = (message) => {
-      if (session.abortController.signal.aborted) return;
-      messageCount++;
-      if (messageCount === 1) {
-        logger.info(`[docker] session=${id} received first SDK message, type=${(message as any)?.type}`);
-      }
-      this.handleMessage(session, message, emit);
-    };
-
-    // Wire container completion
-    dockerSession.onComplete = async (result) => {
-      logger.info(`[docker] session=${id} complete: isError=${result.isError}, error=${result.error ?? 'none'}, messageCount=${messageCount}`);
-
-      // Kill any dev servers that were detected during this session
-      await this.killDetectedPorts(session);
-
-      session.status = 'stopped';
-
-      // Surface container errors to the UI before signalling exit
-      if (result.isError && result.error) {
-        emit({ type: 'error', message: result.error });
-      }
-      if (messageCount === 0 && !result.isError) {
-        emit({ type: 'status', message: 'Docker container exited without producing output' });
-      }
-
-      emit({ type: 'process_exit' });
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
-      }
-
-      // Fire completion callback
-      const cb = this.completionCallbacks.get(id);
-      if (cb) {
-        this.completionCallbacks.delete(id);
-        cb({
-          sessionId: id,
-          isError: result.isError,
-          totalCostUsd: session.lastResult?.totalCostUsd,
-          durationMs: session.lastResult?.durationMs,
-        });
-      }
-    };
-
-    // Start the container
-    dockerSession.start();
-    session.status = 'running';
-    emit({ type: 'status', message: 'Starting Docker container...' });
   }
 
   private handleMessage(
@@ -586,13 +482,6 @@ class AgentSessionManager {
           worktreeManager.saveClaudeSessionId(session.id, message.session_id).catch((e) => {
             logger.warn(`Failed to persist Claude session ID for ${session.id}:`, e);
           });
-          // Also save on the orch job for plan sessions (which have no worktree manifest entry)
-          if (session.id.startsWith('plan_')) {
-            import('./orchestrator.js').then(({ orchestrator }) => {
-              orchestrator.savePlanClaudeSessionId(session.id, message.session_id);
-            }).catch(() => {});
-          }
-
           emit({
             type: 'system_init',
             sessionId: message.session_id,
@@ -924,20 +813,15 @@ class AgentSessionManager {
   sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): boolean {
     const session = this.sessions.get(id);
 
-    // Docker path: send init message to Docker container
-    if (session?.useDocker && session.dockerSession) {
-      session.eventHistory.push({ type: 'user_message', text: content });
-      session.dockerSession.sendInit(content);
-      return true;
-    }
-
     if (!session?.inputController) {
       logger.debug(`[sendMessage] session=${id} no session or inputController`);
       return false;
     }
 
     // Record in event history so user messages survive renderer refresh
-    session.eventHistory.push({ type: 'user_message', text: content });
+    const userEvent: AgentEvent = { type: 'user_message', text: content };
+    session.eventHistory.push(userEvent);
+    try { fs.appendFileSync(session.eventLogPath, JSON.stringify(userEvent) + '\n'); } catch { /* non-fatal */ }
 
     // Build content: plain string when no images, content block array when images attached
     let messageContent: string | Array<Record<string, unknown>> = content;
@@ -1066,6 +950,7 @@ class AgentSessionManager {
       session.detectedPorts.add(info.port);
       const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
       session.eventHistory.push(event);
+      try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
       const w = session.window;
       if (!w.isDestroyed()) {
         w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
@@ -1095,18 +980,77 @@ class AgentSessionManager {
     );
   }
 
+  /**
+   * Stop the current query but keep the session alive so the user can send
+   * follow-up messages without losing state or remounting the UI.
+   */
+  async stopQuery(id: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) return;
+
+    // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
+    session.stoppedByUser = true;
+
+    // Abort the running query
+    session.abortController.abort();
+
+    try { session.inputController?.close(); } catch { /* may already be closed */ }
+    try { session.queryInstance?.close(); } catch { /* may already be closed */ }
+
+    // Resolve any pending permissions as denied
+    for (const [, pending] of session.pendingPermissions) {
+      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
+    }
+    session.pendingPermissions.clear();
+
+    // Set up fresh abort controller and input stream for the next query
+    session.abortController = new AbortController();
+    let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
+    session.inputStream = new ReadableStream<SDKUserMessage>({
+      start(controller) {
+        inputController = controller;
+      },
+    });
+    session.inputController = inputController;
+    session.queryInstance = null;
+
+    // Build the emit helper (same as in createSession)
+    const emit = (event: AgentEvent) => {
+      logger.debug(`[emit] session=${id} event.type=${event.type}`);
+      session.eventHistory.push(event);
+      try {
+        fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
+      } catch { /* non-fatal */ }
+      const listeners = this.eventListeners.get(id);
+      if (listeners) {
+        for (const cb of listeners) {
+          try { cb(event); } catch { /* non-fatal */ }
+        }
+      }
+      const w = session.window;
+      if (!w.isDestroyed()) {
+        const channel = `${IPC.AGENT_EVENT}:${id}`;
+        w.webContents.send(channel, event);
+      }
+    };
+
+    // Start a new query loop — the session stays in the map so sendMessage works
+    this.runQuery(session, emit).catch((err) => {
+      console.error(`[runQuery] session=${id} FAILED after stop:`, err);
+      const errMsg = String(err.message || err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      emit({ type: 'error', message: isAuthError
+        ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+        : errMsg });
+    });
+  }
+
   async destroySession(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
 
     // Abort the query
     session.abortController.abort();
-
-    // Kill Docker container if applicable
-    if (session.dockerSession) {
-      await session.dockerSession.abort();
-      session.dockerSession = null;
-    }
 
     // Close the input stream
     try {
@@ -1156,9 +1100,6 @@ class AgentSessionManager {
       status: s.status,
       agentType: s.agentType,
       createdAt: s.createdAt,
-      parentSessionId: s.parentSessionId,
-      orchJobId: s.orchJobId,
-      dockerized: s.useDocker || undefined,
       displayName: s.displayName,
     }));
   }
@@ -1191,8 +1132,6 @@ class AgentSessionManager {
   closeInputStream(id: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
-    // Docker sessions don't use the input stream — the init message is the only input
-    if (session.useDocker) return;
     if (!session.inputController) return;
     try {
       session.inputController.close();
@@ -1205,7 +1144,7 @@ class AgentSessionManager {
     this.completionCallbacks.set(id, callback);
   }
 
-  /** Register a listener for all events on a session (used by orchestrator for progress). */
+  /** Register a listener for all events on a session. */
   onEvent(id: string, callback: (event: AgentEvent) => void): void {
     const list = this.eventListeners.get(id) ?? [];
     list.push(callback);
@@ -1217,6 +1156,7 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
     session.eventHistory.push(event);
+    try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
     const w = session.window;
     if (!w.isDestroyed()) {
       w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);

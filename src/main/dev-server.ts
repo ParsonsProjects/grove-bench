@@ -1,7 +1,7 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { logger } from './logger.js';
 
-const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/;
+const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g;
 const DETECT_TIMEOUT_MS = 30_000;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -15,7 +15,7 @@ export interface DevServerInfo {
 
 export class DevServer {
   private proc: ChildProcess | null = null;
-  private _port: number | null = null;
+  private detectedPorts = new Set<number>();
 
   constructor(
     private sessionId: string,
@@ -28,8 +28,8 @@ export class DevServer {
     return this.proc !== null && this.proc.exitCode === null;
   }
 
-  get port(): number | null {
-    return this._port;
+  get ports(): Set<number> {
+    return this.detectedPorts;
   }
 
   /** Start the dev server process. Resolves when the URL is detected or after timeout. */
@@ -57,16 +57,12 @@ export class DevServer {
       const handleData = (data: Buffer) => {
         const text = data.toString().replace(ANSI_RE, '');
         logger.debug(`[dev-server] session=${this.sessionId} output: ${text.trim().slice(0, 200)}`);
-        if (this._port) return; // already detected
-        const match = text.match(URL_RE);
-        if (match) {
+        for (const match of text.matchAll(URL_RE)) {
           const port = parseInt(match[1], 10);
-          this._port = port;
+          if (this.detectedPorts.has(port)) continue;
+          this.detectedPorts.add(port);
           const url = `http://localhost:${port}`;
           logger.info(`[dev-server] session=${this.sessionId} detected port ${port}`);
-          // Stop listening — no need to scan further output
-          this.proc?.stdout?.removeListener('data', handleData);
-          this.proc?.stderr?.removeListener('data', handleData);
           this.onDetected({ port, url });
           if (!resolved) {
             resolved = true;

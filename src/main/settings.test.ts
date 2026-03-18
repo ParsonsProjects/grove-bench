@@ -29,8 +29,6 @@ describe('loadSettings', () => {
     mockReadFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
     const s = loadSettings();
     expect(s.defaultPermissionMode).toBe('default');
-    expect(s.maxParallelAgents).toBe(5);
-    expect(s.circuitBreakerThreshold).toBe(50);
     expect(s.theme).toBe('system');
     expect(s.defaultBaseBranch).toBe('main');
     expect(s.alwaysOnTop).toBe(false);
@@ -39,13 +37,10 @@ describe('loadSettings', () => {
   it('merges saved data with defaults so new fields are present', () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       theme: 'dark',
-      maxParallelAgents: 3,
     }));
     const s = loadSettings();
     expect(s.theme).toBe('dark');
-    expect(s.maxParallelAgents).toBe(3);
     expect(s.defaultPermissionMode).toBe('default');
-    expect(s.circuitBreakerThreshold).toBe(50);
   });
 
   it('handles corrupt JSON gracefully', () => {
@@ -67,58 +62,11 @@ describe('getSettings', () => {
   });
 });
 
-describe('saveSettings — validate()', () => {
-  function makeValid(): GroveBenchSettings {
-    return {
-      ...loadSettings(),
-      defaultTaskTimeoutMinutes: 10,
-      maxParallelAgents: 5,
-      circuitBreakerThreshold: 50,
-      worktreeCleanupIntervalMinutes: 15,
-    };
-  }
-
+describe('saveSettings', () => {
   it('saves valid settings', () => {
-    expect(() => saveSettings(makeValid())).not.toThrow();
+    const s = loadSettings();
+    expect(() => saveSettings(s)).not.toThrow();
     expect(mockWriteFileSync).toHaveBeenCalled();
-  });
-
-  it('throws when task timeout < 1', () => {
-    const s = makeValid();
-    s.defaultTaskTimeoutMinutes = 0;
-    expect(() => saveSettings(s)).toThrow('Task timeout must be at least 1 minute');
-  });
-
-  it('throws when maxParallelAgents < 1', () => {
-    const s = makeValid();
-    s.maxParallelAgents = 0;
-    expect(() => saveSettings(s)).toThrow('Max parallel agents must be at least 1');
-  });
-
-  it('throws when circuitBreakerThreshold < 0', () => {
-    const s = makeValid();
-    s.circuitBreakerThreshold = -1;
-    expect(() => saveSettings(s)).toThrow('Circuit breaker threshold must be between 0 and 100');
-  });
-
-  it('throws when circuitBreakerThreshold > 100', () => {
-    const s = makeValid();
-    s.circuitBreakerThreshold = 101;
-    expect(() => saveSettings(s)).toThrow('Circuit breaker threshold must be between 0 and 100');
-  });
-
-  it('accepts circuitBreakerThreshold at boundaries (0 and 100)', () => {
-    const s = makeValid();
-    s.circuitBreakerThreshold = 0;
-    expect(() => saveSettings(s)).not.toThrow();
-    s.circuitBreakerThreshold = 100;
-    expect(() => saveSettings(s)).not.toThrow();
-  });
-
-  it('throws when worktreeCleanupIntervalMinutes < 1', () => {
-    const s = makeValid();
-    s.worktreeCleanupIntervalMinutes = 0;
-    expect(() => saveSettings(s)).toThrow('Cleanup interval must be at least 1 minute');
   });
 });
 

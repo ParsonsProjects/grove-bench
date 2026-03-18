@@ -6,8 +6,20 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let value = $state('');
+  let value = $state(messageStore.getDraft(sessionId));
   let textarea: HTMLTextAreaElement;
+
+  // Sync draft to store whenever value changes
+  $effect(() => {
+    messageStore.setDraft(sessionId, value);
+  });
+
+  // Auto-resize textarea when mounting with a restored draft
+  $effect(() => {
+    if (textarea && value) {
+      autoResize();
+    }
+  });
   let userResized = $state(false);
   let pickerOpen = $state(false);
   let pickerQuery = $state('');

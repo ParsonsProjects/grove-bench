@@ -9,8 +9,6 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
-  parentSessionId?: string | null;
-  orchJobId?: string | null;
 }
 
 function makeSession(overrides: Partial<SessionEntry> = {}): SessionEntry {
@@ -202,24 +200,6 @@ describe('SessionStore', () => {
       const result = store.sessionsForRepo('/repo/a');
       expect(result).toHaveLength(2);
       expect(result.every(s => s.repoPath === '/repo/a')).toBe(true);
-    });
-
-    it('topLevelSessionsForRepo excludes child sessions', () => {
-      store.addSession(makeSession({ id: 's1', repoPath: '/repo/a' }), false);
-      store.addSession(makeSession({ id: 's2', repoPath: '/repo/a', parentSessionId: 's1' }), false);
-
-      const result = store.topLevelSessionsForRepo('/repo/a');
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('s1');
-    });
-
-    it('childSessions returns children of a parent', () => {
-      store.addSession(makeSession({ id: 's1', repoPath: '/repo/a' }), false);
-      store.addSession(makeSession({ id: 's2', repoPath: '/repo/a', parentSessionId: 's1' }), false);
-      store.addSession(makeSession({ id: 's3', repoPath: '/repo/a', parentSessionId: 's1' }), false);
-
-      const children = store.childSessions('s1');
-      expect(children).toHaveLength(2);
     });
 
     it('canRemoveRepo returns true when no sessions', () => {

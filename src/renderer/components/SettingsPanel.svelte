@@ -18,14 +18,13 @@
 
   let { open, onclose }: Props = $props();
 
-  type Tab = 'permissions' | 'agent' | 'orchestration' | 'docker' | 'general' | 'plugins';
+  type Tab = 'permissions' | 'agent' | 'general' | 'plugins';
   let tab = $state<Tab>('permissions');
 
   // Temp input values for adding list items
   let newAllowRule = $state('');
   let newDenyRule = $state('');
   let newWorkingDir = $state('');
-  let newDomain = $state('');
 
   // Plugin search
   let pluginSearch = $state('');
@@ -89,18 +88,9 @@
     newWorkingDir = '';
   }
 
-  function addDomain() {
-    const v = newDomain.trim();
-    if (!v) return;
-    settingsStore.addSandboxDomain(v);
-    newDomain = '';
-  }
-
   const tabs: { id: Tab; label: string }[] = [
     { id: 'permissions', label: 'Permissions' },
     { id: 'agent', label: 'Agent' },
-    { id: 'orchestration', label: 'Orchestration' },
-    { id: 'docker', label: 'Docker' },
     { id: 'general', label: 'General' },
     { id: 'plugins', label: 'Plugins' },
   ];
@@ -124,7 +114,7 @@
     <Dialog.Header>
       <Dialog.Title>Settings</Dialog.Title>
       <Dialog.Description>
-        Configure defaults for agent sessions, permissions, orchestration, plugins, and more.
+        Configure defaults for agent sessions, permissions, plugins, and more.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -324,123 +314,6 @@
               />
               <Button variant="secondary" class="h-[34px] px-3 text-sm" onclick={addWorkingDir}>Add</Button>
             </div>
-          </div>
-        </div>
-
-      {:else if tab === 'orchestration'}
-        <div class="flex flex-col gap-4">
-          <!-- Default Task Timeout -->
-          <div>
-            <Label for="settings-timeout" class="mb-1 block">Default Task Timeout (minutes)</Label>
-            <input
-              id="settings-timeout"
-              type="number"
-              min="1"
-              bind:value={settingsStore.draft.defaultTaskTimeoutMinutes}
-              class="w-32 bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-          </div>
-
-          <!-- Max Parallel Agents -->
-          <div>
-            <Label for="settings-parallel" class="mb-1 block">Max Parallel Agents</Label>
-            <input
-              id="settings-parallel"
-              type="number"
-              min="1"
-              bind:value={settingsStore.draft.maxParallelAgents}
-              class="w-32 bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Maximum number of subtasks running concurrently.</p>
-          </div>
-
-          <!-- Circuit Breaker Threshold -->
-          <div>
-            <Label for="settings-circuit" class="mb-1 block">Circuit Breaker Threshold (%)</Label>
-            <input
-              id="settings-circuit"
-              type="number"
-              min="0"
-              max="100"
-              bind:value={settingsStore.draft.circuitBreakerThreshold}
-              class="w-32 bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Stop orchestration if this percentage of tasks fail. 0 = disabled.</p>
-          </div>
-
-          <Separator />
-
-          <!-- Auto-cleanup Stale Worktrees -->
-          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <Checkbox bind:checked={settingsStore.draft.autoCleanupStaleWorktrees} />
-            Auto-cleanup stale worktrees
-          </label>
-
-          {#if settingsStore.draft.autoCleanupStaleWorktrees}
-            <div>
-              <Label for="settings-cleanup" class="mb-1 block">Cleanup Interval (minutes)</Label>
-              <input
-                id="settings-cleanup"
-                type="number"
-                min="1"
-                bind:value={settingsStore.draft.worktreeCleanupIntervalMinutes}
-                class="w-32 bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
-          {/if}
-        </div>
-
-      {:else if tab === 'docker'}
-        <div class="flex flex-col gap-4">
-          <!-- Enable Docker by Default -->
-          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <Checkbox bind:checked={settingsStore.draft.enableDockerByDefault} />
-            Enable Docker containers by default for subtasks
-          </label>
-
-          <Separator />
-
-          <!-- Sandbox Allowed Domains -->
-          <div>
-            <Label class="mb-1 block">Sandbox Allowed Domains</Label>
-            <p class="text-xs text-muted-foreground mb-2">Network domains accessible from sandboxed sessions.</p>
-            {#if settingsStore.draft.sandboxAllowedDomains.length > 0}
-              <div class="flex flex-wrap gap-1 mb-2">
-                {#each settingsStore.draft.sandboxAllowedDomains as domain, i (i)}
-                  <span class="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-xs">
-                    {domain}
-                    <button onclick={() => settingsStore.removeSandboxDomain(i)} class="text-muted-foreground hover:text-destructive">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                    </button>
-                  </span>
-                {/each}
-              </div>
-            {/if}
-            <div class="flex items-center gap-2">
-              <input
-                type="text"
-                bind:value={newDomain}
-                placeholder="example.com"
-                onkeydown={(e) => { if (e.key === 'Enter') addDomain(); }}
-                class="flex-1 bg-background border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-              <Button variant="secondary" class="h-[34px] px-3 text-sm" onclick={addDomain}>Add</Button>
-            </div>
-          </div>
-
-          <Separator />
-
-          <!-- Default Container Image -->
-          <div>
-            <Label for="settings-image" class="mb-1 block">Default Container Image</Label>
-            <input
-              id="settings-image"
-              type="text"
-              bind:value={settingsStore.draft.defaultContainerImage}
-              placeholder="grove-sandbox (leave empty for auto)"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Override the Docker image used for sandboxed sessions.</p>
           </div>
         </div>
 

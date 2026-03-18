@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { orchStore } from '../stores/orchestration.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
@@ -26,6 +25,7 @@
     }
   }
 
+  let sessionBranch = $derived(store.sessions.find(s => s.id === sessionId)?.branch ?? '');
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
@@ -121,35 +121,17 @@
     if (diff < 3600) return `${Math.round(diff / 60)}m`;
     return `${Math.round(diff / 3600)}h`;
   }
-  // Orchestration
-  let session = $derived(store.sessions.find(s => s.id === sessionId));
-  let orchJob = $derived(session?.orchJobId ? orchStore.jobs.find(j => j.id === session!.orchJobId) : null);
-  let isOrchTerminal = $derived(
-    orchJob?.status === 'completed' || orchJob?.status === 'failed' || orchJob?.status === 'partial_failure' || orchJob?.status === 'cancelled'
-  );
-
-  async function handleCancelOrch() {
-    if (!orchJob) return;
-    try {
-      await window.groveBench.cancelOrchJob(orchJob.id);
-      for (const task of orchJob.tasks) {
-        if (task.status === 'running' || task.status === 'spawning' || task.status === 'pending') {
-          orchStore.updateTaskStatus(orchJob.id, task.id, 'cancelled');
-        }
-      }
-      orchStore.updateJob(orchJob.id, { status: 'cancelled', completedAt: Date.now() });
-    } catch { /* best effort */ }
-  }
-
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
+  let devServersExpanded = $state(false);
   let shortcutsOpen = $state(false);
 
   // Refs for click-outside detection on popovers
   let modelPickerRef = $state<HTMLDivElement | null>(null);
   let tasksRef = $state<HTMLDivElement | null>(null);
   let bgTasksRef = $state<HTMLDivElement | null>(null);
+  let devServersRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
   let shortcutsRef = $state<HTMLDivElement | null>(null);
 
@@ -165,18 +147,16 @@
     default: 'Code',
     plan: 'Plan',
     acceptEdits: 'Edit',
-    orchestrator: 'Orchestrator',
   };
 
   const modeColors: Record<string, string> = {
     default: 'text-green-400 border-green-400/40',
     plan: 'text-yellow-400 border-yellow-400/40',
     acceptEdits: 'text-purple-400 border-purple-400/40',
-    orchestrator: 'text-cyan-400 border-cyan-400/40',
   };
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.altKey && e.key.toLowerCase() === 'm' && mode !== 'orchestrator') {
+    if (e.altKey && e.key.toLowerCase() === 'm') {
       e.preventDefault();
       messageStore.cycleMode(sessionId);
     }
@@ -196,6 +176,9 @@
     }
     if (bgTasksExpanded && bgTasksRef && !bgTasksRef.contains(target)) {
       bgTasksExpanded = false;
+    }
+    if (devServersExpanded && devServersRef && !devServersRef.contains(target)) {
+      devServersExpanded = false;
     }
     if (contextExpanded && contextRef && !contextRef.contains(target)) {
       contextExpanded = false;
@@ -249,32 +232,13 @@
     </div>
   {/if}
 
-  {#if prInfo}
-    <button
-      onclick={() => prInfo && window.groveBench.openExternal(prInfo.url)}
-      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
-      title="Open PR #{prInfo.number} on GitHub"
-    >
-      PR #{prInfo.number}
-    </button>
-  {/if}
-
-  {#if mode === 'orchestrator'}
-    <span
-      class="flex items-center gap-1.5 px-1.5 py-0.5 border {modeColors.orchestrator}"
-      title="Orchestrator session — mode is fixed"
-    >
-      Orchestrator
-    </span>
-  {:else}
-    <button
-      onclick={() => messageStore.cycleMode(sessionId)}
-      class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
-      title="Change mode (Alt+M)"
-    >
-      {modeLabels[mode] ?? mode}
-    </button>
-  {/if}
+  <button
+    onclick={() => messageStore.cycleMode(sessionId)}
+    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
+    title="Change mode (Alt+M)"
+  >
+    {modeLabels[mode] ?? mode}
+  </button>
 
   <button
     onclick={() => messageStore.setThinking(sessionId, !thinking)}
@@ -415,16 +379,6 @@
     </div>
   {/if}
 
-  {#if orchJob && !isOrchTerminal}
-    <button
-      onclick={handleCancelOrch}
-      class="px-1.5 py-0.5 border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors"
-      title="Cancel orchestration job"
-    >
-      Cancel
-    </button>
-  {/if}
-
   {#if lastResult?.totalCostUsd !== undefined}
     <span>${lastResult.totalCostUsd.toFixed(4)}</span>
   {/if}
@@ -433,54 +387,105 @@
     <span>{(lastResult.durationMs / 1000).toFixed(1)}s</span>
   {/if}
 
-  {#if devServers.length > 0}
-    {#each devServers as server}
-      <span class="flex items-center gap-1">
+  <div class="relative" bind:this={devServersRef}>
+    {#if devServers.length > 0}
+      <button
+        onclick={() => devServersExpanded = !devServersExpanded}
+        class="flex items-center gap-1 text-green-400 hover:text-green-300 transition-colors"
+        title="Dev servers — click for details"
+      >
         <span class="w-1.5 h-1.5 bg-green-500"></span>
-        <button
-          onclick={() => window.groveBench.openExternal(server.url)}
-          class="text-green-400 hover:text-green-300 hover:underline transition-colors"
-          title="Open {server.url} in browser"
-        >
-          :{server.port}
-        </button>
-        <button
-          onclick={() => { window.groveBench.killPort(server.port); messageStore.removeDevServer(sessionId, server.port); }}
-          class="text-muted-foreground/40 hover:text-destructive transition-colors"
-          title="Kill server on port {server.port}"
-        >
-          &times;
-        </button>
-      </span>
-    {/each}
-  {:else}
+        {devServers.length === 1
+          ? `:${devServers[0].port}`
+          : `${devServers.length} servers`}
+      </button>
+    {:else}
+      <button
+        onclick={async () => {
+          if (devServerStarting) return;
+          devServerStarting = true;
+          devServerError = null;
+          try {
+            const result = await window.groveBench.startDevServer(sessionId);
+            if (!result) {
+              devServerError = 'Dev server exited before a URL was detected';
+            }
+          } catch (e: any) {
+            devServerError = e?.message ?? 'Failed to start dev server';
+            console.error('Failed to start dev server:', e?.message ?? e);
+          } finally {
+            devServerStarting = false;
+            if (devServerError) {
+              setTimeout(() => { devServerError = null; }, 5000);
+            }
+          }
+        }}
+        class="flex items-center gap-1 text-muted-foreground/60 hover:text-green-400 transition-colors"
+        class:opacity-50={devServerStarting}
+        disabled={devServerStarting}
+        title={devServerError ?? (devServerStarting ? 'Starting dev server...' : 'Start dev server')}
+      >
+        <span class="w-1.5 h-1.5 {devServerError ? 'bg-red-500' : devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
+        {devServerError ? 'Failed' : devServerStarting ? 'Starting...' : 'Dev'}
+      </button>
+    {/if}
+
+    {#if devServersExpanded && devServers.length > 0}
+      <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-72 z-50">
+        <div class="font-medium text-foreground mb-2">Dev Servers ({devServers.length})</div>
+        <div class="space-y-1.5 max-h-48 overflow-y-auto">
+          {#each devServers as server}
+            <div class="flex items-center gap-2 group">
+              <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+              <button
+                onclick={() => window.groveBench.openExternal(server.url)}
+                class="text-green-400 hover:text-green-300 hover:underline transition-colors truncate flex-1 text-left"
+                title="Open in browser"
+              >
+                {server.url}
+              </button>
+              <span class="text-muted-foreground/60 shrink-0">:{server.port}</span>
+              <button
+                onclick={() => { window.groveBench.killPort(server.port); messageStore.removeDevServer(sessionId, server.port); }}
+                class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                title="Kill server on port {server.port}"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+          {/each}
+        </div>
+        <div class="border-t border-border pt-2 mt-2">
+          <button
+            onclick={() => {
+              for (const server of devServers) {
+                window.groveBench.killPort(server.port);
+                messageStore.removeDevServer(sessionId, server.port);
+              }
+              devServersExpanded = false;
+            }}
+            class="w-full text-left px-2 py-1.5 text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            Kill all servers
+          </button>
+        </div>
+      </div>
+    {/if}
+  </div>
+
+  {#if sessionBranch}
+    <span class="text-muted-foreground/70 truncate max-w-40" title={sessionBranch}>
+      {sessionBranch}
+    </span>
+  {/if}
+
+  {#if prInfo}
     <button
-      onclick={async () => {
-        if (devServerStarting) return;
-        devServerStarting = true;
-        devServerError = null;
-        try {
-          const result = await window.groveBench.startDevServer(sessionId);
-          if (!result) {
-            devServerError = 'Dev server exited before a URL was detected';
-          }
-        } catch (e: any) {
-          devServerError = e?.message ?? 'Failed to start dev server';
-          console.error('Failed to start dev server:', e?.message ?? e);
-        } finally {
-          devServerStarting = false;
-          if (devServerError) {
-            setTimeout(() => { devServerError = null; }, 5000);
-          }
-        }
-      }}
-      class="flex items-center gap-1 text-muted-foreground/60 hover:text-green-400 transition-colors"
-      class:opacity-50={devServerStarting}
-      disabled={devServerStarting}
-      title={devServerError ?? (devServerStarting ? 'Starting dev server...' : 'Start dev server')}
+      onclick={() => prInfo && window.groveBench.openExternal(prInfo.url)}
+      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+      title="Open PR #{prInfo.number} on GitHub"
     >
-      <span class="w-1.5 h-1.5 rounded-full {devServerError ? 'bg-red-500' : devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
-      {devServerError ? 'Failed' : devServerStarting ? 'Starting...' : 'Dev'}
+      PR #{prInfo.number}
     </button>
   {/if}
 
@@ -701,7 +706,7 @@
           <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
           <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
           <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
-          <div class="flex justify-between"><span>Plan tab</span><kbd class="text-foreground">Alt+3</kbd></div>
+
         </div>
       </div>
     {/if}

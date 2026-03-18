@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision, OrchCreateOpts, OrchTask } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -68,10 +68,14 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
 
   // File revert & diff (for changes review)
-  revertFile: (sessionId: string, filePath: string) =>
-    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath),
+  revertFile: (sessionId: string, filePath: string, staged?: boolean) =>
+    ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged),
   getFileDiff: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
+
+  // Git status
+  getGitStatus: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_STATUS, sessionId),
 
   // PR info
   getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
@@ -109,46 +113,14 @@ const api: GroveBenchAPI = {
     };
   },
 
-  // Docker
-  checkDocker: () => ipcRenderer.invoke(IPC.DOCKER_CHECK),
-  saveDockerToken: (token: string) => ipcRenderer.invoke(IPC.DOCKER_SAVE_TOKEN, token),
+  // Folder
+  openSessionFolder: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
 
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   saveSettings: (s: import('../shared/types.js').GroveBenchSettings) =>
     ipcRenderer.invoke(IPC.SETTINGS_SAVE, s),
-
-  // Orchestration
-  createOrchJob: (opts: OrchCreateOpts) =>
-    ipcRenderer.invoke(IPC.ORCH_CREATE, opts),
-  approveOrchPlan: (jobId: string, editedTasks?: Partial<OrchTask>[]) =>
-    ipcRenderer.invoke(IPC.ORCH_APPROVE, jobId, editedTasks),
-  cancelOrchJob: (jobId: string) =>
-    ipcRenderer.invoke(IPC.ORCH_CANCEL, jobId),
-  removeOrchJob: (jobId: string) =>
-    ipcRenderer.invoke(IPC.ORCH_REMOVE, jobId),
-  listOrchJobs: () =>
-    ipcRenderer.invoke(IPC.ORCH_LIST),
-  retryOrchTask: (jobId: string, taskId: string) =>
-    ipcRenderer.invoke(IPC.ORCH_RETRY_TASK, jobId, taskId),
-  retryAllOrchTasks: (jobId: string) =>
-    ipcRenderer.invoke(IPC.ORCH_RETRY_ALL, jobId),
-  mergeOrchJob: (jobId: string) =>
-    ipcRenderer.invoke(IPC.ORCH_MERGE, jobId),
-  resolveOrchConflict: (jobId: string, taskId: string) =>
-    ipcRenderer.invoke(IPC.ORCH_RESOLVE_CONFLICT, jobId, taskId),
-  onOrchEvent: (jobId: string, callback: (event: import('../shared/types.js').OrchEvent) => void) => {
-    const channel = `${IPC.ORCH_EVENT}:${jobId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').OrchEvent) =>
-      callback(data);
-    ipcRenderer.on(channel, handler);
-    return () => {
-      ipcRenderer.removeListener(channel, handler);
-    };
-  },
-  offOrchEvent: (jobId: string) => {
-    ipcRenderer.removeAllListeners(`${IPC.ORCH_EVENT}:${jobId}`);
-  },
 
   // App state persistence
   getActiveTab: () => ipcRenderer.invoke(IPC.APP_STATE_GET_ACTIVE_TAB),

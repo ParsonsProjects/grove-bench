@@ -1,4 +1,5 @@
 import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
+import { gitStatusStore } from './gitStatus.svelte.js';
 
 // ─── Chat message types ───
 
@@ -175,14 +176,15 @@ class MessageStore {
   /** Background task tracking per session */
   backgroundTasksBySession = $state<Record<string, Record<string, { taskId: string; description: string; taskType?: string; summary?: string; lastToolName?: string; status: 'running' | 'completed' | 'failed' | 'stopped'; totalTokens: number; toolUses: number; durationMs: number }>>>({});
 
-  /** Files that have been reverted in the changes review panel */
-  revertedFilesBySession = $state<Record<string, Set<string>>>({});
 
   /** Active tab per session (survives component remount) */
   activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan'>>({});
 
   /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
   showDetailsBySession = $state<Record<string, boolean>>({});
+
+  /** Draft input text per session (survives tab switches and component remounts) */
+  draftBySession = $state<Record<string, string>>({});
 
   private cleanups = new Map<string, () => void>();
 
@@ -261,6 +263,14 @@ class MessageStore {
 
   setShowDetails(sessionId: string, show: boolean) {
     this.showDetailsBySession[sessionId] = show;
+  }
+
+  getDraft(sessionId: string): string {
+    return this.draftBySession[sessionId] ?? '';
+  }
+
+  setDraft(sessionId: string, text: string) {
+    this.draftBySession[sessionId] = text;
   }
 
   getDevServers(sessionId: string): { port: number; url: string }[] {
@@ -384,17 +394,10 @@ class MessageStore {
     }));
   }
 
-  /** Check if a file has been reverted */
-  isFileReverted(sessionId: string, filePath: string): boolean {
-    return this.revertedFilesBySession[sessionId]?.has(filePath) ?? false;
-  }
-
-  /** Revert a file via git checkout and track it */
-  async revertFile(sessionId: string, filePath: string) {
-    await window.groveBench.revertFile(sessionId, filePath);
-    const reverted = this.revertedFilesBySession[sessionId] ?? new Set();
-    reverted.add(filePath);
-    this.revertedFilesBySession[sessionId] = new Set(reverted);
+  /** Revert a file via git checkout */
+  async revertFile(sessionId: string, filePath: string, staged?: boolean) {
+    await window.groveBench.revertFile(sessionId, filePath, staged);
+    gitStatusStore.scheduleRefresh(sessionId, 100);
   }
 
   removeDevServer(sessionId: string, port: number) {
@@ -407,15 +410,8 @@ class MessageStore {
     await window.groveBench.setMode(sessionId, mode);
   }
 
-  /** Set mode locally without IPC — used for UI-only modes like 'orchestrator'. */
-  setModeLocal(sessionId: string, mode: PermissionMode) {
-    this.modeBySession[sessionId] = mode;
-  }
-
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    // Orchestrator mode is fixed — don't cycle
-    if (current === 'orchestrator') return;
     const modes = ['default', 'plan', 'acceptEdits'] as const;
     const idx = modes.indexOf(current as typeof modes[number]);
     const next = modes[(idx + 1) % modes.length];
@@ -613,6 +609,13 @@ class MessageStore {
             ];
           }
         }
+        // Refresh git status after file-modifying tool calls
+        if (idx >= 0) {
+          const toolCall = this.messagesBySession[sessionId]?.[idx] as ChatToolCallMessage | undefined;
+          if (toolCall && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(toolCall.toolName)) {
+            gitStatusStore.scheduleRefresh(sessionId, 300);
+          }
+        }
         break;
       }
 
@@ -676,6 +679,7 @@ class MessageStore {
           isError: event.isError,
           errors: event.errors,
         });
+        gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
 
       case 'error':
@@ -762,6 +766,7 @@ class MessageStore {
         this.streamingThinking[sessionId] = '';
         this.isRunning[sessionId] = false;
         this.activityBySession[sessionId] = { activity: 'idle' };
+        gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
 
       case 'rate_limit':
@@ -841,6 +846,13 @@ class MessageStore {
           id: nextId(),
           text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
         });
+        // Auto-remove finished tasks after a short delay
+        if (event.taskStatus !== 'running') {
+          const taskId = event.taskId;
+          setTimeout(() => {
+            this.removeBackgroundTask(sessionId, taskId);
+          }, 3000);
+        }
         break;
       }
 

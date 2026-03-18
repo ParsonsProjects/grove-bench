@@ -9,15 +9,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   extendedThinking: false,
   workingDirectories: [],
   defaultSystemPromptAppend: '',
-  defaultTaskTimeoutMinutes: 10,
-  maxParallelAgents: 5,
-  circuitBreakerThreshold: 50,
-  autoCleanupStaleWorktrees: true,
-  worktreeCleanupIntervalMinutes: 15,
-  enableDockerByDefault: false,
-  sandboxAllowedDomains: [],
-  defaultContainerImage: '',
-  dockerOAuthToken: '',
   devCommand: '',
   defaultBaseBranch: 'main',
   theme: 'system',
@@ -93,13 +84,6 @@ class SettingsStore {
     this.draft.workingDirectories = this.draft.workingDirectories.filter((_, i) => i !== index);
   }
 
-  addSandboxDomain(domain: string) {
-    this.draft.sandboxAllowedDomains = [...this.draft.sandboxAllowedDomains, domain];
-  }
-
-  removeSandboxDomain(index: number) {
-    this.draft.sandboxAllowedDomains = this.draft.sandboxAllowedDomains.filter((_, i) => i !== index);
-  }
 }
 
 export const settingsStore = new SettingsStore();

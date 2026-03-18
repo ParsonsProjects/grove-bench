@@ -13,15 +13,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   extendedThinking: false,
   workingDirectories: [],
   defaultSystemPromptAppend: '',
-  defaultTaskTimeoutMinutes: 10,
-  maxParallelAgents: 5,
-  circuitBreakerThreshold: 50,
-  autoCleanupStaleWorktrees: true,
-  worktreeCleanupIntervalMinutes: 15,
-  enableDockerByDefault: false,
-  sandboxAllowedDomains: [],
-  defaultContainerImage: '',
-  dockerOAuthToken: '',
   devCommand: '',
   defaultBaseBranch: 'main',
   theme: 'system',
@@ -50,7 +41,7 @@ describe('dirty', () => {
 
 describe('reset', () => {
   it('reverts draft to current', () => {
-    settingsStore.draft = { ...settingsStore.draft, theme: 'dark', maxParallelAgents: 10 };
+    settingsStore.draft = { ...settingsStore.draft, theme: 'dark' };
     expect(settingsStore.dirty).toBe(true);
 
     settingsStore.reset();
@@ -157,13 +148,4 @@ describe('working directories', () => {
   });
 });
 
-describe('sandbox domains', () => {
-  it('add and remove', () => {
-    settingsStore.addSandboxDomain('example.com');
-    expect(settingsStore.draft.sandboxAllowedDomains).toContain('example.com');
 
-    settingsStore.addSandboxDomain('api.com');
-    settingsStore.removeSandboxDomain(0);
-    expect(settingsStore.draft.sandboxAllowedDomains).toEqual(['api.com']);
-  });
-});

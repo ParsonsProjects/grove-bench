@@ -618,11 +618,6 @@ describe('cycleMode', () => {
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
-  it('does not cycle orchestrator mode', () => {
-    messageStore.modeBySession[SID] = 'orchestrator';
-    messageStore.cycleMode(SID);
-    expect(messageStore.getMode(SID)).toBe('orchestrator');
-  });
 });
 
 describe('sendCommand', () => {
