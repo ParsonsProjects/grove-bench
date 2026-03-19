@@ -9,7 +9,9 @@ import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, g
 import { parseGitStatusPorcelain } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
+import { terminalManager } from './terminal.js';
 import * as settings from './settings.js';
+import * as memory from './memory.js';
 import { loadAppState, saveActiveTab } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -163,7 +165,9 @@ export function registerHandlers() {
           logger.info(`npm install completed for worktree ${worktree.id}`);
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+            const stderr = (e as any).stderr || (e as any).message || String(e);
             logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
+            emitPrelaunch({ type: 'error', message: `npm install failed:\n${stderr}` });
           }
         }
 
@@ -235,6 +239,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
+    await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
     logger.info(`Session destroyed: id=${id}`);
@@ -301,8 +306,8 @@ export function registerHandlers() {
     return sessionManager.setThinking(sessionId, enabled);
   });
 
-  ipcMain.on(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
-    sessionManager.respondToPermission(sessionId, decision);
+  ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
+    return sessionManager.respondToPermission(sessionId, decision);
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
@@ -538,6 +543,40 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
     await execa('claude', ['plugin', 'disable', pluginId]);
+  });
+
+  // ─── Memory ───
+
+  ipcMain.handle(IPC.MEMORY_LIST, (_event, repoPath: string) => {
+    return memory.listMemoryFiles(repoPath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_READ, (_event, repoPath: string, relativePath: string) => {
+    return memory.readMemoryFile(repoPath, relativePath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_WRITE, (_event, repoPath: string, relativePath: string, content: string) => {
+    memory.writeMemoryFile(repoPath, relativePath, content);
+  });
+
+  ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
+    return memory.deleteMemoryFile(repoPath, relativePath);
+  });
+
+  // ─── Shell / Terminal ───
+
+  ipcMain.handle(IPC.SHELL_RUN, (event, sessionId: string, command: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    return terminalManager.spawnCommand(sessionId, command, worktree.path, event.sender);
+  });
+
+  ipcMain.handle(IPC.SHELL_KILL, (_event, execId: string) => {
+    terminalManager.killExecution(execId);
+  });
+
+  ipcMain.on(IPC.SHELL_INPUT, (_event, execId: string, data: string) => {
+    terminalManager.sendInput(execId, data);
   });
 
   // ─── Settings ───

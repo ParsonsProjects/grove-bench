@@ -112,6 +112,15 @@ export type AgentEvent =
   // Permission mode sync (from SDK status messages)
   | { type: 'mode_sync'; mode: PermissionMode };
 
+// ─── Shell / Terminal ───
+
+export interface ShellOutputEvent {
+  execId: string;
+  stream: 'stdout' | 'stderr' | 'exit';
+  data?: string;
+  exitCode?: number;
+}
+
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
@@ -220,7 +229,7 @@ export interface GroveBenchAPI {
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
-  respondToPermission(sessionId: string, decision: PermissionDecision): void;
+  respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -275,6 +284,18 @@ export interface GroveBenchAPI {
   // Folder
   openSessionFolder(sessionId: string): Promise<void>;
 
+  // Memory
+  memoryList(repoPath: string): Promise<MemoryEntry[]>;
+  memoryRead(repoPath: string, relativePath: string): Promise<string | null>;
+  memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
+  memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
+
+  // Shell / Terminal
+  shellRun(sessionId: string, command: string): Promise<string>;
+  shellKill(execId: string): Promise<void>;
+  shellInput(execId: string, data: string): void;
+  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
+
   // Settings
   getSettings(): Promise<GroveBenchSettings>;
   saveSettings(settings: GroveBenchSettings): Promise<void>;
@@ -322,6 +343,15 @@ export interface GroveBenchSettings {
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+}
+
+// ─── Memory ───
+
+export interface MemoryEntry {
+  relativePath: string;  // e.g. "repo/overview.md"
+  title: string;         // from frontmatter
+  updatedAt: string;     // ISO date from frontmatter
+  folder: string;        // e.g. "repo", "conventions", "sessions"
 }
 
 // ─── IPC Channel Names ───
@@ -376,4 +406,12 @@ export const IPC = {
   APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
   APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
   OPEN_SESSION_FOLDER: 'session:openFolder',
+  MEMORY_LIST: 'memory:list',
+  MEMORY_READ: 'memory:read',
+  MEMORY_WRITE: 'memory:write',
+  MEMORY_DELETE: 'memory:delete',
+  SHELL_RUN: 'shell:run',
+  SHELL_KILL: 'shell:kill',
+  SHELL_INPUT: 'shell:input',
+  SHELL_OUTPUT: 'shell:output',
 } as const;

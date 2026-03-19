@@ -11,6 +11,7 @@
     result,
     isError,
     pending,
+    summaryMode = false,
   }: {
     sessionId: string;
     toolName: string;
@@ -18,13 +19,14 @@
     result?: string;
     isError?: boolean;
     pending: boolean;
+    summaryMode?: boolean;
   } = $props();
 </script>
 
 {#if toolName === 'Bash'}
   <BashBlock {toolInput} {result} {isError} {pending} />
 {:else if toolName === 'Edit' || toolName === 'Write'}
-  <DiffBlock {sessionId} {toolName} {toolInput} {result} {pending} {isError} />
+  <DiffBlock {sessionId} {toolName} {toolInput} {result} {pending} {isError} {summaryMode} />
 {:else if toolName === 'Read' || toolName === 'Grep' || toolName === 'Glob'}
   <FileOpBlock {sessionId} {toolName} {toolInput} {result} {pending} {isError} />
 {:else}

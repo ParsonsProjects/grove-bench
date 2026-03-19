@@ -178,7 +178,7 @@ class MessageStore {
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan' | 'terminal'>>({});
 
   /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
   showDetailsBySession = $state<Record<string, boolean>>({});
@@ -252,11 +252,11 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' | 'terminal' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan' | 'terminal') {
     this.activeTabBySession[sessionId] = tab;
   }
 
@@ -576,21 +576,32 @@ class MessageStore {
         break;
 
       case 'tool_result': {
-        // Find the matching tool_call and update it
+        // Build a single updated array that handles both the tool_call result
+        // and any matching permission/question resolution in one pass.
         const msgs = this.messagesBySession[sessionId] ?? [];
-        const idx = msgs.findIndex(
-          (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
-        );
-        if (idx >= 0) {
-          const updated = { ...(msgs[idx] as ChatToolCallMessage) };
-          updated.result = event.content;
-          updated.isError = event.isError;
-          updated.pending = false;
-          this.messagesBySession[sessionId] = [
-            ...msgs.slice(0, idx),
-            updated,
-            ...msgs.slice(idx + 1),
-          ];
+        let changed = false;
+        let matchedToolName: string | undefined;
+        const updated = msgs.map((m) => {
+          // Update the matching tool_call
+          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
+            changed = true;
+            matchedToolName = m.toolName;
+            return { ...m, result: event.content, isError: event.isError, pending: false };
+          }
+          // Also mark any matching unresolved permission as resolved (handles replay)
+          if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const, decision: (event.isError ? 'deny' : 'allow') as 'allow' | 'deny' };
+          }
+          // Also mark any matching unresolved question as resolved (handles replay)
+          if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const };
+          }
+          return m;
+        });
+        if (changed) {
+          this.messagesBySession[sessionId] = updated;
         }
         // Clear tool progress for this tool
         const prog = this.toolProgressBySession[sessionId];
@@ -598,38 +609,9 @@ class MessageStore {
           delete prog[event.toolUseId];
           this.toolProgressBySession[sessionId] = { ...prog };
         }
-        // Also mark any matching permission or question request as resolved (handles replay after refresh)
-        const msgs2 = this.messagesBySession[sessionId] ?? [];
-        const interactiveIdx = msgs2.findIndex(
-          (m) => (m.kind === 'permission' || m.kind === 'question') && m.toolUseId === event.toolUseId && !m.resolved,
-        );
-        if (interactiveIdx >= 0) {
-          const msg = msgs2[interactiveIdx];
-          if (msg.kind === 'permission') {
-            const updated = { ...(msg as ChatPermissionMessage) };
-            updated.resolved = true;
-            updated.decision = event.isError ? 'deny' : 'allow';
-            this.messagesBySession[sessionId] = [
-              ...msgs2.slice(0, interactiveIdx),
-              updated,
-              ...msgs2.slice(interactiveIdx + 1),
-            ];
-          } else if (msg.kind === 'question') {
-            const updated = { ...(msg as ChatQuestionMessage) };
-            updated.resolved = true;
-            this.messagesBySession[sessionId] = [
-              ...msgs2.slice(0, interactiveIdx),
-              updated,
-              ...msgs2.slice(interactiveIdx + 1),
-            ];
-          }
-        }
         // Refresh git status after file-modifying tool calls
-        if (idx >= 0) {
-          const toolCall = this.messagesBySession[sessionId]?.[idx] as ChatToolCallMessage | undefined;
-          if (toolCall && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(toolCall.toolName)) {
-            gitStatusStore.scheduleRefresh(sessionId, 300);
-          }
+        if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(matchedToolName)) {
+          gitStatusStore.scheduleRefresh(sessionId, 300);
         }
         break;
       }
@@ -704,6 +686,12 @@ class MessageStore {
           id: nextId(),
           text: event.message,
         });
+        // If the session never initialized (system_init never arrived),
+        // unlock the input so the user can see the error and retry.
+        if (!this.isReady[sessionId]) {
+          this.isReady[sessionId] = true;
+          this.isRunning[sessionId] = false;
+        }
         break;
 
       case 'status':
@@ -780,6 +768,10 @@ class MessageStore {
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
         this.isRunning[sessionId] = false;
+        // If the agent exited before system_init, unlock the input
+        if (!this.isReady[sessionId]) {
+          this.isReady[sessionId] = true;
+        }
         this.activityBySession[sessionId] = { activity: 'idle' };
         gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
@@ -992,30 +984,44 @@ class MessageStore {
     window.groveBench.respondToPermission(sessionId, permDecision);
   }
 
-  /** Resolve a permission request in the UI */
-  resolvePermission(
+  /** Resolve a permission request in the UI.
+   *  Returns false if the permission was already resolved or timed out on the
+   *  main process side (e.g. the 30-minute timeout expired). */
+  async resolvePermission(
     sessionId: string,
     requestId: string,
     decision: 'allow' | 'deny' | 'allowAlways',
     opts?: { message?: string; updatedPermissions?: unknown[] },
-  ) {
+  ): Promise<boolean> {
+    console.debug('[resolvePermission] start', { sessionId, requestId, decision });
+
     const msgs = this.messagesBySession[sessionId] ?? [];
     const idx = msgs.findIndex(
       (m) => m.kind === 'permission' && m.requestId === requestId,
     );
 
-    // Capture the tool name before resolving, so we can sync mode
+    console.debug('[resolvePermission] findIndex result:', idx, 'total msgs:', msgs.length);
+
+    // Guard: if already resolved in the UI, ignore the duplicate click
     let toolName: string | undefined;
     if (idx >= 0) {
-      const msg = msgs[idx] as ChatPermissionMessage;
-      toolName = msg.toolName;
-      msg.resolved = true;
-      msg.decision = decision === 'deny' ? 'deny' : 'allow';
-    }
-
-    // When "Always Allow" is used on Edit/Write, sync mode to acceptEdits
-    if (decision === 'allowAlways' && toolName && (toolName === 'Edit' || toolName === 'Write')) {
-      this.modeBySession[sessionId] = 'acceptEdits';
+      const existing = msgs[idx] as ChatPermissionMessage;
+      if (existing.resolved) {
+        console.debug('[resolvePermission] already resolved, skipping');
+        return false;
+      }
+      toolName = existing.toolName;
+      // Mark resolved immediately with a new array ref so Svelte reactivity
+      // picks it up — clears the orange tab/sidebar indicators right away.
+      const updated = { ...existing, resolved: true as const, decision: (decision === 'deny' ? 'deny' : 'allow') as 'allow' | 'deny' };
+      this.messagesBySession[sessionId] = [
+        ...msgs.slice(0, idx),
+        updated,
+        ...msgs.slice(idx + 1),
+      ];
+      console.debug('[resolvePermission] UI updated to resolved');
+    } else {
+      console.warn('[resolvePermission] permission message NOT FOUND in store for requestId:', requestId);
     }
 
     const permDecision: PermissionDecision = {
@@ -1024,7 +1030,44 @@ class MessageStore {
       message: decision === 'deny' ? (opts?.message || 'User denied permission') : undefined,
       updatedPermissions: opts?.updatedPermissions,
     };
-    window.groveBench.respondToPermission(sessionId, permDecision);
+
+    // Ask main process — returns false if the pending permission no longer exists
+    let accepted: boolean;
+    try {
+      console.debug('[resolvePermission] sending IPC...');
+      accepted = await window.groveBench.respondToPermission(sessionId, permDecision);
+      console.debug('[resolvePermission] IPC returned:', accepted);
+    } catch (e) {
+      console.error('[resolvePermission] IPC call failed:', e);
+      accepted = false;
+    }
+
+    // If main rejected (stale/timed-out), override to denied.
+    // Re-find by requestId since the array may have shifted during the await.
+    if (!accepted) {
+      console.warn('[resolvePermission] main process rejected permission', requestId);
+      const current = this.messagesBySession[sessionId] ?? [];
+      const currentIdx = current.findIndex(
+        (m) => m.kind === 'permission' && m.requestId === requestId,
+      );
+      if (currentIdx >= 0) {
+        const msg = current[currentIdx] as ChatPermissionMessage;
+        const denied = { ...msg, resolved: true as const, decision: 'deny' as const };
+        this.messagesBySession[sessionId] = [
+          ...current.slice(0, currentIdx),
+          denied,
+          ...current.slice(currentIdx + 1),
+        ];
+      }
+      return false;
+    }
+
+    // When "Always Allow" is used on Edit/Write, sync mode to acceptEdits
+    if (decision === 'allowAlways' && toolName && (toolName === 'Edit' || toolName === 'Write')) {
+      this.modeBySession[sessionId] = 'acceptEdits';
+    }
+
+    return true;
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.

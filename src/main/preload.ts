@@ -33,7 +33,7 @@ const api: GroveBenchAPI = {
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
     ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
-    ipcRenderer.send(IPC.AGENT_PERMISSION, sessionId, decision),
+    ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
@@ -116,6 +116,32 @@ const api: GroveBenchAPI = {
   // Folder
   openSessionFolder: (sessionId: string) =>
     ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
+
+  // Memory
+  memoryList: (repoPath: string) => ipcRenderer.invoke(IPC.MEMORY_LIST, repoPath),
+  memoryRead: (repoPath: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_READ, repoPath, relativePath),
+  memoryWrite: (repoPath: string, relativePath: string, content: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_WRITE, repoPath, relativePath, content),
+  memoryDelete: (repoPath: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
+
+  // Shell / Terminal
+  shellRun: (sessionId: string, command: string) =>
+    ipcRenderer.invoke(IPC.SHELL_RUN, sessionId, command),
+  shellKill: (execId: string) =>
+    ipcRenderer.invoke(IPC.SHELL_KILL, execId),
+  shellInput: (execId: string, data: string) =>
+    ipcRenderer.send(IPC.SHELL_INPUT, execId, data),
+  onShellOutput: (sessionId: string, callback: (event: import('../shared/types.js').ShellOutputEvent) => void) => {
+    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').ShellOutputEvent) =>
+      callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
 
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),

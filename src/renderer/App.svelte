@@ -234,6 +234,17 @@
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);
+      if (status === 'running') {
+        // SESSION_STATUS 'running' fires when system_init arrives on the main side.
+        // Ensure the input unlocks even if system_init was missed due to a
+        // subscribe/replay race. system_init will fill in model/tools info
+        // when it arrives; this just guarantees the input is usable.
+        messageStore.isReady[sessionId] = true;
+        messageStore.isRunning[sessionId] = false;
+      } else if (status === 'error') {
+        messageStore.isReady[sessionId] = true;
+        messageStore.isRunning[sessionId] = false;
+      }
     });
     return () => {
       unsub();
@@ -241,7 +252,7 @@
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing'));
+  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error'));
   let hasTabContent = $derived(openSessions.length > 0);
 </script>
 
@@ -304,7 +315,9 @@
               {dragTabId === session.id ? 'opacity-40' : ''}
               {isDragOver ? 'border-l-2 border-l-primary' : ''}"
           >
-            {#if session.status === 'starting' || session.status === 'installing'}
+            {#if session.status === 'error'}
+              <span class="w-2 h-2 shrink-0 bg-red-500"></span>
+            {:else if session.status === 'starting' || session.status === 'installing'}
               <span class="w-2 h-2 shrink-0 bg-yellow-500 animate-pulse"></span>
             {:else if hasPending}
               <span class="w-2 h-2 shrink-0 bg-orange-500 animate-pulse"></span>
@@ -338,7 +351,7 @@
         <!-- Active session -->
         {#each store.sessions as session (session.id)}
           <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-            {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing'}
+            {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
               <WorkspacePane sessionId={session.id} />
             {:else}
               <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">

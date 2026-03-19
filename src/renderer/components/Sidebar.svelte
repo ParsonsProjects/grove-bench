@@ -8,6 +8,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import SettingsPanel from './SettingsPanel.svelte';
+  import MemoryPanel from './MemoryPanel.svelte';
   import SessionContextMenu from './SessionContextMenu.svelte';
 
   let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
@@ -29,6 +30,7 @@
 
   let showNewAgent = $state(false);
   let showSettings = $state(false);
+  let showMemory = $state(false);
   let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<string | null>(null);
@@ -241,6 +243,15 @@
         + Agent
       </Button>
       <Button
+        onclick={() => showMemory = true}
+        variant="ghost"
+        size="sm"
+        class="px-2 shrink-0"
+        title="Project Memory"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+      </Button>
+      <Button
         onclick={() => showSettings = true}
         variant="ghost"
         size="sm"
@@ -258,6 +269,7 @@
 {/if}
 
 <SettingsPanel open={showSettings} onclose={() => showSettings = false} />
+<MemoryPanel open={showMemory} onclose={() => showMemory = false} />
 
 {#if contextMenu}
   <SessionContextMenu

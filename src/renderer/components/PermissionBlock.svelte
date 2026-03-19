@@ -27,6 +27,10 @@
   let expanded = $state(false);
   let sideBySide = $state(false);
   let replyText = $state('');
+  let submitting = $state(false);
+  /** Local fallback: tracks the decision we made locally in case
+   *  the store update doesn't propagate back through props. */
+  let localDecision = $state<'allow' | 'deny' | null>(null);
 
   let input = $derived(toolInput as Record<string, unknown>);
   let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
@@ -38,37 +42,76 @@
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
 
-  function approve() {
-    messageStore.resolvePermission(sessionId, requestId, 'allow');
+  async function approve() {
+    if (submitting) return;
+    submitting = true;
+    localDecision = 'allow';
+    try {
+      await messageStore.resolvePermission(sessionId, requestId, 'allow');
+    } catch (e) {
+      console.error('[PermissionBlock] approve failed:', e);
+      submitting = false;
+    }
   }
 
-  function approveAlways() {
-    messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
+  async function approveAlways() {
+    if (submitting) return;
+    submitting = true;
+    localDecision = 'allow';
+    try {
+      await messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
+    } catch (e) {
+      console.error('[PermissionBlock] approveAlways failed:', e);
+      submitting = false;
+    }
   }
 
   /** Execute and clear — allow with SDK suggestions to exit plan mode */
-  function approveAndClear() {
-    messageStore.resolvePermission(sessionId, requestId, 'allow', {
-      updatedPermissions: suggestions,
-    });
+  async function approveAndClear() {
+    if (submitting) return;
+    submitting = true;
+    localDecision = 'allow';
+    try {
+      await messageStore.resolvePermission(sessionId, requestId, 'allow', {
+        updatedPermissions: suggestions,
+      });
+    } catch (e) {
+      console.error('[PermissionBlock] approveAndClear failed:', e);
+      submitting = false;
+    }
   }
 
   /** Clear the conversation and re-send the plan as a fresh prompt */
-  function clearAndExecute() {
-    if (!planText) return;
-    const prompt = `Execute the following plan:\n\n${planText}`;
-    messageStore.resolvePermission(sessionId, requestId, 'deny', { message: 'Clearing and restarting with the plan.' });
-    messageStore.clearAndSend(sessionId, prompt);
+  async function clearAndExecute() {
+    if (!planText || submitting) return;
+    submitting = true;
+    localDecision = 'deny';
+    try {
+      const prompt = `Execute the following plan:\n\n${planText}`;
+      await messageStore.resolvePermission(sessionId, requestId, 'deny', { message: 'Clearing and restarting with the plan.' });
+      messageStore.clearAndSend(sessionId, prompt);
+    } catch (e) {
+      console.error('[PermissionBlock] clearAndExecute failed:', e);
+      submitting = false;
+    }
   }
 
-  function deny(message?: string) {
-    messageStore.resolvePermission(sessionId, requestId, 'deny', { message });
+  async function deny(message?: string) {
+    if (submitting) return;
+    submitting = true;
+    localDecision = 'deny';
+    try {
+      await messageStore.resolvePermission(sessionId, requestId, 'deny', { message });
+    } catch (e) {
+      console.error('[PermissionBlock] deny failed:', e);
+      submitting = false;
+    }
   }
 
-  function sendReply() {
+  async function sendReply() {
     const text = replyText.trim();
     if (!text) return;
-    deny(text);
+    await deny(text);
     replyText = '';
   }
 
@@ -118,15 +161,20 @@
     return parts.join('\n\n');
   });
 
+  /** Effective resolved state — true if store says resolved OR we clicked a button locally */
+  let isResolved = $derived(resolved || localDecision !== null);
+  /** Effective decision — prefer store decision, fall back to local */
+  let effectiveDecision = $derived(decision ?? localDecision);
+
   let borderColor = $derived(
-    resolved
-      ? (decision === 'allow' ? 'border-green-400' : 'border-destructive')
+    isResolved
+      ? (effectiveDecision === 'allow' ? 'border-green-400' : 'border-destructive')
       : 'border-amber-500'
   );
 
   let labelColor = $derived(
-    resolved
-      ? (decision === 'allow' ? 'text-green-400' : 'text-destructive')
+    isResolved
+      ? (effectiveDecision === 'allow' ? 'text-green-400' : 'text-destructive')
       : 'text-amber-500'
   );
 </script>
@@ -144,7 +192,7 @@
     {:else if !isBashTool}
       <span class="text-muted-foreground truncate flex-1">{summarizeInput(toolInput)}</span>
     {/if}
-    {#if !resolved && isEditTool && diffLines.length > 0 && toolName === 'Edit'}
+    {#if !isResolved && isEditTool && diffLines.length > 0 && toolName === 'Edit'}
       <button
         onclick={() => sideBySide = !sideBySide}
         class="text-xs text-muted-foreground hover:text-foreground select-none shrink-0"
@@ -169,7 +217,7 @@
   {/if}
 
   <!-- Inline diff preview for Edit/Write (only while awaiting approval) -->
-  {#if !resolved && isEditTool && diffLines.length > 0}
+  {#if !isResolved && isEditTool && diffLines.length > 0}
     <div class="mt-1">
       <DiffView lines={diffLines} {sideBySide} maxHeight="200px" />
     </div>
@@ -201,30 +249,30 @@
     {/if}
   {/if}
 
-  {#if resolved}
-    <div class="text-xs mt-1 {decision === 'allow' ? 'text-green-400' : 'text-destructive'}">
+  {#if isResolved}
+    <div class="text-xs mt-1 {effectiveDecision === 'allow' ? 'text-green-400' : 'text-destructive'}">
       {#if isExitPlanMode}
-        {decision === 'allow' ? 'plan executed' : 'kept planning'}
+        {effectiveDecision === 'allow' ? 'plan executed' : 'kept planning'}
       {:else}
-        {decision === 'allow' ? 'allowed' : 'denied'}
+        {effectiveDecision === 'allow' ? 'allowed' : 'denied'}
       {/if}
     </div>
   {:else}
     {#if isExitPlanMode}
       <div class="flex gap-2 mt-2 flex-wrap">
         {#if suggestions && suggestions.length > 0}
-          <Button variant="outline" size="sm" onclick={approveAndClear} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          <Button variant="outline" size="sm" onclick={approveAndClear} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
             Execute and clear
           </Button>
         {/if}
-        <Button variant="outline" size="sm" onclick={approve} class="text-green-400 border-green-600 hover:bg-green-900/30">
+        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
           Execute
         </Button>
-        <Button variant="outline" size="sm" onclick={() => deny()} class="text-destructive border-destructive hover:bg-destructive/10">
+        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
           No
         </Button>
         {#if planText}
-          <Button variant="outline" size="sm" onclick={clearAndExecute} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+          <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
             Clear &amp; Execute
           </Button>
         {/if}
@@ -249,13 +297,13 @@
       </div>
     {:else}
       <div class="flex gap-2 mt-2">
-        <Button variant="outline" size="sm" onclick={approve} class="text-green-400 border-green-600 hover:bg-green-900/30">
+        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
           Allow
         </Button>
-        <Button variant="outline" size="sm" onclick={approveAlways} class="text-green-400 border-green-600 hover:bg-green-900/30">
+        <Button variant="outline" size="sm" onclick={approveAlways} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
           Always Allow
         </Button>
-        <Button variant="outline" size="sm" onclick={() => deny()} class="text-destructive border-destructive hover:bg-destructive/10">
+        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
           Deny
         </Button>
       </div>

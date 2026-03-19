@@ -7,6 +7,7 @@ import { killProcessOnPort } from './port-killer.js';
 import { DevServer } from './dev-server.js';
 import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
+import * as memory from './memory.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -17,12 +18,25 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
 
 let _query: typeof import('@anthropic-ai/claude-agent-sdk').query;
-async function getQuery() {
+let _createSdkMcpServer: typeof import('@anthropic-ai/claude-agent-sdk').createSdkMcpServer;
+let _tool: typeof import('@anthropic-ai/claude-agent-sdk').tool;
+let _z: typeof import('zod').z;
+
+async function getSdk() {
   if (!_query) {
     const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
     _query = sdk.query;
+    _createSdkMcpServer = sdk.createSdkMcpServer;
+    _tool = sdk.tool;
+    const zodModule = await (dynamicImport as any)('zod');
+    _z = zodModule.z;
   }
-  return _query;
+  return { query: _query, createSdkMcpServer: _createSdkMcpServer, tool: _tool, z: _z };
+}
+
+async function getQuery() {
+  const { query } = await getSdk();
+  return query;
 }
 
 /**
@@ -161,6 +175,19 @@ function matchToolRule(pattern: string, toolName: string, toolCall: string): boo
   }
 }
 
+// Suppress "Operation aborted" unhandled rejections from the Claude Agent SDK.
+// When we abort a running query, the SDK's internal async operations (write,
+// handleControlRequest) may reject after the abort signal fires.  These are
+// expected and safe to ignore.
+process.on('unhandledRejection', (reason: unknown) => {
+  if (reason instanceof Error && reason.message === 'Operation aborted') {
+    logger.debug('[unhandledRejection] Suppressed expected SDK abort error');
+    return;
+  }
+  // Re-throw anything else so it surfaces normally
+  console.error('Unhandled promise rejection:', reason);
+});
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
@@ -203,7 +230,14 @@ class AgentSessionManager {
     const effectivePermissionMode = opts.permissionMode
       || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
       || 'default';
-    const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+    // Inject project memory into the system prompt
+    const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
+    const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+    const builtInPrompt = 'When running Bash commands, prefer short command names (npm, npx, node, git, etc.) over absolute paths. Only fall back to a full path if the short command name fails to resolve.';
+    const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
+
+    // Ensure memory directory exists for this repo
+    memory.ensureRepoMemory(repoPath);
 
     const session: ManagedSession = {
       id,
@@ -313,8 +347,48 @@ class AgentSessionManager {
     let permRequestCounter = 0;
 
     logger.debug(`[runQuery] session=${id} starting`);
-    const queryFn = await getQuery();
+    const { query: queryFn, createSdkMcpServer, tool, z } = await getSdk();
     logger.debug(`[runQuery] session=${id} SDK loaded`);
+
+    // Create per-session MCP server for memory tools
+    const memoryServer = createSdkMcpServer({
+      name: 'grove-memory',
+      version: '1.0.0',
+      tools: [
+        tool('memory_list', 'List all memory files for this project', {}, async () => {
+          const entries = memory.listMemoryFiles(session.repoPath);
+          return { content: [{ type: 'text' as const, text: JSON.stringify(entries, null, 2) }] };
+        }),
+        tool('memory_read', 'Read a specific memory file by relative path', {
+          path: z.string().describe('Relative path e.g. "repo/overview.md"'),
+        }, async (args: { path: string }) => {
+          const content = memory.readMemoryFile(session.repoPath, args.path);
+          return { content: [{ type: 'text' as const, text: content ?? 'File not found' }] };
+        }),
+        tool('memory_write', 'Write or update a memory file. Always read the file first to avoid duplicating or contradicting existing content.', {
+          path: z.string().describe('Relative path e.g. "repo/overview.md" or "conventions/naming.md"'),
+          content: z.string().describe('Full markdown content including YAML frontmatter (title, updatedAt)'),
+        }, async (args: { path: string; content: string }) => {
+          memory.writeMemoryFile(session.repoPath, args.path, args.content);
+          return { content: [{ type: 'text' as const, text: `Saved memory file: ${args.path}` }] };
+        }),
+        tool('memory_delete', 'Delete a memory file', {
+          path: z.string().describe('Relative path e.g. "repo/overview.md"'),
+        }, async (args: { path: string }) => {
+          const deleted = memory.deleteMemoryFile(session.repoPath, args.path);
+          return { content: [{ type: 'text' as const, text: deleted ? `Deleted: ${args.path}` : 'File not found' }] };
+        }),
+      ],
+    });
+
+    // Memory tool names for allowedTools whitelist compatibility
+    const memoryToolNames = [
+      'mcp__grove-memory__memory_list',
+      'mcp__grove-memory__memory_read',
+      'mcp__grove-memory__memory_write',
+      'mcp__grove-memory__memory_delete',
+    ];
+
     const q = queryFn({
       prompt: readableStreamToAsyncIterable(session.inputStream!),
       options: {
@@ -328,6 +402,10 @@ class AgentSessionManager {
             ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
             : { type: 'preset', preset: 'claude_code' },
         permissionMode: session.permissionMode,
+        // Memory MCP server
+        mcpServers: {
+          'grove-memory': memoryServer,
+        },
         // Force structured JSON output if configured
         ...(session.outputFormat ? { outputFormat: session.outputFormat } : {}),
         // Sandbox settings for restricted Bash execution
@@ -335,6 +413,10 @@ class AgentSessionManager {
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
+          // Always allow memory tools
+          if (memoryToolNames.includes(toolName)) {
+            return { behavior: 'allow' as const, updatedInput: input as Record<string, unknown> };
+          }
           // If an allowedTools whitelist is set, deny anything not in it
           if (session.allowedTools && !session.allowedTools.has(toolName)) {
             return { behavior: 'deny', message: `Tool "${toolName}" is not allowed in this session` };
@@ -384,6 +466,13 @@ class AgentSessionManager {
           return new Promise((resolve) => {
             const timer = setTimeout(() => {
               pendingPermissions.delete(requestId);
+              // Notify renderer so the PermissionBlock resolves to "denied"
+              emit({
+                type: 'tool_result',
+                toolUseId: options.toolUseID,
+                content: 'Permission request timed out',
+                isError: true,
+              });
               resolve({ behavior: 'deny', message: 'Permission request timed out' });
             }, PERMISSION_TIMEOUT_MS);
 
@@ -434,18 +523,23 @@ class AgentSessionManager {
       }
       logger.debug(`[runQuery] session=${id} message loop ended normally`);
     } catch (err: any) {
-      // Extract as much detail as possible from the SDK error
-      const errMsg = err?.message || String(err);
-      const stderr = err?.stderr || err?.cause?.stderr || '';
-      const exitCode = err?.exitCode ?? err?.code ?? '';
-      const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
-      logger.error(`[runQuery] session=${id} message loop error (exit=${exitCode}):`, detail);
-
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
-      if (isAuthError) {
-        emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+      // Abort errors are expected when the user stops a query — don't surface them
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted) {
+        logger.debug(`[runQuery] session=${id} message loop aborted (expected)`);
       } else {
-        emit({ type: 'error', message: detail.slice(0, 500) });
+        // Extract as much detail as possible from the SDK error
+        const errMsg = err?.message || String(err);
+        const stderr = err?.stderr || err?.cause?.stderr || '';
+        const exitCode = err?.exitCode ?? err?.code ?? '';
+        const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
+        logger.error(`[runQuery] session=${id} message loop error (exit=${exitCode}):`, detail);
+
+        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
+        if (isAuthError) {
+          emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+        } else {
+          emit({ type: 'error', message: detail.slice(0, 500) });
+        }
       }
     }
 
@@ -517,6 +611,15 @@ class AgentSessionManager {
             trigger: meta.trigger ?? 'manual',
             preTokens: meta.pre_tokens ?? 0,
           });
+          // After compaction, remind the agent to re-read its plan/todo from memory
+          const planFiles = memory.listMemoryFiles(session.repoPath)
+            .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
+          if (planFiles.length > 0) {
+            const fileList = planFiles.map(f => f.relativePath).join(', ');
+            this.sendMessage(session.id,
+              `[System] Context was just compacted. You have active plan/todo files in memory: ${fileList}. Use memory_read to restore your progress before continuing.`
+            );
+          }
         } else if (message.subtype === 'status') {
           const m = message as any;
           if (m.status === 'compacting') {
@@ -871,12 +974,17 @@ class AgentSessionManager {
     }
   }
 
-  respondToPermission(id: string, decision: PermissionDecision): void {
+  /**
+   * Resolve a pending permission request.
+   * Returns true if the permission was found and resolved, false if it was
+   * already resolved or the session/request no longer exists (e.g. timed out).
+   */
+  respondToPermission(id: string, decision: PermissionDecision): boolean {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session) return false;
 
     const pending = session.pendingPermissions.get(decision.requestId);
-    if (!pending) return;
+    if (!pending) return false;
 
     session.pendingPermissions.delete(decision.requestId);
 
@@ -895,6 +1003,7 @@ class AgentSessionManager {
         message: decision.message || 'User denied permission',
       });
     }
+    return true;
   }
 
   setMode(id: string, mode: string): void {
@@ -1004,17 +1113,29 @@ class AgentSessionManager {
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
 
-    // Abort the running query
-    session.abortController.abort();
-
-    try { session.inputController?.close(); } catch { /* may already be closed */ }
+    // Close the query and input stream *before* aborting so the SDK can
+    // clean up gracefully and avoid dangling async operations that reject
+    // with "Operation aborted" after the signal fires.
     try { session.queryInstance?.close(); } catch { /* may already be closed */ }
+    try { session.inputController?.close(); } catch { /* may already be closed */ }
+
+    // Now abort — any remaining in-flight SDK operations will be cancelled
+    session.abortController.abort();
 
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
       pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
     }
     session.pendingPermissions.clear();
+
+    // Stop host-managed dev server
+    if (session.devServer) {
+      await session.devServer.stop();
+      session.devServer = null;
+    }
+
+    // Kill any detected dev servers
+    await this.killDetectedPorts(session);
 
     // Set up fresh abort controller and input stream for the next query
     session.abortController = new AbortController();
@@ -1062,18 +1183,17 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
 
-    // Abort the query
-    session.abortController.abort();
+    // Close the query and input stream before aborting to allow graceful cleanup
+    try {
+      session.queryInstance?.close();
+    } catch { /* may already be closed */ }
 
-    // Close the input stream
     try {
       session.inputController?.close();
     } catch { /* may already be closed */ }
 
-    // Close the query
-    try {
-      session.queryInstance?.close();
-    } catch { /* may already be closed */ }
+    // Abort any remaining in-flight operations
+    session.abortController.abort();
 
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
