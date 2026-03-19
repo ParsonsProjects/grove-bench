@@ -19,6 +19,12 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Dev Server
   devCommand: '',
 
+  // Memory
+  memoryAutoSave: true,
+
+  // Worktree
+  autoInstallDeps: false,
+
   // General
   defaultBaseBranch: 'main',
   theme: 'system',

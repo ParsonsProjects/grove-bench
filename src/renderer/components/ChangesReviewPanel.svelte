@@ -239,7 +239,7 @@
   {@const historyExpanded = editHistoryExpanded.has(key)}
   {@const canRevert = entry.status !== 'untracked'}
 
-  <div class="border-l-4 {entry.staged ? 'border-green-500' : entry.status === 'untracked' ? 'border-muted-foreground/30' : 'border-primary'}">
+  <div data-file-key={key} class="border-l-4 {entry.staged ? 'border-green-500' : entry.status === 'untracked' ? 'border-muted-foreground/30' : 'border-primary'}">
     <!-- File header -->
     <div class="flex items-center gap-2 px-4 py-2 group/file-hdr">
       <button
@@ -421,6 +421,9 @@
           <input
             bind:this={searchInputEl}
             bind:value={searchQuery}
+            onfocus={() => searchFocused = true}
+            onblur={() => { setTimeout(() => searchFocused = false, 150); }}
+            onkeydown={handleSearchKeydown}
             type="text"
             placeholder="Filter files..."
             class="w-full text-xs bg-background/50 border border-border/50 rounded px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
@@ -435,8 +438,30 @@
               </svg>
             </button>
           {/if}
+
+          <!-- Dropdown -->
+          {#if showDropdown}
+            <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded shadow-lg max-h-56 overflow-y-auto z-50">
+              {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
+                {@const badge = statusBadge(entry.status)}
+                <button
+                  onmousedown={() => selectDropdownEntry(entry)}
+                  onmouseenter={() => dropdownIndex = i}
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
+                >
+                  <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
+                  <span class="truncate">
+                    <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
+                  </span>
+                  {#if entry.staged}
+                    <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
-        {#if searchQuery && filteredTotal !== gitStatus.entries.length}
+        {#if searchQuery && filteredTotal !== gitStatus.entries.length && !showDropdown}
           <div class="text-[10px] text-muted-foreground mt-1">
             {filteredTotal} of {gitStatus.entries.length} files
           </div>

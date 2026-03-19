@@ -254,6 +254,12 @@
 
   let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error'));
   let hasTabContent = $derived(openSessions.length > 0);
+
+  // Track pending permissions per session reactively via $derived so the tab
+  // glow updates immediately when a permission is resolved.
+  let pendingBySession = $derived(
+    Object.fromEntries(openSessions.map((s) => [s.id, messageStore.hasPendingPermission(s.id)])),
+  );
 </script>
 
 <PrerequisiteCheck />
@@ -296,7 +302,6 @@
         {#each openSessions as session (session.id)}
           {@const isActive = store.activeSessionId === session.id}
           {@const running = messageStore.getIsRunning(session.id)}
-          {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
           {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
           {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
           <button
@@ -311,7 +316,7 @@
             oncontextmenu={(e) => openContextMenu(e, session.id)}
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
               {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
-              {hasPending ? 'tab-action-required' : ''}
+              {pendingBySession[session.id] ? 'tab-action-required' : ''}
               {dragTabId === session.id ? 'opacity-40' : ''}
               {isDragOver ? 'border-l-2 border-l-primary' : ''}"
           >
@@ -319,7 +324,7 @@
               <span class="w-2 h-2 shrink-0 bg-red-500"></span>
             {:else if session.status === 'starting' || session.status === 'installing'}
               <span class="w-2 h-2 shrink-0 bg-yellow-500 animate-pulse"></span>
-            {:else if hasPending}
+            {:else if pendingBySession[session.id]}
               <span class="w-2 h-2 shrink-0 bg-orange-500 animate-pulse"></span>
             {:else if !isActive && running}
               <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>

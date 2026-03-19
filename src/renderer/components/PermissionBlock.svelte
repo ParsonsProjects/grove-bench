@@ -28,9 +28,6 @@
   let sideBySide = $state(false);
   let replyText = $state('');
   let submitting = $state(false);
-  /** Local fallback: tracks the decision we made locally in case
-   *  the store update doesn't propagate back through props. */
-  let localDecision = $state<'allow' | 'deny' | null>(null);
 
   let input = $derived(toolInput as Record<string, unknown>);
   let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
@@ -45,7 +42,6 @@
   async function approve() {
     if (submitting) return;
     submitting = true;
-    localDecision = 'allow';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'allow');
     } catch (e) {
@@ -57,7 +53,6 @@
   async function approveAlways() {
     if (submitting) return;
     submitting = true;
-    localDecision = 'allow';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
     } catch (e) {
@@ -70,7 +65,6 @@
   async function approveAndClear() {
     if (submitting) return;
     submitting = true;
-    localDecision = 'allow';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'allow', {
         updatedPermissions: suggestions,
@@ -85,7 +79,6 @@
   async function clearAndExecute() {
     if (!planText || submitting) return;
     submitting = true;
-    localDecision = 'deny';
     try {
       const prompt = `Execute the following plan:\n\n${planText}`;
       await messageStore.resolvePermission(sessionId, requestId, 'deny', { message: 'Clearing and restarting with the plan.' });
@@ -99,7 +92,6 @@
   async function deny(message?: string) {
     if (submitting) return;
     submitting = true;
-    localDecision = 'deny';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'deny', { message });
     } catch (e) {
@@ -161,10 +153,8 @@
     return parts.join('\n\n');
   });
 
-  /** Effective resolved state — true if store says resolved OR we clicked a button locally */
-  let isResolved = $derived(resolved || localDecision !== null);
-  /** Effective decision — prefer store decision, fall back to local */
-  let effectiveDecision = $derived(decision ?? localDecision);
+  let isResolved = $derived(resolved);
+  let effectiveDecision = $derived(decision);
 
   let borderColor = $derived(
     isResolved

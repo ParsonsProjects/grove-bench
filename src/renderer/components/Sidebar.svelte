@@ -64,6 +64,12 @@
     // Mark stopped immediately so the tab closes right away
     store.updateStatus(id, 'stopped');
 
+    // Deactivate so the auto-resume $effect doesn't bring the tab back
+    if (store.activeSessionId === id) {
+      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
+      store.activeSessionId = next?.id ?? null;
+    }
+
     try {
       await window.groveBench.destroySession(id, deleteBranch);
       store.removeSession(id);
@@ -126,7 +132,7 @@
   };
 
   function getSessionHasPending(sessionId: string): boolean {
-    return messageStore.getMessages(sessionId).some((m) => m.kind === 'permission' && !m.resolved);
+    return messageStore.hasPendingPermission(sessionId);
   }
 </script>
 

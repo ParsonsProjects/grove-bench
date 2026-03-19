@@ -110,7 +110,11 @@ export type AgentEvent =
   // Files persisted to disk
   | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
   // Permission mode sync (from SDK status messages)
-  | { type: 'mode_sync'; mode: PermissionMode };
+  | { type: 'mode_sync'; mode: PermissionMode }
+  // Permission resolved (authoritative — emitted by main for all resolution paths)
+  | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
+  // Memory auto-save status
+  | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] };
 
 // ─── Shell / Terminal ───
 
@@ -338,6 +342,14 @@ export interface GroveBenchSettings {
   // Dev Server
   /** Default dev command (e.g. 'npm run dev'). Auto-detected from package.json if blank. */
   devCommand: string;
+
+  // Memory
+  /** Enable auto-save of memories at end of session / compaction. Default true. */
+  memoryAutoSave: boolean;
+
+  // Worktree
+  /** Automatically run npm install in new worktrees. Default false. */
+  autoInstallDeps: boolean;
 
   // General
   defaultBaseBranch: string;

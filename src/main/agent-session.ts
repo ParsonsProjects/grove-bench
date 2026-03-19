@@ -8,6 +8,7 @@ import { DevServer } from './dev-server.js';
 import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
+import * as memoryAutosave from './memory-autosave.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -112,6 +113,10 @@ interface ManagedSession {
   devServer: DevServer | null;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
+  /** Whether a memory auto-save is currently in progress. */
+  autoSaveInProgress: boolean;
+  /** Emit function for sending events to the renderer — set by runQuery. */
+  emit: ((event: AgentEvent) => void) | null;
 }
 
 /**
@@ -233,7 +238,7 @@ class AgentSessionManager {
     // Inject project memory into the system prompt
     const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
     const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
-    const builtInPrompt = 'When running Bash commands, prefer short command names (npm, npx, node, git, etc.) over absolute paths. Only fall back to a full path if the short command name fails to resolve.';
+    const builtInPrompt = 'When running Bash commands, prefer short command names (npm, npx, node, git, etc.) over absolute paths. Only fall back to a full path if the short command name fails to resolve. IMPORTANT: Do not use `cd` to navigate to your current working directory before running commands — you are already there. Just run commands directly.';
     const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
 
     // Ensure memory directory exists for this repo
@@ -270,6 +275,8 @@ class AgentSessionManager {
       displayName: null,
       devServer: null,
       stoppedByUser: false,
+      autoSaveInProgress: false,
+      emit: null,
     };
 
     this.sessions.set(id, session);
@@ -304,6 +311,7 @@ class AgentSessionManager {
         logger.debug(`[emit] window is destroyed, dropping event`);
       }
     };
+    session.emit = emit;
 
     this.runQuery(session, emit).catch((err) => {
         console.error(`[runQuery] session=${id} FAILED:`, err);
@@ -455,6 +463,10 @@ class AgentSessionManager {
               }
             }
           }
+          // In acceptEdits mode, auto-approve Edit and Write tools
+          if (session.permissionMode === 'acceptEdits' && (toolName === 'Edit' || toolName === 'Write')) {
+            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+          }
           // Auto-approve if user previously chose "Always Allow" for this tool
           if (session.alwaysAllowedTools.has(toolName)) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
@@ -466,12 +478,11 @@ class AgentSessionManager {
           return new Promise((resolve) => {
             const timer = setTimeout(() => {
               pendingPermissions.delete(requestId);
-              // Notify renderer so the PermissionBlock resolves to "denied"
               emit({
-                type: 'tool_result',
+                type: 'permission_resolved',
+                requestId,
                 toolUseId: options.toolUseID,
-                content: 'Permission request timed out',
-                isError: true,
+                decision: 'deny',
               });
               resolve({ behavior: 'deny', message: 'Permission request timed out' });
             }, PERMISSION_TIMEOUT_MS);
@@ -572,6 +583,19 @@ class AgentSessionManager {
         durationMs: session.lastResult?.durationMs,
       });
     }
+
+    // Trigger memory auto-save (fire-and-forget, runs in background)
+    memoryAutosave.triggerAutoSaveImmediate({
+      sessionId: id,
+      repoPath: session.repoPath,
+      cwd: session.worktreePath,
+      events: session.eventHistory,
+      onStatus: (status, filesWritten) => {
+        emit({ type: 'memory_autosave', status, filesWritten });
+      },
+    }).catch(err => {
+      logger.warn(`[memory-autosave] Auto-save failed for session ${id}: ${err}`);
+    });
   }
 
   private handleMessage(
@@ -610,6 +634,16 @@ class AgentSessionManager {
             type: 'compact_boundary',
             trigger: meta.trigger ?? 'manual',
             preTokens: meta.pre_tokens ?? 0,
+          });
+          // Auto-save memories before compaction wipes context
+          memoryAutosave.triggerAutoSave({
+            sessionId: session.id,
+            repoPath: session.repoPath,
+            cwd: session.worktreePath,
+            events: session.eventHistory,
+            onStatus: (status, filesWritten) => {
+              emit({ type: 'memory_autosave', status, filesWritten });
+            },
           });
           // After compaction, remind the agent to re-read its plan/todo from memory
           const planFiles = memory.listMemoryFiles(session.repoPath)
@@ -988,7 +1022,9 @@ class AgentSessionManager {
 
     session.pendingPermissions.delete(decision.requestId);
 
-    if (decision.behavior === 'allow' || decision.behavior === 'allowAlways') {
+    const resolvedDecision = (decision.behavior === 'allow' || decision.behavior === 'allowAlways') ? 'allow' : 'deny';
+
+    if (resolvedDecision === 'allow') {
       if (decision.behavior === 'allowAlways') {
         session.alwaysAllowedTools.add(pending.toolName);
       }
@@ -1003,6 +1039,15 @@ class AgentSessionManager {
         message: decision.message || 'User denied permission',
       });
     }
+
+    // Notify renderer authoritatively
+    session.emit?.({
+      type: 'permission_resolved',
+      requestId: decision.requestId,
+      toolUseId: pending.toolUseId,
+      decision: resolvedDecision,
+    });
+
     return true;
   }
 
@@ -1010,7 +1055,12 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session?.queryInstance) return;
     try {
-      session.queryInstance.setPermissionMode(mode as any);
+      session.permissionMode = mode as ManagedSession['permissionMode'];
+      // Only pass SDK-recognized modes to the SDK instance.
+      // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
+      if (mode === 'default' || mode === 'plan') {
+        session.queryInstance.setPermissionMode(mode as any);
+      }
     } catch (e) {
       logger.warn(`Failed to set mode for session ${id}:`, e);
     }
@@ -1122,12 +1172,6 @@ class AgentSessionManager {
     // Now abort — any remaining in-flight SDK operations will be cancelled
     session.abortController.abort();
 
-    // Resolve any pending permissions as denied
-    for (const [, pending] of session.pendingPermissions) {
-      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
-    }
-    session.pendingPermissions.clear();
-
     // Stop host-managed dev server
     if (session.devServer) {
       await session.devServer.stop();
@@ -1167,6 +1211,20 @@ class AgentSessionManager {
         w.webContents.send(channel, event);
       }
     };
+    session.emit = emit;
+
+    // Resolve any pending permissions as denied — done after emit is rebuilt
+    // so the permission_resolved events reach the renderer.
+    for (const [, pending] of session.pendingPermissions) {
+      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
+      emit({
+        type: 'permission_resolved',
+        requestId: pending.requestId,
+        toolUseId: pending.toolUseId,
+        decision: 'deny',
+      });
+    }
+    session.pendingPermissions.clear();
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1183,6 +1241,10 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
 
+    // Cancel any pending auto-save debounce and save heuristic metadata
+    memoryAutosave.cancelAutoSave(id);
+    memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory);
+
     // Close the query and input stream before aborting to allow graceful cleanup
     try {
       session.queryInstance?.close();
@@ -1198,6 +1260,12 @@ class AgentSessionManager {
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
       pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
+      session.emit?.({
+        type: 'permission_resolved',
+        requestId: pending.requestId,
+        toolUseId: pending.toolUseId,
+        decision: 'deny',
+      });
     }
 
     // Stop host-managed dev server

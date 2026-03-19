@@ -355,6 +355,15 @@
             <Checkbox bind:checked={settingsStore.draft.alwaysOnTop} />
             Always on top
           </label>
+
+          <Separator />
+
+          <!-- Auto Install Dependencies -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.autoInstallDeps} />
+            Auto-install dependencies in new worktrees
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">Run npm install automatically when creating a worktree. Off by default.</p>
         </div>
 
       {:else if tab === 'plugins'}

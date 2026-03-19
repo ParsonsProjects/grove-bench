@@ -20,10 +20,7 @@
   let terminalRunning = $derived(terminalStore.getIsRunning(sessionId));
 
   // Derive whether there's an unresolved permission request
-  let hasPendingPermission = $derived.by(() => {
-    const msgs = messageStore.getMessages(sessionId);
-    return msgs.some((m) => m.kind === 'permission' && !m.resolved);
-  });
+  let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
 
   function switchTab(tab: 'activity' | 'changes' | 'plan' | 'terminal') {
     if (tab === activeTab) return;
@@ -68,51 +65,11 @@
         'devserver_detected',
       ]);
 
-      // Build a set of toolUseIds that have a tool_result in history so we
-      // can auto-resolve permission_request events during replay instead of
-      // skipping them entirely (which loses the "allowed"/"denied" indicator).
-      const resolvedToolUseIds = new Set<string>();
-      const toolResultErrors = new Set<string>();
-      for (const ev of history) {
-        if (ev.type === 'tool_result') {
-          resolvedToolUseIds.add(ev.toolUseId);
-          if (ev.isError) toolResultErrors.add(ev.toolUseId);
-        }
-      }
-
+      // Replay all events in order. permission_request events create unresolved
+      // permission messages; permission_resolved and tool_result events resolve
+      // them via the store's ingestEvent handler.
       for (const event of history) {
         if (skipDuringReplay.has(event.type)) continue;
-
-        // For permission_request, replay it pre-resolved if a matching
-        // tool_result exists, so the UI shows "allowed"/"denied" history.
-        // If no tool_result exists yet (still pending), replay as unresolved.
-        if (event.type === 'permission_request') {
-          messageStore.ingestEvent(sessionId, event);
-          if (resolvedToolUseIds.has(event.toolUseId)) {
-            // Auto-resolve: find the permission we just pushed and mark it
-            const msgs = messageStore.getMessages(sessionId);
-            const idx = msgs.findIndex(
-              (m) => (m.kind === 'permission' || m.kind === 'question') && 'requestId' in m && m.requestId === event.requestId,
-            );
-            if (idx >= 0) {
-              const msg = msgs[idx];
-              if (msg.kind === 'permission' && !msg.resolved) {
-                const wasError = toolResultErrors.has(event.toolUseId);
-                const updated = { ...msg, resolved: true as const, decision: (wasError ? 'deny' : 'allow') as 'allow' | 'deny' };
-                const current = [...msgs];
-                current[idx] = updated;
-                messageStore.messagesBySession[sessionId] = current;
-              } else if (msg.kind === 'question' && !msg.resolved) {
-                const updated = { ...msg, resolved: true as const };
-                const current = [...msgs];
-                current[idx] = updated;
-                messageStore.messagesBySession[sessionId] = current;
-              }
-            }
-          }
-          continue;
-        }
-
         messageStore.ingestEvent(sessionId, event);
       }
       if (history.length > 0) {
@@ -121,8 +78,10 @@
           messageStore.isRunning[sessionId] = false;
         }
       }
-      // After replay, resolve any tool_calls still marked pending
+      // After replay, resolve any permissions/tool_calls still unresolved
+      // (denied permissions have no tool_result, stopped sessions cleared theirs)
       messageStore.resolveStaleToolCalls(sessionId);
+      messageStore.resolveReplayedPermissions(sessionId);
 
       // If the session is already running but system_init was missed during
       // replay (e.g. agent just connected), ensure the input unlocks.

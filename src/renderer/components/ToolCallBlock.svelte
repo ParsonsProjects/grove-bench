@@ -24,7 +24,7 @@
 </script>
 
 {#if toolName === 'Bash'}
-  <BashBlock {toolInput} {result} {isError} {pending} />
+  <BashBlock {toolInput} {result} {isError} {pending} {summaryMode} />
 {:else if toolName === 'Edit' || toolName === 'Write'}
   <DiffBlock {sessionId} {toolName} {toolInput} {result} {pending} {isError} {summaryMode} />
 {:else if toolName === 'Read' || toolName === 'Grep' || toolName === 'Glob'}

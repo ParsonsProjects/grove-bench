@@ -26,13 +26,13 @@
 
   // Detail toggle — hide tool calls & thinking when off (defaults to summary mode)
   let showDetails = $derived(messageStore.getShowDetails(sessionId));
-  const editTools = new Set(['Edit', 'Write']);
+  const summaryVisibleTools = new Set(['Edit', 'Write', 'Bash']);
   let messages = $derived(
     showDetails
-      ? allMessages
+      ? allMessages.filter((m) => !(m.kind === 'tool_call' && m.awaitingPermission))
       : allMessages.filter((m) => {
           if (m.kind === 'thinking') return false;
-          if (m.kind === 'tool_call') return editTools.has(m.toolName);
+          if (m.kind === 'tool_call') return summaryVisibleTools.has(m.toolName) && !m.awaitingPermission;
           return true;
         })
   );
