@@ -418,8 +418,15 @@ class MessageStore {
   }
 
   async setMode(sessionId: string, mode: PermissionMode) {
+    const previousMode = this.modeBySession[sessionId] ?? 'default';
     this.modeBySession[sessionId] = mode;
-    await window.groveBench.setMode(sessionId, mode);
+    try {
+      await window.groveBench.setMode(sessionId, mode);
+    } catch (e) {
+      // Roll back to previous mode if the IPC failed
+      console.warn('[setMode] IPC failed, rolling back:', e);
+      this.modeBySession[sessionId] = previousMode;
+    }
   }
 
   cycleMode(sessionId: string) {
@@ -499,6 +506,8 @@ class MessageStore {
           delete this.usageBySession[sessionId];
           delete this.turnsBySession[sessionId];
           delete this.pendingClear[sessionId];
+          // Truncate event history on disk so old messages don't reappear on restart
+          window.groveBench.clearEventHistory(sessionId).catch(() => {});
         }
         this.isReady[sessionId] = true;
         this.isRunning[sessionId] = false;
@@ -603,8 +612,17 @@ class MessageStore {
             matchedToolName = m.toolName;
             return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
           }
-          // Permission/question resolution is handled by the permission_resolved
-          // event. tool_result no longer drives permission decisions.
+          // Fallback: if a tool_result exists, the tool ran, so the permission
+          // was allowed. permission_resolved is the primary path but this catches
+          // cases where that event is lost or from pre-refactor history.
+          if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const, decision: 'allow' as const };
+          }
+          if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const };
+          }
           return m;
         });
         if (changed) {
@@ -1052,6 +1070,23 @@ class MessageStore {
 
     if (perm?.resolved) return false;
 
+    // Optimistically update the store so the UI responds instantly.
+    // The permission_resolved event from main will confirm (or the
+    // tool_result fallback will catch it if the event is lost).
+    const resolvedDecision = (decision === 'deny' ? 'deny' : 'allow') as 'allow' | 'deny';
+    if (perm) {
+      const toolUseId = perm.toolUseId;
+      this.messagesBySession[sessionId] = msgs.map((m) => {
+        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId) {
+          return { ...m, resolved: true as const, decision: resolvedDecision };
+        }
+        if (m.kind === 'tool_call' && m.toolUseId === toolUseId && m.awaitingPermission) {
+          return { ...m, awaitingPermission: false };
+        }
+        return m;
+      });
+    }
+
     const permDecision: PermissionDecision = {
       requestId,
       behavior: decision,
@@ -1059,7 +1094,7 @@ class MessageStore {
       updatedPermissions: opts?.updatedPermissions,
     };
 
-    // Ask main process — it will emit permission_resolved which drives the UI
+    // Ask main process — it will emit permission_resolved to confirm
     let accepted: boolean;
     try {
       accepted = await window.groveBench.respondToPermission(sessionId, permDecision);
@@ -1068,19 +1103,14 @@ class MessageStore {
       accepted = false;
     }
 
-    // If main rejected (stale/timed-out), resolve locally as denied since
-    // no permission_resolved event will arrive.
+    // If main rejected (stale/timed-out), override to denied
     if (!accepted) {
       const current = this.messagesBySession[sessionId] ?? [];
       let changed = false;
       const updated = current.map((m) => {
-        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId && !m.resolved) {
+        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId && m.resolved && (m as ChatPermissionMessage).decision !== 'deny') {
           changed = true;
-          return { ...m, resolved: true as const, decision: 'deny' as const };
-        }
-        if (m.kind === 'tool_call' && perm && m.toolUseId === perm.toolUseId && m.awaitingPermission) {
-          changed = true;
-          return { ...m, awaitingPermission: false };
+          return { ...m, decision: 'deny' as const };
         }
         return m;
       });
@@ -1088,8 +1118,8 @@ class MessageStore {
       return false;
     }
 
-    // When "Always Allow" is used on Edit/Write, sync mode to acceptEdits
-    if (decision === 'allowAlways' && perm && (perm.toolName === 'Edit' || perm.toolName === 'Write')) {
+    // When "Always Allow" is used on Edit/Write/MultiEdit, sync mode to acceptEdits
+    if (decision === 'allowAlways' && perm && (perm.toolName === 'Edit' || perm.toolName === 'Write' || perm.toolName === 'MultiEdit')) {
       this.setMode(sessionId, 'acceptEdits').catch((e) => {
         console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
       });

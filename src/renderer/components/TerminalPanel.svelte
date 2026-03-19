@@ -89,7 +89,7 @@
 <div class="flex flex-col h-full">
   <!-- Output area -->
   <div
-    class="flex-1 overflow-y-auto bg-card font-mono text-xs p-3 select-text"
+    class="flex-1 overflow-y-auto bg-card pixel-bg font-mono text-xs p-3 select-text"
     bind:this={scrollContainer}
     onscroll={handleScroll}
   >

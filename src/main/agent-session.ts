@@ -463,8 +463,8 @@ class AgentSessionManager {
               }
             }
           }
-          // In acceptEdits mode, auto-approve Edit and Write tools
-          if (session.permissionMode === 'acceptEdits' && (toolName === 'Edit' || toolName === 'Write')) {
+          // In acceptEdits mode, auto-approve Edit, Write, and MultiEdit tools
+          if (session.permissionMode === 'acceptEdits' && (toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit')) {
             return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
           }
           // Auto-approve if user previously chose "Always Allow" for this tool
@@ -1387,6 +1387,35 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (session) return session.eventHistory;
     return this.loadEventHistory(id);
+  }
+
+  /** Clear event history (in-memory and on disk) for a session.
+   *  Called after /clear so replays don't resurrect old messages.
+   *  Triggers memory auto-save before wiping so context isn't lost. */
+  clearEventHistory(id: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      // Save memories before wiping history
+      if (session.eventHistory.length > 0) {
+        memoryAutosave.triggerAutoSave({
+          sessionId: id,
+          repoPath: session.repoPath,
+          cwd: session.worktreePath,
+          events: session.eventHistory,
+          onStatus: (status, filesWritten) => {
+            session.emit?.({ type: 'memory_autosave', status, filesWritten });
+          },
+        });
+      }
+      session.eventHistory = [];
+      try {
+        fs.writeFileSync(session.eventLogPath, '');
+      } catch { /* non-fatal */ }
+    } else {
+      // Session not running — clear disk log directly
+      const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
+      try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
+    }
   }
 
   get count(): number {

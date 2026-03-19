@@ -325,6 +325,10 @@ export function registerHandlers() {
     return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
   });
 
+  ipcMain.handle(IPC.AGENT_CLEAR_HISTORY, (_event, sessionId: string) => {
+    sessionManager.clearEventHistory(sessionId);
+  });
+
   // ─── File operations (for @ file picker) ───
 
   ipcMain.handle(IPC.FILE_LIST, async (_event, sessionId: string) => {

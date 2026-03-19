@@ -134,6 +134,15 @@
   function getSessionHasPending(sessionId: string): boolean {
     return messageStore.hasPendingPermission(sessionId);
   }
+
+  function getBranchGroups(repo: string): [string, typeof store.sessions][] {
+    const groups: Record<string, typeof store.sessions> = {};
+    for (const s of store.sessionsForRepo(repo)) {
+      const key = s.branch || 'main';
+      (groups[key] ??= []).push(s);
+    }
+    return Object.entries(groups);
+  }
 </script>
 
 <aside class="w-60 border-r border-sidebar-border flex flex-col bg-sidebar shrink-0">
@@ -174,8 +183,11 @@
           </div>
         </div>
 
-        <!-- Sessions under this repo -->
-        {#each store.sessionsForRepo(repo) as session (session.id)}
+        <!-- Sessions grouped by branch -->
+        {#each getBranchGroups(repo) as [branch, sessions] (branch)}
+          {#if sessions.length === 1}
+            <!-- Single session — render flat (no branch header) -->
+            {@const session = sessions[0]}
             {@const isDestroying = destroying === session.id}
             <button
               onclick={() => !isDestroying && focusSession(session.id)}
@@ -223,6 +235,58 @@
                 </span>
               </div>
             </button>
+          {:else}
+            <!-- Multiple sessions on same branch — show branch header with nested sessions -->
+            <div class="pl-3 mt-0.5">
+              <div class="flex items-center gap-1.5 px-1 py-0.5 text-xs text-muted-foreground/70">
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v12"/><path d="M18 9a3 3 0 0 0-3-3H9"/><path d="M6 21a3 3 0 0 0 3-3V9"/></svg>
+                <span class="truncate" title={branch}>{branch}</span>
+                <span class="text-muted-foreground/40">({sessions.length})</span>
+              </div>
+              {#each sessions as session (session.id)}
+                {@const isDestroying = destroying === session.id}
+                <button
+                  onclick={() => !isDestroying && focusSession(session.id)}
+                  onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
+                  ondblclick={() => !isDestroying && startRename(session.id, sessionLabel(session))}
+                  oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
+                  disabled={isDestroying}
+                  title={sessionLabel(session)}
+                  class="w-full flex items-center justify-between pl-4 pr-2 py-1 text-left group/session transition-colors
+                    {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+                >
+                  <div class="flex items-center gap-2 min-w-0">
+                    {#if destroying === session.id}
+                      <span class="w-1.5 h-1.5 bg-muted-foreground animate-pulse shrink-0"></span>
+                    {:else if session.status === 'error'}
+                      <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>
+                    {:else if session.status === 'starting' || session.status === 'installing'}
+                      <span class="w-1.5 h-1.5 bg-yellow-500 animate-pulse shrink-0"></span>
+                    {:else if messageStore.getIsRunning(session.id)}
+                      <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
+                    {:else if getSessionHasPending(session.id)}
+                      <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse shrink-0"></span>
+                    {:else if session.status === 'stopped'}
+                      <span class="w-1.5 h-1.5 bg-neutral-500 shrink-0"></span>
+                    {:else}
+                      <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
+                    {/if}
+                    <span class="text-xs truncate">{session.displayName || (session.direct ? 'direct' : 'worktree')}</span>
+                  </div>
+                  <span
+                    role="button"
+                    tabindex="-1"
+                    onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
+                    onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
+                    class="w-4 h-4 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
+                      {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {/if}
         {/each}
 
         {#if store.sessionsForRepo(repo).length === 0}

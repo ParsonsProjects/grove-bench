@@ -28,6 +28,9 @@
   let sideBySide = $state(false);
   let replyText = $state('');
   let submitting = $state(false);
+  /** Instant visual feedback while waiting for the authoritative
+   *  permission_resolved event from main. Purely cosmetic. */
+  let pendingDecision = $state<'allow' | 'deny' | null>(null);
 
   let input = $derived(toolInput as Record<string, unknown>);
   let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
@@ -42,22 +45,26 @@
   async function approve() {
     if (submitting) return;
     submitting = true;
+    pendingDecision = 'allow';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'allow');
     } catch (e) {
       console.error('[PermissionBlock] approve failed:', e);
       submitting = false;
+      pendingDecision = null;
     }
   }
 
   async function approveAlways() {
     if (submitting) return;
     submitting = true;
+    pendingDecision = 'allow';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
     } catch (e) {
       console.error('[PermissionBlock] approveAlways failed:', e);
       submitting = false;
+      pendingDecision = null;
     }
   }
 
@@ -65,6 +72,7 @@
   async function approveAndClear() {
     if (submitting) return;
     submitting = true;
+    pendingDecision = 'allow';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'allow', {
         updatedPermissions: suggestions,
@@ -72,6 +80,7 @@
     } catch (e) {
       console.error('[PermissionBlock] approveAndClear failed:', e);
       submitting = false;
+      pendingDecision = null;
     }
   }
 
@@ -79,6 +88,7 @@
   async function clearAndExecute() {
     if (!planText || submitting) return;
     submitting = true;
+    pendingDecision = 'deny';
     try {
       const prompt = `Execute the following plan:\n\n${planText}`;
       await messageStore.resolvePermission(sessionId, requestId, 'deny', { message: 'Clearing and restarting with the plan.' });
@@ -86,17 +96,20 @@
     } catch (e) {
       console.error('[PermissionBlock] clearAndExecute failed:', e);
       submitting = false;
+      pendingDecision = null;
     }
   }
 
   async function deny(message?: string) {
     if (submitting) return;
     submitting = true;
+    pendingDecision = 'deny';
     try {
       await messageStore.resolvePermission(sessionId, requestId, 'deny', { message });
     } catch (e) {
       console.error('[PermissionBlock] deny failed:', e);
       submitting = false;
+      pendingDecision = null;
     }
   }
 
@@ -153,8 +166,10 @@
     return parts.join('\n\n');
   });
 
-  let isResolved = $derived(resolved);
-  let effectiveDecision = $derived(decision);
+  // Resolved once the authoritative event arrives, or optimistically while waiting
+  let isResolved = $derived(resolved || pendingDecision !== null);
+  // Prefer the authoritative decision from the store, fall back to what we clicked
+  let effectiveDecision = $derived(decision ?? pendingDecision);
 
   let borderColor = $derived(
     isResolved

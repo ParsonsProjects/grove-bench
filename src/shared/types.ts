@@ -237,6 +237,7 @@ export interface GroveBenchAPI {
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
+  clearEventHistory(sessionId: string): Promise<void>;
 
   // Prerequisites
   checkPrerequisites(): Promise<PrerequisiteStatus>;
@@ -389,6 +390,7 @@ export const IPC = {
   AGENT_SEND: 'agent:send',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
+  AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
   FILE_LIST: 'file:list',

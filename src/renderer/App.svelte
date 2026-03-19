@@ -23,11 +23,22 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     return [
+      { label: 'New Session', icon: 'add' as const, action: () => newSessionForRepo(session.repoPath, session.branch) },
       { label: 'Rename', icon: 'rename' as const, action: () => startTabRename(sessionId) },
       { label: 'Open Folder', icon: 'folder' as const, action: () => window.groveBench.openSessionFolder(sessionId) },
       { label: 'Close Tab', icon: 'close' as const, action: () => closeTab(sessionId), separator: true },
       { label: 'Destroy Agent', icon: 'destroy' as const, action: () => closeTab(sessionId), variant: 'destructive' as const },
     ];
+  }
+
+  async function newSessionForRepo(repoPath: string, branch: string) {
+    try {
+      const result = await window.groveBench.createSession({ repoPath, branchName: branch, direct: true });
+      store.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true });
+      store.activeSessionId = result.id;
+    } catch (e: any) {
+      store.setError(e.message || String(e));
+    }
   }
 
   let tabRenamingId = $state<string | null>(null);

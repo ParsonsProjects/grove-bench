@@ -48,6 +48,8 @@ const api: GroveBenchAPI = {
   },
   getEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY, sessionId),
+  clearEventHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
 
   // Mode control
   setMode: (sessionId: string, mode: string) =>

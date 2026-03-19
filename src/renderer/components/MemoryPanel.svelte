@@ -85,7 +85,7 @@
 </script>
 
 <Dialog.Root {open} onOpenChange={(o) => { if (!o) onclose(); }}>
-  <Dialog.Content class="max-w-2xl max-h-[80vh] flex flex-col">
+  <Dialog.Content class="sm:max-w-4xl max-h-[90vh] flex flex-col">
     <Dialog.Header>
       <Dialog.Title>Project Memory</Dialog.Title>
       <Dialog.Description>
