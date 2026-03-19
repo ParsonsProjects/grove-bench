@@ -140,6 +140,10 @@ const api: GroveBenchAPI = {
   winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
   winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
   winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
+
+  // Agent adapters
+  listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
 };
 
 contextBridge.exposeInMainWorld('groveBench', api);

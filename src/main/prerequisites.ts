@@ -1,9 +1,6 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { PrerequisiteStatus } from '../shared/types.js';
 import { gitVersion } from './git.js';
-
-const execFileAsync = promisify(execFile);
+import { adapterRegistry } from './adapters/index.js';
 
 const MIN_GIT_MAJOR = 2;
 const MIN_GIT_MINOR = 17;
@@ -23,35 +20,20 @@ export async function checkGit(): Promise<PrerequisiteStatus['git']> {
   };
 }
 
-export async function findClaudeCode(): Promise<PrerequisiteStatus['claudeCode']> {
-  try {
-    const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
-    const { stdout } = await execFileAsync(cmd, ['claude']);
-    const firstMatch = stdout.trim().split('\n')[0];
-
-    // Check authentication status — use shell:true so .cmd shims work on Windows
-    try {
-      const { stdout: authJson } = await execFileAsync('claude', ['auth', 'status', '--json'], { shell: true });
-      const auth = JSON.parse(authJson.trim());
-      return {
-        available: true,
-        path: firstMatch,
-        authenticated: auth.loggedIn === true,
-        authMethod: auth.authMethod,
-        email: auth.email,
-      };
-    } catch {
-      return { available: true, path: firstMatch, authenticated: false };
-    }
-  } catch {
-    return { available: false };
-  }
-}
-
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
-  const [gitStatus, claudeCode] = await Promise.all([
+  const adapter = adapterRegistry.getDefault();
+  const [gitStatus, agentStatus] = await Promise.all([
     checkGit(),
-    findClaudeCode(),
+    adapter.checkPrerequisites(),
   ]);
-  return { git: gitStatus, claudeCode };
+  return {
+    git: gitStatus,
+    claudeCode: {
+      available: agentStatus.available,
+      path: agentStatus.path,
+      authenticated: agentStatus.authenticated,
+      authMethod: agentStatus.authMethod,
+      email: agentStatus.email,
+    },
+  };
 }

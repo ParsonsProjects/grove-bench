@@ -246,7 +246,7 @@
               id="settings-model"
               type="text"
               bind:value={settingsStore.draft.defaultModel}
-              placeholder="e.g. claude-sonnet-4-5-20250514"
+              placeholder="e.g. claude-sonnet-4-6 or model ID"
               class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>

@@ -42,7 +42,7 @@ export interface SessionInfo {
   worktreePath: string;
   repoPath: string;
   status: SessionStatus;
-  agentType: 'claude-code';
+  agentType: string;
   createdAt: number;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
@@ -291,6 +291,10 @@ export interface GroveBenchAPI {
   winMaximize(): void;
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
+
+  // Agent adapters
+  listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
+  getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string }>>;
 }
 
 // ─── Settings ───
@@ -376,4 +380,6 @@ export const IPC = {
   APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
   APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
   OPEN_SESSION_FOLDER: 'session:openFolder',
+  AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  AGENT_GET_MODELS: 'agent:getModels',
 } as const;

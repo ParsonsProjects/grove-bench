@@ -9,11 +9,11 @@
   let prInfo = $state<PrInfo | null>(null);
   let modelPickerOpen = $state(false);
 
-  const modelOptions = [
+  let modelOptions = $state<Array<{ value: string; label: string }>>([
     { value: 'claude-opus-4-6', label: 'Opus 4.6' },
     { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
     { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-  ];
+  ]);
 
   async function switchModel(modelId: string) {
     modelPickerOpen = false;
@@ -194,6 +194,12 @@
     window.groveBench.getPrInfo(sessionId).then((info) => {
       prInfo = info;
     });
+    // Fetch available models from the active adapter
+    window.groveBench.getModels().then((models) => {
+      if (models.length > 0) {
+        modelOptions = models.map(m => ({ value: m.id, label: m.label }));
+      }
+    }).catch(() => { /* keep defaults */ });
   });
 
   onDestroy(() => {

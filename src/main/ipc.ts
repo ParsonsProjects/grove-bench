@@ -5,6 +5,7 @@ import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, Session
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
+import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git } from './git.js';
 import { parseGitStatusPorcelain } from './git-status-parser.js';
 import { logger } from './logger.js';
@@ -210,9 +211,9 @@ export function registerHandlers() {
       throw new Error(`Worktree ${id} not found`);
     }
 
-    // Look up saved Claude session ID for conversation resumption
-    const claudeSessionId = await worktreeManager.getClaudeSessionId(id);
-    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, claudeSession=${claudeSessionId ?? 'none'}`);
+    // Look up saved provider session ID for conversation resumption
+    const providerSessionId = await worktreeManager.getProviderSessionId(id);
+    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}`);
 
     const session = await sessionManager.createSession({
       id: worktree.id,
@@ -220,7 +221,7 @@ export function registerHandlers() {
       cwd: worktree.path,
       repoPath,
       window: win,
-      resumeClaudeSessionId: claudeSessionId,
+      resumeSessionId: providerSessionId,
     });
 
     logger.info(`Session resumed: id=${session.id}`);
@@ -538,6 +539,24 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
     await execa('claude', ['plugin', 'disable', pluginId]);
+  });
+
+  // ─── Agent Adapters ───
+
+  ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
+    return adapterRegistry.list().map(a => ({
+      id: a.id,
+      displayName: a.displayName,
+      capabilities: { ...a.capabilities },
+    }));
+  });
+
+  ipcMain.handle(IPC.AGENT_GET_MODELS, (_event, adapterType?: string) => {
+    const adapter = adapterType
+      ? adapterRegistry.get(adapterType)
+      : adapterRegistry.getDefault();
+    if (!adapter) return [];
+    return adapter.getModels();
   });
 
   // ─── Settings ───

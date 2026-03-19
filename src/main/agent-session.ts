@@ -9,46 +9,15 @@ import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-
-// The Agent SDK is ESM-only; Electron's main process is CJS.
-// Use Function constructor to create a dynamic import that Rollup/Vite
-// won't transform into require().
-const dynamicImport = new Function('specifier', 'return import(specifier)') as
-  (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
-
-let _query: typeof import('@anthropic-ai/claude-agent-sdk').query;
-async function getQuery() {
-  if (!_query) {
-    const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
-    _query = sdk.query;
-  }
-  return _query;
-}
-
-/**
- * Strip noisy env vars that leak absolute paths into the LLM context,
- * causing the model to use full paths for simple CLI commands.
- */
-const ENV_NOISE_PREFIXES = ['npm_', 'NVM_', 'FNM_', 'VSCODE_', 'ELECTRON_'];
-function cleanEnv(): Record<string, string | undefined> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => !ENV_NOISE_PREFIXES.some(p => key.startsWith(p))
-    )
-  );
-}
-
-// Re-declare the types we need (type-only imports are erased at runtime)
-type Query = import('@anthropic-ai/claude-agent-sdk').Query;
-type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
-type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
+import { adapterRegistry } from './adapters/index.js';
+import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 
 interface PendingPermission {
   requestId: string;
   toolName: string;
   toolUseId: string;
   toolInput: Record<string, unknown>;
-  resolve: (result: { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string }) => void;
+  resolve: (result: PermissionResponse) => void;
 }
 
 interface ManagedSession {
@@ -57,16 +26,15 @@ interface ManagedSession {
   worktreePath: string;
   repoPath: string;
   status: SessionStatus;
-  agentType: 'claude-code';
+  agentType: string;
   createdAt: number;
-  queryInstance: Query | null;
+  adapter: AgentAdapter;
+  queryHandle: AgentQueryHandle | null;
   abortController: AbortController;
-  inputController: ReadableStreamDefaultController<SDKUserMessage> | null;
-  inputStream: ReadableStream<SDKUserMessage> | null;
   pendingPermissions: Map<string, PendingPermission>;
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
-  claudeSessionId: string | null;
+  providerSessionId: string | null;
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
   eventHistory: AgentEvent[];
@@ -100,33 +68,6 @@ interface ManagedSession {
   stoppedByUser: boolean;
 }
 
-/**
- * Creates an AsyncIterable from a ReadableStream so we can pass
- * it to query()'s prompt parameter for multi-turn conversations.
- */
-function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): AsyncIterable<T> {
-  return {
-    [Symbol.asyncIterator]() {
-      const reader = stream.getReader();
-      return {
-        async next() {
-          const { done, value } = await reader.read();
-          if (done) return { done: true, value: undefined as any };
-          return { done: false, value };
-        },
-        async return() {
-          reader.releaseLock();
-          return { done: true, value: undefined as any };
-        },
-        async throw(e: unknown) {
-          reader.cancel(e instanceof Error ? e.message : String(e));
-          return { done: true, value: undefined as any };
-        },
-      };
-    },
-  };
-}
-
 export interface SessionCompletionResult {
   sessionId: string;
   isError: boolean;
@@ -136,115 +77,15 @@ export interface SessionCompletionResult {
 
 const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
 
-/**
- * Match a tool rule pattern against a tool call.
- * Patterns: "Bash" matches all Bash, "Bash(npm run *)" matches commands starting with "npm run ".
- * Glob-style * wildcards are supported.
- */
-function matchToolRule(pattern: string, toolName: string, toolCall: string): boolean {
-  // Simple tool name match (no parentheses)
-  if (!pattern.includes('(')) {
-    return toolName === pattern || toolName.startsWith(pattern);
-  }
-  // Pattern with specifier: ToolName(specifier)
-  const match = pattern.match(/^([^(]+)\((.+)\)$/);
-  if (!match) return false;
-  const [, ruleTool, specifier] = match;
-  if (ruleTool !== toolName) return false;
-  if (specifier === '*') return true;
-  // Convert glob pattern to regex
-  const escaped = specifier.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  try {
-    return new RegExp(`^${escaped}$`).test(toolCall.slice(toolName.length + 1, -1) || '');
-  } catch {
-    return false;
-  }
-}
-
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
-  async createSession(opts: {
-    id: string;
-    branch: string;
-    cwd: string;
-    repoPath: string;
-    window: BrowserWindow;
-    resumeClaudeSessionId?: string;
-    permissionMode?: 'default' | 'plan' | 'acceptEdits';
-    appendSystemPrompt?: string | null;
-    /** Fully custom system prompt — overrides the claude_code preset entirely. */
-    customSystemPrompt?: string | null;
-    /** If set, only these tools are allowed — everything else is auto-denied. */
-    allowedTools?: string[] | null;
-    /** Force structured JSON output via json_schema. */
-    outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
-    /** SDK sandbox settings for restricted Bash execution. */
-    sandbox?: Record<string, unknown> | null;
-    /** Extra environment variables for the SDK query. */
-    extraEnv?: Record<string, string> | null;
-  }): Promise<SessionInfo> {
-    const { id, branch, cwd, repoPath, window: win } = opts;
-
-    const abortController = new AbortController();
-
-    // Create a stream for multi-turn input
-    let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
-    const inputStream = new ReadableStream<SDKUserMessage>({
-      start(controller) {
-        inputController = controller;
-      },
-    });
-
-    // Apply settings defaults for values not explicitly provided
-    const appSettings = settings.getSettings();
-    const effectivePermissionMode = opts.permissionMode
-      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
-      || 'default';
-    const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
-
-    const session: ManagedSession = {
-      id,
-      branch,
-      worktreePath: cwd,
-      repoPath,
-      status: 'starting',
-      agentType: 'claude-code',
-      createdAt: Date.now(),
-      queryInstance: null,
-      abortController,
-      inputController,
-      inputStream,
-      pendingPermissions: new Map(),
-      alwaysAllowedTools: new Set(),
-      claudeSessionId: opts.resumeClaudeSessionId || null,
-      window: win,
-      eventHistory: this.loadEventHistory(id),
-      detectedPorts: new Set(),
-      toolUseMap: new Map(),
-      lastResult: null,
-      permissionMode: effectivePermissionMode,
-      appendSystemPrompt: effectiveAppendPrompt,
-      customSystemPrompt: opts.customSystemPrompt ?? null,
-      allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
-      outputFormat: opts.outputFormat ?? null,
-      sandbox: opts.sandbox ?? null,
-      extraEnv: opts.extraEnv ?? null,
-      eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
-      displayName: null,
-      devServer: null,
-      stoppedByUser: false,
-    };
-
-    this.sessions.set(id, session);
-
-    // Ensure events directory exists
-    try { fs.mkdirSync(EVENTS_DIR, { recursive: true }); } catch { /* already exists */ }
-
-    // Emit helper — buffers events and persists them to JSONL on disk.
-    const emit = (event: AgentEvent) => {
+  /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
+  private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
+    const id = session.id;
+    return (event: AgentEvent) => {
       logger.debug(`[emit] session=${id} event.type=${event.type}`);
       session.eventHistory.push(event);
 
@@ -270,6 +111,78 @@ class AgentSessionManager {
         logger.debug(`[emit] window is destroyed, dropping event`);
       }
     };
+  }
+
+  async createSession(opts: {
+    id: string;
+    branch: string;
+    cwd: string;
+    repoPath: string;
+    window: BrowserWindow;
+    resumeSessionId?: string;
+    permissionMode?: 'default' | 'plan' | 'acceptEdits';
+    appendSystemPrompt?: string | null;
+    customSystemPrompt?: string | null;
+    allowedTools?: string[] | null;
+    outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
+    sandbox?: Record<string, unknown> | null;
+    extraEnv?: Record<string, string> | null;
+    adapterType?: string;
+  }): Promise<SessionInfo> {
+    const { id, branch, cwd, repoPath, window: win } = opts;
+
+    // Look up the adapter
+    const adapterType = opts.adapterType ?? 'claude-code';
+    const adapter = adapterRegistry.get(adapterType);
+    if (!adapter) throw new Error(`Unknown agent adapter: ${adapterType}`);
+
+    const abortController = new AbortController();
+
+    // Apply settings defaults for values not explicitly provided
+    const appSettings = settings.getSettings();
+    const effectivePermissionMode = opts.permissionMode
+      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
+      || 'default';
+    const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+
+    const session: ManagedSession = {
+      id,
+      branch,
+      worktreePath: cwd,
+      repoPath,
+      status: 'starting',
+      agentType: adapterType,
+      createdAt: Date.now(),
+      adapter,
+      queryHandle: null,
+      abortController,
+      pendingPermissions: new Map(),
+      alwaysAllowedTools: new Set(),
+      providerSessionId: opts.resumeSessionId || null,
+      window: win,
+      eventHistory: this.loadEventHistory(id),
+      detectedPorts: new Set(),
+      toolUseMap: new Map(),
+      lastResult: null,
+      permissionMode: effectivePermissionMode,
+      appendSystemPrompt: effectiveAppendPrompt,
+      customSystemPrompt: opts.customSystemPrompt ?? null,
+      allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
+      outputFormat: opts.outputFormat ?? null,
+      sandbox: opts.sandbox ?? null,
+      extraEnv: opts.extraEnv ?? null,
+      eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
+      displayName: null,
+      devServer: null,
+      stoppedByUser: false,
+    };
+
+    this.sessions.set(id, session);
+
+    // Ensure events directory exists
+    try { fs.mkdirSync(EVENTS_DIR, { recursive: true }); } catch { /* already exists */ }
+
+    const emit = this.createEmitter(session);
 
     this.runQuery(session, emit).catch((err) => {
         console.error(`[runQuery] session=${id} FAILED:`, err);
@@ -306,140 +219,132 @@ class AgentSessionManager {
     session: ManagedSession,
     emit: (event: AgentEvent) => void,
   ) {
-    const { id, worktreePath, abortController } = session;
+    const { id, abortController } = session;
 
     const pendingPermissions = session.pendingPermissions;
-
     let permRequestCounter = 0;
 
     logger.debug(`[runQuery] session=${id} starting`);
-    const queryFn = await getQuery();
-    logger.debug(`[runQuery] session=${id} SDK loaded`);
-    const q = queryFn({
-      prompt: readableStreamToAsyncIterable(session.inputStream!),
-      options: {
-        cwd: worktreePath,
-        abortController,
-        includePartialMessages: true,
-        settingSources: ['user', 'project', 'local'],
-        systemPrompt: session.customSystemPrompt
-          ? session.customSystemPrompt
-          : session.appendSystemPrompt
-            ? { type: 'preset', preset: 'claude_code', append: session.appendSystemPrompt }
-            : { type: 'preset', preset: 'claude_code' },
-        permissionMode: session.permissionMode,
-        // Force structured JSON output if configured
-        ...(session.outputFormat ? { outputFormat: session.outputFormat } : {}),
-        // Sandbox settings for restricted Bash execution
-        ...(session.sandbox ? { sandbox: session.sandbox } : {}),
-        // Resume previous conversation if we have a saved session ID
-        ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
-        canUseTool: async (toolName, input, options) => {
-          // If an allowedTools whitelist is set, deny anything not in it
-          if (session.allowedTools && !session.allowedTools.has(toolName)) {
-            return { behavior: 'deny', message: `Tool "${toolName}" is not allowed in this session` };
-          }
-          // Check settings-level deny/allow rules
-          const currentSettings = settings.getSettings();
-          const toolCall = typeof (input as any)?.command === 'string'
-            ? `${toolName}(${(input as any).command})`
-            : toolName;
-          for (const rule of currentSettings.toolDenyRules) {
-            if (matchToolRule(rule.pattern, toolName, toolCall)) {
-              return { behavior: 'deny', message: `Denied by settings rule: ${rule.pattern}` };
-            }
-          }
-          for (const rule of currentSettings.toolAllowRules) {
-            if (matchToolRule(rule.pattern, toolName, toolCall)) {
-              return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
-            }
-          }
-          // Auto-approve Bash for sandboxed sessions (SDK sandbox may not
-          // be active on all platforms, so we enforce it here as fallback)
-          if (session.sandbox && toolName === 'Bash') {
-            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
-          }
-          // For sandboxed sessions, validate Edit/Write paths against allowWrite
-          if (session.sandbox && (toolName === 'Edit' || toolName === 'Write')) {
-            const filePath = (input as any).file_path;
-            if (filePath && typeof filePath === 'string') {
-              const allowWrite = (session.sandbox as any)?.filesystem?.allowWrite as string[] | undefined;
-              if (allowWrite && allowWrite.length > 0) {
-                const resolved = path.resolve(filePath);
-                const allowed = allowWrite.some(dir => resolved.startsWith(path.resolve(dir)));
-                if (!allowed) {
-                  return { behavior: 'deny', message: `Path "${filePath}" is outside the allowed write directories` };
-                }
-              }
-            }
-          }
-          // Auto-approve if user previously chose "Always Allow" for this tool
-          if (session.alwaysAllowedTools.has(toolName)) {
-            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
-          }
-          // Forward permission request to renderer and wait for user response.
-          // Times out after 30 minutes to give users plenty of time to respond.
-          const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
-          const requestId = `perm_${id}_${++permRequestCounter}`;
-          return new Promise((resolve) => {
-            const timer = setTimeout(() => {
-              pendingPermissions.delete(requestId);
-              resolve({ behavior: 'deny', message: 'Permission request timed out' });
-            }, PERMISSION_TIMEOUT_MS);
 
-            pendingPermissions.set(requestId, {
-              requestId,
-              toolName,
-              toolUseId: options.toolUseID,
-              toolInput: input as Record<string, unknown>,
-              resolve: (result) => {
-                clearTimeout(timer);
-                resolve(result);
-              },
-            });
-            emit({
-              type: 'permission_request',
-              toolName,
-              toolInput: input,
-              toolUseId: options.toolUseID,
-              requestId,
-              decisionReason: options.decisionReason,
-              suggestions: options.suggestions,
-            });
+    // Build adapter config from session state + app settings
+    const currentSettings = settings.getSettings();
+    const handle = await session.adapter.start({
+      cwd: session.worktreePath,
+      permissionMode: session.permissionMode,
+      appendSystemPrompt: session.appendSystemPrompt,
+      customSystemPrompt: session.customSystemPrompt,
+      allowedTools: session.allowedTools,
+      outputFormat: session.outputFormat,
+      sandbox: session.sandbox,
+      extraEnv: session.extraEnv,
+      resumeSessionId: session.providerSessionId,
+      toolAllowRules: currentSettings.toolAllowRules,
+      toolDenyRules: currentSettings.toolDenyRules,
+      alwaysAllowedTools: session.alwaysAllowedTools,
+      onPermissionRequest: async (request) => {
+        const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
+        const requestId = `perm_${id}_${++permRequestCounter}`;
+        return new Promise<PermissionResponse>((resolve) => {
+          const timer = setTimeout(() => {
+            pendingPermissions.delete(requestId);
+            resolve({ behavior: 'deny', message: 'Permission request timed out' });
+          }, PERMISSION_TIMEOUT_MS);
+
+          pendingPermissions.set(requestId, {
+            requestId,
+            toolName: request.toolName,
+            toolUseId: request.toolUseId,
+            toolInput: request.toolInput,
+            resolve: (result) => {
+              clearTimeout(timer);
+              resolve(result);
+            },
           });
-        },
-        env: {
-          ...cleanEnv(),
-          CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
-          ...(session.extraEnv ?? {}),
-        },
-        stderr: (data: string) => {
-          logger.debug(`[claude-stderr] session=${id}: ${data.trim()}`);
-        },
+          emit({
+            type: 'permission_request',
+            toolName: request.toolName,
+            toolInput: request.toolInput,
+            toolUseId: request.toolUseId,
+            requestId,
+            decisionReason: request.decisionReason,
+            suggestions: request.suggestions,
+          });
+        });
       },
     });
 
-    session.queryInstance = q;
-    logger.debug(`[runQuery] session=${id} query created, entering message loop`);
+    session.queryHandle = handle;
+    logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
-    emit({ type: 'status', message: `Connecting to Claude Code — ${session.branch} · ${session.permissionMode}` });
+    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch} · ${session.permissionMode}` });
 
-    // Process message stream
+    // Process event stream from the adapter
     try {
-      for await (const message of q) {
-        logger.debug(`[runQuery] session=${id} msg type=${message.type}`);
+      for await (const event of handle.events) {
+        logger.debug(`[runQuery] session=${id} event type=${event.type}`);
         if (abortController.signal.aborted) break;
-        this.handleMessage(session, message, emit);
+
+        // Intercept system_init to capture provider session ID and update status
+        if (event.type === 'system_init') {
+          session.status = 'running';
+          session.providerSessionId = handle.getSessionId();
+
+          // Persist provider session ID so we can resume after app restart
+          if (session.providerSessionId) {
+            worktreeManager.saveProviderSessionId(session.id, session.providerSessionId).catch((e) => {
+              logger.warn(`Failed to persist provider session ID for ${session.id}:`, e);
+            });
+          }
+
+          const w = session.window;
+          if (!w.isDestroyed()) {
+            w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
+          }
+        }
+
+        // Intercept tool_result to track tool names and detect dev server URLs
+        if (event.type === 'tool_result') {
+          // Dev server URL detection (from Bash output)
+          const toolName = session.toolUseMap.get(event.toolUseId);
+          if (toolName === 'Bash' && event.content) {
+            const portMatches = event.content.matchAll(
+              /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
+            );
+            for (const m of portMatches) {
+              const port = parseInt(m[1], 10);
+              if (!session.detectedPorts.has(port)) {
+                session.detectedPorts.add(port);
+                logger.info(`Dev server detected on port ${port} in session ${session.id}`);
+                emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
+              }
+            }
+          }
+        }
+
+        // Track tool use IDs for matching tool_results
+        if (event.type === 'assistant_tool_use') {
+          session.toolUseMap.set(event.toolUseId, event.toolName);
+        }
+
+        // Track result for completion callback
+        if (event.type === 'result') {
+          session.lastResult = {
+            isError: event.isError,
+            totalCostUsd: event.totalCostUsd,
+            durationMs: event.durationMs,
+          };
+        }
+
+        emit(event);
       }
-      logger.debug(`[runQuery] session=${id} message loop ended normally`);
+      logger.debug(`[runQuery] session=${id} event loop ended normally`);
     } catch (err: any) {
-      // Extract as much detail as possible from the SDK error
       const errMsg = err?.message || String(err);
       const stderr = err?.stderr || err?.cause?.stderr || '';
       const exitCode = err?.exitCode ?? err?.code ?? '';
       const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
-      logger.error(`[runQuery] session=${id} message loop error (exit=${exitCode}):`, detail);
+      logger.error(`[runQuery] session=${id} event loop error (exit=${exitCode}):`, detail);
 
       const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
       if (isAuthError) {
@@ -480,354 +385,11 @@ class AgentSessionManager {
     }
   }
 
-  private handleMessage(
-    session: ManagedSession,
-    message: SDKMessage,
-    emit: (event: AgentEvent) => void,
-  ) {
-    switch (message.type) {
-      case 'system': {
-        if (message.subtype === 'init') {
-          session.status = 'running';
-          session.claudeSessionId = message.session_id;
-
-          // Persist Claude session ID so we can resume after app restart
-          worktreeManager.saveClaudeSessionId(session.id, message.session_id).catch((e) => {
-            logger.warn(`Failed to persist Claude session ID for ${session.id}:`, e);
-          });
-          emit({
-            type: 'system_init',
-            sessionId: message.session_id,
-            model: message.model,
-            tools: message.tools,
-            agents: (message as any).agents,
-            skills: (message as any).skills,
-            slashCommands: (message as any).slash_commands,
-            mcpServers: (message as any).mcp_servers,
-          });
-          const w = session.window;
-          if (!w.isDestroyed()) {
-            w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
-          }
-
-        } else if (message.subtype === 'compact_boundary') {
-          const meta = (message as any).compact_metadata ?? {};
-          emit({
-            type: 'compact_boundary',
-            trigger: meta.trigger ?? 'manual',
-            preTokens: meta.pre_tokens ?? 0,
-          });
-        } else if (message.subtype === 'status') {
-          const m = message as any;
-          if (m.status === 'compacting') {
-            emit({ type: 'status', message: 'Compacting conversation...' });
-          }
-          // Sync permission mode from SDK (check both camelCase and snake_case)
-          const modeValue = m.permissionMode ?? m.permission_mode;
-          if (modeValue) {
-            emit({ type: 'mode_sync', mode: modeValue });
-          }
-        } else if (message.subtype === 'local_command_output') {
-          const content = (message as any).content;
-          if (content) {
-            emit({ type: 'status', message: content });
-            // Detect mode changes from slash command output
-            if (/mode.*plan/i.test(content) || /plan mode/i.test(content)) {
-              emit({ type: 'mode_sync', mode: 'plan' });
-            } else if (/mode.*code/i.test(content) || /code mode/i.test(content) || /default mode/i.test(content)) {
-              emit({ type: 'mode_sync', mode: 'default' });
-            } else if (/mode.*accept/i.test(content) || /acceptEdits/i.test(content) || /edit mode/i.test(content)) {
-              emit({ type: 'mode_sync', mode: 'acceptEdits' });
-            }
-          }
-        } else if (message.subtype === 'task_started') {
-          const m = message as any;
-          emit({
-            type: 'task_started',
-            taskId: m.task_id ?? '',
-            toolUseId: m.tool_use_id,
-            description: m.description ?? '',
-            taskType: m.task_type,
-          });
-        } else if (message.subtype === 'task_progress') {
-          const m = message as any;
-          const usage = m.usage ?? {};
-          emit({
-            type: 'task_progress',
-            taskId: m.task_id ?? '',
-            toolUseId: m.tool_use_id,
-            description: m.description ?? '',
-            summary: m.summary,
-            lastToolName: m.last_tool_name,
-            totalTokens: usage.total_tokens ?? 0,
-            toolUses: usage.tool_uses ?? 0,
-            durationMs: usage.duration_ms ?? 0,
-          });
-        } else if (message.subtype === 'task_notification') {
-          const m = message as any;
-          const usage = m.usage ?? {};
-          emit({
-            type: 'task_notification',
-            taskId: m.task_id ?? '',
-            toolUseId: m.tool_use_id,
-            taskStatus: m.status ?? 'completed',
-            summary: m.summary ?? '',
-            outputFile: m.output_file ?? '',
-            totalTokens: usage.total_tokens,
-            toolUses: usage.tool_uses,
-            durationMs: usage.duration_ms,
-          });
-        } else if (message.subtype === 'hook_started') {
-          const m = message as any;
-          emit({
-            type: 'hook_event',
-            subtype: 'started',
-            hookId: m.hook_id ?? '',
-            hookName: m.hook_name ?? '',
-            hookEvent: m.hook_event ?? '',
-          });
-        } else if (message.subtype === 'hook_progress') {
-          const m = message as any;
-          emit({
-            type: 'hook_event',
-            subtype: 'progress',
-            hookId: m.hook_id ?? '',
-            hookName: m.hook_name ?? '',
-            hookEvent: m.hook_event ?? '',
-            output: m.output || m.stdout || m.stderr || '',
-          });
-        } else if (message.subtype === 'hook_response') {
-          const m = message as any;
-          emit({
-            type: 'hook_event',
-            subtype: 'response',
-            hookId: m.hook_id ?? '',
-            hookName: m.hook_name ?? '',
-            hookEvent: m.hook_event ?? '',
-            output: m.output || m.stdout || m.stderr || '',
-            outcome: m.outcome ?? 'success',
-            exitCode: m.exit_code,
-          });
-        } else if (message.subtype === 'elicitation_complete') {
-          const m = message as any;
-          emit({
-            type: 'elicitation_complete',
-            serverName: m.mcp_server_name ?? '',
-            elicitationId: m.elicitation_id ?? '',
-          });
-        } else if (message.subtype === 'files_persisted') {
-          const m = message as any;
-          emit({
-            type: 'files_persisted',
-            files: (m.files ?? []).map((f: any) => ({ filename: f.filename, fileId: f.file_id })),
-            failed: m.failed ?? [],
-          });
-        } else {
-          // Log unhandled system subtypes to help debug missing events
-          const m = message as any;
-          logger.debug(`[handleMessage] session=${session.id} unhandled system subtype=${message.subtype} keys=${Object.keys(m).join(',')}`);
-          // Try to extract permission mode from any system message
-          const modeVal = m.permissionMode ?? m.permission_mode ?? m.mode;
-          if (modeVal && typeof modeVal === 'string') {
-            emit({ type: 'mode_sync', mode: modeVal as any });
-          }
-        }
-        break;
-      }
-
-      case 'assistant': {
-        const content = message.message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === 'text') {
-              emit({ type: 'assistant_text', text: block.text, uuid: message.uuid });
-            } else if (block.type === 'tool_use') {
-              // Track tool name for matching results later
-              session.toolUseMap.set(block.id, block.name);
-              emit({
-                type: 'assistant_tool_use',
-                toolName: block.name,
-                toolInput: block.input,
-                toolUseId: block.id,
-                uuid: message.uuid,
-              });
-            } else if (block.type === 'thinking') {
-              emit({
-                type: 'thinking',
-                thinking: (block as any).thinking || '',
-                uuid: message.uuid,
-              });
-            }
-          }
-        }
-        // Emit usage info if available
-        const usage = (message.message as any)?.usage;
-        if (usage) {
-          emit({
-            type: 'usage',
-            inputTokens: usage.input_tokens ?? 0,
-            outputTokens: usage.output_tokens ?? 0,
-            cacheReadTokens: usage.cache_read_input_tokens,
-            cacheCreationTokens: usage.cache_creation_input_tokens,
-          });
-        }
-        break;
-      }
-
-      case 'user': {
-        // Tool results come back as user messages
-        const content = message.message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === 'tool_result') {
-              const resultContent = Array.isArray(block.content)
-                ? block.content.map((c: any) => c.text || '').join('')
-                : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-              emit({
-                type: 'tool_result',
-                toolUseId: block.tool_use_id,
-                content: resultContent,
-                isError: block.is_error,
-              });
-              // Detect localhost URLs in Bash tool output
-              const toolName = session.toolUseMap.get(block.tool_use_id);
-              if (toolName === 'Bash' && resultContent) {
-                const portMatches = resultContent.matchAll(
-                  /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
-                );
-                for (const m of portMatches) {
-                  const port = parseInt(m[1], 10);
-                  if (!session.detectedPorts.has(port)) {
-                    session.detectedPorts.add(port);
-                    const url = m[0].replace(/0\.0\.0\.0|\[::\]/, 'localhost');
-                    logger.info(`Dev server detected on port ${port} in session ${session.id}`);
-                    emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
-                  }
-                }
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case 'result': {
-        // Extract contextWindow from modelUsage (first model entry)
-        const modelUsage = (message as any).modelUsage as Record<string, { contextWindow?: number }> | undefined;
-        const contextWindow = modelUsage
-          ? Object.values(modelUsage)[0]?.contextWindow
-          : undefined;
-        // Store for completion callback
-        session.lastResult = {
-          isError: message.is_error,
-          totalCostUsd: message.total_cost_usd,
-          durationMs: message.duration_ms,
-        };
-        emit({
-          type: 'result',
-          subtype: message.subtype,
-          result: 'result' in message ? (message as any).result : undefined,
-          structured_output: 'structured_output' in message ? (message as any).structured_output : undefined,
-          totalCostUsd: message.total_cost_usd,
-          durationMs: message.duration_ms,
-          isError: message.is_error,
-          errors: 'errors' in message ? (message as any).errors : undefined,
-          numTurns: message.num_turns,
-          contextWindow,
-        });
-        break;
-      }
-
-      case 'tool_progress': {
-        const m = message as any;
-        emit({
-          type: 'tool_progress',
-          toolName: m.tool_name ?? '',
-          toolUseId: m.tool_use_id ?? '',
-          elapsedSeconds: m.elapsed_time_seconds ?? 0,
-        });
-        break;
-      }
-
-      case 'stream_event': {
-        // Partial streaming events for real-time text display
-        const event = message.event;
-        if (event.type === 'content_block_delta') {
-          const delta = (event as any).delta;
-          if (delta?.type === 'text_delta' && delta.text) {
-            emit({ type: 'partial_text', text: delta.text });
-          } else if (delta?.type === 'thinking_delta' && delta.thinking) {
-            emit({ type: 'partial_thinking', text: delta.thinking });
-          }
-        } else if (event.type === 'content_block_start') {
-          const block = (event as any).content_block;
-          if (block?.type === 'thinking') {
-            emit({ type: 'activity', activity: 'thinking' });
-          } else if (block?.type === 'text') {
-            emit({ type: 'activity', activity: 'generating' });
-          } else if (block?.type === 'tool_use') {
-            emit({ type: 'activity', activity: 'tool_starting', toolName: block.name });
-          }
-        } else if (event.type === 'message_start') {
-          emit({ type: 'activity', activity: 'generating' });
-        }
-        break;
-      }
-
-      case 'auth_status': {
-        const m = message as any;
-        emit({
-          type: 'auth_status',
-          isAuthenticating: m.isAuthenticating ?? false,
-          output: m.output ?? [],
-          authError: m.error,
-        });
-        break;
-      }
-
-      case 'tool_use_summary': {
-        const m = message as any;
-        emit({
-          type: 'tool_use_summary',
-          summary: m.summary ?? '',
-          toolUseIds: m.preceding_tool_use_ids ?? [],
-        });
-        break;
-      }
-
-      case 'rate_limit_event': {
-        const m = message as any;
-        const info = m.rate_limit_info ?? {};
-        emit({
-          type: 'rate_limit',
-          status: info.status ?? 'allowed',
-          resetsAt: info.resets_at ?? info.resetsAt,
-          utilization: info.utilization,
-          rateLimitType: info.rate_limit_type ?? info.rateLimitType,
-        });
-        break;
-      }
-
-      case 'prompt_suggestion': {
-        const m = message as any;
-        emit({
-          type: 'prompt_suggestion',
-          suggestion: m.suggestion ?? '',
-        });
-        break;
-      }
-
-      default:
-        // Ignore other message types
-        break;
-    }
-  }
-
   sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): boolean {
     const session = this.sessions.get(id);
 
-    if (!session?.inputController) {
-      logger.debug(`[sendMessage] session=${id} no session or inputController`);
+    if (!session?.queryHandle) {
+      logger.debug(`[sendMessage] session=${id} no session or queryHandle`);
       return false;
     }
 
@@ -836,36 +398,17 @@ class AgentSessionManager {
     session.eventHistory.push(userEvent);
     try { fs.appendFileSync(session.eventLogPath, JSON.stringify(userEvent) + '\n'); } catch { /* non-fatal */ }
 
-    // Build content: plain string when no images, content block array when images attached
-    let messageContent: string | Array<Record<string, unknown>> = content;
-    if (images && images.length > 0) {
-      const blocks: Array<Record<string, unknown>> = [];
-      for (const img of images) {
-        blocks.push({
-          type: 'image',
-          source: { type: 'base64', media_type: img.mediaType, data: img.data },
-        });
-      }
-      blocks.push({ type: 'text', text: content });
-      messageContent = blocks;
-    }
-
-    const sessionId = session.claudeSessionId ?? '';
-    logger.debug(`[sendMessage] session=${id} enqueuing to SDK, claudeSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
+    const sessionId = session.providerSessionId ?? '';
+    logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
-      session.inputController.enqueue({
-        type: 'user',
-        session_id: sessionId,
-        message: {
-          role: 'user',
-          content: messageContent,
-        },
-        parent_tool_use_id: null,
-      } as SDKUserMessage);
-      logger.debug(`[sendMessage] session=${id} enqueued successfully`);
+      session.queryHandle.sendMessage({
+        text: content,
+        images: images,
+      });
+      logger.debug(`[sendMessage] session=${id} sent successfully`);
       return true;
     } catch (e) {
-      console.error(`[sendMessage] session=${id} enqueue FAILED:`, e);
+      console.error(`[sendMessage] session=${id} send FAILED:`, e);
       logger.warn(`Failed to send message to session ${id}:`, e);
       return false;
     }
@@ -899,9 +442,9 @@ class AgentSessionManager {
 
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
-    if (!session?.queryInstance) return;
+    if (!session?.queryHandle?.setPermissionMode) return;
     try {
-      session.queryInstance.setPermissionMode(mode as any);
+      session.queryHandle.setPermissionMode(mode as any);
     } catch (e) {
       logger.warn(`Failed to set mode for session ${id}:`, e);
     }
@@ -909,9 +452,9 @@ class AgentSessionManager {
 
   async setModel(id: string, model?: string): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryInstance) return;
+    if (!session?.queryHandle?.setModel) return;
     try {
-      await session.queryInstance.setModel(model);
+      await session.queryHandle.setModel(model!);
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;
@@ -920,9 +463,9 @@ class AgentSessionManager {
 
   async setThinking(id: string, enabled: boolean): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryInstance) return;
+    if (!session?.queryHandle?.setMaxThinkingTokens) return;
     try {
-      await session.queryInstance.setMaxThinkingTokens(enabled ? null : 0);
+      await session.queryHandle.setMaxThinkingTokens(enabled ? null : 0);
     } catch (e) {
       logger.warn(`Failed to set thinking for session ${id}:`, e);
       throw e;
@@ -1007,8 +550,7 @@ class AgentSessionManager {
     // Abort the running query
     session.abortController.abort();
 
-    try { session.inputController?.close(); } catch { /* may already be closed */ }
-    try { session.queryInstance?.close(); } catch { /* may already be closed */ }
+    try { session.queryHandle?.close(); } catch { /* may already be closed */ }
 
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
@@ -1016,36 +558,11 @@ class AgentSessionManager {
     }
     session.pendingPermissions.clear();
 
-    // Set up fresh abort controller and input stream for the next query
+    // Set up fresh abort controller for the next query
     session.abortController = new AbortController();
-    let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
-    session.inputStream = new ReadableStream<SDKUserMessage>({
-      start(controller) {
-        inputController = controller;
-      },
-    });
-    session.inputController = inputController;
-    session.queryInstance = null;
+    session.queryHandle = null;
 
-    // Build the emit helper (same as in createSession)
-    const emit = (event: AgentEvent) => {
-      logger.debug(`[emit] session=${id} event.type=${event.type}`);
-      session.eventHistory.push(event);
-      try {
-        fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
-      } catch { /* non-fatal */ }
-      const listeners = this.eventListeners.get(id);
-      if (listeners) {
-        for (const cb of listeners) {
-          try { cb(event); } catch { /* non-fatal */ }
-        }
-      }
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        const channel = `${IPC.AGENT_EVENT}:${id}`;
-        w.webContents.send(channel, event);
-      }
-    };
+    const emit = this.createEmitter(session);
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1065,14 +582,9 @@ class AgentSessionManager {
     // Abort the query
     session.abortController.abort();
 
-    // Close the input stream
+    // Close the query handle
     try {
-      session.inputController?.close();
-    } catch { /* may already be closed */ }
-
-    // Close the query
-    try {
-      session.queryInstance?.close();
+      session.queryHandle?.close();
     } catch { /* may already be closed */ }
 
     // Resolve any pending permissions as denied
@@ -1138,18 +650,14 @@ class AgentSessionManager {
 
   /**
    * Close the input stream for a session, signalling no more messages.
-   * This causes the SDK's `for await` loop to exit naturally, firing
+   * This causes the agent's event loop to exit naturally, firing
    * the completion callback. Use for single-shot sessions (subtasks,
    * merge agents) where only one instruction is sent.
    */
   closeInputStream(id: string): void {
     const session = this.sessions.get(id);
-    if (!session) return;
-    if (!session.inputController) return;
-    try {
-      session.inputController.close();
-      session.inputController = null;
-    } catch { /* may already be closed */ }
+    if (!session?.queryHandle?.closeInput) return;
+    session.queryHandle.closeInput();
   }
 
   /** Register a one-time callback for when a session's query completes. */

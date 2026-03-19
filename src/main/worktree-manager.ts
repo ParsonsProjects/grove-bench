@@ -15,6 +15,8 @@ interface ManifestEntry {
   repoPath: string;
   branch: string;
   createdAt: number;
+  providerSessionId?: string;
+  /** @deprecated Use providerSessionId — kept for migration from older manifests. */
   claudeSessionId?: string;
   direct?: boolean;
 }
@@ -180,19 +182,31 @@ export class WorktreeManager {
     return info;
   }
 
-  /** Persist the Claude SDK session ID so it can be resumed after restart. */
-  async saveClaudeSessionId(worktreeId: string, claudeSessionId: string): Promise<void> {
+  /** Persist the provider session ID so it can be resumed after restart. */
+  async saveProviderSessionId(worktreeId: string, sessionId: string): Promise<void> {
     await this.withManifest((manifest) => {
       if (manifest[worktreeId]) {
-        manifest[worktreeId].claudeSessionId = claudeSessionId;
+        manifest[worktreeId].providerSessionId = sessionId;
       }
     });
   }
 
-  /** Retrieve the last Claude SDK session ID for a worktree. */
-  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
+  /** Retrieve the last provider session ID for a worktree. */
+  async getProviderSessionId(worktreeId: string): Promise<string | undefined> {
     const manifest = await this.loadManifest();
-    return manifest[worktreeId]?.claudeSessionId;
+    const entry = manifest[worktreeId];
+    // Fall back to old claudeSessionId field for migration
+    return entry?.providerSessionId ?? entry?.claudeSessionId;
+  }
+
+  /** @deprecated Use saveProviderSessionId */
+  async saveClaudeSessionId(worktreeId: string, claudeSessionId: string): Promise<void> {
+    return this.saveProviderSessionId(worktreeId, claudeSessionId);
+  }
+
+  /** @deprecated Use getProviderSessionId */
+  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
+    return this.getProviderSessionId(worktreeId);
   }
 
   async remove(id: string, deleteBranch = false): Promise<void> {
