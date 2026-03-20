@@ -190,6 +190,9 @@ class MessageStore {
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
 
+  /** Preserved edit history after conversation-only rewind (keyed by session) */
+  preservedEditHistory = $state<Record<string, { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[]>>({});
+
   /** Message to send automatically after a /clear completes (system_init) */
   private pendingMessageAfterClear: Record<string, string> = {};
 
@@ -404,12 +407,26 @@ class MessageStore {
       }
     }
 
-    return [...byFile.entries()].map(([filePath, { edits }]) => ({
+    const fromMessages = [...byFile.entries()].map(([filePath, { edits }]) => ({
       filePath,
       toolName: edits[edits.length - 1].toolName,
       toolInput: edits[edits.length - 1].toolInput,
       edits,
     }));
+
+    // Merge in preserved edit history from conversation-only rewinds
+    const preserved = this.preservedEditHistory[sessionId];
+    if (!preserved || preserved.length === 0) return fromMessages;
+
+    // Current message-derived changes take precedence over preserved ones
+    const seenPaths = new Set(fromMessages.map(fc => fc.filePath));
+    const merged = [...fromMessages];
+    for (const p of preserved) {
+      if (!seenPaths.has(p.filePath)) {
+        merged.push(p);
+      }
+    }
+    return merged;
   }
 
   /** Revert a file via git checkout */
@@ -1039,6 +1056,14 @@ class MessageStore {
         break;
 
       case 'rewind': {
+        // Snapshot edit history before truncation if conversation-only rewind
+        if (event.conversationOnly) {
+          this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
+        } else {
+          // Full rewind restores files — clear any preserved history
+          delete this.preservedEditHistory[sessionId];
+        }
+
         // Truncate messages after the rewind point
         const msgs = this.messagesBySession[sessionId] ?? [];
         const rewindIdx = msgs.findLastIndex(
@@ -1051,7 +1076,7 @@ class MessageStore {
         this.isRunning[sessionId] = false;
         this.streamingText[sessionId] = '';
         this.streamingThinking[sessionId] = '';
-        // Refresh git status since files changed on disk
+        // Refresh git status since files may have changed on disk
         gitStatusStore.refresh(sessionId);
         break;
       }

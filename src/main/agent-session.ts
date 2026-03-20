@@ -1427,7 +1427,7 @@ class AgentSessionManager {
       await q.rewindFiles(userMessageId);
     }
 
-    session.emit?.({ type: 'rewind', toMessageId: userMessageId });
+    session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
   }
 
   /** Dry-run rewind to get the diff of what would change. */

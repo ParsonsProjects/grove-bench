@@ -116,7 +116,7 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
-  | { type: 'rewind'; toMessageId: string };
+  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean };
 
 // ─── PTY / Terminal ───
 
