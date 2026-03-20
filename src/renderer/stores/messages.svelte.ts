@@ -191,6 +191,10 @@ class MessageStore {
   /** Message to send automatically after a /clear completes (system_init) */
   private pendingMessageAfterClear: Record<string, string> = {};
 
+  /** Set after markSessionStopped — suppresses late permission_request events
+   *  from the dying query until the next system_init re-initializes the session. */
+  private stoppingSession: Record<string, boolean> = {};
+
   private cleanups = new Map<string, () => void>();
 
   getMessages(sessionId: string): ChatMessage[] {
@@ -462,6 +466,10 @@ class MessageStore {
     this.isRunning[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
 
+    // Suppress late permission_request events from the dying query.
+    // Cleared on the next system_init when the new query connects.
+    this.stoppingSession[sessionId] = true;
+
     // Resolve any pending tool calls and permissions so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
@@ -511,6 +519,7 @@ class MessageStore {
         }
         this.isReady[sessionId] = true;
         this.isRunning[sessionId] = false;
+        delete this.stoppingSession[sessionId];
         this.modelBySession[sessionId] = event.model;
         this.systemInfoBySession[sessionId] = {
           tools: event.tools ?? [],
@@ -642,6 +651,10 @@ class MessageStore {
       }
 
       case 'permission_request': {
+        // Drop stale permission requests from a dying query after the user
+        // clicked Stop. The new query will re-request if needed.
+        if (this.stoppingSession[sessionId]) break;
+
         this.flushStreamingText(sessionId);
         // Mark the matching tool_call as awaiting permission so it doesn't
         // render before the user has approved/denied.
@@ -1138,6 +1151,7 @@ class MessageStore {
     this.isReady[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
+    delete this.stoppingSession[sessionId];
     // Preserve isRunning — caller controls this based on history
   }
 

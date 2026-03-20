@@ -243,7 +243,7 @@
                 <span class="truncate" title={branch}>{branch}</span>
                 <span class="text-muted-foreground/40">({sessions.length})</span>
               </div>
-              {#each sessions as session (session.id)}
+              {#each sessions as session, i (session.id)}
                 {@const isDestroying = destroying === session.id}
                 <button
                   onclick={() => !isDestroying && focusSession(session.id)}
@@ -271,7 +271,7 @@
                     {:else}
                       <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
                     {/if}
-                    <span class="text-xs truncate">{session.displayName || (session.direct ? 'direct' : 'worktree')}</span>
+                    <span class="text-xs truncate">{session.displayName || `session ${i + 1}`}</span>
                   </div>
                   <span
                     role="button"

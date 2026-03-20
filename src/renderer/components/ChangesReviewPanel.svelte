@@ -238,7 +238,7 @@
   {@const badge = statusBadge(entry.status)}
   {@const history = editHistoryByFile.get(entry.filePath)}
   {@const historyExpanded = editHistoryExpanded.has(key)}
-  {@const canRevert = entry.status !== 'untracked'}
+  {@const isUntracked = entry.status === 'untracked'}
 
   <div data-file-key={key} class="border-l-4 {entry.staged ? 'border-green-500' : entry.status === 'untracked' ? 'border-muted-foreground/30' : 'border-primary'}">
     <!-- File header -->
@@ -280,20 +280,18 @@
       {/if}
 
       <div class="ml-auto flex items-center gap-2">
-        {#if canRevert}
-          <button
-            onclick={() => revertFile(entry)}
-            disabled={reverting}
-            class="text-xs px-2 py-0.5 border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
-            title="Revert this file to its state before changes"
-          >
-            {#if reverting}
-              <span class="w-2 h-2 bg-destructive animate-pulse inline-block"></span>
-            {:else}
-              Revert
-            {/if}
-          </button>
-        {/if}
+        <button
+          onclick={() => revertFile(entry)}
+          disabled={reverting}
+          class="text-xs px-2 py-0.5 border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+          title={isUntracked ? 'Delete this untracked file' : 'Revert this file to its state before changes'}
+        >
+          {#if reverting}
+            <span class="w-2 h-2 bg-destructive animate-pulse inline-block"></span>
+          {:else}
+            {isUntracked ? 'Discard' : 'Revert'}
+          {/if}
+        </button>
       </div>
     </div>
 

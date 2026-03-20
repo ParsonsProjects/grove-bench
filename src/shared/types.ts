@@ -313,6 +313,7 @@ export interface GroveBenchAPI {
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
+  onPowerResume(callback: () => void): () => void;
 
   // Window controls
   winMinimize(): void;
@@ -399,6 +400,7 @@ export const IPC = {
   AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
+  POWER_RESUME: 'power:resume',
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',

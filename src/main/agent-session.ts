@@ -554,15 +554,17 @@ class AgentSessionManager {
       }
     }
 
-    // Kill any dev servers that were detected during this session
-    await this.killDetectedPorts(session);
-
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
+    // Dev servers are preserved so they survive stop/continue cycles.
     if (session.stoppedByUser) {
       session.stoppedByUser = false;
       return;
     }
+
+    // Kill any dev servers that were detected during this session
+    // (only on natural query completion, not user-initiated stop)
+    await this.killDetectedPorts(session);
 
     // Query finished
     session.status = 'stopped';
@@ -1053,16 +1055,20 @@ class AgentSessionManager {
 
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
-    if (!session?.queryInstance) return;
-    try {
-      session.permissionMode = mode as ManagedSession['permissionMode'];
-      // Only pass SDK-recognized modes to the SDK instance.
-      // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
-      if (mode === 'default' || mode === 'plan') {
+    if (!session) return;
+
+    // Always update permissionMode on the session so it persists across
+    // stop/restart cycles — even when queryInstance is temporarily null.
+    session.permissionMode = mode as ManagedSession['permissionMode'];
+
+    // Only pass SDK-recognized modes to the live SDK instance.
+    // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
+    if (session.queryInstance && (mode === 'default' || mode === 'plan')) {
+      try {
         session.queryInstance.setPermissionMode(mode as any);
+      } catch (e) {
+        logger.warn(`Failed to set mode for session ${id}:`, e);
       }
-    } catch (e) {
-      logger.warn(`Failed to set mode for session ${id}:`, e);
     }
   }
 
@@ -1172,14 +1178,9 @@ class AgentSessionManager {
     // Now abort — any remaining in-flight SDK operations will be cancelled
     session.abortController.abort();
 
-    // Stop host-managed dev server
-    if (session.devServer) {
-      await session.devServer.stop();
-      session.devServer = null;
-    }
-
-    // Kill any detected dev servers
-    await this.killDetectedPorts(session);
+    // Dev servers are intentionally preserved across stop/continue cycles
+    // so the user doesn't lose running servers when pausing the LLM.
+    // They are cleaned up on natural query completion and session destroy.
 
     // Set up fresh abort controller and input stream for the next query
     session.abortController = new AbortController();
@@ -1225,6 +1226,10 @@ class AgentSessionManager {
       });
     }
     session.pendingPermissions.clear();
+
+    // Re-sync the renderer with the current permission mode so the status bar
+    // reflects the correct state after a stop/restart cycle.
+    emit({ type: 'mode_sync', mode: session.permissionMode });
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1415,6 +1420,29 @@ class AgentSessionManager {
       // Session not running — clear disk log directly
       const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
       try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
+    }
+  }
+
+  /**
+   * Health-check all sessions after system resume.
+   * Detects sessions whose SDK query died silently (e.g. during sleep)
+   * and emits process_exit + SESSION_STATUS so the renderer updates.
+   */
+  healthCheckAll(): void {
+    for (const [id, session] of this.sessions) {
+      if (session.status !== 'running') continue;
+
+      // A running session should have a queryInstance. If it's null,
+      // the query finished/crashed but the status was never updated.
+      if (!session.queryInstance) {
+        logger.warn(`[healthCheck] session ${id} has no queryInstance but status=running — marking stopped`);
+        session.status = 'stopped';
+        session.emit?.({ type: 'process_exit' });
+        const w = session.window;
+        if (!w.isDestroyed()) {
+          w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
+        }
+      }
     }
   }
 

@@ -279,10 +279,35 @@
       } else if (status === 'error') {
         messageStore.isReady[sessionId] = true;
         messageStore.isRunning[sessionId] = false;
+      } else if (status === 'stopped') {
+        // Session died (possibly during sleep) — update UI
+        messageStore.markSessionStopped(sessionId);
       }
     });
+
+    // After system resume (laptop wake), re-check session liveness.
+    // The main process runs healthCheckAll() and sends SESSION_STATUS
+    // for dead sessions, but we also re-verify subscriptions are live
+    // by listing sessions and reconciling with our local state.
+    const unsubPower = window.groveBench.onPowerResume(async () => {
+      try {
+        const runningSessions = await window.groveBench.listSessions();
+        const runningIds = new Set(
+          runningSessions.filter((s) => s.status === 'running').map((s) => s.id),
+        );
+        // Mark any locally-running sessions that the main process says are stopped
+        for (const session of store.sessions) {
+          if (session.status === 'running' && !runningIds.has(session.id)) {
+            store.updateStatus(session.id, 'stopped');
+            messageStore.markSessionStopped(session.id);
+          }
+        }
+      } catch { /* main process may be busy — SESSION_STATUS events will catch up */ }
+    });
+
     return () => {
       unsub();
+      unsubPower();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
   });

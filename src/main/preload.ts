@@ -164,6 +164,13 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.APP_CLOSING, handler);
     };
   },
+  onPowerResume: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on(IPC.POWER_RESUME, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.POWER_RESUME, handler);
+    };
+  },
 
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),

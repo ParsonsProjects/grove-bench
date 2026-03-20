@@ -451,7 +451,14 @@ export function registerHandlers() {
     if (!path.normalize(resolved).startsWith(normalWt)) {
       throw new Error('Path traversal not allowed');
     }
-    if (staged) {
+    // Check if the file is untracked (git checkout won't work for untracked files)
+    const statusRaw = await git(['status', '--porcelain', '--', relPath], worktree.path);
+    const isUntracked = statusRaw.trimStart().startsWith('??');
+
+    if (isUntracked) {
+      // Delete untracked file
+      await fs.rm(resolved, { force: true, recursive: true });
+    } else if (staged) {
       // Reset both index and working tree for staged files
       await git(['checkout', 'HEAD', '--', relPath], worktree.path);
     } else {

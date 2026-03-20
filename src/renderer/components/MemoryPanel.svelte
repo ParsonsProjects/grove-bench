@@ -24,11 +24,12 @@
 
   $effect(() => {
     if (open && store.repos.length > 0) {
-      if (!memoryStore.activeRepo || !store.repos.includes(memoryStore.activeRepo)) {
-        memoryStore.loadForRepo(store.repos[0]);
-      } else {
-        memoryStore.loadForRepo(memoryStore.activeRepo);
-      }
+      // Default to the repo of the currently active session
+      const currentRepo = store.activeSession?.repoPath;
+      const targetRepo = currentRepo && store.repos.includes(currentRepo)
+        ? currentRepo
+        : store.repos[0];
+      memoryStore.loadForRepo(targetRepo);
     }
   });
 

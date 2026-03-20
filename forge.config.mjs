@@ -7,6 +7,7 @@ import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-nati
 export default {
   packagerConfig: {
     asar: true,
+    icon: 'src/main/icon',
     extraResource: [
       'src/main/docker/worker.mjs',
       'src/main/docker/Dockerfile',
