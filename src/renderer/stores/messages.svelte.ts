@@ -1004,6 +1004,16 @@ class MessageStore {
         if (event.mode === 'acceptEdits' || this.modeBySession[sessionId] !== 'acceptEdits') {
           this.modeBySession[sessionId] = event.mode;
         }
+        // mode_sync is emitted by stopQuery after all old pending permissions
+        // have been resolved and before the new query loop starts.  Clear the
+        // stoppingSession flag here so permission_request events from the new
+        // query are not suppressed.  (system_init also clears it, but it
+        // arrives later — after the SDK initialises — leaving a window where
+        // early permission requests from the new query would be silently
+        // dropped, causing the agent to hang.)
+        if (this.stoppingSession[sessionId]) {
+          delete this.stoppingSession[sessionId];
+        }
         break;
     }
   }
