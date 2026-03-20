@@ -29,6 +29,10 @@ class SessionStore {
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
 
+  /** Pending status updates for sessions not yet added to the store.
+   *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
+  private pendingStatuses = new Map<string, SessionStatus>();
+
   get count() {
     return this.sessions.length;
   }
@@ -70,6 +74,13 @@ class SessionStore {
   }
 
   addSession(entry: SessionEntry, focus = true) {
+    // Apply any pending status that arrived before addSession (race condition
+    // where SESSION_STATUS fires before the renderer has added the session).
+    const pending = this.pendingStatuses.get(entry.id);
+    if (pending) {
+      entry = { ...entry, status: pending };
+      this.pendingStatuses.delete(entry.id);
+    }
     this.sessions = [...this.sessions, entry];
     if (focus) {
       this.activeSessionId = entry.id;
@@ -97,6 +108,12 @@ class SessionStore {
   }
 
   updateStatus(id: string, status: SessionStatus) {
+    const exists = this.sessions.some((s) => s.id === id);
+    if (!exists) {
+      // Session not in store yet — buffer the status so addSession can apply it.
+      this.pendingStatuses.set(id, status);
+      return;
+    }
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, status } : s
     );

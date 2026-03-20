@@ -1083,16 +1083,13 @@ class MessageStore {
     const msgs = this.messagesBySession[sessionId] ?? [];
     let foundToolName: string | undefined;
     let foundToolUseId: string | undefined;
-    let alreadyResolved = false;
     let changed = false;
+    // Resolve the LAST unresolved permission with this requestId.
+    // Skip already-resolved ones (stale duplicates from prior query loops).
     const updated = msgs.map((m) => {
       if (m.kind === 'permission') {
         const pm = m as ChatPermissionMessage;
-        if (pm.requestId === requestId) {
-          if (pm.resolved) {
-            alreadyResolved = true;
-            return m;
-          }
+        if (pm.requestId === requestId && !pm.resolved) {
           foundToolName = pm.toolName;
           foundToolUseId = pm.toolUseId;
           changed = true;
@@ -1102,7 +1099,7 @@ class MessageStore {
       return m;
     });
 
-    if (alreadyResolved) return false;
+    if (!changed) return false;
 
     // Second pass: clear awaitingPermission on the matching tool_call
     if (changed && foundToolUseId) {
