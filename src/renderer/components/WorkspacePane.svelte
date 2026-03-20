@@ -8,6 +8,7 @@
   import TerminalPanel from './TerminalPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
+  import RewindDialog from './RewindDialog.svelte';
   import { terminalStore } from '../stores/terminal.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -196,4 +197,5 @@
       </button>
     </div>
   {/if}
+  <RewindDialog {sessionId} />
 </div>

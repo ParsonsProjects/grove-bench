@@ -27,6 +27,7 @@ beforeEach(() => {
   messageStore.contextWindowBySession = {};
   messageStore.turnsBySession = {};
   messageStore.thinkingBySession = {};
+  messageStore.rewindDialogOpen = {};
 });
 
 describe('ingestEvent — system_init', () => {
@@ -379,7 +380,7 @@ describe('ingestEvent — devserver_detected', () => {
       url: 'http://localhost:3000',
     } as AgentEvent);
 
-    expect(messageStore.getDevServers(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000' }]);
+    expect(messageStore.getDevServers(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000', status: 'ok' }]);
   });
 
   it('does not duplicate same port', () => {
@@ -749,6 +750,188 @@ describe('getters with defaults', () => {
     const u = messageStore.getUsage('unknown');
     expect(u.inputTokens).toBe(0);
     expect(u.outputTokens).toBe(0);
+  });
+});
+
+describe('ingestEvent — user_message UUID stamping', () => {
+  it('stamps UUID onto the most recent UUID-less user message', () => {
+    messageStore.addUserMessage(SID, 'first prompt');
+    messageStore.addUserMessage(SID, 'second prompt');
+
+    // SDK replays second user message with a UUID
+    messageStore.ingestEvent(SID, {
+      type: 'user_message',
+      text: 'second prompt',
+      uuid: 'uuid-replay-1',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    // Should stamp UUID on the last UUID-less user message (second)
+    expect((msgs[1] as any).uuid).toBe('uuid-replay-1');
+    // First should still have no UUID
+    expect((msgs[0] as any).uuid).toBeUndefined();
+  });
+
+  it('stamps UUIDs in reverse order (findLastIndex) when replaying multiple', () => {
+    messageStore.addUserMessage(SID, 'first');
+    messageStore.addUserMessage(SID, 'second');
+
+    // SDK replays — findLastIndex stamps the last UUID-less msg first (second)
+    messageStore.ingestEvent(SID, {
+      type: 'user_message',
+      text: 'second',
+      uuid: 'uuid-b',
+    } as AgentEvent);
+
+    // Now second has a UUID, first still doesn't — next replay stamps first
+    messageStore.ingestEvent(SID, {
+      type: 'user_message',
+      text: 'first',
+      uuid: 'uuid-a',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect((msgs[0] as any).uuid).toBe('uuid-a');
+    expect((msgs[1] as any).uuid).toBe('uuid-b');
+  });
+
+  it('pushes new user message when no UUID-less match exists', () => {
+    // No existing messages — should push a new one
+    messageStore.ingestEvent(SID, {
+      type: 'user_message',
+      text: 'replayed prompt',
+      uuid: 'uuid-new',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].kind).toBe('user');
+    expect((msgs[0] as any).uuid).toBe('uuid-new');
+  });
+});
+
+describe('ingestEvent — rewind', () => {
+  it('truncates messages after the rewind target', () => {
+    // Build up a conversation with UUIDs
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'first prompt', uuid: 'cp-1' },
+      { kind: 'text', id: '2', text: 'response 1', uuid: 'r-1' },
+      { kind: 'user', id: '3', text: 'second prompt', uuid: 'cp-2' },
+      { kind: 'text', id: '4', text: 'response 2', uuid: 'r-2' },
+      { kind: 'user', id: '5', text: 'third prompt', uuid: 'cp-3' },
+      { kind: 'text', id: '6', text: 'response 3', uuid: 'r-3' },
+    ] as any;
+
+    messageStore.isRunning[SID] = true;
+    messageStore.streamingText[SID] = 'partial';
+
+    messageStore.ingestEvent(SID, {
+      type: 'rewind',
+      toMessageId: 'cp-2',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    // Should keep messages up to and including the user message with uuid cp-2
+    expect(msgs).toHaveLength(3);
+    expect(msgs[0].id).toBe('1');
+    expect(msgs[1].id).toBe('2');
+    expect(msgs[2].id).toBe('3');
+  });
+
+  it('resets running state and streaming buffers', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'prompt', uuid: 'cp-1' },
+      { kind: 'text', id: '2', text: 'response', uuid: 'r-1' },
+    ] as any;
+    messageStore.isRunning[SID] = true;
+    messageStore.streamingText[SID] = 'leftover';
+    messageStore.streamingThinking[SID] = 'thinking...';
+
+    messageStore.ingestEvent(SID, {
+      type: 'rewind',
+      toMessageId: 'cp-1',
+    } as AgentEvent);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getStreamingText(SID)).toBe('');
+    expect(messageStore.getStreamingThinking(SID)).toBe('');
+  });
+
+  it('does nothing when target UUID is not found', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'prompt', uuid: 'cp-1' },
+      { kind: 'text', id: '2', text: 'response', uuid: 'r-1' },
+    ] as any;
+
+    messageStore.ingestEvent(SID, {
+      type: 'rewind',
+      toMessageId: 'nonexistent-uuid',
+    } as AgentEvent);
+
+    // Messages should be unchanged (no truncation)
+    expect(messageStore.getMessages(SID)).toHaveLength(2);
+  });
+});
+
+describe('getRewindPoints', () => {
+  it('returns user messages that have UUIDs (most recent first)', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'first prompt', uuid: 'cp-1' },
+      { kind: 'text', id: '2', text: 'response 1', uuid: 'r-1' },
+      { kind: 'user', id: '3', text: 'second prompt', uuid: 'cp-2' },
+      { kind: 'text', id: '4', text: 'response 2', uuid: 'r-2' },
+    ] as any;
+
+    const points = messageStore.getRewindPoints(SID);
+    expect(points).toHaveLength(2);
+    // Most recent first (reversed)
+    expect(points[0]).toEqual({ uuid: 'cp-2', text: 'second prompt', index: 2 });
+    expect(points[1]).toEqual({ uuid: 'cp-1', text: 'first prompt', index: 0 });
+  });
+
+  it('excludes user messages without UUIDs', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'no uuid' },
+      { kind: 'user', id: '2', text: 'has uuid', uuid: 'cp-1' },
+    ] as any;
+
+    const points = messageStore.getRewindPoints(SID);
+    expect(points).toHaveLength(1);
+    expect(points[0].uuid).toBe('cp-1');
+  });
+
+  it('returns empty for unknown session', () => {
+    expect(messageStore.getRewindPoints('unknown')).toEqual([]);
+  });
+});
+
+describe('rewind dialog', () => {
+  it('openRewindDialog sets dialog open state', () => {
+    messageStore.openRewindDialog(SID);
+    expect(messageStore.rewindDialogOpen[SID]).toBe(true);
+  });
+
+  it('closeRewindDialog clears dialog open state', () => {
+    messageStore.rewindDialogOpen[SID] = true;
+    messageStore.closeRewindDialog(SID);
+    expect(messageStore.rewindDialogOpen[SID]).toBe(false);
+  });
+});
+
+describe('sendCommand — /rewind', () => {
+  it('opens rewind dialog instead of sending to SDK', () => {
+    messageStore.sendCommand(SID, '/rewind');
+
+    expect(messageStore.rewindDialogOpen[SID]).toBe(true);
+    // Should NOT send /rewind to the SDK
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeRewind', () => {
+  it('calls rewindSession on the API bridge', async () => {
+    await messageStore.executeRewind(SID, 'cp-1');
+    expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'cp-1');
   });
 });
 
