@@ -267,7 +267,7 @@ export interface GroveBenchAPI {
   getFileDiff(sessionId: string, filePath: string): Promise<string>;
 
   // Checkpoint rewind
-  rewindSession(sessionId: string, userMessageId: string): Promise<void>;
+  rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
 
   // Git status

@@ -1232,9 +1232,10 @@ class MessageStore {
     return points.reverse();
   }
 
-  /** Execute a rewind to a specific user message checkpoint */
-  async executeRewind(sessionId: string, userMessageId: string): Promise<void> {
-    await window.groveBench.rewindSession(sessionId, userMessageId);
+  /** Execute a rewind to a specific user message checkpoint.
+   *  When conversationOnly is true, only truncate messages without restoring files. */
+  async executeRewind(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
+    await window.groveBench.rewindSession(sessionId, userMessageId, options);
     // The rewind event from main will handle message truncation
   }
 

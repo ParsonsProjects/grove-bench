@@ -507,8 +507,8 @@ export function registerHandlers() {
 
   // ─── Checkpoint rewind ───
 
-  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string) => {
-    await sessionManager.rewindFiles(sessionId, userMessageId);
+  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) => {
+    await sessionManager.rewindFiles(sessionId, userMessageId, options);
   });
 
   ipcMain.handle(IPC.AGENT_CHECKPOINT_DIFF, async (_event, sessionId: string, userMessageId: string) => {

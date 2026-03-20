@@ -1411,16 +1411,22 @@ class AgentSessionManager {
     }
   }
 
-  /** Rewind files on disk to their state at a specific user message checkpoint. */
-  async rewindFiles(id: string, userMessageId: string): Promise<void> {
+  /** Rewind files on disk to their state at a specific user message checkpoint.
+   *  When options.conversationOnly is true, only truncate the conversation
+   *  without restoring files on disk. */
+  async rewindFiles(id: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Session ${id} not found`);
     if (!session.queryInstance) throw new Error(`Session ${id} has no active query`);
-    const q = session.queryInstance as any;
-    if (typeof q.rewindFiles !== 'function') {
-      throw new Error('SDK does not support rewindFiles — upgrade @anthropic-ai/claude-agent-sdk');
+
+    if (!options?.conversationOnly) {
+      const q = session.queryInstance as any;
+      if (typeof q.rewindFiles !== 'function') {
+        throw new Error('SDK does not support rewindFiles — upgrade @anthropic-ai/claude-agent-sdk');
+      }
+      await q.rewindFiles(userMessageId);
     }
-    await q.rewindFiles(userMessageId);
+
     session.emit?.({ type: 'rewind', toMessageId: userMessageId });
   }
 

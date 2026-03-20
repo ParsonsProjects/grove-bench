@@ -2,6 +2,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -11,6 +12,7 @@
   let selectedId = $state<string | null>(null);
   let diffPreview = $state<string | null>(null);
   let loadingDiff = $state(false);
+  let conversationOnly = $state(false);
 
   let rewindPoints = $derived(messageStore.getRewindPoints(sessionId));
 
@@ -19,6 +21,7 @@
       messageStore.closeRewindDialog(sessionId);
       selectedId = null;
       diffPreview = null;
+      conversationOnly = false;
       error = '';
     }
   }
@@ -41,10 +44,11 @@
     rewinding = true;
     error = '';
     try {
-      await messageStore.executeRewind(sessionId, selectedId);
+      await messageStore.executeRewind(sessionId, selectedId, { conversationOnly });
       messageStore.closeRewindDialog(sessionId);
       selectedId = null;
       diffPreview = null;
+      conversationOnly = false;
     } catch (e: any) {
       error = e?.message || 'Rewind failed';
     } finally {
@@ -106,6 +110,13 @@
     {#if error}
       <div class="text-destructive text-sm mt-2">{error}</div>
     {/if}
+
+    <div class="flex items-center gap-2 mt-2">
+      <Checkbox bind:checked={conversationOnly} id="conversation-only" />
+      <label for="conversation-only" class="text-sm text-muted-foreground cursor-pointer select-none">
+        Conversation only (keep file changes on disk)
+      </label>
+    </div>
 
     <Dialog.Footer>
       <Button variant="outline" onclick={() => handleOpenChange(false)}>
