@@ -7,6 +7,7 @@ import { loadWindowState, trackWindowState } from './window-state.js';
 import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
 import { logger } from './logger.js';
+import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -124,6 +125,7 @@ app.on('before-quit', (event) => {
     (async () => {
       try {
         logger.info(`Cleaning up ${sessionManager.count} sessions...`);
+        await terminalManager.killAll();
         await sessionManager.destroyAll();
         await new Promise((r) => setTimeout(r, 500));
         await worktreeManager.cleanupAll();

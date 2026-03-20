@@ -1,107 +1,101 @@
-import type { ShellOutputEvent } from '../../shared/types.js';
-
-export interface TerminalLine {
-  id: string;
-  stream: 'stdout' | 'stderr' | 'system';
-  text: string;
-}
-
-let lineCounter = 0;
-function nextLineId(): string {
-  return `tl_${++lineCounter}`;
-}
-
-const MAX_LINES = 5000;
+/**
+ * Terminal store for per-session PTY terminals.
+ *
+ * Each session gets a persistent PTY shell. The store manages:
+ * - PTY lifecycle (spawn, kill, restart)
+ * - IPC subscriptions for data/exit events
+ * - Alive state tracking
+ */
 
 class TerminalStore {
-  linesBySession = $state<Record<string, TerminalLine[]>>({});
-  activeExecBySession = $state<Record<string, string | null>>({});
-  isRunningBySession = $state<Record<string, boolean>>({});
-  private cleanups = new Map<string, () => void>();
+  /** Whether the PTY is alive for each session. */
+  aliveBySession = $state<Record<string, boolean>>({});
 
-  getLines(sessionId: string): TerminalLine[] {
-    return this.linesBySession[sessionId] ?? [];
+  private dataCleanups = new Map<string, () => void>();
+  private exitCleanups = new Map<string, () => void>();
+
+  /** Callbacks registered by the TerminalPanel to receive raw PTY data. */
+  private dataHandlers = new Map<string, (data: string) => void>();
+
+  /** Callbacks registered for PTY exit. */
+  private exitHandlers = new Map<string, (exitCode: number, signal?: number) => void>();
+
+  isAlive(sessionId: string): boolean {
+    return this.aliveBySession[sessionId] ?? false;
   }
 
-  getIsRunning(sessionId: string): boolean {
-    return this.isRunningBySession[sessionId] ?? false;
+  /** Register a handler to receive raw PTY data (called by TerminalPanel). */
+  onData(sessionId: string, handler: (data: string) => void) {
+    this.dataHandlers.set(sessionId, handler);
   }
 
-  getActiveExecId(sessionId: string): string | null {
-    return this.activeExecBySession[sessionId] ?? null;
+  /** Register a handler for PTY exit (called by TerminalPanel). */
+  onExit(sessionId: string, handler: (exitCode: number, signal?: number) => void) {
+    this.exitHandlers.set(sessionId, handler);
   }
 
+  /** Subscribe to IPC events for a session's PTY. */
   subscribe(sessionId: string) {
-    if (this.cleanups.has(sessionId)) return;
-    const cleanup = window.groveBench.onShellOutput(sessionId, (event) => {
-      this.handleOutput(sessionId, event);
+    if (this.dataCleanups.has(sessionId)) return;
+
+    const dataCleanup = window.groveBench.onPtyData(sessionId, (data) => {
+      const handler = this.dataHandlers.get(sessionId);
+      if (handler) handler(data);
     });
-    this.cleanups.set(sessionId, cleanup);
+    this.dataCleanups.set(sessionId, dataCleanup);
+
+    const exitCleanup = window.groveBench.onPtyExit(sessionId, (exitCode, signal) => {
+      this.aliveBySession[sessionId] = false;
+      const handler = this.exitHandlers.get(sessionId);
+      if (handler) handler(exitCode, signal);
+    });
+    this.exitCleanups.set(sessionId, exitCleanup);
   }
 
+  /** Unsubscribe from IPC events. */
   unsubscribe(sessionId: string) {
-    const cleanup = this.cleanups.get(sessionId);
-    if (cleanup) {
-      cleanup();
-      this.cleanups.delete(sessionId);
-    }
+    this.dataCleanups.get(sessionId)?.();
+    this.dataCleanups.delete(sessionId);
+    this.exitCleanups.get(sessionId)?.();
+    this.exitCleanups.delete(sessionId);
+    this.dataHandlers.delete(sessionId);
+    this.exitHandlers.delete(sessionId);
   }
 
-  async startCommand(sessionId: string, command: string) {
-    this.pushLine(sessionId, { id: nextLineId(), stream: 'system', text: `$ ${command}` });
-    this.isRunningBySession[sessionId] = true;
-
-    try {
-      const execId = await window.groveBench.shellRun(sessionId, command);
-      this.activeExecBySession[sessionId] = execId;
-    } catch (err: any) {
-      this.pushLine(sessionId, { id: nextLineId(), stream: 'stderr', text: `Failed to start: ${err?.message ?? err}` });
-      this.isRunningBySession[sessionId] = false;
-    }
+  /** Spawn a PTY for the session. */
+  async spawn(sessionId: string): Promise<boolean> {
+    const ok = await window.groveBench.ptySpawn(sessionId);
+    this.aliveBySession[sessionId] = ok;
+    return ok;
   }
 
-  killActive(sessionId: string) {
-    const execId = this.activeExecBySession[sessionId];
-    if (execId) {
-      window.groveBench.shellKill(execId);
-    }
+  /** Write data to the PTY (keystrokes, pasted text). */
+  write(sessionId: string, data: string) {
+    window.groveBench.ptyWrite(sessionId, data);
   }
 
-  clearOutput(sessionId: string) {
-    this.linesBySession[sessionId] = [];
+  /** Resize the PTY. */
+  resize(sessionId: string, cols: number, rows: number) {
+    window.groveBench.ptyResize(sessionId, cols, rows);
   }
 
-  private handleOutput(sessionId: string, event: ShellOutputEvent) {
-    if (event.stream === 'exit') {
-      this.pushLine(sessionId, {
-        id: nextLineId(),
-        stream: 'system',
-        text: `Process exited with code ${event.exitCode ?? 0}`,
-      });
-      this.activeExecBySession[sessionId] = null;
-      this.isRunningBySession[sessionId] = false;
-      return;
-    }
-
-    if (event.data) {
-      // Split into lines but keep as a single block to avoid excessive DOM elements
-      const text = event.data;
-      this.pushLine(sessionId, {
-        id: nextLineId(),
-        stream: event.stream,
-        text,
-      });
-    }
+  /** Kill the PTY. */
+  async kill(sessionId: string) {
+    await window.groveBench.ptyKill(sessionId);
+    this.aliveBySession[sessionId] = false;
   }
 
-  private pushLine(sessionId: string, line: TerminalLine) {
-    const current = this.linesBySession[sessionId] ?? [];
-    const updated = [...current, line];
-    // Cap at MAX_LINES
-    if (updated.length > MAX_LINES) {
-      updated.splice(0, updated.length - MAX_LINES);
-    }
-    this.linesBySession[sessionId] = updated;
+  /** Kill and respawn the PTY (same as what happens on tab open). */
+  async restart(sessionId: string): Promise<boolean> {
+    await this.kill(sessionId);
+    return this.spawn(sessionId);
+  }
+
+  /** Check if the PTY is alive (queries main process). */
+  async checkAlive(sessionId: string): Promise<boolean> {
+    const alive = await window.groveBench.ptyIsAlive(sessionId);
+    this.aliveBySession[sessionId] = alive;
+    return alive;
   }
 }
 

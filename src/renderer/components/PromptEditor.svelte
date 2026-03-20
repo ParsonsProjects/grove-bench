@@ -85,7 +85,12 @@
         userResized = false;
         if (textarea) textarea.style.height = '';
         messageStore.setActiveTab(sessionId, 'terminal');
-        terminalStore.startCommand(sessionId, cmd);
+        // Ensure PTY is alive, then write the command + Enter
+        (async () => {
+          const alive = await terminalStore.checkAlive(sessionId);
+          if (!alive) await terminalStore.spawn(sessionId);
+          terminalStore.write(sessionId, cmd + '\r');
+        })();
       }
       return;
     }

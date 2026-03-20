@@ -17,7 +17,7 @@
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let hasChanges = $derived(gitStatus.entries.length > 0);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  let terminalRunning = $derived(terminalStore.getIsRunning(sessionId));
+  let terminalRunning = $derived(terminalStore.isAlive(sessionId));
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
