@@ -117,6 +117,9 @@ interface ManagedSession {
   autoSaveInProgress: boolean;
   /** Emit function for sending events to the renderer — set by runQuery. */
   emit: ((event: AgentEvent) => void) | null;
+  /** Monotonic counter for permission request IDs — persists across stopQuery restarts
+   *  to avoid ID collisions with resolved permissions from previous query loops. */
+  permRequestCounter: number;
 }
 
 /**
@@ -238,7 +241,13 @@ class AgentSessionManager {
     // Inject project memory into the system prompt
     const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
     const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
-    const builtInPrompt = 'When running Bash commands, prefer short command names (npm, npx, node, git, etc.) over absolute paths. Only fall back to a full path if the short command name fails to resolve. IMPORTANT: Do not use `cd` to navigate to your current working directory before running commands — you are already there. Just run commands directly.';
+    const builtInPrompt = [
+      'IMPORTANT PATH RULES — you are already in your project directory. Follow these strictly:',
+      '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: Read, Edit, Write, Grep, Glob. NEVER use absolute paths like "' + cwd.replace(/\\/g, '/').slice(0, 30) + '..." — just use paths relative to the project root.',
+      '- When running Bash commands, use short command names (npm, npx, node, git) not absolute paths to binaries.',
+      '- Do NOT use `cd` to navigate to your current working directory before running commands — you are already there.',
+      '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.',
+    ].join('\n');
     const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
 
     // Ensure memory directory exists for this repo
@@ -277,6 +286,7 @@ class AgentSessionManager {
       stoppedByUser: false,
       autoSaveInProgress: false,
       emit: null,
+      permRequestCounter: 0,
     };
 
     this.sessions.set(id, session);
@@ -351,8 +361,6 @@ class AgentSessionManager {
     const { id, worktreePath, abortController } = session;
 
     const pendingPermissions = session.pendingPermissions;
-
-    let permRequestCounter = 0;
 
     logger.debug(`[runQuery] session=${id} starting`);
     const { query: queryFn, createSdkMcpServer, tool, z } = await getSdk();
@@ -479,7 +487,7 @@ class AgentSessionManager {
           // Forward permission request to renderer and wait for user response.
           // Times out after 30 minutes to give users plenty of time to respond.
           const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
-          const requestId = `perm_${id}_${++permRequestCounter}`;
+          const requestId = `perm_${id}_${++session.permRequestCounter}`;
           return new Promise((resolve) => {
             const timer = setTimeout(() => {
               pendingPermissions.delete(requestId);

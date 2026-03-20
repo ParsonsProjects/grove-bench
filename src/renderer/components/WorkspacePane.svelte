@@ -18,7 +18,7 @@
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let hasChanges = $derived(gitStatus.entries.length > 0);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  let terminalRunning = $derived(terminalStore.getIsRunning(sessionId));
+  let terminalRunning = $derived(terminalStore.isAlive(sessionId));
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
@@ -41,9 +41,13 @@
   // Reactively unlock the input whenever the session reaches 'running' (or 'error')
   // status. This covers race conditions where SESSION_STATUS arrives before or after
   // mount, or where clearSession resets isReady after it was already set.
+  // IMPORTANT: read `ready` outside the condition so Svelte always tracks isReady
+  // as a dependency — otherwise short-circuit evaluation when status is 'starting'
+  // causes isReady changes to be missed.
   $effect(() => {
     const session = store.sessions.find((s) => s.id === sessionId);
-    if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
+    const ready = messageStore.getIsReady(sessionId);
+    if (session && (session.status === 'running' || session.status === 'error') && !ready) {
       messageStore.isReady[sessionId] = true;
       messageStore.isRunning[sessionId] = false;
     }

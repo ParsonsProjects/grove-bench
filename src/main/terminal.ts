@@ -1,146 +1,155 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import crypto from 'node:crypto';
+import * as pty from 'node-pty';
+import type { IPty } from 'node-pty';
 import type { WebContents } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { ShellOutputEvent } from '../shared/types.js';
 import { logger } from './logger.js';
 
-/** Strip ANSI escape sequences (colors, cursor movement, hyperlinks, etc.) */
-function stripAnsi(text: string): string {
-  // Covers: SGR (colors/bold), cursor movement, erase, OSC (hyperlinks/title), CSI sequences
-  return text.replace(/\x1B\[[0-9;]*[a-zA-Z]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)|\x1B[()][0-9A-Z]|\x1B\[?[0-9;]*[hHlL]/g, '');
-}
-
-interface Execution {
-  process: ChildProcess;
+interface PtySession {
+  pty: IPty;
   sessionId: string;
   sender: WebContents;
+  cwd: string;
 }
 
-class TerminalManager {
-  private executions = new Map<string, Execution>();
+export class TerminalManager {
+  private sessions = new Map<string, PtySession>();
 
-  /** Spawn a shell command and stream output via IPC. Returns the execId. */
-  spawnCommand(sessionId: string, command: string, cwd: string, sender: WebContents): string {
-    const execId = crypto.randomUUID().slice(0, 8);
-    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
+  /** Spawn a persistent PTY shell for a session. Returns true if spawned. */
+  spawnPty(sessionId: string, cwd: string, sender: WebContents): boolean {
+    // Kill existing PTY if any
+    if (this.sessions.has(sessionId)) {
+      this.killPty(sessionId);
+    }
 
     const isWin = process.platform === 'win32';
-    const shell = isWin ? 'cmd.exe' : '/bin/bash';
-    const args = isWin ? ['/c', command] : ['-c', command];
+    const shell = isWin
+      ? (process.env.COMSPEC || 'cmd.exe')
+      : (process.env.SHELL || '/bin/bash');
 
-    const child = spawn(shell, args, {
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-      windowsHide: true,
-    });
+    try {
+      const ptyProcess = pty.spawn(shell, [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: Object.fromEntries(
+          Object.entries(process.env).filter((e): e is [string, string] => e[1] != null)
+        ),
+      });
 
-    this.executions.set(execId, { process: child, sessionId, sender });
+      const dataChannel = `${IPC.PTY_DATA}:${sessionId}`;
+      const exitChannel = `${IPC.PTY_EXIT}:${sessionId}`;
 
-    // Buffer and batch output to avoid flooding IPC (16ms batching)
-    const createBatcher = (stream: 'stdout' | 'stderr') => {
+      // Buffer output with 8ms batching to avoid IPC flooding
       let buffer = '';
-      let timer: ReturnType<typeof setTimeout> | null = null;
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
       const flush = () => {
-        timer = null;
+        flushTimer = null;
+        // Don't send data if this PTY has been replaced by a new one (restart)
+        const current = this.sessions.get(sessionId);
+        if (current?.pty !== ptyProcess) {
+          buffer = '';
+          return;
+        }
         if (buffer && !sender.isDestroyed()) {
-          const cleaned = stripAnsi(buffer);
-          if (cleaned) {
-            sender.send(channel, { execId, stream, data: cleaned } satisfies ShellOutputEvent);
-          }
+          sender.send(dataChannel, buffer);
           buffer = '';
         }
       };
 
-      return (chunk: Buffer) => {
-        buffer += chunk.toString('utf-8');
-        if (!timer) {
-          timer = setTimeout(flush, 16);
+      ptyProcess.onData((data: string) => {
+        buffer += data;
+        if (!flushTimer) {
+          flushTimer = setTimeout(flush, 8);
         }
-      };
-    };
+      });
 
-    if (child.stdout) {
-      child.stdout.on('data', createBatcher('stdout'));
-    }
-    if (child.stderr) {
-      child.stderr.on('data', createBatcher('stderr'));
-    }
+      ptyProcess.onExit(({ exitCode, signal }) => {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
 
-    child.on('close', (exitCode) => {
-      // Flush any remaining buffered output before sending exit
-      setTimeout(() => {
+        // Only handle exit if this PTY is still the active one for the session.
+        // During restart, a new PTY is already registered under the same sessionId —
+        // we must not send stale data or exit events from the old PTY.
+        const current = this.sessions.get(sessionId);
+        if (current?.pty !== ptyProcess) {
+          buffer = '';
+          logger.info(`PTY exited (stale, ignored): session=${sessionId}, code=${exitCode}, signal=${signal}`);
+          return;
+        }
+
+        // Flush remaining data
+        if (buffer && !sender.isDestroyed()) {
+          sender.send(dataChannel, buffer);
+          buffer = '';
+        }
         if (!sender.isDestroyed()) {
-          sender.send(channel, { execId, stream: 'exit', exitCode: exitCode ?? 0 } satisfies ShellOutputEvent);
+          sender.send(exitChannel, exitCode, signal);
         }
-        this.executions.delete(execId);
-      }, 32);
-    });
+        this.sessions.delete(sessionId);
+        logger.info(`PTY exited: session=${sessionId}, code=${exitCode}, signal=${signal}`);
+      });
 
-    child.on('error', (err) => {
-      logger.error(`Shell execution error (${execId}):`, err.message);
-      if (!sender.isDestroyed()) {
-        sender.send(channel, { execId, stream: 'stderr', data: `Error: ${err.message}\n` } satisfies ShellOutputEvent);
-        sender.send(channel, { execId, stream: 'exit', exitCode: 1 } satisfies ShellOutputEvent);
-      }
-      this.executions.delete(execId);
-    });
-
-    logger.info(`Shell spawn: execId=${execId}, session=${sessionId}, cmd="${command.slice(0, 80)}"`);
-    return execId;
-  }
-
-  /** Kill a running execution */
-  killExecution(execId: string): void {
-    const exec = this.executions.get(execId);
-    if (!exec) return;
-
-    const { process: child } = exec;
-    if (child.killed) return;
-
-    if (process.platform === 'win32') {
-      // On Windows, use taskkill to kill the process tree
-      try {
-        spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true });
-      } catch {
-        child.kill('SIGKILL');
-      }
-    } else {
-      child.kill('SIGTERM');
-      // Force kill after 2s if still alive
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill('SIGKILL');
-        }
-      }, 2000);
+      this.sessions.set(sessionId, { pty: ptyProcess, sessionId, sender, cwd });
+      logger.info(`PTY spawned: session=${sessionId}, shell=${shell}, cwd=${cwd}`);
+      return true;
+    } catch (err: any) {
+      logger.error(`PTY spawn failed for session ${sessionId}:`, err.message);
+      return false;
     }
   }
 
-  /** Write to a running process's stdin */
-  sendInput(execId: string, data: string): void {
-    const exec = this.executions.get(execId);
-    if (!exec || !exec.process.stdin) return;
-    exec.process.stdin.write(data);
+  /** Write data to a session's PTY (keystrokes, pasted text, commands). */
+  write(sessionId: string, data: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.pty.write(data);
   }
 
-  /** Kill all executions for a session */
+  /** Resize a session's PTY. */
+  resize(sessionId: string, cols: number, rows: number): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    try {
+      session.pty.resize(cols, rows);
+    } catch {
+      // Ignore resize errors on dead PTY
+    }
+  }
+
+  /** Kill a session's PTY. */
+  killPty(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    // Remove from map BEFORE killing so that if onExit fires synchronously
+    // during kill(), it won't find this session and won't send a stale exit event.
+    this.sessions.delete(sessionId);
+    try {
+      session.pty.kill();
+    } catch {
+      // Already dead
+    }
+    logger.info(`PTY killed: session=${sessionId}`);
+  }
+
+/** Check if a session has a live PTY. */
+  isAlive(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  /** Kill all PTYs for cleanup (app quit). */
+  async killAll(): Promise<void> {
+    for (const sessionId of [...this.sessions.keys()]) {
+      this.killPty(sessionId);
+    }
+  }
+
+  /** Kill PTY for a specific session (session destroy). */
   async killAllForSession(sessionId: string): Promise<void> {
-    const promises: Promise<void>[] = [];
-
-    for (const [execId, exec] of this.executions) {
-      if (exec.sessionId === sessionId) {
-        promises.push(new Promise<void>((resolve) => {
-          exec.process.on('close', () => resolve());
-          this.killExecution(execId);
-          // Don't wait forever
-          setTimeout(resolve, 3000);
-        }));
-      }
-    }
-
-    await Promise.all(promises);
+    this.killPty(sessionId);
   }
 }
 

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
-import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists } from './git.js';
+import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity } from './git.js';
 import { logger } from './logger.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 
@@ -127,6 +127,14 @@ export class WorktreeManager {
 
     // Generate .claude/settings.local.json with deny rules
     await this.generateClaudeSettings(wtPath);
+
+    // Propagate the repo's git identity into the worktree so commits
+    // are attributed to the user rather than the agent's default identity.
+    try {
+      const identity = await getGitIdentity(repoPath);
+      await git(['config', 'user.name', identity.name], wtPath);
+      await git(['config', 'user.email', identity.email], wtPath);
+    } catch { /* best effort — falls back to global config */ }
 
     const info: WorktreeInfo = {
       id,

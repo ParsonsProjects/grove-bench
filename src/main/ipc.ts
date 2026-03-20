@@ -595,20 +595,28 @@ export function registerHandlers() {
     return memory.deleteMemoryFile(repoPath, relativePath);
   });
 
-  // ─── Shell / Terminal ───
+  // ─── PTY Terminal (per-session persistent shell) ───
 
-  ipcMain.handle(IPC.SHELL_RUN, (event, sessionId: string, command: string) => {
+  ipcMain.handle(IPC.PTY_SPAWN, (event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    return terminalManager.spawnCommand(sessionId, command, worktree.path, event.sender);
+    return terminalManager.spawnPty(sessionId, worktree.path, event.sender);
   });
 
-  ipcMain.handle(IPC.SHELL_KILL, (_event, execId: string) => {
-    terminalManager.killExecution(execId);
+  ipcMain.on(IPC.PTY_WRITE, (_event, sessionId: string, data: string) => {
+    terminalManager.write(sessionId, data);
   });
 
-  ipcMain.on(IPC.SHELL_INPUT, (_event, execId: string, data: string) => {
-    terminalManager.sendInput(execId, data);
+  ipcMain.on(IPC.PTY_RESIZE, (_event, sessionId: string, cols: number, rows: number) => {
+    terminalManager.resize(sessionId, cols, rows);
+  });
+
+  ipcMain.handle(IPC.PTY_KILL, (_event, sessionId: string) => {
+    terminalManager.killPty(sessionId);
+  });
+
+ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
+    return terminalManager.isAlive(sessionId);
   });
 
   // ─── Settings ───

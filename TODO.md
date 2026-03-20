@@ -10,9 +10,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Agent Client Protocol for custom agent integration
 
 ### Embedded Terminal
-- [ ] Full working shell with color support and interactive command execution
-- [ ] Persistent shell state (env vars, directory changes across commands)
-- [ ] Per-session PTY terminals (split, toggle, resize, clear, restart)
+- [x] Full working shell with color support and interactive command execution
+- [x] Persistent shell state (env vars, directory changes across commands)
+- [x] Per-session PTY terminals (split, toggle, resize, clear, restart)
 - [ ] Attach terminal output as context to AI messages
 
 ### Checkpointing & Revert

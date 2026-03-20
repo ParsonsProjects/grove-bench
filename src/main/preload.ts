@@ -134,17 +134,29 @@ const api: GroveBenchAPI = {
   memoryDelete: (repoPath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
 
-  // Shell / Terminal
-  shellRun: (sessionId: string, command: string) =>
-    ipcRenderer.invoke(IPC.SHELL_RUN, sessionId, command),
-  shellKill: (execId: string) =>
-    ipcRenderer.invoke(IPC.SHELL_KILL, execId),
-  shellInput: (execId: string, data: string) =>
-    ipcRenderer.send(IPC.SHELL_INPUT, execId, data),
-  onShellOutput: (sessionId: string, callback: (event: import('../shared/types.js').ShellOutputEvent) => void) => {
-    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').ShellOutputEvent) =>
-      callback(data);
+  // PTY Terminal (per-session persistent shell)
+  ptySpawn: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.PTY_SPAWN, sessionId),
+  ptyWrite: (sessionId: string, data: string) =>
+    ipcRenderer.send(IPC.PTY_WRITE, sessionId, data),
+  ptyResize: (sessionId: string, cols: number, rows: number) =>
+    ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
+  ptyKill: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.PTY_KILL, sessionId),
+  ptyIsAlive: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.PTY_IS_ALIVE, sessionId),
+  onPtyData: (sessionId: string, callback: (data: string) => void) => {
+    const channel = `${IPC.PTY_DATA}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+  onPtyExit: (sessionId: string, callback: (exitCode: number, signal?: number) => void) => {
+    const channel = `${IPC.PTY_EXIT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, exitCode: number, signal?: number) =>
+      callback(exitCode, signal);
     ipcRenderer.on(channel, handler);
     return () => {
       ipcRenderer.removeListener(channel, handler);
