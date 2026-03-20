@@ -115,7 +115,13 @@
 {#if lines.length > 0}
   {#if sideBySide}
     <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
-      <table class="w-full border-collapse">
+      <table class="w-full border-collapse table-fixed">
+        <colgroup>
+          <col class="w-8" />
+          <col class="w-[calc(50%-1rem)]" />
+          <col class="w-8" />
+          <col class="w-[calc(50%-1rem)]" />
+        </colgroup>
         <tbody>
           {#each rows as row}
             {#if row.type === 'hunk'}

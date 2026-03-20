@@ -358,6 +358,22 @@
 
           <Separator />
 
+          <!-- Diff View Mode -->
+          <div>
+            <Label class="mb-1 block">Default Diff View</Label>
+            <Select.Root type="single" value={settingsStore.draft.diffViewMode} onValueChange={(v) => { if (v) settingsStore.draft.diffViewMode = v as 'unified' | 'side-by-side'; }}>
+              <Select.Trigger class="w-48">
+                {settingsStore.draft.diffViewMode === 'side-by-side' ? 'Side-by-side' : 'Unified'}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="unified" label="Unified" />
+                <Select.Item value="side-by-side" label="Side-by-side" />
+              </Select.Content>
+            </Select.Root>
+          </div>
+
+          <Separator />
+
           <!-- Auto Install Dependencies -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.autoInstallDeps} />

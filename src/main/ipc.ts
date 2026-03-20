@@ -12,7 +12,7 @@ import { killProcessOnPort } from './port-killer.js';
 import { terminalManager } from './terminal.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
-import { loadAppState, saveActiveTab } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -614,6 +614,14 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_ACTIVE_TAB, (_event, id: string | null) => {
     saveActiveTab(id);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
+    return loadAppState().openTabIds;
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_OPEN_TABS, (_event, ids: string[]) => {
+    saveOpenTabs(ids);
   });
 
   // ─── Window controls ───

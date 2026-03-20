@@ -29,6 +29,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
+
+  // Editor
+  diffViewMode: 'unified',
 };
 
 let cached: GroveBenchSettings | null = null;

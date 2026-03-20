@@ -308,6 +308,8 @@ export interface GroveBenchAPI {
   // App state persistence
   getActiveTab(): Promise<string | null>;
   setActiveTab(id: string | null): void;
+  getOpenTabs(): Promise<string[]>;
+  setOpenTabs(ids: string[]): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -356,6 +358,10 @@ export interface GroveBenchSettings {
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+
+  // Editor
+  /** Default diff view mode in the Changes tab. */
+  diffViewMode: 'unified' | 'side-by-side';
 }
 
 // ─── Memory ───
@@ -419,6 +425,8 @@ export const IPC = {
   SETTINGS_SAVE: 'settings:save',
   APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
   APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
+  APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
+  APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   MEMORY_LIST: 'memory:list',
   MEMORY_READ: 'memory:read',

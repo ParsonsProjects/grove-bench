@@ -14,9 +14,12 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   devCommand: '',
+  memoryAutoSave: true,
+  autoInstallDeps: false,
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
+  diffViewMode: 'unified',
 };
 
 beforeEach(() => {

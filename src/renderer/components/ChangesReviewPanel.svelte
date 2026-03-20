@@ -6,6 +6,7 @@
   import type { DiffLine } from './DiffView.svelte';
   import type { GitStatusEntry } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -26,7 +27,7 @@
 
   // Per-file UI state
   let expandedFiles = $state<Set<string>>(new Set());
-  let sideBySide = $state(false);
+  let sideBySide = $state(settingsStore.current.diffViewMode === 'side-by-side');
   let editHistoryExpanded = $state<Set<string>>(new Set());
   let revertingFiles = $state<Set<string>>(new Set());
   let fileDiffs = $state<Record<string, string>>({});

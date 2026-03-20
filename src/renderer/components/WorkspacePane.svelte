@@ -37,6 +37,17 @@
     if (e.altKey && e.key === '3') { e.preventDefault(); switchTab('terminal'); }
   }
 
+  // Reactively unlock the input whenever the session reaches 'running' (or 'error')
+  // status. This covers race conditions where SESSION_STATUS arrives before or after
+  // mount, or where clearSession resets isReady after it was already set.
+  $effect(() => {
+    const session = store.sessions.find((s) => s.id === sessionId);
+    if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
+      messageStore.isReady[sessionId] = true;
+      messageStore.isRunning[sessionId] = false;
+    }
+  });
+
   onMount(async () => {
     window.addEventListener('keydown', handleKeydown);
 

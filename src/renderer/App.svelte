@@ -114,6 +114,20 @@
       }
     }
 
+    // Resume all previously-open tabs, not just the active one
+    const persistedOpenTabs = await window.groveBench.getOpenTabs();
+    for (const tabId of persistedOpenTabs) {
+      const session = store.sessions.find((s) => s.id === tabId);
+      if (session && session.status === 'stopped' && !runningMap.has(tabId)) {
+        window.groveBench.resumeSession(tabId, session.repoPath).then((result) => {
+          store.updateStatus(result.id, 'running');
+        }).catch((e: any) => {
+          store.setError(e.message || String(e));
+          failedResumeIds.add(tabId);
+        });
+      }
+    }
+
     // Restore persisted active tab, or fall back to first running session
     const persistedTabId = await window.groveBench.getActiveTab();
     if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
@@ -159,6 +173,16 @@
   $effect(() => {
     if (restored) {
       window.groveBench.setActiveTab(store.activeSessionId);
+    }
+  });
+
+  // Persist open tab IDs so all tabs reopen on restart
+  $effect(() => {
+    if (restored) {
+      const ids = store.sessions
+        .filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error')
+        .map((s) => s.id);
+      window.groveBench.setOpenTabs(ids);
     }
   });
 
