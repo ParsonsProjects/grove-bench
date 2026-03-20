@@ -20,6 +20,8 @@ export interface ChatToolCallMessage {
   result?: string;
   isError?: boolean;
   pending: boolean;
+  /** True while a permission_request is pending for this tool — suppresses rendering until approved */
+  awaitingPermission?: boolean;
 }
 
 export interface ChatUserMessage {
@@ -178,7 +180,7 @@ class MessageStore {
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan' | 'terminal'>>({});
 
   /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
   showDetailsBySession = $state<Record<string, boolean>>({});
@@ -209,6 +211,13 @@ class MessageStore {
 
   getIsReady(sessionId: string): boolean {
     return this.isReady[sessionId] ?? false;
+  }
+
+  /** Whether a session has any unresolved permission requests */
+  hasPendingPermission(sessionId: string): boolean {
+    return (this.messagesBySession[sessionId] ?? []).some(
+      (m) => m.kind === 'permission' && !(m as ChatPermissionMessage).resolved,
+    );
   }
 
   getModel(sessionId: string): string {
@@ -252,11 +261,11 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' | 'terminal' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan' | 'terminal') {
     this.activeTabBySession[sessionId] = tab;
   }
 
@@ -409,8 +418,15 @@ class MessageStore {
   }
 
   async setMode(sessionId: string, mode: PermissionMode) {
+    const previousMode = this.modeBySession[sessionId] ?? 'default';
     this.modeBySession[sessionId] = mode;
-    await window.groveBench.setMode(sessionId, mode);
+    try {
+      await window.groveBench.setMode(sessionId, mode);
+    } catch (e) {
+      // Roll back to previous mode if the IPC failed
+      console.warn('[setMode] IPC failed, rolling back:', e);
+      this.modeBySession[sessionId] = previousMode;
+    }
   }
 
   cycleMode(sessionId: string) {
@@ -450,9 +466,9 @@ class MessageStore {
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
     const updated = msgs.map((m) => {
-      if (m.kind === 'tool_call' && m.pending) {
+      if (m.kind === 'tool_call' && (m.pending || m.awaitingPermission)) {
         changed = true;
-        return { ...m, pending: false };
+        return { ...m, pending: false, awaitingPermission: false };
       }
       if (m.kind === 'permission' && !m.resolved) {
         changed = true;
@@ -490,6 +506,8 @@ class MessageStore {
           delete this.usageBySession[sessionId];
           delete this.turnsBySession[sessionId];
           delete this.pendingClear[sessionId];
+          // Truncate event history on disk so old messages don't reappear on restart
+          window.groveBench.clearEventHistory(sessionId).catch(() => {});
         }
         this.isReady[sessionId] = true;
         this.isRunning[sessionId] = false;
@@ -553,11 +571,16 @@ class MessageStore {
         if (this.streamingText[sessionId]) {
           this.flushStreamingText(sessionId);
         }
-        // Sync mode when LLM calls mode-changing tools
+        // Sync mode when LLM calls mode-changing tools.
+        // Preserve 'acceptEdits' — that's a user-set mode that should persist
+        // across plan mode transitions. ExitPlanMode returns to the mode the
+        // user had before (acceptEdits if set, otherwise default).
         if (event.toolName === 'EnterPlanMode') {
           this.modeBySession[sessionId] = 'plan';
         } else if (event.toolName === 'ExitPlanMode') {
-          this.modeBySession[sessionId] = 'default';
+          if (this.modeBySession[sessionId] !== 'acceptEdits') {
+            this.modeBySession[sessionId] = 'default';
+          }
         }
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
@@ -663,6 +686,30 @@ class MessageStore {
         }
         break;
 
+      case 'permission_resolved': {
+        const msgs = this.messagesBySession[sessionId] ?? [];
+        let changed = false;
+        const updated = msgs.map((m) => {
+          if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const, decision: event.decision };
+          }
+          if (m.kind === 'question' && 'requestId' in m && (m as any).requestId === event.requestId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const };
+          }
+          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
+            changed = true;
+            return { ...m, awaitingPermission: false };
+          }
+          return m;
+        });
+        if (changed) {
+          this.messagesBySession[sessionId] = updated;
+        }
+        break;
+      }
+
       case 'thinking':
         this.isRunning[sessionId] = true;
         this.streamingThinking[sessionId] = '';
@@ -704,6 +751,12 @@ class MessageStore {
           id: nextId(),
           text: event.message,
         });
+        // If the session never initialized (system_init never arrived),
+        // unlock the input so the user can see the error and retry.
+        if (!this.isReady[sessionId]) {
+          this.isReady[sessionId] = true;
+          this.isRunning[sessionId] = false;
+        }
         break;
 
       case 'status':
@@ -780,6 +833,10 @@ class MessageStore {
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
         this.isRunning[sessionId] = false;
+        // If the agent exited before system_init, unlock the input
+        if (!this.isReady[sessionId]) {
+          this.isReady[sessionId] = true;
+        }
         this.activityBySession[sessionId] = { activity: 'idle' };
         gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
@@ -930,7 +987,11 @@ class MessageStore {
         break;
 
       case 'mode_sync':
-        this.modeBySession[sessionId] = event.mode;
+        // Don't let SDK-driven mode_sync overwrite user-set 'acceptEdits'
+        // unless the sync explicitly sets acceptEdits or the user changed mode.
+        if (event.mode === 'acceptEdits' || this.modeBySession[sessionId] !== 'acceptEdits') {
+          this.modeBySession[sessionId] = event.mode;
+        }
         break;
     }
   }
@@ -992,30 +1053,39 @@ class MessageStore {
     window.groveBench.respondToPermission(sessionId, permDecision);
   }
 
-  /** Resolve a permission request in the UI */
-  resolvePermission(
+  /** Resolve a permission request by forwarding the decision to main.
+   *  The UI update is driven by the permission_resolved event from main,
+   *  not by optimistic local mutation.
+   *  Returns false if the main process rejected (already resolved/timed out). */
+  async resolvePermission(
     sessionId: string,
     requestId: string,
     decision: 'allow' | 'deny' | 'allowAlways',
     opts?: { message?: string; updatedPermissions?: unknown[] },
-  ) {
+  ): Promise<boolean> {
+    // Guard: if already resolved in the UI, ignore the duplicate click
     const msgs = this.messagesBySession[sessionId] ?? [];
-    const idx = msgs.findIndex(
+    const perm = msgs.find(
       (m) => m.kind === 'permission' && m.requestId === requestId,
-    );
+    ) as ChatPermissionMessage | undefined;
 
-    // Capture the tool name before resolving, so we can sync mode
-    let toolName: string | undefined;
-    if (idx >= 0) {
-      const msg = msgs[idx] as ChatPermissionMessage;
-      toolName = msg.toolName;
-      msg.resolved = true;
-      msg.decision = decision === 'deny' ? 'deny' : 'allow';
-    }
+    if (perm?.resolved) return false;
 
-    // When "Always Allow" is used on Edit/Write, sync mode to acceptEdits
-    if (decision === 'allowAlways' && toolName && (toolName === 'Edit' || toolName === 'Write')) {
-      this.modeBySession[sessionId] = 'acceptEdits';
+    // Optimistically update the store so the UI responds instantly.
+    // The permission_resolved event from main will confirm (or the
+    // tool_result fallback will catch it if the event is lost).
+    const resolvedDecision = (decision === 'deny' ? 'deny' : 'allow') as 'allow' | 'deny';
+    if (perm) {
+      const toolUseId = perm.toolUseId;
+      this.messagesBySession[sessionId] = msgs.map((m) => {
+        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId) {
+          return { ...m, resolved: true as const, decision: resolvedDecision };
+        }
+        if (m.kind === 'tool_call' && m.toolUseId === toolUseId && m.awaitingPermission) {
+          return { ...m, awaitingPermission: false };
+        }
+        return m;
+      });
     }
 
     const permDecision: PermissionDecision = {
@@ -1024,7 +1094,39 @@ class MessageStore {
       message: decision === 'deny' ? (opts?.message || 'User denied permission') : undefined,
       updatedPermissions: opts?.updatedPermissions,
     };
-    window.groveBench.respondToPermission(sessionId, permDecision);
+
+    // Ask main process — it will emit permission_resolved to confirm
+    let accepted: boolean;
+    try {
+      accepted = await window.groveBench.respondToPermission(sessionId, permDecision);
+    } catch (e) {
+      console.error('[resolvePermission] IPC call failed:', e);
+      accepted = false;
+    }
+
+    // If main rejected (stale/timed-out), override to denied
+    if (!accepted) {
+      const current = this.messagesBySession[sessionId] ?? [];
+      let changed = false;
+      const updated = current.map((m) => {
+        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId && m.resolved && (m as ChatPermissionMessage).decision !== 'deny') {
+          changed = true;
+          return { ...m, decision: 'deny' as const };
+        }
+        return m;
+      });
+      if (changed) this.messagesBySession[sessionId] = updated;
+      return false;
+    }
+
+    // When "Always Allow" is used on Edit/Write/MultiEdit, sync mode to acceptEdits
+    if (decision === 'allowAlways' && perm && (perm.toolName === 'Edit' || perm.toolName === 'Write' || perm.toolName === 'MultiEdit')) {
+      this.setMode(sessionId, 'acceptEdits').catch((e) => {
+        console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
+      });
+    }
+
+    return true;
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.
@@ -1072,6 +1174,34 @@ class MessageStore {
       if (m.kind === 'tool_call' && m.pending) {
         changed = true;
         return { ...m, pending: false };
+      }
+      return m;
+    });
+    if (changed) {
+      this.messagesBySession[sessionId] = updated;
+    }
+  }
+
+  /** After replaying event history, resolve any permission/question messages
+   *  that were not resolved by a permission_resolved or tool_result event.
+   *  If the session is still running, leave them unresolved (genuinely pending).
+   *  Otherwise, mark as denied (timeout/stop/destroy happened before replay). */
+  resolveReplayedPermissions(sessionId: string) {
+    if (this.isRunning[sessionId]) return;
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let changed = false;
+    const updated = msgs.map((m) => {
+      if (m.kind === 'permission' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, decision: 'deny' as const };
+      }
+      if (m.kind === 'question' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const };
+      }
+      if (m.kind === 'tool_call' && m.awaitingPermission) {
+        changed = true;
+        return { ...m, awaitingPermission: false };
       }
       return m;
     });

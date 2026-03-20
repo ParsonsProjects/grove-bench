@@ -7,6 +7,8 @@ import { killProcessOnPort } from './port-killer.js';
 import { DevServer } from './dev-server.js';
 import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
+import * as memory from './memory.js';
+import * as memoryAutosave from './memory-autosave.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { adapterRegistry } from './adapters/index.js';
@@ -66,6 +68,10 @@ interface ManagedSession {
   devServer: DevServer | null;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
+  /** Whether a memory auto-save is currently in progress. */
+  autoSaveInProgress: boolean;
+  /** Emit function for sending events to the renderer — set by createEmitter. */
+  emit: ((event: AgentEvent) => void) | null;
 }
 
 export interface SessionCompletionResult {
@@ -77,6 +83,19 @@ export interface SessionCompletionResult {
 
 const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
 
+// Suppress "Operation aborted" unhandled rejections from the Claude Agent SDK.
+// When we abort a running query, the SDK's internal async operations (write,
+// handleControlRequest) may reject after the abort signal fires.  These are
+// expected and safe to ignore.
+process.on('unhandledRejection', (reason: unknown) => {
+  if (reason instanceof Error && reason.message === 'Operation aborted') {
+    logger.debug('[unhandledRejection] Suppressed expected SDK abort error');
+    return;
+  }
+  // Re-throw anything else so it surfaces normally
+  console.error('Unhandled promise rejection:', reason);
+});
+
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
@@ -85,7 +104,7 @@ class AgentSessionManager {
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
     const id = session.id;
-    return (event: AgentEvent) => {
+    const emit = (event: AgentEvent) => {
       logger.debug(`[emit] session=${id} event.type=${event.type}`);
       session.eventHistory.push(event);
 
@@ -111,6 +130,8 @@ class AgentSessionManager {
         logger.debug(`[emit] window is destroyed, dropping event`);
       }
     };
+    session.emit = emit;
+    return emit;
   }
 
   async createSession(opts: {
@@ -143,7 +164,14 @@ class AgentSessionManager {
     const effectivePermissionMode = opts.permissionMode
       || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
       || 'default';
-    const effectiveAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+    // Inject project memory into the system prompt
+    const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
+    const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
+    const builtInPrompt = 'When running Bash commands, prefer short command names (npm, npx, node, git, etc.) over absolute paths. Only fall back to a full path if the short command name fails to resolve. IMPORTANT: Do not use `cd` to navigate to your current working directory before running commands — you are already there. Just run commands directly.';
+    const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
+
+    // Ensure memory directory exists for this repo
+    memory.ensureRepoMemory(repoPath);
 
     const session: ManagedSession = {
       id,
@@ -175,6 +203,8 @@ class AgentSessionManager {
       displayName: null,
       devServer: null,
       stoppedByUser: false,
+      autoSaveInProgress: false,
+      emit: null,
     };
 
     this.sessions.set(id, session);
@@ -247,6 +277,12 @@ class AgentSessionManager {
         return new Promise<PermissionResponse>((resolve) => {
           const timer = setTimeout(() => {
             pendingPermissions.delete(requestId);
+            emit({
+              type: 'permission_resolved',
+              requestId,
+              toolUseId: request.toolUseId,
+              decision: 'deny',
+            });
             resolve({ behavior: 'deny', message: 'Permission request timed out' });
           }, PERMISSION_TIMEOUT_MS);
 
@@ -340,17 +376,22 @@ class AgentSessionManager {
       }
       logger.debug(`[runQuery] session=${id} event loop ended normally`);
     } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      const stderr = err?.stderr || err?.cause?.stderr || '';
-      const exitCode = err?.exitCode ?? err?.code ?? '';
-      const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
-      logger.error(`[runQuery] session=${id} event loop error (exit=${exitCode}):`, detail);
-
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
-      if (isAuthError) {
-        emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+      // Abort errors are expected when the user stops a query — don't surface them
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted) {
+        logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else {
-        emit({ type: 'error', message: detail.slice(0, 500) });
+        const errMsg = err?.message || String(err);
+        const stderr = err?.stderr || err?.cause?.stderr || '';
+        const exitCode = err?.exitCode ?? err?.code ?? '';
+        const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
+        logger.error(`[runQuery] session=${id} event loop error (exit=${exitCode}):`, detail);
+
+        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
+        if (isAuthError) {
+          emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+        } else {
+          emit({ type: 'error', message: detail.slice(0, 500) });
+        }
       }
     }
 
@@ -383,6 +424,19 @@ class AgentSessionManager {
         durationMs: session.lastResult?.durationMs,
       });
     }
+
+    // Trigger memory auto-save (fire-and-forget, runs in background)
+    memoryAutosave.triggerAutoSaveImmediate({
+      sessionId: id,
+      repoPath: session.repoPath,
+      cwd: session.worktreePath,
+      events: session.eventHistory,
+      onStatus: (status, filesWritten) => {
+        emit({ type: 'memory_autosave', status, filesWritten });
+      },
+    }).catch(err => {
+      logger.warn(`[memory-autosave] Auto-save failed for session ${id}: ${err}`);
+    });
   }
 
   sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): boolean {
@@ -414,16 +468,23 @@ class AgentSessionManager {
     }
   }
 
-  respondToPermission(id: string, decision: PermissionDecision): void {
+  /**
+   * Resolve a pending permission request.
+   * Returns true if the permission was found and resolved, false if it was
+   * already resolved or the session/request no longer exists (e.g. timed out).
+   */
+  respondToPermission(id: string, decision: PermissionDecision): boolean {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session) return false;
 
     const pending = session.pendingPermissions.get(decision.requestId);
-    if (!pending) return;
+    if (!pending) return false;
 
     session.pendingPermissions.delete(decision.requestId);
 
-    if (decision.behavior === 'allow' || decision.behavior === 'allowAlways') {
+    const resolvedDecision = (decision.behavior === 'allow' || decision.behavior === 'allowAlways') ? 'allow' : 'deny';
+
+    if (resolvedDecision === 'allow') {
       if (decision.behavior === 'allowAlways') {
         session.alwaysAllowedTools.add(pending.toolName);
       }
@@ -438,13 +499,28 @@ class AgentSessionManager {
         message: decision.message || 'User denied permission',
       });
     }
+
+    // Notify renderer authoritatively
+    session.emit?.({
+      type: 'permission_resolved',
+      requestId: decision.requestId,
+      toolUseId: pending.toolUseId,
+      decision: resolvedDecision,
+    });
+
+    return true;
   }
 
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.setPermissionMode) return;
     try {
-      session.queryHandle.setPermissionMode(mode as any);
+      session.permissionMode = mode as ManagedSession['permissionMode'];
+      // Only pass SDK-recognized modes to the SDK instance.
+      // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
+      if (mode === 'default' || mode === 'plan') {
+        session.queryHandle.setPermissionMode(mode as any);
+      }
     } catch (e) {
       logger.warn(`Failed to set mode for session ${id}:`, e);
     }
@@ -547,22 +623,41 @@ class AgentSessionManager {
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
 
-    // Abort the running query
-    session.abortController.abort();
-
+    // Close the query and input stream *before* aborting so the SDK can
+    // clean up gracefully and avoid dangling async operations that reject
+    // with "Operation aborted" after the signal fires.
     try { session.queryHandle?.close(); } catch { /* may already be closed */ }
 
-    // Resolve any pending permissions as denied
-    for (const [, pending] of session.pendingPermissions) {
-      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
+    // Now abort — any remaining in-flight SDK operations will be cancelled
+    session.abortController.abort();
+
+    // Stop host-managed dev server
+    if (session.devServer) {
+      await session.devServer.stop();
+      session.devServer = null;
     }
-    session.pendingPermissions.clear();
+
+    // Kill any detected dev servers
+    await this.killDetectedPorts(session);
 
     // Set up fresh abort controller for the next query
     session.abortController = new AbortController();
     session.queryHandle = null;
 
     const emit = this.createEmitter(session);
+
+    // Resolve any pending permissions as denied — done after emit is rebuilt
+    // so the permission_resolved events reach the renderer.
+    for (const [, pending] of session.pendingPermissions) {
+      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
+      emit({
+        type: 'permission_resolved',
+        requestId: pending.requestId,
+        toolUseId: pending.toolUseId,
+        decision: 'deny',
+      });
+    }
+    session.pendingPermissions.clear();
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -579,17 +674,27 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
 
-    // Abort the query
-    session.abortController.abort();
+    // Cancel any pending auto-save debounce and save heuristic metadata
+    memoryAutosave.cancelAutoSave(id);
+    memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory);
 
-    // Close the query handle
+    // Close the query and input stream before aborting to allow graceful cleanup
     try {
       session.queryHandle?.close();
     } catch { /* may already be closed */ }
 
+    // Abort any remaining in-flight operations
+    session.abortController.abort();
+
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
       pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
+      session.emit?.({
+        type: 'permission_resolved',
+        requestId: pending.requestId,
+        toolUseId: pending.toolUseId,
+        decision: 'deny',
+      });
     }
 
     // Stop host-managed dev server
@@ -707,6 +812,35 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (session) return session.eventHistory;
     return this.loadEventHistory(id);
+  }
+
+  /** Clear event history (in-memory and on disk) for a session.
+   *  Called after /clear so replays don't resurrect old messages.
+   *  Triggers memory auto-save before wiping so context isn't lost. */
+  clearEventHistory(id: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      // Save memories before wiping history
+      if (session.eventHistory.length > 0) {
+        memoryAutosave.triggerAutoSave({
+          sessionId: id,
+          repoPath: session.repoPath,
+          cwd: session.worktreePath,
+          events: session.eventHistory,
+          onStatus: (status, filesWritten) => {
+            session.emit?.({ type: 'memory_autosave', status, filesWritten });
+          },
+        });
+      }
+      session.eventHistory = [];
+      try {
+        fs.writeFileSync(session.eventLogPath, '');
+      } catch { /* non-fatal */ }
+    } else {
+      // Session not running — clear disk log directly
+      const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
+      try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
+    }
   }
 
   get count(): number {

@@ -110,7 +110,20 @@ export type AgentEvent =
   // Files persisted to disk
   | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
   // Permission mode sync (from SDK status messages)
-  | { type: 'mode_sync'; mode: PermissionMode };
+  | { type: 'mode_sync'; mode: PermissionMode }
+  // Permission resolved (authoritative — emitted by main for all resolution paths)
+  | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
+  // Memory auto-save status
+  | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] };
+
+// ─── Shell / Terminal ───
+
+export interface ShellOutputEvent {
+  execId: string;
+  stream: 'stdout' | 'stderr' | 'exit';
+  data?: string;
+  exitCode?: number;
+}
 
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
@@ -220,10 +233,11 @@ export interface GroveBenchAPI {
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
-  respondToPermission(sessionId: string, decision: PermissionDecision): void;
+  respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
+  clearEventHistory(sessionId: string): Promise<void>;
 
   // Prerequisites
   checkPrerequisites(): Promise<PrerequisiteStatus>;
@@ -275,6 +289,18 @@ export interface GroveBenchAPI {
   // Folder
   openSessionFolder(sessionId: string): Promise<void>;
 
+  // Memory
+  memoryList(repoPath: string): Promise<MemoryEntry[]>;
+  memoryRead(repoPath: string, relativePath: string): Promise<string | null>;
+  memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
+  memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
+
+  // Shell / Terminal
+  shellRun(sessionId: string, command: string): Promise<string>;
+  shellKill(execId: string): Promise<void>;
+  shellInput(execId: string, data: string): void;
+  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
+
   // Settings
   getSettings(): Promise<GroveBenchSettings>;
   saveSettings(settings: GroveBenchSettings): Promise<void>;
@@ -282,6 +308,8 @@ export interface GroveBenchAPI {
   // App state persistence
   getActiveTab(): Promise<string | null>;
   setActiveTab(id: string | null): void;
+  getOpenTabs(): Promise<string[]>;
+  setOpenTabs(ids: string[]): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -322,10 +350,31 @@ export interface GroveBenchSettings {
   /** Default dev command (e.g. 'npm run dev'). Auto-detected from package.json if blank. */
   devCommand: string;
 
+  // Memory
+  /** Enable auto-save of memories at end of session / compaction. Default true. */
+  memoryAutoSave: boolean;
+
+  // Worktree
+  /** Automatically run npm install in new worktrees. Default false. */
+  autoInstallDeps: boolean;
+
   // General
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+
+  // Editor
+  /** Default diff view mode in the Changes tab. */
+  diffViewMode: 'unified' | 'side-by-side';
+}
+
+// ─── Memory ───
+
+export interface MemoryEntry {
+  relativePath: string;  // e.g. "repo/overview.md"
+  title: string;         // from frontmatter
+  updatedAt: string;     // ISO date from frontmatter
+  folder: string;        // e.g. "repo", "conventions", "sessions"
 }
 
 // ─── IPC Channel Names ───
@@ -351,6 +400,7 @@ export const IPC = {
   AGENT_SEND: 'agent:send',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
+  AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
   FILE_LIST: 'file:list',
@@ -379,7 +429,17 @@ export const IPC = {
   SETTINGS_SAVE: 'settings:save',
   APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
   APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
+  APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
+  APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',
   OPEN_SESSION_FOLDER: 'session:openFolder',
+  MEMORY_LIST: 'memory:list',
+  MEMORY_READ: 'memory:read',
+  MEMORY_WRITE: 'memory:write',
+  MEMORY_DELETE: 'memory:delete',
+  SHELL_RUN: 'shell:run',
+  SHELL_KILL: 'shell:kill',
+  SHELL_INPUT: 'shell:input',
+  SHELL_OUTPUT: 'shell:output',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_MODELS: 'agent:getModels',
 } as const;

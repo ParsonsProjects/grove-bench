@@ -379,7 +379,7 @@ describe('ingestEvent — devserver_detected', () => {
       url: 'http://localhost:3000',
     } as AgentEvent);
 
-    expect(messageStore.getDevServers(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000' }]);
+    expect(messageStore.getDevServers(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000', status: 'ok' }]);
   });
 
   it('does not duplicate same port', () => {

@@ -33,7 +33,7 @@ const api: GroveBenchAPI = {
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
     ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
-    ipcRenderer.send(IPC.AGENT_PERMISSION, sessionId, decision),
+    ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
@@ -48,6 +48,8 @@ const api: GroveBenchAPI = {
   },
   getEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY, sessionId),
+  clearEventHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
 
   // Mode control
   setMode: (sessionId: string, mode: string) =>
@@ -117,6 +119,32 @@ const api: GroveBenchAPI = {
   openSessionFolder: (sessionId: string) =>
     ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
 
+  // Memory
+  memoryList: (repoPath: string) => ipcRenderer.invoke(IPC.MEMORY_LIST, repoPath),
+  memoryRead: (repoPath: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_READ, repoPath, relativePath),
+  memoryWrite: (repoPath: string, relativePath: string, content: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_WRITE, repoPath, relativePath, content),
+  memoryDelete: (repoPath: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
+
+  // Shell / Terminal
+  shellRun: (sessionId: string, command: string) =>
+    ipcRenderer.invoke(IPC.SHELL_RUN, sessionId, command),
+  shellKill: (execId: string) =>
+    ipcRenderer.invoke(IPC.SHELL_KILL, execId),
+  shellInput: (execId: string, data: string) =>
+    ipcRenderer.send(IPC.SHELL_INPUT, execId, data),
+  onShellOutput: (sessionId: string, callback: (event: import('../shared/types.js').ShellOutputEvent) => void) => {
+    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').ShellOutputEvent) =>
+      callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   saveSettings: (s: import('../shared/types.js').GroveBenchSettings) =>
@@ -125,6 +153,8 @@ const api: GroveBenchAPI = {
   // App state persistence
   getActiveTab: () => ipcRenderer.invoke(IPC.APP_STATE_GET_ACTIVE_TAB),
   setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
+  getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
+  setOpenTabs: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_OPEN_TABS, ids),
 
   // App lifecycle
   onAppClosing: (callback: () => void) => {

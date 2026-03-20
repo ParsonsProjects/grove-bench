@@ -10,12 +10,19 @@ import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, g
 import { parseGitStatusPorcelain } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
+import { terminalManager } from './terminal.js';
 import * as settings from './settings.js';
-import { loadAppState, saveActiveTab } from './app-state.js';
+import * as memory from './memory.js';
+import { loadAppState, saveActiveTab, saveOpenTabs } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
+
+/** Buffer for events emitted before the session object exists (worktree creation, npm install).
+ *  These are sent live via IPC but not persisted — the AGENT_HISTORY handler
+ *  prepends them so the renderer's history replay can show them. */
+const prelaunchEvents = new Map<string, import('../shared/types.js').AgentEvent[]>();
 
 export function registerHandlers() {
   // ─── Repo ───
@@ -109,8 +116,12 @@ export function registerHandlers() {
     const id = crypto.randomUUID().slice(0, 8);
     const branch = opts.branchName;
 
-    // Helper to emit agent events before the session object exists
+    // Helper to emit agent events before the session object exists.
+    // Events are buffered so history replay can show them even if the
+    // renderer subscribes after they were sent.
+    prelaunchEvents.set(id, []);
     const emitPrelaunch = (evt: import('../shared/types.js').AgentEvent) => {
+      prelaunchEvents.get(id)?.push(evt);
       if (!win.isDestroyed()) {
         win.webContents.send(`${IPC.AGENT_EVENT}:${id}`, evt);
       }
@@ -141,30 +152,26 @@ export function registerHandlers() {
           logger.warn('Failed to copy untracked files:', e);
         }
 
-        // Install npm dependencies if the project has a package.json
-        try {
-          await fs.access(path.join(worktree.path, 'package.json'));
-          if (!win.isDestroyed()) {
-            win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
-          }
+        // Install npm dependencies if enabled and the project has a package.json
+        if (settings.getSettings().autoInstallDeps) {
+          try {
+            await fs.access(path.join(worktree.path, 'package.json'));
+            if (!win.isDestroyed()) {
+              win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
+            }
 
-          // Copy node_modules from a sibling worktree if available (fast path)
-          const siblingNm = await worktreeManager.findSiblingNodeModules(opts.repoPath, worktree.id);
-          if (siblingNm) {
-            emitPrelaunch({ type: 'status', message: 'Copying dependencies from sibling…' });
-            logger.info(`Copying node_modules from ${siblingNm} to worktree ${worktree.id}`);
-            await fs.cp(siblingNm, path.join(worktree.path, 'node_modules'), { recursive: true });
-          }
-
-          // Run npm install with shared cache — diffs against copied node_modules or installs fresh
-          const npmCache = await worktreeManager.getNpmCachePath(opts.repoPath);
-          emitPrelaunch({ type: 'status', message: siblingNm ? 'Syncing dependencies…' : 'Installing dependencies…' });
-          logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
-          await execa('npm', ['install', '--prefer-offline', '--cache', npmCache], { cwd: worktree.path });
-          logger.info(`npm install completed for worktree ${worktree.id}`);
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-            logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
+            // Run npm install with shared cache
+            const npmCache = await worktreeManager.getNpmCachePath(opts.repoPath);
+            emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
+            logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
+            await execa('npm', ['install', '--prefer-offline', '--cache', npmCache], { cwd: worktree.path });
+            logger.info(`npm install completed for worktree ${worktree.id}`);
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+              const stderr = (e as any).stderr || (e as any).message || String(e);
+              logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
+              emitPrelaunch({ type: 'error', message: `npm install failed:\n${stderr}` });
+            }
           }
         }
 
@@ -186,6 +193,10 @@ export function registerHandlers() {
         if (!win.isDestroyed()) {
           win.webContents.send(IPC.SESSION_STATUS, id, 'error');
         }
+      } finally {
+        // Clean up prelaunch buffer — events are now in the session's
+        // own eventHistory or no longer needed.
+        prelaunchEvents.delete(id);
       }
     })();
 
@@ -236,6 +247,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
+    await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
     logger.info(`Session destroyed: id=${id}`);
@@ -302,12 +314,20 @@ export function registerHandlers() {
     return sessionManager.setThinking(sessionId, enabled);
   });
 
-  ipcMain.on(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
-    sessionManager.respondToPermission(sessionId, decision);
+  ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
+    return sessionManager.respondToPermission(sessionId, decision);
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
-    return sessionManager.getEventHistory(sessionId);
+    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
+    const history = sessionManager.getEventHistory(sessionId);
+    // Prepend prelaunch events (worktree/install status) that aren't in the
+    // session's own history — they were emitted before the session existed.
+    return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
+  });
+
+  ipcMain.handle(IPC.AGENT_CLEAR_HISTORY, (_event, sessionId: string) => {
+    sessionManager.clearEventHistory(sessionId);
   });
 
   // ─── File operations (for @ file picker) ───
@@ -559,6 +579,40 @@ export function registerHandlers() {
     return adapter.getModels();
   });
 
+  // ─── Memory ───
+
+  ipcMain.handle(IPC.MEMORY_LIST, (_event, repoPath: string) => {
+    return memory.listMemoryFiles(repoPath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_READ, (_event, repoPath: string, relativePath: string) => {
+    return memory.readMemoryFile(repoPath, relativePath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_WRITE, (_event, repoPath: string, relativePath: string, content: string) => {
+    memory.writeMemoryFile(repoPath, relativePath, content);
+  });
+
+  ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
+    return memory.deleteMemoryFile(repoPath, relativePath);
+  });
+
+  // ─── Shell / Terminal ───
+
+  ipcMain.handle(IPC.SHELL_RUN, (event, sessionId: string, command: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    return terminalManager.spawnCommand(sessionId, command, worktree.path, event.sender);
+  });
+
+  ipcMain.handle(IPC.SHELL_KILL, (_event, execId: string) => {
+    terminalManager.killExecution(execId);
+  });
+
+  ipcMain.on(IPC.SHELL_INPUT, (_event, execId: string, data: string) => {
+    terminalManager.sendInput(execId, data);
+  });
+
   // ─── Settings ───
 
   ipcMain.handle(IPC.SETTINGS_GET, () => {
@@ -579,6 +633,14 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_ACTIVE_TAB, (_event, id: string | null) => {
     saveActiveTab(id);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
+    return loadAppState().openTabIds;
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_OPEN_TABS, (_event, ids: string[]) => {
+    saveOpenTabs(ids);
   });
 
   // ─── Window controls ───
