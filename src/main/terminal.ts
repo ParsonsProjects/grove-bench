@@ -46,6 +46,12 @@ class TerminalManager {
 
       const flush = () => {
         flushTimer = null;
+        // Don't send data if this PTY has been replaced by a new one (restart)
+        const current = this.sessions.get(sessionId);
+        if (current?.pty !== ptyProcess) {
+          buffer = '';
+          return;
+        }
         if (buffer && !sender.isDestroyed()) {
           sender.send(dataChannel, buffer);
           buffer = '';
@@ -60,16 +66,26 @@ class TerminalManager {
       });
 
       ptyProcess.onExit(({ exitCode, signal }) => {
-        // Flush remaining data
         if (flushTimer) {
           clearTimeout(flushTimer);
           flushTimer = null;
         }
+
+        // Only handle exit if this PTY is still the active one for the session.
+        // During restart, a new PTY is already registered under the same sessionId —
+        // we must not send stale data or exit events from the old PTY.
+        const current = this.sessions.get(sessionId);
+        if (current?.pty !== ptyProcess) {
+          buffer = '';
+          logger.info(`PTY exited (stale, ignored): session=${sessionId}, code=${exitCode}, signal=${signal}`);
+          return;
+        }
+
+        // Flush remaining data
         if (buffer && !sender.isDestroyed()) {
           sender.send(dataChannel, buffer);
           buffer = '';
         }
-
         if (!sender.isDestroyed()) {
           sender.send(exitChannel, exitCode, signal);
         }
@@ -108,27 +124,18 @@ class TerminalManager {
   killPty(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Remove from map BEFORE killing so that if onExit fires synchronously
+    // during kill(), it won't find this session and won't send a stale exit event.
+    this.sessions.delete(sessionId);
     try {
       session.pty.kill();
     } catch {
       // Already dead
     }
-    this.sessions.delete(sessionId);
     logger.info(`PTY killed: session=${sessionId}`);
   }
 
-  /** Kill and respawn the PTY for a session. If sender is provided, bind to the new WebContents. */
-  restartPty(sessionId: string, sender?: WebContents): boolean {
-    const session = this.sessions.get(sessionId);
-    if (!session) return false;
-
-    const cwd = session.cwd;
-    const activeSender = sender ?? session.sender;
-    this.killPty(sessionId);
-    return this.spawnPty(sessionId, cwd, activeSender);
-  }
-
-  /** Check if a session has a live PTY. */
+/** Check if a session has a live PTY. */
   isAlive(sessionId: string): boolean {
     return this.sessions.has(sessionId);
   }

@@ -137,8 +137,6 @@ const api: GroveBenchAPI = {
     ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
   ptyKill: (sessionId: string) =>
     ipcRenderer.invoke(IPC.PTY_KILL, sessionId),
-  ptyRestart: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.PTY_RESTART, sessionId),
   ptyIsAlive: (sessionId: string) =>
     ipcRenderer.invoke(IPC.PTY_IS_ALIVE, sessionId),
   onPtyData: (sessionId: string, callback: (data: string) => void) => {

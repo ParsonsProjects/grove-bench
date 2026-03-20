@@ -85,11 +85,10 @@ class TerminalStore {
     this.aliveBySession[sessionId] = false;
   }
 
-  /** Kill and respawn the PTY. */
+  /** Kill and respawn the PTY (same as what happens on tab open). */
   async restart(sessionId: string): Promise<boolean> {
-    const ok = await window.groveBench.ptyRestart(sessionId);
-    this.aliveBySession[sessionId] = ok;
-    return ok;
+    await this.kill(sessionId);
+    return this.spawn(sessionId);
   }
 
   /** Check if the PTY is alive (queries main process). */

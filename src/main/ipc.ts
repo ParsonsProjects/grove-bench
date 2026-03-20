@@ -605,11 +605,7 @@ export function registerHandlers() {
     terminalManager.killPty(sessionId);
   });
 
-  ipcMain.handle(IPC.PTY_RESTART, (event, sessionId: string) => {
-    return terminalManager.restartPty(sessionId, event.sender);
-  });
-
-  ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
+ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
     return terminalManager.isAlive(sessionId);
   });
 

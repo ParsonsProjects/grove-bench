@@ -301,7 +301,6 @@ export interface GroveBenchAPI {
   ptyWrite(sessionId: string, data: string): void;
   ptyResize(sessionId: string, cols: number, rows: number): void;
   ptyKill(sessionId: string): Promise<void>;
-  ptyRestart(sessionId: string): Promise<boolean>;
   ptyIsAlive(sessionId: string): Promise<boolean>;
   onPtyData(sessionId: string, callback: (data: string) => void): () => void;
   onPtyExit(sessionId: string, callback: (exitCode: number, signal?: number) => void): () => void;
@@ -444,7 +443,6 @@ export const IPC = {
   PTY_WRITE: 'pty:write',
   PTY_RESIZE: 'pty:resize',
   PTY_KILL: 'pty:kill',
-  PTY_RESTART: 'pty:restart',
   PTY_IS_ALIVE: 'pty:isAlive',
   PTY_DATA: 'pty:data',      // pty:data:{sessionId}
   PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
