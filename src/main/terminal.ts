@@ -11,7 +11,7 @@ interface PtySession {
   cwd: string;
 }
 
-class TerminalManager {
+export class TerminalManager {
   private sessions = new Map<string, PtySession>();
 
   /** Spawn a persistent PTY shell for a session. Returns true if spawned. */
