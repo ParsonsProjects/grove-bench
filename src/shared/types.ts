@@ -116,8 +116,9 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] };
 
-// ─── Shell / Terminal ───
+// ─── PTY / Terminal ───
 
+/** @deprecated Legacy shell output event — replaced by PTY data stream. */
 export interface ShellOutputEvent {
   execId: string;
   stream: 'stdout' | 'stderr' | 'exit';
@@ -295,11 +296,15 @@ export interface GroveBenchAPI {
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
 
-  // Shell / Terminal
-  shellRun(sessionId: string, command: string): Promise<string>;
-  shellKill(execId: string): Promise<void>;
-  shellInput(execId: string, data: string): void;
-  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
+  // PTY Terminal (per-session persistent shell)
+  ptySpawn(sessionId: string): Promise<boolean>;
+  ptyWrite(sessionId: string, data: string): void;
+  ptyResize(sessionId: string, cols: number, rows: number): void;
+  ptyKill(sessionId: string): Promise<void>;
+  ptyRestart(sessionId: string): Promise<boolean>;
+  ptyIsAlive(sessionId: string): Promise<boolean>;
+  onPtyData(sessionId: string, callback: (data: string) => void): () => void;
+  onPtyExit(sessionId: string, callback: (exitCode: number, signal?: number) => void): () => void;
 
   // Settings
   getSettings(): Promise<GroveBenchSettings>;
@@ -434,8 +439,13 @@ export const IPC = {
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
-  SHELL_RUN: 'shell:run',
-  SHELL_KILL: 'shell:kill',
-  SHELL_INPUT: 'shell:input',
-  SHELL_OUTPUT: 'shell:output',
+  // PTY channels (per-session persistent terminal)
+  PTY_SPAWN: 'pty:spawn',
+  PTY_WRITE: 'pty:write',
+  PTY_RESIZE: 'pty:resize',
+  PTY_KILL: 'pty:kill',
+  PTY_RESTART: 'pty:restart',
+  PTY_IS_ALIVE: 'pty:isAlive',
+  PTY_DATA: 'pty:data',      // pty:data:{sessionId}
+  PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
 } as const;
