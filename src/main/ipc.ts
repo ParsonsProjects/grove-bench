@@ -505,6 +505,16 @@ export function registerHandlers() {
     }
   });
 
+  // ─── Checkpoint rewind ───
+
+  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string) => {
+    await sessionManager.rewindFiles(sessionId, userMessageId);
+  });
+
+  ipcMain.handle(IPC.AGENT_CHECKPOINT_DIFF, async (_event, sessionId: string, userMessageId: string) => {
+    return sessionManager.getCheckpointDiff(sessionId, userMessageId);
+  });
+
   // ─── Git status ───
 
   ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string) => {

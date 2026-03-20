@@ -75,6 +75,12 @@ const api: GroveBenchAPI = {
   getFileDiff: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
 
+  // Checkpoint rewind
+  rewindSession: (sessionId: string, userMessageId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_REWIND, sessionId, userMessageId),
+  getCheckpointDiff: (sessionId: string, userMessageId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_DIFF, sessionId, userMessageId),
+
   // Git status
   getGitStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId),

@@ -418,6 +418,11 @@ class AgentSessionManager {
         ...(session.outputFormat ? { outputFormat: session.outputFormat } : {}),
         // Sandbox settings for restricted Bash execution
         ...(session.sandbox ? { sandbox: session.sandbox } : {}),
+        // Enable file checkpointing for /rewind support
+        enableFileCheckpointing: true,
+        // null value = flag without a value (CLI-style --replay-user-messages).
+        // This causes the SDK to replay user messages with UUIDs for checkpoint tracking.
+        extraArgs: { 'replay-user-messages': null },
         // Resume previous conversation if we have a saved session ID
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
         canUseTool: async (toolName, input, options) => {
@@ -814,9 +819,20 @@ class AgentSessionManager {
       }
 
       case 'user': {
-        // Tool results come back as user messages
+        // Tool results and replayed user messages come back as user messages.
+        // With replay-user-messages enabled, the SDK replays user text with UUIDs
+        // which we use as checkpoint IDs for /rewind.
         const content = message.message?.content;
+        const userUuid = (message as any).uuid;
+        if (typeof content === 'string' && content.trim()) {
+          emit({ type: 'user_message', text: content, uuid: userUuid });
+        }
         if (Array.isArray(content)) {
+          // Emit user text blocks with UUID for checkpoint tracking
+          const textParts = content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+          if (textParts.trim()) {
+            emit({ type: 'user_message', text: textParts, uuid: userUuid });
+          }
           for (const block of content) {
             if (block.type === 'tool_result') {
               const resultContent = Array.isArray(block.content)
@@ -1385,6 +1401,40 @@ class AgentSessionManager {
     } catch {
       return [];
     }
+  }
+
+  /** Rewind files on disk to their state at a specific user message checkpoint. */
+  async rewindFiles(id: string, userMessageId: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session.queryInstance) throw new Error(`Session ${id} has no active query`);
+    const q = session.queryInstance as any;
+    if (typeof q.rewindFiles !== 'function') {
+      throw new Error('SDK does not support rewindFiles — upgrade @anthropic-ai/claude-agent-sdk');
+    }
+    await q.rewindFiles(userMessageId);
+    session.emit?.({ type: 'rewind', toMessageId: userMessageId });
+  }
+
+  /** Dry-run rewind to get the diff of what would change. */
+  async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session.queryInstance) throw new Error(`Session ${id} has no active query`);
+    const q = session.queryInstance as any;
+    if (typeof q.rewindFiles !== 'function') {
+      throw new Error('SDK does not support rewindFiles — upgrade @anthropic-ai/claude-agent-sdk');
+    }
+    const result = await q.rewindFiles(userMessageId, { dryRun: true });
+    // Return a human-readable summary of files that would be restored
+    if (result && typeof result === 'object') {
+      const files = result.files ?? result.changedFiles ?? [];
+      if (Array.isArray(files) && files.length > 0) {
+        return files.map((f: any) => typeof f === 'string' ? f : f.path ?? f.filename ?? JSON.stringify(f)).join('\n');
+      }
+      return JSON.stringify(result, null, 2);
+    }
+    return String(result ?? 'No changes');
   }
 
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */

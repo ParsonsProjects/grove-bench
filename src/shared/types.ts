@@ -86,7 +86,7 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string }
+  | { type: 'user_message'; text: string; uuid?: string }
   | { type: 'devserver_detected'; port: number; url: string }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
@@ -114,7 +114,9 @@ export type AgentEvent =
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
   // Memory auto-save status
-  | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] };
+  | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
+  // Rewind checkpoint
+  | { type: 'rewind'; toMessageId: string };
 
 // ─── Shell / Terminal ───
 
@@ -262,6 +264,10 @@ export interface GroveBenchAPI {
   // File revert (for changes review)
   revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void>;
   getFileDiff(sessionId: string, filePath: string): Promise<string>;
+
+  // Checkpoint rewind
+  rewindSession(sessionId: string, userMessageId: string): Promise<void>;
+  getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
 
   // Git status
   getGitStatus(sessionId: string): Promise<GitStatusResult>;
@@ -438,4 +444,6 @@ export const IPC = {
   SHELL_KILL: 'shell:kill',
   SHELL_INPUT: 'shell:input',
   SHELL_OUTPUT: 'shell:output',
+  AGENT_REWIND: 'agent:rewind',
+  AGENT_CHECKPOINT_DIFF: 'agent:checkpointDiff',
 } as const;

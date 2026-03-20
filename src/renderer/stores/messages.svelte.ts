@@ -28,6 +28,8 @@ export interface ChatUserMessage {
   kind: 'user';
   id: string;
   text: string;
+  /** SDK user message UUID — used as checkpoint ID for /rewind */
+  uuid?: string;
 }
 
 export interface ChatSystemMessage {
@@ -825,13 +827,33 @@ class MessageStore {
         };
         break;
 
-      case 'user_message':
+      case 'user_message': {
+        // When replay-user-messages is enabled, the SDK replays user messages
+        // with UUIDs. We stamp the UUID onto the most recent user message
+        // that doesn't already have one. Text matching is unreliable because
+        // the SDK sees the full message (with @-ref file tags prepended) while
+        // the store has the display text. So we match by position: the most
+        // recent UUID-less user message is the one the SDK is replaying.
+        if (event.uuid) {
+          const msgs = this.messagesBySession[sessionId] ?? [];
+          const existingIdx = msgs.findLastIndex(
+            (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
+          );
+          if (existingIdx >= 0) {
+            const updated = [...msgs];
+            updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
+            this.messagesBySession[sessionId] = updated;
+            break;
+          }
+        }
         this.pushMessage(sessionId, {
           kind: 'user',
           id: nextId(),
           text: event.text,
+          uuid: event.uuid,
         });
         break;
+      }
 
       case 'devserver_detected': {
         const servers = this.devServersBySession[sessionId] ?? [];
@@ -1005,12 +1027,35 @@ class MessageStore {
           this.modeBySession[sessionId] = event.mode;
         }
         break;
+
+      case 'rewind': {
+        // Truncate messages after the rewind point
+        const msgs = this.messagesBySession[sessionId] ?? [];
+        const rewindIdx = msgs.findLastIndex(
+          (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
+        );
+        if (rewindIdx >= 0) {
+          // Keep everything up to and including the rewind target user message
+          this.messagesBySession[sessionId] = msgs.slice(0, rewindIdx + 1);
+        }
+        this.isRunning[sessionId] = false;
+        this.streamingText[sessionId] = '';
+        this.streamingThinking[sessionId] = '';
+        // Refresh git status since files changed on disk
+        gitStatusStore.refresh(sessionId);
+        break;
+      }
     }
   }
 
-  /** Send a slash command (e.g. /compact, /clear) */
+  /** Send a slash command (e.g. /compact, /clear, /rewind) */
   sendCommand(sessionId: string, command: string) {
     const trimmed = command.trim();
+    // /rewind is handled client-side — open the dialog instead of sending to SDK
+    if (trimmed === '/rewind') {
+      this.openRewindDialog(sessionId);
+      return;
+    }
     if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
     }
@@ -1157,6 +1202,43 @@ class MessageStore {
     }
 
     return true;
+  }
+
+  /** Whether the rewind dialog is open for a session */
+  rewindDialogOpen = $state<Record<string, boolean>>({});
+
+  /** Get available rewind points (user messages with UUIDs) for a session */
+  getRewindPoints(sessionId: string): { uuid: string; text: string; index: number }[] {
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    const points: { uuid: string; text: string; index: number }[] = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m.kind === 'user' && (m as ChatUserMessage).uuid) {
+        points.push({
+          uuid: (m as ChatUserMessage).uuid!,
+          text: m.text,
+          index: i,
+        });
+      }
+    }
+    // Most recent first
+    return points.reverse();
+  }
+
+  /** Execute a rewind to a specific user message checkpoint */
+  async executeRewind(sessionId: string, userMessageId: string): Promise<void> {
+    await window.groveBench.rewindSession(sessionId, userMessageId);
+    // The rewind event from main will handle message truncation
+  }
+
+  /** Open the rewind dialog for a session */
+  openRewindDialog(sessionId: string) {
+    this.rewindDialogOpen[sessionId] = true;
+  }
+
+  /** Close the rewind dialog for a session */
+  closeRewindDialog(sessionId: string) {
+    this.rewindDialogOpen[sessionId] = false;
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.

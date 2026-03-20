@@ -16,9 +16,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Attach terminal output as context to AI messages
 
 ### Checkpointing & Revert
-- [ ] Git-based snapshots at each agent turn
-- [ ] Per-turn diff viewing (what changed in each turn)
-- [ ] Revert workspace to any previous turn's checkpoint
+- [x] Git-based snapshots at each agent turn
+- [x] Per-turn diff viewing (what changed in each turn)
+- [x] Revert workspace to any previous turn's checkpoint
 
 ### Settings UI
 - [ ] GUI-based settings panel (no manual JSON editing)
@@ -67,7 +67,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
 
 ### Agent Capabilities
-- [ ] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`
+- [x] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`
 - [ ] `/btw` — Ephemeral side question that doesn't enter conversation history. Runs while agent is working, no tool access, shows in dismissible overlay. No SDK support — needs separate `query()` call with `maxTurns: 1`
 - [ ] Commands (slash commands for common actions)
 - [ ] Skills (reusable prompt templates / workflows)
