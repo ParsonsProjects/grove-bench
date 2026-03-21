@@ -145,6 +145,35 @@ const api: GroveBenchAPI = {
     };
   },
 
+  // PTY Terminal (per-session persistent shell)
+  ptySpawn: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.PTY_SPAWN, sessionId),
+  ptyWrite: (sessionId: string, data: string) =>
+    ipcRenderer.send(IPC.PTY_WRITE, sessionId, data),
+  ptyResize: (sessionId: string, cols: number, rows: number) =>
+    ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
+  ptyKill: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.PTY_KILL, sessionId),
+  ptyIsAlive: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.PTY_IS_ALIVE, sessionId),
+  onPtyData: (sessionId: string, callback: (data: string) => void) => {
+    const channel = `${IPC.PTY_DATA}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: string) => callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+  onPtyExit: (sessionId: string, callback: (exitCode: number, signal?: number) => void) => {
+    const channel = `${IPC.PTY_EXIT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, exitCode: number, signal?: number) =>
+      callback(exitCode, signal);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   saveSettings: (s: import('../shared/types.js').GroveBenchSettings) =>
@@ -162,6 +191,13 @@ const api: GroveBenchAPI = {
     ipcRenderer.on(IPC.APP_CLOSING, handler);
     return () => {
       ipcRenderer.removeListener(IPC.APP_CLOSING, handler);
+    };
+  },
+  onPowerResume: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on(IPC.POWER_RESUME, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.POWER_RESUME, handler);
     };
   },
 

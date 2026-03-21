@@ -5,8 +5,10 @@
   import { store } from '../stores/sessions.svelte.js';
   import OutputPanel from './OutputPanel.svelte';
   import ChangesReviewPanel from './ChangesReviewPanel.svelte';
+  import TerminalPanel from './TerminalPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
+  import { terminalStore } from '../stores/terminal.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -15,14 +17,12 @@
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let hasChanges = $derived(gitStatus.entries.length > 0);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  let terminalRunning = $derived(terminalStore.isAlive(sessionId));
 
   // Derive whether there's an unresolved permission request
-  let hasPendingPermission = $derived.by(() => {
-    const msgs = messageStore.getMessages(sessionId);
-    return msgs.some((m) => m.kind === 'permission' && !m.resolved);
-  });
+  let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
 
-  function switchTab(tab: 'activity' | 'changes' | 'plan') {
+  function switchTab(tab: 'activity' | 'changes' | 'plan' | 'terminal') {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
     if (tab === 'changes') {
@@ -34,7 +34,23 @@
     // Alt+1 / Alt+2 to switch tabs
     if (e.altKey && e.key === '1') { e.preventDefault(); switchTab('activity'); }
     if (e.altKey && e.key === '2') { e.preventDefault(); switchTab('changes'); }
+    if (e.altKey && e.key === '3') { e.preventDefault(); switchTab('terminal'); }
   }
+
+  // Reactively unlock the input whenever the session reaches 'running' (or 'error')
+  // status. This covers race conditions where SESSION_STATUS arrives before or after
+  // mount, or where clearSession resets isReady after it was already set.
+  // IMPORTANT: read `ready` outside the condition so Svelte always tracks isReady
+  // as a dependency — otherwise short-circuit evaluation when status is 'starting'
+  // causes isReady changes to be missed.
+  $effect(() => {
+    const session = store.sessions.find((s) => s.id === sessionId);
+    const ready = messageStore.getIsReady(sessionId);
+    if (session && (session.status === 'running' || session.status === 'error') && !ready) {
+      messageStore.isReady[sessionId] = true;
+      messageStore.isRunning[sessionId] = false;
+    }
+  });
 
   onMount(async () => {
     window.addEventListener('keydown', handleKeydown);
@@ -59,11 +75,17 @@
       // assistant_text, and activity/tool_progress are ephemeral status updates.
       const skipDuringReplay = new Set([
         'partial_text', 'activity', 'tool_progress', 'usage',
+        // Dev server URLs from history point to servers that are no longer
+        // running after a restart — skip to avoid showing dead localhost links.
+        'devserver_detected',
       ]);
+
+      // Replay all events in order. permission_request events create unresolved
+      // permission messages; permission_resolved and tool_result events resolve
+      // them via the store's ingestEvent handler.
       for (const event of history) {
-        if (!skipDuringReplay.has(event.type)) {
-          messageStore.ingestEvent(sessionId, event);
-        }
+        if (skipDuringReplay.has(event.type)) continue;
+        messageStore.ingestEvent(sessionId, event);
       }
       if (history.length > 0) {
         const last = history[history.length - 1];
@@ -71,8 +93,19 @@
           messageStore.isRunning[sessionId] = false;
         }
       }
-      // After replay, resolve any tool_calls still marked pending
+      // After replay, resolve any permissions/tool_calls still unresolved
+      // (denied permissions have no tool_result, stopped sessions cleared theirs)
       messageStore.resolveStaleToolCalls(sessionId);
+      messageStore.resolveReplayedPermissions(sessionId);
+
+      // If the session is already running but system_init was missed during
+      // replay (e.g. agent just connected), ensure the input unlocks.
+      // SESSION_STATUS 'running' only fires after system_init on the main side.
+      const session = store.sessions.find((s) => s.id === sessionId);
+      if (session?.status === 'running' && !messageStore.getIsReady(sessionId)) {
+        messageStore.isReady[sessionId] = true;
+        messageStore.isRunning[sessionId] = false;
+      }
     } catch (e: any) {
       messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);
     } finally {
@@ -122,6 +155,19 @@
       {/if}
       <span class="text-muted-foreground/60 ml-1">Alt+2</span>
     </button>
+    <button
+      onclick={() => switchTab('terminal')}
+      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'terminal'
+        ? 'border-primary text-foreground'
+        : 'border-transparent text-muted-foreground hover:text-foreground'}"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 17h8v2H4v-2Zm-2-4h2v2H2v-2h2v-2H2V9h2V7H2V5h2V3h16v2h2v16H4v-2H2v-6Zm4-2h2v2H6v-2Zm2-2H6V7h2v2Zm2 2H8v-2h2v2Z"/></svg>
+      Terminal
+      {#if terminalRunning}
+        <span class="inline-block w-2 h-2 bg-green-500 animate-pulse"></span>
+      {/if}
+      <span class="text-muted-foreground/60 ml-1">Alt+3</span>
+    </button>
   </div>
 
   <!-- Tab content -->
@@ -131,10 +177,15 @@
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
     <ChangesReviewPanel {sessionId} />
   </div>
+  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
+    <TerminalPanel {sessionId} />
+  </div>
 
   <StatusBar {sessionId} />
   {#if activeTab === 'activity'}
     <PromptEditor {sessionId} />
+  {:else if activeTab === 'terminal'}
+    <!-- Terminal has its own input -->
   {:else}
     <div class="border-t border-border bg-card/50 px-4 py-2 shrink-0">
       <button

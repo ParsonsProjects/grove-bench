@@ -452,7 +452,14 @@ export function registerHandlers() {
     if (!path.normalize(resolved).startsWith(normalWt)) {
       throw new Error('Path traversal not allowed');
     }
-    if (staged) {
+    // Check if the file is untracked (git checkout won't work for untracked files)
+    const statusRaw = await git(['status', '--porcelain', '--', relPath], worktree.path);
+    const isUntracked = statusRaw.trimStart().startsWith('??');
+
+    if (isUntracked) {
+      // Delete untracked file
+      await fs.rm(resolved, { force: true, recursive: true });
+    } else if (staged) {
       // Reset both index and working tree for staged files
       await git(['checkout', 'HEAD', '--', relPath], worktree.path);
     } else {
@@ -559,6 +566,30 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
     await execa('claude', ['plugin', 'disable', pluginId]);
+  });
+
+  // ─── PTY Terminal (per-session persistent shell) ───
+
+  ipcMain.handle(IPC.PTY_SPAWN, (event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    return terminalManager.spawnPty(sessionId, worktree.path, event.sender);
+  });
+
+  ipcMain.on(IPC.PTY_WRITE, (_event, sessionId: string, data: string) => {
+    terminalManager.write(sessionId, data);
+  });
+
+  ipcMain.on(IPC.PTY_RESIZE, (_event, sessionId: string, cols: number, rows: number) => {
+    terminalManager.resize(sessionId, cols, rows);
+  });
+
+  ipcMain.handle(IPC.PTY_KILL, (_event, sessionId: string) => {
+    terminalManager.killPty(sessionId);
+  });
+
+  ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
+    return terminalManager.isAlive(sessionId);
   });
 
   // ─── Agent Adapters ───

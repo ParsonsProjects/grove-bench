@@ -504,6 +504,148 @@ describe('ingestEvent — mode_sync', () => {
   });
 });
 
+describe('ingestEvent — mode_sync preserves acceptEdits', () => {
+  it('does not let SDK mode_sync overwrite user-set acceptEdits', () => {
+    messageStore.modeBySession[SID] = 'acceptEdits';
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default' } as AgentEvent);
+    // acceptEdits should be preserved — SDK doesn't know about acceptEdits
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+  });
+
+  it('allows mode_sync to set acceptEdits explicitly', () => {
+    messageStore.modeBySession[SID] = 'default';
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'acceptEdits' } as AgentEvent);
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+  });
+});
+
+describe('ingestEvent — stoppingSession suppresses late permission_request', () => {
+  it('drops permission_request events after markSessionStopped', () => {
+    messageStore.markSessionStopped(SID);
+
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'echo hi' },
+      toolUseId: 'tu-late',
+      requestId: 'perm-late',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const perms = msgs.filter((m) => m.kind === 'permission');
+    expect(perms).toHaveLength(0);
+  });
+
+  it('clears stoppingSession so new query permission requests are not dropped', () => {
+    // Simulate: user clicks Stop → markSessionStopped sets stoppingSession
+    messageStore.markSessionStopped(SID);
+
+    // mode_sync (emitted by stopQuery after resolving old permissions) should
+    // clear stoppingSession so the new query's permissions get through.
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default' } as AgentEvent);
+
+    // Now a permission_request from the new query should NOT be suppressed
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'echo hi' },
+      toolUseId: 'tu-post-stop',
+      requestId: 'perm-post-stop',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const perm = msgs.find((m) => m.kind === 'permission');
+    expect(perm).toBeDefined();
+    expect((perm as any).requestId).toBe('perm-post-stop');
+  });
+});
+
+describe('ingestEvent — permission_resolved', () => {
+  it('marks matching permission as resolved', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-pr',
+      requestId: 'req-pr',
+    } as AgentEvent);
+
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-pr',
+      toolUseId: 'tu-pr',
+      decision: 'allow',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const perm = msgs.find((m) => m.kind === 'permission') as any;
+    expect(perm.resolved).toBe(true);
+    expect(perm.decision).toBe('allow');
+  });
+
+  it('clears awaitingPermission on matching tool_call', () => {
+    // Add a tool_call that's awaiting permission
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-await',
+      uuid: 'u-await',
+    } as AgentEvent);
+
+    // Set awaitingPermission via permission_request
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-await',
+      requestId: 'req-await',
+    } as AgentEvent);
+
+    // Resolve it
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-await',
+      toolUseId: 'tu-await',
+      decision: 'allow',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const tc = msgs.find((m) => m.kind === 'tool_call') as any;
+    expect(tc.awaitingPermission).toBe(false);
+  });
+});
+
+describe('ingestEvent — ExitPlanMode preserves acceptEdits', () => {
+  it('does not reset to default when in acceptEdits mode', () => {
+    messageStore.modeBySession[SID] = 'acceptEdits';
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+      toolUseId: 'tu-exit2',
+      uuid: 'u-exit2',
+    } as AgentEvent);
+
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+  });
+});
+
+describe('ingestEvent — error/process_exit unlocks input when never initialized', () => {
+  it('error unlocks input if session never had system_init', () => {
+    expect(messageStore.getIsReady(SID)).toBe(false);
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Auth failed' } as AgentEvent);
+    expect(messageStore.getIsReady(SID)).toBe(true);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+
+  it('process_exit unlocks input if session never had system_init', () => {
+    expect(messageStore.getIsReady(SID)).toBe(false);
+    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+    expect(messageStore.getIsReady(SID)).toBe(true);
+  });
+});
+
 describe('summarizeToolInput (via activity)', () => {
   it('summarizes Bash command', () => {
     messageStore.ingestEvent(SID, {

@@ -22,28 +22,61 @@ export function loadAppState(): AppState {
   }
 }
 
+// Track pending values so flush can write them immediately
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingActiveTab: { value: string | null } | null = null;
 
 export function saveActiveTab(id: string | null): void {
+  pendingActiveTab = { value: id };
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try {
-      const state = loadAppState();
-      state.activeTabId = id;
-      fs.writeFileSync(getStatePath(), JSON.stringify(state));
-    } catch { /* ignore */ }
+    writePendingActiveTab();
   }, 500);
 }
 
+function writePendingActiveTab(): void {
+  if (!pendingActiveTab) return;
+  try {
+    const state = loadAppState();
+    state.activeTabId = pendingActiveTab.value;
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+  pendingActiveTab = null;
+  saveTimer = null;
+}
+
 let openTabsTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingOpenTabs: { value: string[] } | null = null;
 
 export function saveOpenTabs(ids: string[]): void {
+  pendingOpenTabs = { value: ids };
   if (openTabsTimer) clearTimeout(openTabsTimer);
   openTabsTimer = setTimeout(() => {
-    try {
-      const state = loadAppState();
-      state.openTabIds = ids;
-      fs.writeFileSync(getStatePath(), JSON.stringify(state));
-    } catch { /* ignore */ }
+    writePendingOpenTabs();
   }, 500);
+}
+
+function writePendingOpenTabs(): void {
+  if (!pendingOpenTabs) return;
+  try {
+    const state = loadAppState();
+    state.openTabIds = pendingOpenTabs.value;
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+  pendingOpenTabs = null;
+  openTabsTimer = null;
+}
+
+/** Flush any pending debounced saves immediately (e.g. before system suspend). */
+export function flushPendingSaves(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (openTabsTimer) {
+    clearTimeout(openTabsTimer);
+    openTabsTimer = null;
+  }
+  writePendingActiveTab();
+  writePendingOpenTabs();
 }

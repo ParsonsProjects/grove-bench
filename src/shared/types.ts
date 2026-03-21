@@ -116,8 +116,9 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] };
 
-// ─── Shell / Terminal ───
+// ─── PTY / Terminal ───
 
+/** @deprecated Legacy shell output event — replaced by PTY data stream. */
 export interface ShellOutputEvent {
   execId: string;
   stream: 'stdout' | 'stderr' | 'exit';
@@ -295,11 +296,20 @@ export interface GroveBenchAPI {
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
 
-  // Shell / Terminal
+  // Shell / Terminal (legacy)
   shellRun(sessionId: string, command: string): Promise<string>;
   shellKill(execId: string): Promise<void>;
   shellInput(execId: string, data: string): void;
   onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
+
+  // PTY Terminal (per-session persistent shell)
+  ptySpawn(sessionId: string): Promise<boolean>;
+  ptyWrite(sessionId: string, data: string): void;
+  ptyResize(sessionId: string, cols: number, rows: number): void;
+  ptyKill(sessionId: string): Promise<void>;
+  ptyIsAlive(sessionId: string): Promise<boolean>;
+  onPtyData(sessionId: string, callback: (data: string) => void): () => void;
+  onPtyExit(sessionId: string, callback: (exitCode: number, signal?: number) => void): () => void;
 
   // Settings
   getSettings(): Promise<GroveBenchSettings>;
@@ -313,6 +323,7 @@ export interface GroveBenchAPI {
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
+  onPowerResume(callback: () => void): () => void;
 
   // Window controls
   winMinimize(): void;
@@ -403,6 +414,7 @@ export const IPC = {
   AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
+  POWER_RESUME: 'power:resume',
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',
@@ -440,6 +452,14 @@ export const IPC = {
   SHELL_KILL: 'shell:kill',
   SHELL_INPUT: 'shell:input',
   SHELL_OUTPUT: 'shell:output',
+  // PTY channels (per-session persistent terminal)
+  PTY_SPAWN: 'pty:spawn',
+  PTY_WRITE: 'pty:write',
+  PTY_RESIZE: 'pty:resize',
+  PTY_KILL: 'pty:kill',
+  PTY_IS_ALIVE: 'pty:isAlive',
+  PTY_DATA: 'pty:data',      // pty:data:{sessionId}
+  PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_MODELS: 'agent:getModels',
 } as const;

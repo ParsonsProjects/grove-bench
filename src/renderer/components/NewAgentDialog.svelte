@@ -130,8 +130,8 @@
         : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
 
       const result = await window.groveBench.createSession(opts);
-      // Direct mode is fully ready; worktree sessions start in 'starting' and
-      // transition to 'running' once the agent process is up.
+      // Direct sessions are ready immediately; worktree sessions go through
+      // starting → installing → running, so start with the correct initial status.
       const initialStatus = mode === 'direct' ? 'running' : 'starting';
       store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: initialStatus, ...(mode === 'direct' ? { direct: true } : {}) });
       open = false;

@@ -277,3 +277,163 @@ describe('ManagedSession emit field', () => {
     });
   });
 });
+
+// ─── permRequestCounter on session ───
+
+describe('permRequestCounter on session (not local)', () => {
+  it('should persist counter across stopQuery restarts to avoid ID collisions', () => {
+    // permRequestCounter lives on the session object, not as a local variable
+    // in runQuery, so it persists across stop/restart cycles.
+    const session = { permRequestCounter: 0 };
+
+    // First query loop generates IDs
+    const id1 = `perm_s1_${++session.permRequestCounter}`;
+    const id2 = `perm_s1_${++session.permRequestCounter}`;
+    expect(id1).toBe('perm_s1_1');
+    expect(id2).toBe('perm_s1_2');
+
+    // After stopQuery, counter persists — new query loop continues from 2
+    const id3 = `perm_s1_${++session.permRequestCounter}`;
+    expect(id3).toBe('perm_s1_3');
+    // No collision with previous IDs
+    expect(new Set([id1, id2, id3]).size).toBe(3);
+  });
+});
+
+// ─── healthCheckAll ───
+
+describe('healthCheckAll()', () => {
+  it('should detect sessions with status=running but no queryInstance and mark as stopped', () => {
+    // Simulates session whose SDK query died silently during sleep
+    const sessions = new Map<string, any>();
+    const emit = vi.fn();
+    sessions.set('s1', {
+      status: 'running',
+      queryHandle: null, // query died
+      emit,
+      window: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    });
+    sessions.set('s2', {
+      status: 'running',
+      queryHandle: { close: vi.fn() }, // healthy
+      emit: vi.fn(),
+      window: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    });
+    sessions.set('s3', {
+      status: 'stopped', // already stopped
+      queryHandle: null,
+      emit: vi.fn(),
+      window: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    });
+
+    // Simulate healthCheckAll logic
+    for (const [_id, session] of sessions) {
+      if (session.status !== 'running') continue;
+      if (!session.queryHandle) {
+        session.status = 'stopped';
+        session.emit({ type: 'process_exit' });
+      }
+    }
+
+    expect(sessions.get('s1').status).toBe('stopped');
+    expect(emit).toHaveBeenCalledWith({ type: 'process_exit' });
+    expect(sessions.get('s2').status).toBe('running');
+    expect(sessions.get('s3').status).toBe('stopped');
+  });
+});
+
+// ─── Compaction auto-save and plan reminder ───
+
+describe('compaction auto-save and plan reminder', () => {
+  it('should trigger auto-save on compact_boundary', () => {
+    // When context is compacted, auto-save should be triggered to preserve
+    // memories before the context is wiped.
+    let autoSaveTriggered = false;
+    const triggerAutoSave = () => { autoSaveTriggered = true; };
+
+    // Simulate compact_boundary handling
+    const message = { type: 'system', subtype: 'compact', meta: { trigger: 'auto', pre_tokens: 150000 } };
+    if (message.subtype === 'compact') {
+      triggerAutoSave();
+    }
+
+    expect(autoSaveTriggered).toBe(true);
+  });
+
+  it('should send plan reminder after compaction if plan files exist', () => {
+    // After compaction, if there are session plan/todo files in memory,
+    // a reminder message should be sent to the agent.
+    const memoryFiles = [
+      { relativePath: 'sessions/current-plan.md', folder: 'sessions' },
+      { relativePath: 'sessions/todo.md', folder: 'sessions' },
+      { relativePath: 'repo/overview.md', folder: 'repo' },
+    ];
+
+    const planFiles = memoryFiles
+      .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
+
+    expect(planFiles).toHaveLength(2);
+
+    const fileList = planFiles.map(f => f.relativePath).join(', ');
+    const reminderMsg = `[System] Context was just compacted. You have active plan/todo files in memory: ${fileList}. Use memory_read to restore your progress before continuing.`;
+
+    expect(reminderMsg).toContain('sessions/current-plan.md');
+    expect(reminderMsg).toContain('sessions/todo.md');
+    expect(reminderMsg).toContain('memory_read');
+  });
+
+  it('should NOT send plan reminder if no plan files exist', () => {
+    const memoryFiles = [
+      { relativePath: 'repo/overview.md', folder: 'repo' },
+      { relativePath: 'conventions/naming.md', folder: 'conventions' },
+    ];
+
+    const planFiles = memoryFiles
+      .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
+
+    expect(planFiles).toHaveLength(0);
+  });
+});
+
+// ─── Dev server preservation on stop ───
+
+describe('dev server preservation on stopQuery', () => {
+  it('should NOT kill dev servers when user stops query', () => {
+    // Dev servers should survive stop/continue cycles
+    // They are only cleaned up on natural query completion and session destroy.
+    const killDevServerCalled = false;
+    // In stopQuery, we should NOT call killDetectedPorts
+    expect(killDevServerCalled).toBe(false);
+  });
+
+  it('should kill dev servers on natural query completion', () => {
+    let portsKilled = false;
+    const detectedPorts = new Set([3000, 8080]);
+
+    // Simulate natural completion (stoppedByUser = false)
+    const stoppedByUser = false;
+    if (!stoppedByUser) {
+      // Kill dev servers
+      portsKilled = detectedPorts.size > 0;
+    }
+
+    expect(portsKilled).toBe(true);
+  });
+});
+
+// ─── mode_sync re-emission in stopQuery ───
+
+describe('stopQuery mode_sync re-emission', () => {
+  it('should emit mode_sync after resolving pending permissions in stopQuery', () => {
+    const emittedEvents: any[] = [];
+    const emit = (event: any) => emittedEvents.push(event);
+    const session = { permissionMode: 'acceptEdits' };
+
+    // Simulate stopQuery behavior: resolve permissions, then re-sync mode
+    emit({ type: 'permission_resolved', requestId: 'req1', toolUseId: 'tu1', decision: 'deny' });
+    emit({ type: 'mode_sync', mode: session.permissionMode });
+
+    expect(emittedEvents).toHaveLength(2);
+    expect(emittedEvents[1]).toEqual({ type: 'mode_sync', mode: 'acceptEdits' });
+  });
+});

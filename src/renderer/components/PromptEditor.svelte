@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { terminalStore } from '../stores/terminal.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
@@ -67,12 +68,32 @@
 
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let isReady = $derived(messageStore.getIsReady(sessionId));
-  let canSend = $derived(!isRunning);
+  let canSend = $derived(!isRunning && isReady);
   let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 
   function handleSubmit() {
     const text = value.trim();
     if (!text || !canSend) return;
+
+    // Shell command: ! prefix runs directly in terminal
+    if (text.startsWith('!')) {
+      const cmd = text.slice(1).trim();
+      if (cmd) {
+        value = '';
+        closePicker();
+        closeCommandPicker();
+        userResized = false;
+        if (textarea) textarea.style.height = '';
+        messageStore.setActiveTab(sessionId, 'terminal');
+        // Ensure PTY is alive, then write the command + Enter
+        (async () => {
+          const alive = await terminalStore.checkAlive(sessionId);
+          if (!alive) await terminalStore.spawn(sessionId);
+          terminalStore.write(sessionId, cmd + '\r');
+        })();
+      }
+      return;
+    }
 
     // Check if it's a slash command
     if (text.startsWith('/')) {
@@ -520,13 +541,13 @@
       bind:value
       oninput={handleInput}
       onkeydown={handleKeydown}
-      disabled={false}
-      placeholder={isRunning ? 'Waiting for Claude...' : 'Message (Enter to send, @ for files, / for commands)'}
+      disabled={!isReady}
+      placeholder={!isReady ? 'Setting up session...' : isRunning ? 'Waiting for Claude...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
       rows="1"
       class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
         placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
         disabled:opacity-50 disabled:cursor-not-allowed font-mono
-        {isRunning ? 'border-muted opacity-60' : 'border-input'}"
+        {!isReady || isRunning ? 'border-muted opacity-60' : 'border-input'}"
     ></textarea>
 
     {#if isRunning}

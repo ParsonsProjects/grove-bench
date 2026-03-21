@@ -6,6 +6,7 @@
   import type { DiffLine } from './DiffView.svelte';
   import type { GitStatusEntry } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -26,10 +27,79 @@
 
   // Per-file UI state
   let expandedFiles = $state<Set<string>>(new Set());
-  let sideBySide = $state(false);
+  let sideBySide = $state(settingsStore.current.diffViewMode === 'side-by-side');
   let editHistoryExpanded = $state<Set<string>>(new Set());
   let revertingFiles = $state<Set<string>>(new Set());
   let fileDiffs = $state<Record<string, string>>({});
+
+  // Search filter
+  let searchQuery = $state('');
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let searchFocused = $state(false);
+  let dropdownIndex = $state(-1);
+
+  function matchesSearch(entry: GitStatusEntry): boolean {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return entry.filePath.toLowerCase().includes(q);
+  }
+
+  let filteredStagedEntries = $derived(stagedEntries.filter(matchesSearch));
+  let filteredUnstagedEntries = $derived(unstagedEntries.filter(matchesSearch));
+  let filteredUntrackedEntries = $derived(untrackedEntries.filter(matchesSearch));
+  let filteredTotal = $derived(filteredStagedEntries.length + filteredUnstagedEntries.length + filteredUntrackedEntries.length);
+
+  // Dropdown items: all matching entries in display order
+  let dropdownEntries = $derived(
+    searchQuery
+      ? [...filteredStagedEntries, ...filteredUnstagedEntries, ...filteredUntrackedEntries]
+      : []
+  );
+  let showDropdown = $derived(searchFocused && dropdownEntries.length > 0);
+
+  function selectDropdownEntry(entry: GitStatusEntry) {
+    const key = fileKey(entry);
+    // Expand the file and scroll to it
+    if (!expandedFiles.has(key)) {
+      const next = new Set(expandedFiles);
+      next.add(key);
+      expandedFiles = next;
+    }
+    loadDiff(entry.filePath);
+    searchQuery = '';
+    searchFocused = false;
+    searchInputEl?.blur();
+    // Scroll to the file row after a tick
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (!showDropdown) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      dropdownIndex = Math.min(dropdownIndex + 1, dropdownEntries.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      dropdownIndex = Math.max(dropdownIndex - 1, 0);
+    } else if (e.key === 'Enter' && dropdownIndex >= 0 && dropdownIndex < dropdownEntries.length) {
+      e.preventDefault();
+      selectDropdownEntry(dropdownEntries[dropdownIndex]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      searchQuery = '';
+      searchFocused = false;
+      searchInputEl?.blur();
+    }
+  }
+
+  // Reset dropdown index when query changes
+  $effect(() => {
+    searchQuery;
+    dropdownIndex = 0;
+  });
 
   // Collapsed sections
   let collapsedSections = $state<Set<string>>(new Set());
@@ -168,9 +238,9 @@
   {@const badge = statusBadge(entry.status)}
   {@const history = editHistoryByFile.get(entry.filePath)}
   {@const historyExpanded = editHistoryExpanded.has(key)}
-  {@const canRevert = entry.status !== 'untracked'}
+  {@const isUntracked = entry.status === 'untracked'}
 
-  <div class="border-l-4 {entry.staged ? 'border-green-500' : entry.status === 'untracked' ? 'border-muted-foreground/30' : 'border-primary'}">
+  <div data-file-key={key} class="border-l-4 {entry.staged ? 'border-green-500' : entry.status === 'untracked' ? 'border-muted-foreground/30' : 'border-primary'}">
     <!-- File header -->
     <div class="flex items-center gap-2 px-4 py-2 group/file-hdr">
       <button
@@ -210,20 +280,18 @@
       {/if}
 
       <div class="ml-auto flex items-center gap-2">
-        {#if canRevert}
-          <button
-            onclick={() => revertFile(entry)}
-            disabled={reverting}
-            class="text-xs px-2 py-0.5 border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
-            title="Revert this file to its state before changes"
-          >
-            {#if reverting}
-              <span class="w-2 h-2 bg-destructive animate-pulse inline-block"></span>
-            {:else}
-              Revert
-            {/if}
-          </button>
-        {/if}
+        <button
+          onclick={() => revertFile(entry)}
+          disabled={reverting}
+          class="text-xs px-2 py-0.5 border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+          title={isUntracked ? 'Delete this untracked file' : 'Revert this file to its state before changes'}
+        >
+          {#if reverting}
+            <span class="w-2 h-2 bg-destructive animate-pulse inline-block"></span>
+          {:else}
+            {isUntracked ? 'Discard' : 'Revert'}
+          {/if}
+        </button>
       </div>
     </div>
 
@@ -310,66 +378,123 @@
 {:else}
   <div class="flex-1 overflow-y-auto">
     <!-- Summary header -->
-    <div class="flex items-center gap-3 px-4 py-2 border-b border-border bg-card/50 sticky top-0 z-10">
-      <span class="text-xs font-medium text-foreground">
-        {gitStatus.entries.length} change{gitStatus.entries.length !== 1 ? 's' : ''}
-      </span>
-      {#if stagedEntries.length > 0}
-        <span class="text-xs text-green-400">{stagedEntries.length} staged</span>
-      {/if}
-      {#if unstagedEntries.length > 0}
-        <span class="text-xs text-yellow-400">{unstagedEntries.length} unstaged</span>
-      {/if}
-      {#if untrackedEntries.length > 0}
-        <span class="text-xs text-muted-foreground">{untrackedEntries.length} untracked</span>
-      {/if}
-      <div class="ml-auto flex items-center gap-2">
-      <button
-        onclick={() => sideBySide = !sideBySide}
-        class="text-xs text-muted-foreground hover:text-foreground select-none"
-      >
-        {sideBySide ? 'unified' : 'side-by-side'}
-      </button>
-      <button
-        onclick={refreshStatus}
-        class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
-        title="Refresh git status"
-        disabled={isLoading}
-      >
-        <svg class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-      </button>
+    <div class="border-b border-border bg-card/50 sticky top-0 z-10">
+      <div class="flex items-center gap-3 px-4 py-2">
+        <span class="text-xs font-medium text-foreground">
+          {gitStatus.entries.length} change{gitStatus.entries.length !== 1 ? 's' : ''}
+        </span>
+        {#if stagedEntries.length > 0}
+          <span class="text-xs text-green-400">{stagedEntries.length} staged</span>
+        {/if}
+        {#if unstagedEntries.length > 0}
+          <span class="text-xs text-yellow-400">{unstagedEntries.length} unstaged</span>
+        {/if}
+        {#if untrackedEntries.length > 0}
+          <span class="text-xs text-muted-foreground">{untrackedEntries.length} untracked</span>
+        {/if}
+        <div class="ml-auto flex items-center gap-2">
+        <button
+          onclick={() => sideBySide = !sideBySide}
+          class="text-xs text-muted-foreground hover:text-foreground select-none"
+        >
+          {sideBySide ? 'unified' : 'side-by-side'}
+        </button>
+        <button
+          onclick={refreshStatus}
+          class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
+          title="Refresh git status"
+          disabled={isLoading}
+        >
+          <svg class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+        </div>
+      </div>
+      <!-- Search input -->
+      <div class="px-4 pb-2">
+        <div class="relative">
+          <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            bind:this={searchInputEl}
+            bind:value={searchQuery}
+            onfocus={() => searchFocused = true}
+            onblur={() => { setTimeout(() => searchFocused = false, 150); }}
+            onkeydown={handleSearchKeydown}
+            type="text"
+            placeholder="Filter files..."
+            class="w-full text-xs bg-background/50 border border-border/50 rounded px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+          />
+          {#if searchQuery}
+            <button
+              onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          {/if}
+
+          <!-- Dropdown -->
+          {#if showDropdown}
+            <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded shadow-lg max-h-56 overflow-y-auto z-50">
+              {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
+                {@const badge = statusBadge(entry.status)}
+                <button
+                  onmousedown={() => selectDropdownEntry(entry)}
+                  onmouseenter={() => dropdownIndex = i}
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
+                >
+                  <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
+                  <span class="truncate">
+                    <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
+                  </span>
+                  {#if entry.staged}
+                    <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        {#if searchQuery && filteredTotal !== gitStatus.entries.length && !showDropdown}
+          <div class="text-[10px] text-muted-foreground mt-1">
+            {filteredTotal} of {gitStatus.entries.length} files
+          </div>
+        {/if}
       </div>
     </div>
 
     <!-- File sections -->
     <div class="divide-y divide-border">
       <!-- Staged -->
-      {#if stagedEntries.length > 0}
-        {@render sectionHeader('Staged Changes', 'staged', stagedEntries.length, 'text-green-400')}
+      {#if filteredStagedEntries.length > 0}
+        {@render sectionHeader('Staged Changes', 'staged', filteredStagedEntries.length, 'text-green-400')}
         {#if !collapsedSections.has('staged')}
-          {#each stagedEntries as entry (entry.filePath + ':staged')}
+          {#each filteredStagedEntries as entry (entry.filePath + ':staged')}
             {@render fileRow(entry)}
           {/each}
         {/if}
       {/if}
 
       <!-- Unstaged -->
-      {#if unstagedEntries.length > 0}
-        {@render sectionHeader('Changes', 'unstaged', unstagedEntries.length, 'text-yellow-400')}
+      {#if filteredUnstagedEntries.length > 0}
+        {@render sectionHeader('Changes', 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400')}
         {#if !collapsedSections.has('unstaged')}
-          {#each unstagedEntries as entry (entry.filePath + ':unstaged')}
+          {#each filteredUnstagedEntries as entry (entry.filePath + ':unstaged')}
             {@render fileRow(entry)}
           {/each}
         {/if}
       {/if}
 
       <!-- Untracked -->
-      {#if untrackedEntries.length > 0}
-        {@render sectionHeader('Untracked Files', 'untracked', untrackedEntries.length, 'text-muted-foreground')}
+      {#if filteredUntrackedEntries.length > 0}
+        {@render sectionHeader('Untracked Files', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground')}
         {#if !collapsedSections.has('untracked')}
-          {#each untrackedEntries as entry (entry.filePath + ':untracked')}
+          {#each filteredUntrackedEntries as entry (entry.filePath + ':untracked')}
             {@render fileRow(entry)}
           {/each}
         {/if}

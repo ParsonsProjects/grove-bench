@@ -9,11 +9,11 @@
   let prInfo = $state<PrInfo | null>(null);
   let modelPickerOpen = $state(false);
 
-  let modelOptions = $state<Array<{ value: string; label: string }>>([
+  const modelOptions = [
     { value: 'claude-opus-4-6', label: 'Opus 4.6' },
     { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
     { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-  ]);
+  ];
 
   async function switchModel(modelId: string) {
     modelPickerOpen = false;
@@ -194,12 +194,6 @@
     window.groveBench.getPrInfo(sessionId).then((info) => {
       prInfo = info;
     });
-    // Fetch available models from the active adapter
-    window.groveBench.getModels().then((models) => {
-      if (models.length > 0) {
-        modelOptions = models.map(m => ({ value: m.id, label: m.label }));
-      }
-    }).catch(() => { /* keep defaults */ });
   });
 
   onDestroy(() => {
@@ -254,6 +248,8 @@
   >
     {thinking ? 'Thinking' : 'No Think'}
   </button>
+
+  <span class="w-px h-3.5 bg-border"></span>
 
   <span class="flex items-center gap-1.5">
     {#if isRunning}
@@ -385,6 +381,8 @@
     </div>
   {/if}
 
+  <span class="w-px h-3.5 bg-border"></span>
+
   {#if lastResult?.totalCostUsd !== undefined}
     <span>${lastResult.totalCostUsd.toFixed(4)}</span>
   {/if}
@@ -392,6 +390,8 @@
   {#if lastResult?.durationMs !== undefined}
     <span>{(lastResult.durationMs / 1000).toFixed(1)}s</span>
   {/if}
+
+  <span class="w-px h-3.5 bg-border"></span>
 
   <div class="relative" bind:this={devServersRef}>
     {#if devServers.length > 0}
@@ -725,7 +725,7 @@
           <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
           <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
           <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
-
+          <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>
         </div>
       </div>
     {/if}

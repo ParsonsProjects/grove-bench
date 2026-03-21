@@ -191,6 +191,10 @@ class MessageStore {
   /** Message to send automatically after a /clear completes (system_init) */
   private pendingMessageAfterClear: Record<string, string> = {};
 
+  /** Set after markSessionStopped — suppresses late permission_request events
+   *  from the dying query until the next system_init re-initializes the session. */
+  private stoppingSession: Record<string, boolean> = {};
+
   private cleanups = new Map<string, () => void>();
 
   getMessages(sessionId: string): ChatMessage[] {
@@ -462,6 +466,10 @@ class MessageStore {
     this.isRunning[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
 
+    // Suppress late permission_request events from the dying query.
+    // Cleared on the next system_init when the new query connects.
+    this.stoppingSession[sessionId] = true;
+
     // Resolve any pending tool calls and permissions so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
@@ -511,6 +519,7 @@ class MessageStore {
         }
         this.isReady[sessionId] = true;
         this.isRunning[sessionId] = false;
+        delete this.stoppingSession[sessionId];
         this.modelBySession[sessionId] = event.model;
         this.systemInfoBySession[sessionId] = {
           tools: event.tools ?? [],
@@ -599,21 +608,33 @@ class MessageStore {
         break;
 
       case 'tool_result': {
-        // Find the matching tool_call and update it
+        // Build a single updated array that handles both the tool_call result
+        // and any matching permission/question resolution in one pass.
         const msgs = this.messagesBySession[sessionId] ?? [];
-        const idx = msgs.findIndex(
-          (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
-        );
-        if (idx >= 0) {
-          const updated = { ...(msgs[idx] as ChatToolCallMessage) };
-          updated.result = event.content;
-          updated.isError = event.isError;
-          updated.pending = false;
-          this.messagesBySession[sessionId] = [
-            ...msgs.slice(0, idx),
-            updated,
-            ...msgs.slice(idx + 1),
-          ];
+        let changed = false;
+        let matchedToolName: string | undefined;
+        const updated = msgs.map((m) => {
+          // Update the matching tool_call (also clear awaitingPermission)
+          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
+            changed = true;
+            matchedToolName = m.toolName;
+            return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
+          }
+          // Fallback: if a tool_result exists, the tool ran, so the permission
+          // was allowed. permission_resolved is the primary path but this catches
+          // cases where that event is lost or from pre-refactor history.
+          if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const, decision: 'allow' as const };
+          }
+          if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
+            changed = true;
+            return { ...m, resolved: true as const };
+          }
+          return m;
+        });
+        if (changed) {
+          this.messagesBySession[sessionId] = updated;
         }
         // Clear tool progress for this tool
         const prog = this.toolProgressBySession[sessionId];
@@ -621,44 +642,33 @@ class MessageStore {
           delete prog[event.toolUseId];
           this.toolProgressBySession[sessionId] = { ...prog };
         }
-        // Also mark any matching permission or question request as resolved (handles replay after refresh)
-        const msgs2 = this.messagesBySession[sessionId] ?? [];
-        const interactiveIdx = msgs2.findIndex(
-          (m) => (m.kind === 'permission' || m.kind === 'question') && m.toolUseId === event.toolUseId && !m.resolved,
-        );
-        if (interactiveIdx >= 0) {
-          const msg = msgs2[interactiveIdx];
-          if (msg.kind === 'permission') {
-            const updated = { ...(msg as ChatPermissionMessage) };
-            updated.resolved = true;
-            updated.decision = event.isError ? 'deny' : 'allow';
-            this.messagesBySession[sessionId] = [
-              ...msgs2.slice(0, interactiveIdx),
-              updated,
-              ...msgs2.slice(interactiveIdx + 1),
-            ];
-          } else if (msg.kind === 'question') {
-            const updated = { ...(msg as ChatQuestionMessage) };
-            updated.resolved = true;
-            this.messagesBySession[sessionId] = [
-              ...msgs2.slice(0, interactiveIdx),
-              updated,
-              ...msgs2.slice(interactiveIdx + 1),
-            ];
-          }
-        }
         // Refresh git status after file-modifying tool calls
-        if (idx >= 0) {
-          const toolCall = this.messagesBySession[sessionId]?.[idx] as ChatToolCallMessage | undefined;
-          if (toolCall && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(toolCall.toolName)) {
-            gitStatusStore.scheduleRefresh(sessionId, 300);
-          }
+        if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(matchedToolName)) {
+          gitStatusStore.scheduleRefresh(sessionId, 300);
         }
         break;
       }
 
-      case 'permission_request':
+      case 'permission_request': {
+        // Drop stale permission requests from a dying query after the user
+        // clicked Stop. The new query will re-request if needed.
+        if (this.stoppingSession[sessionId]) break;
+
         this.flushStreamingText(sessionId);
+        // Mark the matching tool_call as awaiting permission so it doesn't
+        // render before the user has approved/denied.
+        const permMsgs = this.messagesBySession[sessionId] ?? [];
+        const toolIdx = permMsgs.findIndex(
+          (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
+        );
+        if (toolIdx >= 0) {
+          const updated = { ...(permMsgs[toolIdx] as ChatToolCallMessage), awaitingPermission: true };
+          this.messagesBySession[sessionId] = [
+            ...permMsgs.slice(0, toolIdx),
+            updated,
+            ...permMsgs.slice(toolIdx + 1),
+          ];
+        }
         // Detect AskUserQuestion tool — render as an interactive question, not a permission gate
         if (event.toolName === 'AskUserQuestion') {
           const input = event.toolInput as Record<string, unknown>;
@@ -685,6 +695,7 @@ class MessageStore {
           });
         }
         break;
+      }
 
       case 'permission_resolved': {
         const msgs = this.messagesBySession[sessionId] ?? [];
@@ -991,6 +1002,16 @@ class MessageStore {
         // unless the sync explicitly sets acceptEdits or the user changed mode.
         if (event.mode === 'acceptEdits' || this.modeBySession[sessionId] !== 'acceptEdits') {
           this.modeBySession[sessionId] = event.mode;
+        }
+        // mode_sync is emitted by stopQuery after all old pending permissions
+        // have been resolved and before the new query loop starts.  Clear the
+        // stoppingSession flag here so permission_request events from the new
+        // query are not suppressed.  (system_init also clears it, but it
+        // arrives later — after the SDK initialises — leaving a window where
+        // early permission requests from the new query would be silently
+        // dropped, causing the agent to hang.)
+        if (this.stoppingSession[sessionId]) {
+          delete this.stoppingSession[sessionId];
         }
         break;
     }

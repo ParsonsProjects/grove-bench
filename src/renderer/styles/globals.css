@@ -4,6 +4,8 @@
 
 @import "highlight.js/styles/github-dark.css";
 
+@import "@xterm/xterm/css/xterm.css";
+
 @custom-variant dark (&:is(.dark *));
 
 /*
@@ -191,17 +193,15 @@
 }
 
 @keyframes fidget {
-  0%, 78% { transform: rotate(0deg); }
-  80% { transform: rotate(12deg); }
-  84% { transform: rotate(-8deg); }
-  88% { transform: rotate(5deg); }
-  91% { transform: rotate(-3deg); }
-  94% { transform: rotate(1deg); }
-  96%, 100% { transform: rotate(0deg); }
+  0% { transform: rotate(0deg); }
+  70% { transform: rotate(360deg); }
+  85% { transform: rotate(350deg); }
+  95% { transform: rotate(362deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .animate-fidget {
-  animation: fidget 4s ease-in-out infinite;
+  animation: fidget 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 @layer base {

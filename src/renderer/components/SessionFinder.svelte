@@ -34,7 +34,7 @@
         status: s.status,
         firstPrompt,
         isRunning: messageStore.getIsRunning(s.id),
-        hasPending: msgs.some((m) => m.kind === 'permission' && !m.resolved),
+        hasPending: messageStore.hasPendingPermission(s.id),
       };
     });
   });

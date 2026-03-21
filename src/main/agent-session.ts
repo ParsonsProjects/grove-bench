@@ -72,6 +72,9 @@ interface ManagedSession {
   autoSaveInProgress: boolean;
   /** Emit function for sending events to the renderer — set by createEmitter. */
   emit: ((event: AgentEvent) => void) | null;
+  /** Monotonic counter for permission request IDs — persists across stopQuery restarts
+   *  to avoid ID collisions with resolved permissions from previous query loops. */
+  permRequestCounter: number;
 }
 
 export interface SessionCompletionResult {
@@ -167,7 +170,13 @@ class AgentSessionManager {
     // Inject project memory into the system prompt
     const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
     const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
-    const builtInPrompt = 'When running Bash commands, prefer short command names (npm, npx, node, git, etc.) over absolute paths. Only fall back to a full path if the short command name fails to resolve. IMPORTANT: Do not use `cd` to navigate to your current working directory before running commands — you are already there. Just run commands directly.';
+    const builtInPrompt = [
+      'IMPORTANT PATH RULES — you are already in your project directory. Follow these strictly:',
+      '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: Read, Edit, Write, Grep, Glob. NEVER use absolute paths like "' + cwd.replace(/\\/g, '/').slice(0, 30) + '..." — just use paths relative to the project root.',
+      '- When running Bash commands, use short command names (npm, npx, node, git) not absolute paths to binaries.',
+      '- Do NOT use `cd` to navigate to your current working directory before running commands — you are already there.',
+      '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.',
+    ].join('\n');
     const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
 
     // Ensure memory directory exists for this repo
@@ -205,6 +214,7 @@ class AgentSessionManager {
       stoppedByUser: false,
       autoSaveInProgress: false,
       emit: null,
+      permRequestCounter: 0,
     };
 
     this.sessions.set(id, session);
@@ -252,7 +262,6 @@ class AgentSessionManager {
     const { id, abortController } = session;
 
     const pendingPermissions = session.pendingPermissions;
-    let permRequestCounter = 0;
 
     logger.debug(`[runQuery] session=${id} starting`);
 
@@ -273,7 +282,7 @@ class AgentSessionManager {
       alwaysAllowedTools: session.alwaysAllowedTools,
       onPermissionRequest: async (request) => {
         const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
-        const requestId = `perm_${id}_${++permRequestCounter}`;
+        const requestId = `perm_${id}_${++session.permRequestCounter}`;
         return new Promise<PermissionResponse>((resolve) => {
           const timer = setTimeout(() => {
             pendingPermissions.delete(requestId);
@@ -363,6 +372,28 @@ class AgentSessionManager {
           session.toolUseMap.set(event.toolUseId, event.toolName);
         }
 
+        // Auto-save memories before compaction wipes context
+        if (event.type === 'compact_boundary') {
+          memoryAutosave.triggerAutoSave({
+            sessionId: session.id,
+            repoPath: session.repoPath,
+            cwd: session.worktreePath,
+            events: session.eventHistory,
+            onStatus: (status, filesWritten) => {
+              emit({ type: 'memory_autosave', status, filesWritten });
+            },
+          });
+          // After compaction, remind the agent to re-read its plan/todo from memory
+          const planFiles = memory.listMemoryFiles(session.repoPath)
+            .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
+          if (planFiles.length > 0) {
+            const fileList = planFiles.map(f => f.relativePath).join(', ');
+            this.sendMessage(session.id,
+              `[System] Context was just compacted. You have active plan/todo files in memory: ${fileList}. Use memory_read to restore your progress before continuing.`
+            );
+          }
+        }
+
         // Track result for completion callback
         if (event.type === 'result') {
           session.lastResult = {
@@ -395,15 +426,17 @@ class AgentSessionManager {
       }
     }
 
-    // Kill any dev servers that were detected during this session
-    await this.killDetectedPorts(session);
-
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
+    // Dev servers are preserved so they survive stop/continue cycles.
     if (session.stoppedByUser) {
       session.stoppedByUser = false;
       return;
     }
+
+    // Kill any dev servers that were detected during this session
+    // (only on natural query completion, not user-initiated stop)
+    await this.killDetectedPorts(session);
 
     // Query finished
     session.status = 'stopped';
@@ -513,16 +546,20 @@ class AgentSessionManager {
 
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setPermissionMode) return;
-    try {
-      session.permissionMode = mode as ManagedSession['permissionMode'];
-      // Only pass SDK-recognized modes to the SDK instance.
-      // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
-      if (mode === 'default' || mode === 'plan') {
+    if (!session) return;
+
+    // Always update permissionMode on the session so it persists across
+    // stop/restart cycles — even when queryHandle is temporarily null.
+    session.permissionMode = mode as ManagedSession['permissionMode'];
+
+    // Only pass SDK-recognized modes to the live SDK instance.
+    // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
+    if (session.queryHandle?.setPermissionMode && (mode === 'default' || mode === 'plan')) {
+      try {
         session.queryHandle.setPermissionMode(mode as any);
+      } catch (e) {
+        logger.warn(`Failed to set mode for session ${id}:`, e);
       }
-    } catch (e) {
-      logger.warn(`Failed to set mode for session ${id}:`, e);
     }
   }
 
@@ -623,7 +660,7 @@ class AgentSessionManager {
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
 
-    // Close the query and input stream *before* aborting so the SDK can
+    // Close the query *before* aborting so the SDK can
     // clean up gracefully and avoid dangling async operations that reject
     // with "Operation aborted" after the signal fires.
     try { session.queryHandle?.close(); } catch { /* may already be closed */ }
@@ -631,14 +668,9 @@ class AgentSessionManager {
     // Now abort — any remaining in-flight SDK operations will be cancelled
     session.abortController.abort();
 
-    // Stop host-managed dev server
-    if (session.devServer) {
-      await session.devServer.stop();
-      session.devServer = null;
-    }
-
-    // Kill any detected dev servers
-    await this.killDetectedPorts(session);
+    // Dev servers are intentionally preserved across stop/continue cycles
+    // so the user doesn't lose running servers when pausing the LLM.
+    // They are cleaned up on natural query completion and session destroy.
 
     // Set up fresh abort controller for the next query
     session.abortController = new AbortController();
@@ -658,6 +690,10 @@ class AgentSessionManager {
       });
     }
     session.pendingPermissions.clear();
+
+    // Re-sync the renderer with the current permission mode so the status bar
+    // reflects the correct state after a stop/restart cycle.
+    emit({ type: 'mode_sync', mode: session.permissionMode });
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -840,6 +876,29 @@ class AgentSessionManager {
       // Session not running — clear disk log directly
       const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
       try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
+    }
+  }
+
+  /**
+   * Health-check all sessions after system resume.
+   * Detects sessions whose SDK query died silently (e.g. during sleep)
+   * and emits process_exit + SESSION_STATUS so the renderer updates.
+   */
+  healthCheckAll(): void {
+    for (const [id, session] of this.sessions) {
+      if (session.status !== 'running') continue;
+
+      // A running session should have a queryHandle. If it's null,
+      // the query finished/crashed but the status was never updated.
+      if (!session.queryHandle) {
+        logger.warn(`[healthCheck] session ${id} has no queryHandle but status=running — marking stopped`);
+        session.status = 'stopped';
+        session.emit?.({ type: 'process_exit' });
+        const w = session.window;
+        if (!w.isDestroyed()) {
+          w.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
+        }
+      }
     }
   }
 

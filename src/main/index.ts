@@ -1,11 +1,13 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, powerMonitor } from 'electron';
 import path from 'node:path';
 import { registerHandlers } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
+import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
 import { logger } from './logger.js';
+import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 
@@ -35,6 +37,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
+    icon: path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -89,6 +92,21 @@ app.whenReady().then(() => {
   setTimeout(runSweep, 10_000); // 10s after launch
   const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
+
+  // ─── Power monitor: flush state on suspend, health-check on resume ───
+  powerMonitor.on('suspend', () => {
+    logger.info('System suspending — flushing pending state saves');
+    flushPendingSaves();
+  });
+
+  powerMonitor.on('resume', () => {
+    logger.info('System resumed — running session health checks');
+    sessionManager.healthCheckAll();
+    // Notify renderer so it can re-verify subscriptions
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.POWER_RESUME);
+    }
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -111,6 +129,7 @@ app.on('before-quit', (event) => {
     (async () => {
       try {
         logger.info(`Cleaning up ${sessionManager.count} sessions...`);
+        await terminalManager.killAll();
         await sessionManager.destroyAll();
         await new Promise((r) => setTimeout(r, 500));
         await worktreeManager.cleanupAll();

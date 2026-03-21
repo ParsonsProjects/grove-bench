@@ -23,11 +23,22 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     return [
+      { label: 'New Session', icon: 'add' as const, action: () => newSessionForRepo(session.repoPath, session.branch) },
       { label: 'Rename', icon: 'rename' as const, action: () => startTabRename(sessionId) },
       { label: 'Open Folder', icon: 'folder' as const, action: () => window.groveBench.openSessionFolder(sessionId) },
       { label: 'Close Tab', icon: 'close' as const, action: () => closeTab(sessionId), separator: true },
       { label: 'Destroy Agent', icon: 'destroy' as const, action: () => closeTab(sessionId), variant: 'destructive' as const },
     ];
+  }
+
+  async function newSessionForRepo(repoPath: string, branch: string) {
+    try {
+      const result = await window.groveBench.createSession({ repoPath, branchName: branch, direct: true });
+      store.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true });
+      store.activeSessionId = result.id;
+    } catch (e: any) {
+      store.setError(e.message || String(e));
+    }
   }
 
   let tabRenamingId = $state<string | null>(null);
@@ -103,6 +114,20 @@
       }
     }
 
+    // Resume all previously-open tabs, not just the active one
+    const persistedOpenTabs = await window.groveBench.getOpenTabs();
+    for (const tabId of persistedOpenTabs) {
+      const session = store.sessions.find((s) => s.id === tabId);
+      if (session && session.status === 'stopped' && !runningMap.has(tabId)) {
+        window.groveBench.resumeSession(tabId, session.repoPath).then((result) => {
+          store.updateStatus(result.id, 'running');
+        }).catch((e: any) => {
+          store.setError(e.message || String(e));
+          failedResumeIds.add(tabId);
+        });
+      }
+    }
+
     // Restore persisted active tab, or fall back to first running session
     const persistedTabId = await window.groveBench.getActiveTab();
     if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
@@ -148,6 +173,16 @@
   $effect(() => {
     if (restored) {
       window.groveBench.setActiveTab(store.activeSessionId);
+    }
+  });
+
+  // Persist open tab IDs so all tabs reopen on restart
+  $effect(() => {
+    if (restored) {
+      const ids = store.sessions
+        .filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error')
+        .map((s) => s.id);
+      window.groveBench.setOpenTabs(ids);
     }
   });
 
@@ -234,15 +269,57 @@
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);
+      if (status === 'running') {
+        // SESSION_STATUS 'running' fires when system_init arrives on the main side.
+        // Ensure the input unlocks even if system_init was missed due to a
+        // subscribe/replay race. system_init will fill in model/tools info
+        // when it arrives; this just guarantees the input is usable.
+        messageStore.isReady[sessionId] = true;
+        messageStore.isRunning[sessionId] = false;
+      } else if (status === 'error') {
+        messageStore.isReady[sessionId] = true;
+        messageStore.isRunning[sessionId] = false;
+      } else if (status === 'stopped') {
+        // Session died (possibly during sleep) — update UI
+        messageStore.markSessionStopped(sessionId);
+      }
     });
+
+    // After system resume (laptop wake), re-check session liveness.
+    // The main process runs healthCheckAll() and sends SESSION_STATUS
+    // for dead sessions, but we also re-verify subscriptions are live
+    // by listing sessions and reconciling with our local state.
+    const unsubPower = window.groveBench.onPowerResume(async () => {
+      try {
+        const runningSessions = await window.groveBench.listSessions();
+        const runningIds = new Set(
+          runningSessions.filter((s) => s.status === 'running').map((s) => s.id),
+        );
+        // Mark any locally-running sessions that the main process says are stopped
+        for (const session of store.sessions) {
+          if (session.status === 'running' && !runningIds.has(session.id)) {
+            store.updateStatus(session.id, 'stopped');
+            messageStore.markSessionStopped(session.id);
+          }
+        }
+      } catch { /* main process may be busy — SESSION_STATUS events will catch up */ }
+    });
+
     return () => {
       unsub();
+      unsubPower();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
   });
 
-  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing'));
+  let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error'));
   let hasTabContent = $derived(openSessions.length > 0);
+
+  // Track pending permissions per session reactively via $derived so the tab
+  // glow updates immediately when a permission is resolved.
+  let pendingBySession = $derived(
+    Object.fromEntries(openSessions.map((s) => [s.id, messageStore.hasPendingPermission(s.id)])),
+  );
 </script>
 
 <PrerequisiteCheck />
@@ -285,7 +362,6 @@
         {#each openSessions as session (session.id)}
           {@const isActive = store.activeSessionId === session.id}
           {@const running = messageStore.getIsRunning(session.id)}
-          {@const hasPending = messageStore.getMessages(session.id).some((m) => m.kind === 'permission' && !m.resolved)}
           {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
           {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
           <button
@@ -300,13 +376,15 @@
             oncontextmenu={(e) => openContextMenu(e, session.id)}
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
               {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
-              {hasPending ? 'tab-action-required' : ''}
+              {pendingBySession[session.id] ? 'tab-action-required' : ''}
               {dragTabId === session.id ? 'opacity-40' : ''}
               {isDragOver ? 'border-l-2 border-l-primary' : ''}"
           >
-            {#if session.status === 'starting' || session.status === 'installing'}
+            {#if session.status === 'error'}
+              <span class="w-2 h-2 shrink-0 bg-red-500"></span>
+            {:else if session.status === 'starting' || session.status === 'installing'}
               <span class="w-2 h-2 shrink-0 bg-yellow-500 animate-pulse"></span>
-            {:else if hasPending}
+            {:else if pendingBySession[session.id]}
               <span class="w-2 h-2 shrink-0 bg-orange-500 animate-pulse"></span>
             {:else if !isActive && running}
               <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
@@ -338,7 +416,7 @@
         <!-- Active session -->
         {#each store.sessions as session (session.id)}
           <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-            {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing'}
+            {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
               <WorkspacePane sessionId={session.id} />
             {:else}
               <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
