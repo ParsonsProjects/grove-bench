@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://alanpjohn.github.io/grove-bench/sitemap.xml

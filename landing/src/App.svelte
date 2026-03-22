@@ -136,8 +136,8 @@
   <!-- Nav -->
   <nav class="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur-md">
     <div class="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
-      <a href="#" class="flex items-center gap-2.5 group">
-        <svg width="16" height="19" viewBox="0 0 21 24" fill="none">
+      <a href="#" class="flex items-center gap-2.5 group" aria-label="Grove Bench home">
+        <svg width="16" height="19" viewBox="0 0 21 24" fill="none" role="img" aria-label="Grove Bench pixel tree logo">
           {#each treeGreens as p}
             <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
           {/each}
@@ -172,9 +172,46 @@
 
     <div class="max-w-5xl mx-auto px-6 pt-24 pb-32 md:pt-36 md:pb-44 relative z-10">
       <div class="flex flex-col items-center text-center">
-        <!-- Pixel tree with glow -->
-        <div class="animate-fade-in-up mb-10 tree-glow">
+        <!-- Pixel grove — center tree largest, flanking trees smaller -->
+        <div class="animate-fade-in-up mb-10 tree-glow flex items-end gap-1">
+          <!-- Far left tree (smallest) -->
+          <svg width="24" height="28" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated; opacity: 0.4;">
+            {#each treeGreens as p}
+              <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+            {/each}
+          </svg>
+          <!-- Left tree -->
+          <svg width="40" height="46" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated; opacity: 0.6;">
+            {#each treeGreens as p}
+              <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+            {/each}
+          </svg>
+          <!-- Left-center tree -->
+          <svg width="56" height="64" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated; opacity: 0.8;">
+            {#each treeGreens as p}
+              <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+            {/each}
+          </svg>
+          <!-- Center tree (largest) -->
           <svg width="84" height="96" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated;">
+            {#each treeGreens as p}
+              <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+            {/each}
+          </svg>
+          <!-- Right-center tree -->
+          <svg width="56" height="64" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated; opacity: 0.8;">
+            {#each treeGreens as p}
+              <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+            {/each}
+          </svg>
+          <!-- Right tree -->
+          <svg width="40" height="46" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated; opacity: 0.6;">
+            {#each treeGreens as p}
+              <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+            {/each}
+          </svg>
+          <!-- Far right tree (smallest) -->
+          <svg width="24" height="28" viewBox="0 0 21 24" fill="none" style="image-rendering: pixelated; opacity: 0.4;">
             {#each treeGreens as p}
               <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
             {/each}
