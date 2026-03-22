@@ -205,7 +205,7 @@ describe('ingestEvent — tool_use and tool_result', () => {
     expect(tc.isError).toBe(false);
   });
 
-  it('syncs mode when EnterPlanMode tool is used', () => {
+  it('EnterPlanMode tool_use does NOT sync mode (mode_sync events handle it)', () => {
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
       toolName: 'EnterPlanMode',
@@ -214,10 +214,11 @@ describe('ingestEvent — tool_use and tool_result', () => {
       uuid: 'u-plan',
     } as AgentEvent);
 
-    expect(messageStore.getMode(SID)).toBe('plan');
+    // Mode stays 'default' — only mode_sync events change it
+    expect(messageStore.getMode(SID)).toBe('default');
   });
 
-  it('syncs mode when ExitPlanMode tool is used', () => {
+  it('ExitPlanMode tool_use does NOT sync mode (mode_sync events handle it)', () => {
     messageStore.modeBySession[SID] = 'plan';
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
@@ -227,7 +228,8 @@ describe('ingestEvent — tool_use and tool_result', () => {
       uuid: 'u-exit',
     } as AgentEvent);
 
-    expect(messageStore.getMode(SID)).toBe('default');
+    // Mode stays 'plan' — only mode_sync events change it
+    expect(messageStore.getMode(SID)).toBe('plan');
   });
 });
 
@@ -616,9 +618,23 @@ describe('ingestEvent — permission_resolved', () => {
   });
 });
 
-describe('ingestEvent — ExitPlanMode preserves acceptEdits', () => {
-  it('does not reset to default when in acceptEdits mode', () => {
-    messageStore.modeBySession[SID] = 'acceptEdits';
+describe('ingestEvent — tool_use does NOT sync mode (mode_sync events do)', () => {
+  it('EnterPlanMode tool does not change mode — mode_sync handles it', () => {
+    messageStore.modeBySession[SID] = 'default';
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'EnterPlanMode',
+      toolInput: {},
+      toolUseId: 'tu-enter',
+      uuid: 'u-enter',
+    } as AgentEvent);
+
+    // Mode should stay 'default' — only mode_sync events change mode
+    expect(messageStore.getMode(SID)).toBe('default');
+  });
+
+  it('ExitPlanMode tool does not change mode — mode_sync handles it', () => {
+    messageStore.modeBySession[SID] = 'plan';
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
       toolName: 'ExitPlanMode',
@@ -627,7 +643,41 @@ describe('ingestEvent — ExitPlanMode preserves acceptEdits', () => {
       uuid: 'u-exit2',
     } as AgentEvent);
 
-    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+    // Mode should stay 'plan' — only mode_sync events change mode
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+});
+
+describe('ingestEvent — isPlanExecution on permission_request', () => {
+  it('permission_request with isPlanExecution is stored on the message', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+      toolUseId: 'tu-plan-exec',
+      requestId: 'req-plan-exec',
+      isPlanExecution: true,
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const perm = msgs.find((m) => m.kind === 'permission') as any;
+    expect(perm).toBeDefined();
+    expect(perm.isPlanExecution).toBe(true);
+  });
+
+  it('permission_request without isPlanExecution defaults to false', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-no-plan',
+      requestId: 'req-no-plan',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const perm = msgs.find((m) => m.kind === 'permission') as any;
+    expect(perm).toBeDefined();
+    expect(perm.isPlanExecution).toBeFalsy();
   });
 });
 

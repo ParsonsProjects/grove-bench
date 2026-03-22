@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity } from './git.js';
 import { logger } from './logger.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
+import { adapterRegistry } from './adapters/index.js';
 
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
@@ -127,8 +128,8 @@ export class WorktreeManager {
       await git(['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])], repoPath);
     }
 
-    // Generate .claude/settings.local.json with deny rules
-    await this.generateClaudeSettings(wtPath);
+    // Generate agent-specific settings (e.g. .claude/settings.local.json)
+    await this.generateAdapterSettings(wtPath, config.adapterType);
 
     // Propagate the repo's git identity into the worktree so commits
     // are attributed to the user rather than the agent's default identity.
@@ -207,15 +208,6 @@ export class WorktreeManager {
     return entry?.providerSessionId ?? entry?.claudeSessionId;
   }
 
-  /** @deprecated Use saveProviderSessionId */
-  async saveClaudeSessionId(worktreeId: string, claudeSessionId: string): Promise<void> {
-    return this.saveProviderSessionId(worktreeId, claudeSessionId);
-  }
-
-  /** @deprecated Use getProviderSessionId */
-  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
-    return this.getProviderSessionId(worktreeId);
-  }
 
   async remove(id: string, deleteBranch = false): Promise<void> {
     let info = this.worktrees.get(id);
@@ -718,23 +710,13 @@ export class WorktreeManager {
     return null;
   }
 
-  private async generateClaudeSettings(wtPath: string): Promise<void> {
-    const claudeDir = path.join(wtPath, '.claude');
-    const settingsPath = path.join(claudeDir, 'settings.local.json');
-
-    await fs.mkdir(claudeDir, { recursive: true });
-    await fs.writeFile(
-      settingsPath,
-      JSON.stringify(
-        {
-          permissions: {
-            deny: ['Read(../../**)', 'Edit(../../**)'],
-          },
-        },
-        null,
-        2
-      )
-    );
+  private async generateAdapterSettings(wtPath: string, adapterType?: string): Promise<void> {
+    const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+    if (adapter.generateWorktreeSettings) {
+      await adapter.generateWorktreeSettings(wtPath);
+    } else {
+      logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
+    }
   }
 }
 

@@ -67,7 +67,7 @@
     <Dialog.Header>
       <Dialog.Title>Plugins</Dialog.Title>
       <Dialog.Description>
-        Manage Claude Code plugins. Changes apply to new agent sessions.
+        Manage agent plugins. Changes apply to new sessions.
       </Dialog.Description>
     </Dialog.Header>
 

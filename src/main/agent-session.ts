@@ -48,17 +48,17 @@ interface ManagedSession {
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
   /** Permission mode for the SDK query. */
   permissionMode: 'default' | 'plan' | 'acceptEdits';
-  /** Extra system prompt appended to the default claude_code preset. */
+  /** Extra system prompt appended to the adapter's default prompt. */
   appendSystemPrompt: string | null;
-  /** Fully custom system prompt — overrides the claude_code preset entirely. */
+  /** Fully custom system prompt — overrides the adapter's default entirely. */
   customSystemPrompt: string | null;
   /** If set, only these tools are allowed — everything else is auto-denied. */
   allowedTools: Set<string> | null;
   /** Force structured JSON output via json_schema. */
   outputFormat: { type: 'json_schema'; schema: Record<string, unknown> } | null;
-  /** SDK sandbox settings for restricted Bash execution. */
+  /** Sandbox settings for restricted Bash execution. */
   sandbox: Record<string, unknown> | null;
-  /** Extra environment variables merged into the SDK query env. */
+  /** Extra environment variables merged into the adapter query env. */
   extraEnv: Record<string, string> | null;
   /** Path to append-only event log on disk. */
   eventLogPath: string;
@@ -88,10 +88,9 @@ export interface SessionCompletionResult {
 
 const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
 
-// Suppress "Operation aborted" unhandled rejections from the Claude Agent SDK.
-// When we abort a running query, the SDK's internal async operations (write,
-// handleControlRequest) may reject after the abort signal fires.  These are
-// expected and safe to ignore.
+// Suppress "Operation aborted" unhandled rejections from agent SDKs.
+// When we abort a running query, internal async operations may reject after
+// the abort signal fires.  These are expected and safe to ignore.
 process.on('unhandledRejection', (reason: unknown) => {
   if (reason instanceof Error && reason.message === 'Operation aborted') {
     logger.debug('[unhandledRejection] Suppressed expected SDK abort error');
@@ -157,8 +156,8 @@ class AgentSessionManager {
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
-    // Look up the adapter
-    const adapterType = opts.adapterType ?? 'claude-code';
+    // Look up the adapter (fall back to the registry default)
+    const adapterType = opts.adapterType ?? adapterRegistry.getDefault().id;
     const adapter = adapterRegistry.get(adapterType);
     if (!adapter) throw new Error(`Unknown agent adapter: ${adapterType}`);
 
@@ -232,7 +231,7 @@ class AgentSessionManager {
         const errMsg = String(err.message || err);
         const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
         emit({ type: 'error', message: isAuthError
-          ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+          ? adapter.authErrorMessage
           : errMsg });
         session.status = 'error';
         const w = session.window;
@@ -325,6 +324,7 @@ class AgentSessionManager {
             requestId,
             decisionReason: request.decisionReason,
             suggestions: request.suggestions,
+            isPlanExecution: request.isPlanExecution,
           });
         });
       },
@@ -397,6 +397,7 @@ class AgentSessionManager {
             repoPath: session.repoPath,
             cwd: session.worktreePath,
             events: session.eventHistory,
+            adapterType: session.adapter.id,
             onStatus: (status, filesWritten) => {
               emit({ type: 'memory_autosave', status, filesWritten });
             },
@@ -437,7 +438,7 @@ class AgentSessionManager {
 
         const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
         if (isAuthError) {
-          emit({ type: 'error', message: 'Authentication failed. Please run "claude auth login" in your terminal and try again.' });
+          emit({ type: 'error', message: session.adapter.authErrorMessage });
         } else {
           emit({ type: 'error', message: detail.slice(0, 500) });
         }
@@ -482,6 +483,7 @@ class AgentSessionManager {
       repoPath: session.repoPath,
       cwd: session.worktreePath,
       events: session.eventHistory,
+      adapterType: session.adapter.id,
       onStatus: (status, filesWritten) => {
         emit({ type: 'memory_autosave', status, filesWritten });
       },
@@ -571,11 +573,11 @@ class AgentSessionManager {
     // stop/restart cycles — even when queryHandle is temporarily null.
     session.permissionMode = mode as ManagedSession['permissionMode'];
 
-    // Only pass SDK-recognized modes to the live SDK instance.
-    // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
-    if (session.queryHandle?.setPermissionMode && (mode === 'default' || mode === 'plan')) {
+    // Pass the mode to the adapter — it decides which modes it recognizes.
+    // Some modes (like 'acceptEdits') may be handled at the app level only.
+    if (session.queryHandle?.setPermissionMode) {
       try {
-        session.queryHandle.setPermissionMode(mode);
+        session.queryHandle.setPermissionMode(mode as any);
       } catch (e) {
         logger.warn(`Failed to set mode for session ${id}:`, e);
       }
@@ -720,7 +722,7 @@ class AgentSessionManager {
       const errMsg = String(err.message || err);
       const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
       emit({ type: 'error', message: isAuthError
-        ? 'Authentication failed. Please run "claude auth login" in your terminal and try again.'
+        ? session.adapter.authErrorMessage
         : errMsg });
     });
   }
@@ -882,6 +884,7 @@ class AgentSessionManager {
           repoPath: session.repoPath,
           cwd: session.worktreePath,
           events: session.eventHistory,
+          adapterType: session.adapter.id,
           onStatus: (status, filesWritten) => {
             session.emit?.({ type: 'memory_autosave', status, filesWritten });
           },

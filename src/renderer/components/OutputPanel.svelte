@@ -206,6 +206,7 @@
           decision={msg.decision}
           decisionReason={msg.decisionReason}
           suggestions={msg.suggestions}
+          isPlanExecution={msg.isPlanExecution}
         />
 
       {:else if msg.kind === 'question'}

@@ -7,6 +7,8 @@ export interface WorktreeConfig {
   useExisting?: boolean;
   /** Pre-generated ID — if omitted, a random one is created. */
   id?: string;
+  /** Which adapter will run in this worktree (for generating agent-specific settings). */
+  adapterType?: string;
 }
 
 export interface WorktreeInfo {
@@ -32,6 +34,8 @@ export interface CreateSessionOpts {
   useExisting?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
+  /** Which adapter to use for this session (defaults to registry default). */
+  adapterType?: string;
 }
 
 export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
@@ -62,6 +66,10 @@ export interface PrerequisiteStatus {
     authenticated?: boolean;
     authMethod?: string;
     email?: string;
+    /** Adapter-provided error message when not available (e.g. install instructions). */
+    errorMessage?: string;
+    /** Adapter-provided message when not authenticated. */
+    authErrorMessage?: string;
   };
 }
 
@@ -78,7 +86,7 @@ export type AgentEvent =
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[] }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }

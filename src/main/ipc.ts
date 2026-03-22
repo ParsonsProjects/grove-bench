@@ -86,6 +86,7 @@ export function registerHandlers() {
         cwd: opts.repoPath,
         repoPath: opts.repoPath,
         window: win,
+        adapterType: opts.adapterType,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
@@ -139,6 +140,7 @@ export function registerHandlers() {
           baseBranch: opts.baseBranch,
           useExisting: opts.useExisting,
           id,
+          adapterType: opts.adapterType,
         });
 
         // Auto-copy untracked files (.env, etc.)
@@ -175,7 +177,7 @@ export function registerHandlers() {
           }
         }
 
-        // Start Claude agent in the worktree
+        // Start agent in the worktree
         emitPrelaunch({ type: 'status', message: 'Starting agent…' });
         await sessionManager.createSession({
           id: worktree.id,
@@ -183,6 +185,7 @@ export function registerHandlers() {
           cwd: worktree.path,
           repoPath: opts.repoPath,
           window: win,
+          adapterType: opts.adapterType,
         });
 
         logger.info(`Session created: id=${worktree.id}`);
@@ -542,30 +545,46 @@ export function registerHandlers() {
 
   // ─── Plugins ───
 
-  ipcMain.handle(IPC.PLUGIN_LIST, async () => {
+  /** Resolve adapter by optional type, falling back to registry default. */
+  function resolveAdapter(adapterType?: string) {
+    return adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+  }
+
+  ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.capabilities.plugins || !adapter.listPlugins) {
+      return { installed: [], available: [] };
+    }
     try {
-      const { stdout } = await execa('claude', ['plugin', 'list', '--json', '--available']);
-      return JSON.parse(stdout);
+      return await adapter.listPlugins();
     } catch (e: any) {
       logger.warn('Failed to list plugins:', e.message);
       return { installed: [], available: [] };
     }
   });
 
-  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user') => {
-    await execa('claude', ['plugin', 'install', pluginId, '--scope', scope]);
+  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user', adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.installPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.installPlugin(pluginId, scope);
   });
 
-  ipcMain.handle(IPC.PLUGIN_UNINSTALL, async (_event, pluginId: string) => {
-    await execa('claude', ['plugin', 'uninstall', pluginId]);
+  ipcMain.handle(IPC.PLUGIN_UNINSTALL, async (_event, pluginId: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.uninstallPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.uninstallPlugin(pluginId);
   });
 
-  ipcMain.handle(IPC.PLUGIN_ENABLE, async (_event, pluginId: string) => {
-    await execa('claude', ['plugin', 'enable', pluginId]);
+  ipcMain.handle(IPC.PLUGIN_ENABLE, async (_event, pluginId: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.enablePlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.enablePlugin(pluginId);
   });
 
-  ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
-    await execa('claude', ['plugin', 'disable', pluginId]);
+  ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.disablePlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.disablePlugin(pluginId);
   });
 
   // ─── PTY Terminal (per-session persistent shell) ───

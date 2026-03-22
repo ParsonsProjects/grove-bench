@@ -362,6 +362,7 @@ export function transformMessage(
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly id = 'claude-code';
   readonly displayName = 'Claude Code';
+  readonly authErrorMessage = 'Authentication failed. Please run "claude auth login" in your terminal and try again.';
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -488,6 +489,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         toolInput: input,
         decisionReason: options.decisionReason,
         suggestions: options.suggestions,
+        isPlanExecution: toolName === 'ExitPlanMode',
       });
     };
 
@@ -601,8 +603,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
 
       setPermissionMode(mode) {
-        // The SDK accepts the same mode strings as our PermissionMode type
-        q.setPermissionMode(mode);
+        // 'acceptEdits' is an app-level concept — the Claude SDK only knows 'default' and 'plan'
+        if (mode === 'default' || mode === 'plan') {
+          q.setPermissionMode(mode);
+        }
       },
 
       async setMaxThinkingTokens(tokens: number | null) {
@@ -611,5 +615,97 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     return handle;
+  }
+
+  // ─── Plugin management (delegates to `claude` CLI) ───
+
+  async listPlugins(): Promise<{ installed: Array<{ id: string; name?: string; enabled?: boolean }>; available: unknown[] }> {
+    try {
+      const { stdout } = await execFileAsync('claude', ['plugin', 'list', '--json', '--available'], { shell: true });
+      return JSON.parse(stdout);
+    } catch {
+      return { installed: [], available: [] };
+    }
+  }
+
+  async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
+    await execFileAsync('claude', ['plugin', 'install', pluginId, '--scope', scope], { shell: true });
+  }
+
+  async uninstallPlugin(pluginId: string): Promise<void> {
+    await execFileAsync('claude', ['plugin', 'uninstall', pluginId], { shell: true });
+  }
+
+  async enablePlugin(pluginId: string): Promise<void> {
+    await execFileAsync('claude', ['plugin', 'enable', pluginId], { shell: true });
+  }
+
+  async disablePlugin(pluginId: string): Promise<void> {
+    await execFileAsync('claude', ['plugin', 'disable', pluginId], { shell: true });
+  }
+
+  // ─── Text generation (for memory extraction) ───
+
+  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal }): Promise<string> {
+    const queryFn = await getQuery();
+
+    let controller: ReadableStreamDefaultController<{ type: 'user'; content: string }>;
+    const inputStream = new ReadableStream<{ type: 'user'; content: string }>({
+      start(c) { controller = c; },
+    });
+
+    controller!.enqueue({ type: 'user', content: userMessage });
+    controller!.close();
+
+    const abortController = new AbortController();
+    if (options?.abortSignal) {
+      options.abortSignal.addEventListener('abort', () => abortController.abort());
+    }
+
+    let resultText = '';
+    const q = queryFn({
+      prompt: inputStream as any,
+      options: {
+        cwd: options?.cwd ?? process.cwd(),
+        abortController,
+        systemPrompt,
+        permissionMode: 'plan',
+        maxTurns: 1,
+      },
+    });
+
+    for await (const message of q) {
+      if (message.type === 'assistant' && 'content' in message) {
+        for (const block of (message as any).content ?? []) {
+          if (block.type === 'text') {
+            resultText += block.text;
+          }
+        }
+      }
+    }
+
+    return resultText;
+  }
+
+  // ─── Worktree configuration ───
+
+  async generateWorktreeSettings(wtPath: string): Promise<void> {
+    const fs = await import('node:fs/promises');
+    const claudeDir = path.join(wtPath, '.claude');
+    const settingsPath = path.join(claudeDir, 'settings.local.json');
+
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          permissions: {
+            deny: ['Read(../../**)', 'Edit(../../**)'],
+          },
+        },
+        null,
+        2
+      )
+    );
   }
 }

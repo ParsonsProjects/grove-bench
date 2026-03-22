@@ -131,23 +131,13 @@ describe('saveProviderSessionId / getProviderSessionId', () => {
   });
 });
 
-describe('deprecated aliases', () => {
-  it('saveClaudeSessionId delegates to saveProviderSessionId', async () => {
+describe('migration from claudeSessionId', () => {
+  it('getProviderSessionId falls back to claudeSessionId for old manifests', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
-      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, claudeSessionId: 'old-session' },
     }));
 
-    await manager.saveClaudeSessionId('wt-123', 'session-via-alias');
-
-    expect((savedManifest as any)['wt-123'].providerSessionId).toBe('session-via-alias');
-  });
-
-  it('getClaudeSessionId delegates to getProviderSessionId', async () => {
-    mockFs.readFile.mockResolvedValue(JSON.stringify({
-      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, providerSessionId: 'session-456' },
-    }));
-
-    const result = await manager.getClaudeSessionId('wt-123');
-    expect(result).toBe('session-456');
+    const result = await manager.getProviderSessionId('wt-123');
+    expect(result).toBe('old-session');
   });
 });

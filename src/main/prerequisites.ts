@@ -26,6 +26,19 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
     checkGit(),
     adapter.checkPrerequisites(),
   ]);
+  // Build error/auth message from adapter when not available or not authenticated
+  let errorMessage: string | undefined;
+  let authErrorMessage: string | undefined;
+  if (!agentStatus.available) {
+    errorMessage = agentStatus.errorMessage
+      ?? (agentStatus.installInstructions
+        ? `Agent not found. ${agentStatus.installInstructions}`
+        : 'Agent CLI not found.');
+  }
+  if (agentStatus.available && !agentStatus.authenticated) {
+    authErrorMessage = adapter.authErrorMessage;
+  }
+
   return {
     git: gitStatus,
     agent: {
@@ -34,6 +47,8 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
       authenticated: agentStatus.authenticated,
       authMethod: agentStatus.authMethod,
       email: agentStatus.email,
+      errorMessage,
+      authErrorMessage,
     },
   };
 }

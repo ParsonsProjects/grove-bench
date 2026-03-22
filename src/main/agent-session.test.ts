@@ -86,6 +86,7 @@ interface MockQueryControl {
 class MockAdapter implements AgentAdapter {
   readonly id = 'mock';
   readonly displayName = 'Mock Agent';
+  readonly authErrorMessage = 'Auth failed. Please configure mock credentials.';
   readonly capabilities = {
     permissions: true,
     permissionModes: true,
@@ -534,11 +535,11 @@ describe('AgentSessionManager.setMode()', () => {
     sessionManager.setMode('test-mode2', 'acceptEdits');
 
     const session = sessionManager.getSession('test-mode2');
-    // queryHandle.setPermissionMode should NOT have been called for acceptEdits
-    // (it's only called for 'default' and 'plan')
+    // All modes are now passed to the adapter — the adapter decides which to accept.
+    // The session manager no longer filters modes.
     const handle = session?.queryHandle;
     if (handle?.setPermissionMode) {
-      expect(handle.setPermissionMode).not.toHaveBeenCalledWith('acceptEdits');
+      expect(handle.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
     }
 
     await sessionManager.destroySession('test-mode2');

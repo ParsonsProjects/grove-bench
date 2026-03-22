@@ -64,6 +64,8 @@ export interface ChatPermissionMessage {
   decision?: 'allow' | 'deny';
   decisionReason?: string;
   suggestions?: unknown[];
+  /** Set by the adapter when this permission is for executing a plan (e.g. ExitPlanMode). */
+  isPlanExecution?: boolean;
 }
 
 export interface ChatThinkingMessage {
@@ -124,7 +126,7 @@ class MessageStore {
   /** Streaming thinking text that hasn't been finalized yet */
   streamingThinking = $state<Record<string, string>>({});
 
-  /** Whether Claude is currently processing for a session */
+  /** Whether the agent is currently processing for a session */
   isRunning = $state<Record<string, boolean>>({});
 
   /** Whether a /clear was issued and we're waiting for re-init */
@@ -580,17 +582,8 @@ class MessageStore {
         if (this.streamingText[sessionId]) {
           this.flushStreamingText(sessionId);
         }
-        // Sync mode when LLM calls mode-changing tools.
-        // Preserve 'acceptEdits' — that's a user-set mode that should persist
-        // across plan mode transitions. ExitPlanMode returns to the mode the
-        // user had before (acceptEdits if set, otherwise default).
-        if (event.toolName === 'EnterPlanMode') {
-          this.modeBySession[sessionId] = 'plan';
-        } else if (event.toolName === 'ExitPlanMode') {
-          if (this.modeBySession[sessionId] !== 'acceptEdits') {
-            this.modeBySession[sessionId] = 'default';
-          }
-        }
+        // Mode syncing is handled by mode_sync events from the adapter,
+        // not by detecting specific tool names (which would be adapter-specific).
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
@@ -692,6 +685,7 @@ class MessageStore {
             resolved: false,
             decisionReason: event.decisionReason,
             suggestions: event.suggestions,
+            isPlanExecution: event.isPlanExecution,
           });
         }
         break;
@@ -1044,9 +1038,9 @@ class MessageStore {
     this.sendCommand(sessionId, '/clear');
   }
 
-  /** Resolve a question from Claude (AskUserQuestion) by sending the answer as a deny message.
-   *  We use 'deny' because the permission system feeds the message text back to Claude as
-   *  tool error output, which is how the SDK receives the user's answer. */
+  /** Resolve a question (AskUserQuestion) by sending the answer as a deny message.
+   *  We use 'deny' because the permission system feeds the message text back to the agent as
+   *  tool error output, which is how it receives the user's answer. */
   resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const idx = msgs.findIndex(
@@ -1065,7 +1059,7 @@ class MessageStore {
     }
 
     // Send the answer back through the permission system — "deny" with the answer as message
-    // so Claude receives the user's response as tool feedback
+    // so the agent receives the user's response as tool feedback
     const permDecision: PermissionDecision = {
       requestId,
       behavior: 'deny',

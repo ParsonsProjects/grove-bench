@@ -47,6 +47,8 @@ export interface PermissionRequest {
   toolInput: Record<string, unknown>;
   decisionReason?: string;
   suggestions?: unknown[];
+  /** Set by the adapter when this permission is for executing a plan. */
+  isPlanExecution?: boolean;
 }
 
 export type PermissionResponse =
@@ -135,7 +137,36 @@ export interface AgentAdapter {
   /** Start a new agent query, returning a handle to interact with it */
   start(config: AdapterConfig): Promise<AgentQueryHandle>;
 
+  /** Human-readable error message shown when authentication fails.
+   *  E.g. 'Please run "claude auth login"' or 'Set OPENAI_API_KEY'. */
+  readonly authErrorMessage: string;
+
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */
   dispose?(): Promise<void>;
+
+  // ─── Optional plugin management ───
+
+  /** List installed and available plugins. Only implement if capabilities.plugins is true. */
+  listPlugins?(): Promise<{ installed: Array<{ id: string; name?: string; enabled?: boolean }>; available: unknown[] }>;
+  /** Install a plugin by ID. */
+  installPlugin?(pluginId: string, scope?: string): Promise<void>;
+  /** Uninstall a plugin by ID. */
+  uninstallPlugin?(pluginId: string): Promise<void>;
+  /** Enable an installed plugin. */
+  enablePlugin?(pluginId: string): Promise<void>;
+  /** Disable an installed plugin. */
+  disablePlugin?(pluginId: string): Promise<void>;
+
+  // ─── Optional text generation (used by memory auto-save) ───
+
+  /** Generate text from a system prompt and user message.
+   *  Used by memory-autosave to run extraction without being coupled to a specific SDK. */
+  generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal }): Promise<string>;
+
+  // ─── Optional worktree configuration ───
+
+  /** Generate agent-specific settings files inside a worktree directory.
+   *  E.g. Claude Code creates `.claude/settings.local.json`. */
+  generateWorktreeSettings?(wtPath: string): Promise<void>;
 }
