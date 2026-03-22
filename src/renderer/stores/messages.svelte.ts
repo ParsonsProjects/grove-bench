@@ -22,6 +22,8 @@ export interface ChatToolCallMessage {
   pending: boolean;
   /** True while a permission_request is pending for this tool — suppresses rendering until approved */
   awaitingPermission?: boolean;
+  /** Adapter-agnostic tool category for display logic. */
+  toolCategory?: import('../../shared/types.js').ToolCategory;
 }
 
 export interface ChatUserMessage {
@@ -64,8 +66,10 @@ export interface ChatPermissionMessage {
   decision?: 'allow' | 'deny';
   decisionReason?: string;
   suggestions?: unknown[];
-  /** Set by the adapter when this permission is for executing a plan (e.g. ExitPlanMode). */
+  /** Set by the adapter when this permission is for executing a plan. */
   isPlanExecution?: boolean;
+  /** Adapter-agnostic tool category for display logic. */
+  toolCategory?: import('../../shared/types.js').ToolCategory;
 }
 
 export interface ChatThinkingMessage {
@@ -338,11 +342,12 @@ class MessageStore {
     return pending;
   }
 
-  private summarizeToolInput(toolName: string, input: unknown): string {
+  private summarizeToolInput(toolName: string, input: unknown, toolCategory?: import('../../shared/types.js').ToolCategory): string {
     if (typeof input !== 'object' || input === null) return '';
     const obj = input as Record<string, unknown>;
-    if (toolName === 'Bash' && obj.command) return String(obj.command).slice(0, 60);
-    if (toolName === 'Agent' && obj.prompt) return String(obj.prompt).slice(0, 60);
+    // Use toolCategory when available (adapter-agnostic), fall back to tool name heuristics
+    if ((toolCategory === 'bash' || obj.command) && obj.command) return String(obj.command).slice(0, 60);
+    if ((toolCategory === 'agent' || obj.prompt) && obj.prompt) return String(obj.prompt).slice(0, 60);
     if (obj.file_path) return String(obj.file_path);
     if (obj.pattern) return String(obj.pattern);
     if (obj.description) return String(obj.description).slice(0, 60);
@@ -587,7 +592,7 @@ class MessageStore {
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
-          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput),
+          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput, event.toolCategory),
         };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -597,6 +602,7 @@ class MessageStore {
           toolUseId: event.toolUseId,
           uuid: event.uuid,
           pending: true,
+          toolCategory: event.toolCategory,
         });
         break;
 
@@ -662,8 +668,8 @@ class MessageStore {
             ...permMsgs.slice(toolIdx + 1),
           ];
         }
-        // Detect AskUserQuestion tool — render as an interactive question, not a permission gate
-        if (event.toolName === 'AskUserQuestion') {
+        // Detect question tools — render as an interactive question, not a permission gate
+        if (event.toolCategory === 'question') {
           const input = event.toolInput as Record<string, unknown>;
           const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
           this.pushMessage(sessionId, {
@@ -686,6 +692,7 @@ class MessageStore {
             decisionReason: event.decisionReason,
             suggestions: event.suggestions,
             isPlanExecution: event.isPlanExecution,
+            toolCategory: event.toolCategory,
           });
         }
         break;
@@ -1085,6 +1092,7 @@ class MessageStore {
     // clear awaitingPermission on its matching tool_call in a single pass.
     const msgs = this.messagesBySession[sessionId] ?? [];
     let foundToolName: string | undefined;
+    let foundToolCategory: import('../../shared/types.js').ToolCategory | undefined;
     let foundToolUseId: string | undefined;
     let changed = false;
     // Resolve the LAST unresolved permission with this requestId.
@@ -1094,6 +1102,7 @@ class MessageStore {
         const pm = m as ChatPermissionMessage;
         if (pm.requestId === requestId && !pm.resolved) {
           foundToolName = pm.toolName;
+          foundToolCategory = pm.toolCategory;
           foundToolUseId = pm.toolUseId;
           changed = true;
           return { ...m, resolved: true as const, decision: resolvedDecision };
@@ -1116,10 +1125,10 @@ class MessageStore {
       this.messagesBySession[sessionId] = updated;
     }
 
-    // When "Always Allow" is used on Edit/Write/MultiEdit, switch to
+    // When "Always Allow" is used on edit tools, switch to
     // acceptEdits mode immediately — don't wait for the IPC result.
     // The user's intent is clear regardless of whether main confirms.
-    if (decision === 'allowAlways' && foundToolName && (foundToolName === 'Edit' || foundToolName === 'Write' || foundToolName === 'MultiEdit')) {
+    if (decision === 'allowAlways' && foundToolCategory === 'edit') {
       this.setMode(sessionId, 'acceptEdits').catch((e) => {
         console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
       });

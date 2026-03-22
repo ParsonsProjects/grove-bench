@@ -1,6 +1,5 @@
 /**
- * Pure utility functions extracted from agent-session.ts for testability.
- * These will move into the adapter layer in Phase 2.
+ * Pure utility functions shared between agent-session.ts and adapters.
  */
 
 /**

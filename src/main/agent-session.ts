@@ -100,19 +100,6 @@ process.on('unhandledRejection', (reason: unknown) => {
   console.error('Unhandled promise rejection:', reason);
 });
 
-// Suppress "Operation aborted" unhandled rejections from the Claude Agent SDK.
-// When we abort a running query, the SDK's internal async operations (write,
-// handleControlRequest) may reject after the abort signal fires.  These are
-// expected and safe to ignore.
-process.on('unhandledRejection', (reason: unknown) => {
-  if (reason instanceof Error && reason.message === 'Operation aborted') {
-    logger.debug('[unhandledRejection] Suppressed expected SDK abort error');
-    return;
-  }
-  // Re-throw anything else so it surfaces normally
-  console.error('Unhandled promise rejection:', reason);
-});
-
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
@@ -337,6 +324,7 @@ class AgentSessionManager {
             decisionReason: request.decisionReason,
             suggestions: request.suggestions,
             isPlanExecution: request.isPlanExecution,
+            toolCategory: request.toolCategory,
           });
         });
       },
@@ -600,7 +588,7 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.setModel) return;
     try {
-      await session.queryHandle.setModel(model!);
+      await session.queryHandle.setModel(model as string);
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;

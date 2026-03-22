@@ -14,6 +14,7 @@
     decisionReason,
     suggestions,
     isPlanExecution = false,
+    toolCategory,
   }: {
     sessionId: string;
     requestId: string;
@@ -24,6 +25,7 @@
     decisionReason?: string;
     suggestions?: unknown[];
     isPlanExecution?: boolean;
+    toolCategory?: import('../../shared/types.js').ToolCategory;
   } = $props();
 
   let expanded = $state(false);
@@ -35,10 +37,10 @@
   let pendingDecision = $state<'allow' | 'deny' | null>(null);
 
   let input = $derived(toolInput as Record<string, unknown>);
-  let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
-  let isBashTool = $derived(toolName === 'Bash');
+  let isEditTool = $derived(toolCategory === 'edit' || toolName === 'Edit' || toolName === 'Write');
+  let isBashTool = $derived(toolCategory === 'bash' || toolName === 'Bash');
   let isExitPlanMode = $derived(isPlanExecution);
-  let isWebFetch = $derived(toolName === 'WebFetch' || toolName === 'mcp__WebFetch' || (typeof input?.url === 'string'));
+  let isWebFetch = $derived(toolCategory === 'web_fetch' || toolName === 'WebFetch' || toolName === 'mcp__WebFetch' || (typeof input?.url === 'string'));
   let filePath = $derived(isEditTool ? String(input?.file_path ?? input?.filePath ?? '') : '');
   let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');

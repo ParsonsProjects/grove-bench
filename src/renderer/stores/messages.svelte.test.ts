@@ -34,13 +34,13 @@ describe('ingestEvent — system_init', () => {
     messageStore.ingestEvent(SID, {
       type: 'system_init',
       sessionId: SID,
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'test-model-v1',
       tools: ['Read', 'Edit'],
     } as AgentEvent);
 
     expect(messageStore.getIsReady(SID)).toBe(true);
     expect(messageStore.getIsRunning(SID)).toBe(false);
-    expect(messageStore.getModel(SID)).toBe('claude-sonnet-4-5-20250514');
+    expect(messageStore.getModel(SID)).toBe('test-model-v1');
   });
 
   it('pushes a system message with model name', () => {
@@ -205,10 +205,10 @@ describe('ingestEvent — tool_use and tool_result', () => {
     expect(tc.isError).toBe(false);
   });
 
-  it('EnterPlanMode tool_use does NOT sync mode (mode_sync events handle it)', () => {
+  it('mode-changing tool_use does NOT sync mode (mode_sync events handle it)', () => {
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
-      toolName: 'EnterPlanMode',
+      toolName: 'some_plan_tool',
       toolInput: {},
       toolUseId: 'tu-plan',
       uuid: 'u-plan',
@@ -218,11 +218,11 @@ describe('ingestEvent — tool_use and tool_result', () => {
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
-  it('ExitPlanMode tool_use does NOT sync mode (mode_sync events handle it)', () => {
+  it('any tool_use does NOT sync mode (mode_sync events handle it)', () => {
     messageStore.modeBySession[SID] = 'plan';
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
-      toolName: 'ExitPlanMode',
+      toolName: 'some_exit_tool',
       toolInput: {},
       toolUseId: 'tu-exit',
       uuid: 'u-exit',
@@ -250,7 +250,7 @@ describe('ingestEvent — permission_request', () => {
     expect(pm.resolved).toBe(false);
   });
 
-  it('pushes question message for AskUserQuestion', () => {
+  it('pushes question message for question-category tools', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',
       toolName: 'AskUserQuestion',
@@ -259,6 +259,7 @@ describe('ingestEvent — permission_request', () => {
       },
       toolUseId: 'tu-q',
       requestId: 'req-q',
+      toolCategory: 'question',
     } as AgentEvent);
 
     const msgs = messageStore.getMessages(SID);
@@ -644,11 +645,11 @@ describe('ingestEvent — permission_resolved', () => {
 });
 
 describe('ingestEvent — tool_use does NOT sync mode (mode_sync events do)', () => {
-  it('EnterPlanMode tool does not change mode — mode_sync handles it', () => {
+  it('plan-related tool does not change mode — mode_sync handles it', () => {
     messageStore.modeBySession[SID] = 'default';
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
-      toolName: 'EnterPlanMode',
+      toolName: 'some_plan_tool',
       toolInput: {},
       toolUseId: 'tu-enter',
       uuid: 'u-enter',
@@ -658,11 +659,11 @@ describe('ingestEvent — tool_use does NOT sync mode (mode_sync events do)', ()
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
-  it('ExitPlanMode tool does not change mode — mode_sync handles it', () => {
+  it('any tool does not change mode — mode_sync handles it', () => {
     messageStore.modeBySession[SID] = 'plan';
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
-      toolName: 'ExitPlanMode',
+      toolName: 'some_exit_tool',
       toolInput: {},
       toolUseId: 'tu-exit2',
       uuid: 'u-exit2',
@@ -677,7 +678,7 @@ describe('ingestEvent — isPlanExecution on permission_request', () => {
   it('permission_request with isPlanExecution is stored on the message', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',
-      toolName: 'ExitPlanMode',
+      toolName: 'plan_execution_tool',
       toolInput: {},
       toolUseId: 'tu-plan-exec',
       requestId: 'req-plan-exec',

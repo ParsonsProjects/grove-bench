@@ -73,20 +73,29 @@ export interface PrerequisiteStatus {
   };
 }
 
+// ─── Tool Categories (adapter-agnostic) ───
+
+/**
+ * Adapter-agnostic tool categories for renderer display logic.
+ * Adapters map their provider-specific tool names to these categories
+ * so the renderer doesn't need to know provider-specific tool names.
+ */
+export type ToolCategory = 'edit' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
+
 // ─── Agent Events (renderer-side, serializable) ───
 
 /**
  * Serializable events sent from main → renderer via IPC.
- * These are derived from the SDK's SDKMessage types but simplified
- * for safe serialization across the IPC boundary.
+ * These are adapter-agnostic events simplified for safe serialization
+ * across the IPC boundary.
  */
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
@@ -117,7 +126,7 @@ export type AgentEvent =
   | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
   // Files persisted to disk
   | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
-  // Permission mode sync (from SDK status messages)
+  // Permission mode sync (from adapter status messages)
   | { type: 'mode_sync'; mode: PermissionMode }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
@@ -139,7 +148,7 @@ export interface PermissionDecision {
   requestId: string;
   behavior: 'allow' | 'deny' | 'allowAlways';
   message?: string; // denial message
-  updatedPermissions?: unknown[]; // PermissionUpdate[] from SDK suggestions
+  updatedPermissions?: unknown[]; // PermissionUpdate[] from adapter suggestions
 }
 
 // ─── Git Status ───

@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent } from '../../shared/types.js';
+import type { AgentEvent, ToolCategory } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -13,6 +13,7 @@ import type {
   UserMessage,
 } from './types.js';
 import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { logger } from '../logger.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
@@ -35,6 +36,30 @@ async function getQuery() {
     _query = sdk.query;
   }
   return _query;
+}
+
+// ─── Tool category mapping ───
+
+/** Map Claude Code SDK tool names to adapter-agnostic categories. */
+function categorizeToolName(toolName: string): ToolCategory {
+  switch (toolName) {
+    case 'Edit':
+    case 'Write':
+    case 'MultiEdit':
+      return 'edit';
+    case 'Bash':
+      return 'bash';
+    case 'AskUserQuestion':
+      return 'question';
+    case 'WebFetch':
+      return 'web_fetch';
+    case 'Agent':
+      return 'agent';
+    default:
+      // MCP tools with WebFetch prefix
+      if (toolName.startsWith('mcp__') && toolName.includes('WebFetch')) return 'web_fetch';
+      return 'other';
+  }
 }
 
 // ─── SDKMessage → AgentEvent transform ───
@@ -209,6 +234,7 @@ export function transformMessage(
               toolInput: block.input,
               toolUseId: block.id,
               uuid: message.uuid,
+              toolCategory: categorizeToolName(block.name),
             });
           } else if (block.type === 'thinking') {
             events.push({
@@ -490,6 +516,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         decisionReason: options.decisionReason,
         suggestions: options.suggestions,
         isPlanExecution: toolName === 'ExitPlanMode',
+        toolCategory: categorizeToolName(toolName),
       });
     };
 
@@ -518,8 +545,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
           ...(config.extraEnv ?? {}),
         },
-        stderr: () => {
-          // SDK stderr is logged at the orchestrator level
+        stderr: (data: string) => {
+          logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`);
         },
       },
     });
@@ -649,13 +676,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal }): Promise<string> {
     const queryFn = await getQuery();
 
-    let controller: ReadableStreamDefaultController<{ type: 'user'; content: string }>;
-    const inputStream = new ReadableStream<{ type: 'user'; content: string }>({
-      start(c) { controller = c; },
+    let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
+    const inputStream = new ReadableStream<SDKUserMessage>({
+      start(c) { inputController = c; },
     });
 
-    controller!.enqueue({ type: 'user', content: userMessage });
-    controller!.close();
+    inputController!.enqueue({
+      type: 'user',
+      session_id: '',
+      message: { role: 'user', content: userMessage },
+      parent_tool_use_id: null,
+    } as SDKUserMessage);
+    inputController!.close();
 
     const abortController = new AbortController();
     if (options?.abortSignal) {
@@ -664,7 +696,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     let resultText = '';
     const q = queryFn({
-      prompt: inputStream as any,
+      prompt: readableStreamToAsyncIterable(inputStream),
       options: {
         cwd: options?.cwd ?? process.cwd(),
         abortController,
@@ -675,10 +707,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     });
 
     for await (const message of q) {
-      if (message.type === 'assistant' && 'content' in message) {
-        for (const block of (message as any).content ?? []) {
-          if (block.type === 'text') {
-            resultText += block.text;
+      if (message.type === 'assistant') {
+        const content = message.message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === 'text') {
+              resultText += block.text;
+            }
           }
         }
       }

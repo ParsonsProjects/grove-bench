@@ -101,6 +101,7 @@ describe('transformMessage()', () => {
         toolInput: { command: 'ls' },
         toolUseId: 'tu1',
         uuid: 'u2',
+        toolCategory: 'bash',
       });
       expect(ctx.toolUseMap.get('tu1')).toBe('Bash');
     });

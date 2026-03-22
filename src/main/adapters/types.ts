@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, PermissionMode, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, PermissionMode, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -49,6 +49,8 @@ export interface PermissionRequest {
   suggestions?: unknown[];
   /** Set by the adapter when this permission is for executing a plan. */
   isPlanExecution?: boolean;
+  /** Adapter-agnostic tool category for renderer display logic. */
+  toolCategory?: ToolCategory;
 }
 
 export type PermissionResponse =
