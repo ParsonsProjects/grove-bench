@@ -431,7 +431,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       toolName: string,
       input: Record<string, unknown>,
       options: { toolUseID: string; decisionReason?: string; suggestions?: unknown[] },
-    ): Promise<PermissionResponse> => {
+    ) => {
       // Allowlist check
       if (config.allowedTools && !config.allowedTools.has(toolName)) {
         return { behavior: 'deny' as const, message: `Tool "${toolName}" is not allowed in this session` };
@@ -512,7 +512,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
-        canUseTool,
+        canUseTool: canUseTool as any,
         env: {
           ...cleanEnv(),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',

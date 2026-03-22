@@ -138,7 +138,7 @@ describe('AutoSaveOptions accepts adapterType', () => {
   });
 
   it('adapterType is undefined when not specified (falls back to default)', () => {
-    const opts = {
+    const opts: { sessionId: string; repoPath: string; cwd: string; events: AgentEvent[]; adapterType?: string } = {
       sessionId: 'test-session',
       repoPath: '/repo',
       cwd: '/repo/wt',

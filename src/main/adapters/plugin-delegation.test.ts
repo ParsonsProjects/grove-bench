@@ -14,6 +14,7 @@ import type { AgentAdapter, AgentCapabilities, AdapterConfig, AgentQueryHandle, 
 class PluginCapableAdapter implements AgentAdapter {
   readonly id = 'plugin-test';
   readonly displayName = 'Plugin Test Adapter';
+  readonly authErrorMessage = 'Auth failed.';
   readonly capabilities: AgentCapabilities = {
     permissions: false,
     permissionModes: false,
@@ -62,6 +63,7 @@ class PluginCapableAdapter implements AgentAdapter {
 class NoPluginAdapter implements AgentAdapter {
   readonly id = 'no-plugin';
   readonly displayName = 'No Plugin Adapter';
+  readonly authErrorMessage = 'Auth failed.';
   readonly capabilities: AgentCapabilities = {
     permissions: false,
     permissionModes: false,
