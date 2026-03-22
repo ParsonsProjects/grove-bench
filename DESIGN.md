@@ -12,7 +12,7 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 
 ## 2. Goals (v1)
 
-- Electron app for Windows that manages up to 3 concurrent agent sessions
+- Electron app for Windows that manages multiple concurrent agent sessions
 - Automatic git worktree creation and cleanup per agent
 - Each agent gets a real interactive terminal (PTY) scoped to its worktree
 - Soft directory scoping so agents stay within their worktree (ergonomic safety net, not a hard sandbox)

@@ -66,7 +66,7 @@ npm run test:renderer  # Tests for renderer only
 - Main process manages AgentSessions, each with a node-pty instance and git worktree
 - IPC bridge via Electron contextBridge (preload.ts)
 - Git operations use `execa` calling `git` CLI directly (not simple-git)
-- Up to 3 concurrent agent sessions per repository
+- Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
 
