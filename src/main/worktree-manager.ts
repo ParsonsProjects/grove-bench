@@ -139,6 +139,14 @@ export class WorktreeManager {
       await git(['config', 'user.email', identity.email], wtPath);
     } catch { /* best effort — falls back to global config */ }
 
+    // Propagate the repo's git identity into the worktree so commits
+    // are attributed to the user rather than the agent's default identity.
+    try {
+      const identity = await getGitIdentity(repoPath);
+      await git(['config', 'user.name', identity.name], wtPath);
+      await git(['config', 'user.email', identity.email], wtPath);
+    } catch { /* best effort — falls back to global config */ }
+
     const info: WorktreeInfo = {
       id,
       path: wtPath,

@@ -1078,28 +1078,50 @@ class MessageStore {
     decision: 'allow' | 'deny' | 'allowAlways',
     opts?: { message?: string; updatedPermissions?: unknown[] },
   ): Promise<boolean> {
-    // Guard: if already resolved in the UI, ignore the duplicate click
-    const msgs = this.messagesBySession[sessionId] ?? [];
-    const perm = msgs.find(
-      (m) => m.kind === 'permission' && m.requestId === requestId,
-    ) as ChatPermissionMessage | undefined;
-
-    if (perm?.resolved) return false;
+    const resolvedDecision = (decision === 'deny' ? 'deny' : 'allow') as 'allow' | 'deny';
 
     // Optimistically update the store so the UI responds instantly.
-    // The permission_resolved event from main will confirm (or the
-    // tool_result fallback will catch it if the event is lost).
-    const resolvedDecision = (decision === 'deny' ? 'deny' : 'allow') as 'allow' | 'deny';
-    if (perm) {
-      const toolUseId = perm.toolUseId;
-      this.messagesBySession[sessionId] = msgs.map((m) => {
-        if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId) {
+    // Scan the full message array to find and resolve the permission +
+    // clear awaitingPermission on its matching tool_call in a single pass.
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let foundToolName: string | undefined;
+    let foundToolUseId: string | undefined;
+    let changed = false;
+    // Resolve the LAST unresolved permission with this requestId.
+    // Skip already-resolved ones (stale duplicates from prior query loops).
+    const updated = msgs.map((m) => {
+      if (m.kind === 'permission') {
+        const pm = m as ChatPermissionMessage;
+        if (pm.requestId === requestId && !pm.resolved) {
+          foundToolName = pm.toolName;
+          foundToolUseId = pm.toolUseId;
+          changed = true;
           return { ...m, resolved: true as const, decision: resolvedDecision };
         }
-        if (m.kind === 'tool_call' && m.toolUseId === toolUseId && m.awaitingPermission) {
-          return { ...m, awaitingPermission: false };
+      }
+      return m;
+    });
+
+    if (!changed) return false;
+
+    // Second pass: clear awaitingPermission on the matching tool_call
+    if (changed && foundToolUseId) {
+      for (let i = 0; i < updated.length; i++) {
+        const m = updated[i];
+        if (m.kind === 'tool_call' && m.toolUseId === foundToolUseId && m.awaitingPermission) {
+          updated[i] = { ...m, awaitingPermission: false };
+          break;
         }
-        return m;
+      }
+      this.messagesBySession[sessionId] = updated;
+    }
+
+    // When "Always Allow" is used on Edit/Write/MultiEdit, switch to
+    // acceptEdits mode immediately — don't wait for the IPC result.
+    // The user's intent is clear regardless of whether main confirms.
+    if (decision === 'allowAlways' && foundToolName && (foundToolName === 'Edit' || foundToolName === 'Write' || foundToolName === 'MultiEdit')) {
+      this.setMode(sessionId, 'acceptEdits').catch((e) => {
+        console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
       });
     }
 
@@ -1122,23 +1144,16 @@ class MessageStore {
     // If main rejected (stale/timed-out), override to denied
     if (!accepted) {
       const current = this.messagesBySession[sessionId] ?? [];
-      let changed = false;
-      const updated = current.map((m) => {
+      let rollbackChanged = false;
+      const rollback = current.map((m) => {
         if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === requestId && m.resolved && (m as ChatPermissionMessage).decision !== 'deny') {
-          changed = true;
+          rollbackChanged = true;
           return { ...m, decision: 'deny' as const };
         }
         return m;
       });
-      if (changed) this.messagesBySession[sessionId] = updated;
+      if (rollbackChanged) this.messagesBySession[sessionId] = rollback;
       return false;
-    }
-
-    // When "Always Allow" is used on Edit/Write/MultiEdit, sync mode to acceptEdits
-    if (decision === 'allowAlways' && perm && (perm.toolName === 'Edit' || perm.toolName === 'Write' || perm.toolName === 'MultiEdit')) {
-      this.setMode(sessionId, 'acceptEdits').catch((e) => {
-        console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
-      });
     }
 
     return true;
@@ -1154,6 +1169,7 @@ class MessageStore {
     this.isReady[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
+    delete this.stoppingSession[sessionId];
     // Preserve isRunning — caller controls this based on history
   }
 

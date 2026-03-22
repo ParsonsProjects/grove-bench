@@ -504,6 +504,31 @@ describe('ingestEvent — mode_sync', () => {
     messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan' } as AgentEvent);
     expect(messageStore.getMode(SID)).toBe('plan');
   });
+
+  it('clears stoppingSession so new query permission requests are not dropped', () => {
+    // Simulate: user clicks Stop → markSessionStopped sets stoppingSession
+    messageStore.markSessionStopped(SID);
+
+    // Before the fix, permission_request events arriving between stopQuery's
+    // mode_sync and system_init would be silently dropped.
+    // mode_sync (emitted by stopQuery after resolving old permissions) should
+    // clear stoppingSession so the new query's permissions get through.
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default' } as AgentEvent);
+
+    // Now a permission_request from the new query should NOT be suppressed
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'echo hi' },
+      toolUseId: 'tu-post-stop',
+      requestId: 'perm-post-stop',
+    } as AgentEvent);
+
+    const msgs = messageStore.getMessages(SID);
+    const perm = msgs.find((m) => m.kind === 'permission');
+    expect(perm).toBeDefined();
+    expect((perm as any).requestId).toBe('perm-post-stop');
+  });
 });
 
 describe('ingestEvent — mode_sync preserves acceptEdits', () => {
