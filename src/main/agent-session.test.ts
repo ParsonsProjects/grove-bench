@@ -1,439 +1,732 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
+import type { AgentEvent } from '../shared/types.js';
 
-/**
- * Tests for agent-session.ts changes ported from main.
- * These tests validate:
- * 1. respondToPermission returns boolean (found/not found)
- * 2. permission_resolved events are emitted
- * 3. acceptEdits mode auto-approves Edit/Write/MultiEdit
- * 4. Abort errors are suppressed (not surfaced as user-facing errors)
- * 5. clearEventHistory clears in-memory and on-disk history
- * 6. Graceful shutdown order (close before abort)
- * 7. Memory integration (system prompt injection, MCP server)
- * 8. setMode handles acceptEdits as app-level concept
- */
+// ─── Mock infrastructure ───
 
-// ─── respondToPermission return type ───
+// Mock electron
+vi.mock('electron', () => ({
+  BrowserWindow: vi.fn(),
+  app: { getPath: () => '/fake/userData', quit: vi.fn() },
+  ipcMain: { handle: vi.fn(), on: vi.fn() },
+}));
 
-describe('respondToPermission()', () => {
-  it('should return true when permission request is found and resolved', () => {
-    // This test validates that respondToPermission returns a boolean
-    // indicating whether the request was found and resolved.
-    // The return value is used by the IPC handler (ipcMain.handle vs ipcMain.on).
-    const found = true; // Simulating a found permission
-    expect(typeof found).toBe('boolean');
-    expect(found).toBe(true);
-  });
+// Mock node:fs
+vi.mock('node:fs', () => ({
+  default: {
+    readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
+    writeFileSync: vi.fn(),
+    appendFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+  },
+  readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
+  writeFileSync: vi.fn(),
+  appendFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+}));
 
-  it('should return false when session does not exist', () => {
-    const found = false;
-    expect(found).toBe(false);
-  });
+// Mock dependencies
+vi.mock('./logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), close: vi.fn() },
+}));
+vi.mock('./worktree-manager.js', () => ({
+  worktreeManager: { saveProviderSessionId: vi.fn().mockResolvedValue(undefined) },
+}));
+vi.mock('./port-killer.js', () => ({
+  killProcessOnPort: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('./dev-server.js', () => ({
+  DevServer: vi.fn(),
+}));
+vi.mock('./dev-command-detector.js', () => ({
+  detectDevCommand: vi.fn().mockResolvedValue(null),
+}));
+vi.mock('./settings.js', () => ({
+  getSettings: vi.fn(() => ({
+    defaultPermissionMode: 'default',
+    defaultSystemPromptAppend: null,
+    toolAllowRules: [],
+    toolDenyRules: [],
+  })),
+  loadSettings: vi.fn(() => ({ alwaysOnTop: false, theme: 'system' })),
+}));
+vi.mock('./memory.js', () => ({
+  getMemoryForSystemPrompt: vi.fn(() => ''),
+  ensureRepoMemory: vi.fn(),
+  listMemoryFiles: vi.fn(() => []),
+}));
+vi.mock('./memory-autosave.js', () => ({
+  triggerAutoSave: vi.fn(),
+  triggerAutoSaveImmediate: vi.fn().mockResolvedValue(undefined),
+  cancelAutoSave: vi.fn(),
+  saveSessionMetadata: vi.fn(),
+}));
 
-  it('should return false when permission request does not exist (e.g. timed out)', () => {
-    const found = false;
-    expect(found).toBe(false);
-  });
-});
+// Mock the adapter registry with a controllable mock adapter
+let mockAdapter: MockAdapter;
 
-// ─── permission_resolved event ───
+vi.mock('./adapters/index.js', () => ({
+  adapterRegistry: {
+    get: (id: string) => id === 'mock' ? mockAdapter : undefined,
+    getDefault: () => mockAdapter,
+    list: () => [mockAdapter],
+    register: vi.fn(),
+  },
+}));
 
-describe('permission_resolved event', () => {
-  it('should emit permission_resolved with allow decision', () => {
-    const event = {
-      type: 'permission_resolved' as const,
-      requestId: 'perm_abc_1',
-      toolUseId: 'tu_123',
-      decision: 'allow' as const,
+// ─── Mock Adapter ───
+
+interface MockQueryControl {
+  emitEvent: (event: AgentEvent) => void;
+  finish: () => void;
+  error: (err: Error) => void;
+  permissionHandler: ((req: any) => Promise<PermissionResponse>) | null;
+}
+
+class MockAdapter implements AgentAdapter {
+  readonly id = 'mock';
+  readonly displayName = 'Mock Agent';
+  readonly capabilities = {
+    permissions: true,
+    permissionModes: true,
+    resume: true,
+    modelSwitching: true,
+    thinking: true,
+    plugins: false,
+    imageAttachments: false,
+    structuredOutput: false,
+    sandbox: false,
+  };
+
+  control: MockQueryControl | null = null;
+  startCallCount = 0;
+  lastConfig: AdapterConfig | null = null;
+
+  getModels() { return [{ id: 'mock-model', label: 'Mock' }]; }
+  async checkPrerequisites() { return { available: true }; }
+
+  async start(config: AdapterConfig): Promise<AgentQueryHandle> {
+    this.startCallCount++;
+    this.lastConfig = config;
+
+    let resolveIter: (() => void) | null = null;
+    let rejectIter: ((err: Error) => void) | null = null;
+    const eventQueue: AgentEvent[] = [];
+    let done = false;
+    let waitForEvent: Promise<void> | null = null;
+
+    const control: MockQueryControl = {
+      emitEvent: (event: AgentEvent) => {
+        eventQueue.push(event);
+        resolveIter?.();
+      },
+      finish: () => {
+        done = true;
+        resolveIter?.();
+      },
+      error: (err: Error) => {
+        rejectIter?.(err);
+      },
+      permissionHandler: config.onPermissionRequest,
     };
-    expect(event.type).toBe('permission_resolved');
-    expect(event.decision).toBe('allow');
-  });
+    this.control = control;
 
-  it('should emit permission_resolved with deny decision on timeout', () => {
-    const event = {
-      type: 'permission_resolved' as const,
-      requestId: 'perm_abc_2',
-      toolUseId: 'tu_456',
-      decision: 'deny' as const,
-    };
-    expect(event.type).toBe('permission_resolved');
-    expect(event.decision).toBe('deny');
-  });
-
-  it('should emit permission_resolved for each pending permission on stopQuery', () => {
-    const pendingPermissions = new Map([
-      ['req1', { requestId: 'req1', toolUseId: 'tu1', toolName: 'Bash', toolInput: {}, resolve: vi.fn() }],
-      ['req2', { requestId: 'req2', toolUseId: 'tu2', toolName: 'Read', toolInput: {}, resolve: vi.fn() }],
-    ]);
-
-    const emittedEvents: any[] = [];
-    const emit = (event: any) => emittedEvents.push(event);
-
-    // Simulate stopQuery behavior: resolve all pending as denied + emit permission_resolved
-    for (const [, pending] of pendingPermissions) {
-      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
-      emit({
-        type: 'permission_resolved',
-        requestId: pending.requestId,
-        toolUseId: pending.toolUseId,
-        decision: 'deny',
-      });
-    }
-
-    expect(emittedEvents).toHaveLength(2);
-    expect(emittedEvents[0]).toEqual({
-      type: 'permission_resolved',
-      requestId: 'req1',
-      toolUseId: 'tu1',
-      decision: 'deny',
-    });
-    expect(emittedEvents[1]).toEqual({
-      type: 'permission_resolved',
-      requestId: 'req2',
-      toolUseId: 'tu2',
-      decision: 'deny',
-    });
-  });
-});
-
-// ─── acceptEdits permission mode ───
-
-describe('acceptEdits permission mode', () => {
-  const editTools = new Set(['Edit', 'Write', 'MultiEdit']);
-  function shouldAutoApprove(mode: string, tool: string): boolean {
-    return mode === 'acceptEdits' && editTools.has(tool);
-  }
-
-  it('should auto-approve Edit tool in acceptEdits mode', () => {
-    expect(shouldAutoApprove('acceptEdits', 'Edit')).toBe(true);
-  });
-
-  it('should auto-approve Write tool in acceptEdits mode', () => {
-    expect(shouldAutoApprove('acceptEdits', 'Write')).toBe(true);
-  });
-
-  it('should auto-approve MultiEdit tool in acceptEdits mode', () => {
-    expect(shouldAutoApprove('acceptEdits', 'MultiEdit')).toBe(true);
-  });
-
-  it('should NOT auto-approve Bash tool in acceptEdits mode', () => {
-    expect(shouldAutoApprove('acceptEdits', 'Bash')).toBe(false);
-  });
-
-  it('should NOT auto-approve Edit tool in default mode', () => {
-    expect(shouldAutoApprove('default', 'Edit')).toBe(false);
-  });
-});
-
-// ─── setMode with acceptEdits ───
-
-describe('setMode() with acceptEdits', () => {
-  const sdkRecognizedModes = new Set(['default', 'plan']);
-
-  it('should store acceptEdits as session permissionMode', () => {
-    let sessionPermissionMode = 'default';
-    sessionPermissionMode = 'acceptEdits';
-    expect(sessionPermissionMode).toBe('acceptEdits');
-  });
-
-  it('should only pass SDK-recognized modes to SDK (default, plan)', () => {
-    expect(sdkRecognizedModes.has('default')).toBe(true);
-    expect(sdkRecognizedModes.has('plan')).toBe(true);
-    expect(sdkRecognizedModes.has('acceptEdits')).toBe(false);
-  });
-});
-
-// ─── Abort error suppression ───
-
-describe('abort error handling', () => {
-  it('should recognize Operation aborted as expected error', () => {
-    const err = new Error('Operation aborted');
-    const isAbortError = err.message === 'Operation aborted';
-    expect(isAbortError).toBe(true);
-  });
-
-  it('should recognize aborted signal as expected', () => {
-    const abortController = new AbortController();
-    abortController.abort();
-    expect(abortController.signal.aborted).toBe(true);
-  });
-
-  it('should not suppress non-abort errors', () => {
-    const err = new Error('Something went wrong');
-    const isAbortError = err.message === 'Operation aborted';
-    expect(isAbortError).toBe(false);
-  });
-});
-
-// ─── Graceful shutdown order ───
-
-describe('graceful shutdown order', () => {
-  it('stopQuery should close before abort', () => {
-    const order: string[] = [];
-
-    const queryHandle = {
-      close: () => order.push('close'),
-    };
-    const inputController = {
-      close: () => order.push('inputClose'),
-    };
-    const abortController = {
-      abort: () => order.push('abort'),
-    };
-
-    // Main's order: close query → close input → abort
-    try { queryHandle.close(); } catch { /* may already be closed */ }
-    try { inputController.close(); } catch { /* may already be closed */ }
-    abortController.abort();
-
-    expect(order).toEqual(['close', 'inputClose', 'abort']);
-  });
-
-  it('destroySession should close before abort', () => {
-    const order: string[] = [];
-
-    const queryHandle = {
-      close: () => order.push('close'),
-    };
-    const inputController = {
-      close: () => order.push('inputClose'),
-    };
-    const abortController = {
-      abort: () => order.push('abort'),
-    };
-
-    // Main's order for destroy: close query → close input → abort
-    try { queryHandle.close(); } catch { /* may already be closed */ }
-    try { inputController.close(); } catch { /* may already be closed */ }
-    abortController.abort();
-
-    expect(order).toEqual(['close', 'inputClose', 'abort']);
-  });
-});
-
-// ─── clearEventHistory ───
-
-describe('clearEventHistory()', () => {
-  it('should clear in-memory event history', () => {
-    const eventHistory = [
-      { type: 'user_message' as const, text: 'hello' },
-      { type: 'assistant_text' as const, text: 'hi', uuid: '1' },
-    ];
-
-    // Simulate clearing
-    eventHistory.length = 0;
-    expect(eventHistory).toEqual([]);
-  });
-
-  it('should handle clearing when session is not running (disk-only clear)', () => {
-    // When session is not in sessions map, should still clear disk log
-    const logPath = '/fake/path/events/abc123.jsonl';
-    // Just verify the path format is correct
-    expect(logPath.endsWith('.jsonl')).toBe(true);
-  });
-});
-
-// ─── Memory system prompt injection ───
-
-describe('memory system prompt injection', () => {
-  it('should combine builtInPrompt, memoryPrompt, and userAppend', () => {
-    const builtInPrompt = 'When running Bash commands, prefer short command names...';
-    const memoryPrompt = '<project_memory>...</project_memory>';
-    const userAppend = 'Custom user prompt';
-
-    const combined = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n');
-    expect(combined).toContain(builtInPrompt);
-    expect(combined).toContain(memoryPrompt);
-    expect(combined).toContain(userAppend);
-  });
-
-  it('should handle null memoryPrompt gracefully', () => {
-    const builtInPrompt = 'When running Bash commands...';
-    const memoryPrompt = '';
-    const userAppend = null;
-
-    const combined = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
-    expect(combined).toBe(builtInPrompt);
-  });
-});
-
-// ─── ManagedSession emit field ───
-
-describe('ManagedSession emit field', () => {
-  it('should have emit function available for permission_resolved events', () => {
-    const emit = vi.fn();
-    emit({
-      type: 'permission_resolved',
-      requestId: 'req1',
-      toolUseId: 'tu1',
-      decision: 'allow',
-    });
-    expect(emit).toHaveBeenCalledWith({
-      type: 'permission_resolved',
-      requestId: 'req1',
-      toolUseId: 'tu1',
-      decision: 'allow',
-    });
-  });
-});
-
-// ─── permRequestCounter on session ───
-
-describe('permRequestCounter on session (not local)', () => {
-  it('should persist counter across stopQuery restarts to avoid ID collisions', () => {
-    // permRequestCounter lives on the session object, not as a local variable
-    // in runQuery, so it persists across stop/restart cycles.
-    const session = { permRequestCounter: 0 };
-
-    // First query loop generates IDs
-    const id1 = `perm_s1_${++session.permRequestCounter}`;
-    const id2 = `perm_s1_${++session.permRequestCounter}`;
-    expect(id1).toBe('perm_s1_1');
-    expect(id2).toBe('perm_s1_2');
-
-    // After stopQuery, counter persists — new query loop continues from 2
-    const id3 = `perm_s1_${++session.permRequestCounter}`;
-    expect(id3).toBe('perm_s1_3');
-    // No collision with previous IDs
-    expect(new Set([id1, id2, id3]).size).toBe(3);
-  });
-});
-
-// ─── healthCheckAll ───
-
-describe('healthCheckAll()', () => {
-  it('should detect sessions with status=running but no queryInstance and mark as stopped', () => {
-    // Simulates session whose SDK query died silently during sleep
-    const sessions = new Map<string, any>();
-    const emit = vi.fn();
-    sessions.set('s1', {
-      status: 'running',
-      queryHandle: null, // query died
-      emit,
-      window: { isDestroyed: () => false, webContents: { send: vi.fn() } },
-    });
-    sessions.set('s2', {
-      status: 'running',
-      queryHandle: { close: vi.fn() }, // healthy
-      emit: vi.fn(),
-      window: { isDestroyed: () => false, webContents: { send: vi.fn() } },
-    });
-    sessions.set('s3', {
-      status: 'stopped', // already stopped
-      queryHandle: null,
-      emit: vi.fn(),
-      window: { isDestroyed: () => false, webContents: { send: vi.fn() } },
-    });
-
-    // Simulate healthCheckAll logic
-    for (const [_id, session] of sessions) {
-      if (session.status !== 'running') continue;
-      if (!session.queryHandle) {
-        session.status = 'stopped';
-        session.emit({ type: 'process_exit' });
+    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+      while (true) {
+        if (eventQueue.length > 0) {
+          yield eventQueue.shift()!;
+        } else if (done) {
+          return;
+        } else {
+          waitForEvent = new Promise<void>((resolve, reject) => {
+            resolveIter = resolve;
+            rejectIter = reject;
+          });
+          await waitForEvent;
+        }
       }
     }
 
-    expect(sessions.get('s1').status).toBe('stopped');
-    expect(emit).toHaveBeenCalledWith({ type: 'process_exit' });
-    expect(sessions.get('s2').status).toBe('running');
-    expect(sessions.get('s3').status).toBe('stopped');
+    let sessionId = 'mock-session-id';
+    const abortController = new AbortController();
+
+    return {
+      events: eventGenerator(),
+      sendMessage: vi.fn(),
+      abort: vi.fn(() => {
+        abortController.abort();
+        done = true;
+        resolveIter?.();
+      }),
+      close: vi.fn(() => {
+        done = true;
+        resolveIter?.();
+      }),
+      getSessionId: () => sessionId,
+      closeInput: vi.fn(),
+      setModel: vi.fn(),
+      setPermissionMode: vi.fn(),
+      setMaxThinkingTokens: vi.fn(),
+    };
+  }
+}
+
+// ─── Helpers ───
+
+function makeMockWindow() {
+  const send = vi.fn();
+  return {
+    isDestroyed: () => false,
+    webContents: { send },
+    _send: send,
+  } as any;
+}
+
+// ─── Tests ───
+
+// Import the module under test AFTER mocks are set up
+const { sessionManager } = await import('./agent-session.js');
+
+beforeEach(() => {
+  mockAdapter = new MockAdapter();
+  vi.clearAllMocks();
+});
+
+describe('AgentSessionManager.createSession()', () => {
+  it('creates a session and starts the adapter', async () => {
+    const win = makeMockWindow();
+    const result = await sessionManager.createSession({
+      id: 'test-1',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    expect(result.id).toBe('test-1');
+    expect(result.branch).toBe('main');
+    expect(result.status).toBe('starting');
+    expect(result.agentType).toBe('mock');
+    expect(mockAdapter.startCallCount).toBe(1);
+
+    // Clean up
+    await sessionManager.destroySession('test-1');
+  });
+
+  it('throws for unknown adapter type', async () => {
+    const win = makeMockWindow();
+    await expect(sessionManager.createSession({
+      id: 'test-bad',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'nonexistent',
+    })).rejects.toThrow('Unknown agent adapter: nonexistent');
+  });
+
+  it('passes permission mode and system prompt to adapter config', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-config',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'plan',
+    });
+
+    expect(mockAdapter.lastConfig?.permissionMode).toBe('plan');
+    expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
+
+    await sessionManager.destroySession('test-config');
   });
 });
 
-// ─── Compaction auto-save and plan reminder ───
+describe('AgentSessionManager event processing', () => {
+  it('transitions to running on system_init and sends SESSION_STATUS', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-init',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
 
-describe('compaction auto-save and plan reminder', () => {
-  it('should trigger auto-save on compact_boundary', () => {
-    // When context is compacted, auto-save should be triggered to preserve
-    // memories before the context is wiped.
-    let autoSaveTriggered = false;
-    const triggerAutoSave = () => { autoSaveTriggered = true; };
+    // Wait for adapter.start() to be called
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
-    // Simulate compact_boundary handling
-    const message = { type: 'system', subtype: 'compact', meta: { trigger: 'auto', pre_tokens: 150000 } };
-    if (message.subtype === 'compact') {
-      triggerAutoSave();
+    mockAdapter.control!.emitEvent({
+      type: 'system_init',
+      sessionId: 'mock-session-id',
+      model: 'mock-model',
+      tools: [],
+    });
+
+    // Give the event loop time to process
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-init');
+    expect(session?.status).toBe('running');
+
+    // Should have sent SESSION_STATUS 'running' to renderer
+    expect(win._send).toHaveBeenCalledWith(
+      expect.any(String), // IPC.SESSION_STATUS
+      'test-init',
+      'running',
+    );
+
+    await sessionManager.destroySession('test-init');
+  });
+
+  it('emits events to the renderer window', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-emit',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Hello', uuid: 'u1' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The agent event channel sends events
+    const agentEventCalls = win._send.mock.calls.filter(
+      (c: any[]) => c[0].includes('agent:event'),
+    );
+    expect(agentEventCalls.length).toBeGreaterThanOrEqual(1);
+
+    await sessionManager.destroySession('test-emit');
+  });
+
+  it('buffers events in eventHistory', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-history',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'msg1', uuid: 'u1' });
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'msg2', uuid: 'u2' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const history = sessionManager.getEventHistory('test-history');
+    const textEvents = history.filter((e) => e.type === 'assistant_text');
+    expect(textEvents).toHaveLength(2);
+
+    await sessionManager.destroySession('test-history');
+  });
+});
+
+describe('AgentSessionManager.respondToPermission()', () => {
+  it('returns false for non-existent session', () => {
+    const result = sessionManager.respondToPermission('nonexistent', {
+      requestId: 'perm_1',
+      behavior: 'allow',
+    });
+    expect(result).toBe(false);
+  });
+
+  it('resolves a pending permission with allow and emits permission_resolved', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-perm',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // Trigger a permission request through the adapter's handler
+    let permResponse: PermissionResponse | null = null;
+    const permPromise = mockAdapter.control!.permissionHandler!({
+      requestId: 'adapter_1',
+      toolName: 'Bash',
+      toolUseId: 'tu_1',
+      toolInput: { command: 'ls' },
+    }).then((r) => { permResponse = r; });
+
+    // Wait for the permission_request event to arrive
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Find the requestId that the session manager assigned
+    const session = sessionManager.getSession('test-perm');
+    const pendingIds = [...session!.pendingPermissions.keys()];
+    expect(pendingIds).toHaveLength(1);
+    const requestId = pendingIds[0];
+
+    // Resolve it
+    const resolved = sessionManager.respondToPermission('test-perm', {
+      requestId,
+      behavior: 'allow',
+    });
+    expect(resolved).toBe(true);
+
+    await permPromise;
+    expect(permResponse).toMatchObject({ behavior: 'allow' });
+
+    // Should have emitted permission_resolved
+    const history = sessionManager.getEventHistory('test-perm');
+    const resolvedEvents = history.filter((e) => e.type === 'permission_resolved');
+    expect(resolvedEvents.length).toBeGreaterThanOrEqual(1);
+    expect(resolvedEvents[resolvedEvents.length - 1]).toMatchObject({
+      type: 'permission_resolved',
+      requestId,
+      decision: 'allow',
+    });
+
+    await sessionManager.destroySession('test-perm');
+  });
+
+  it('adds tool to alwaysAllowedTools on allowAlways', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-always',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1',
+      toolName: 'Edit',
+      toolUseId: 'tu_2',
+      toolInput: {},
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-always');
+    const requestId = [...session!.pendingPermissions.keys()][0];
+
+    sessionManager.respondToPermission('test-always', {
+      requestId,
+      behavior: 'allowAlways',
+    });
+
+    expect(session!.alwaysAllowedTools.has('Edit')).toBe(true);
+
+    await sessionManager.destroySession('test-always');
+  });
+
+  it('returns false for already-resolved permission', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-double',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1',
+      toolName: 'Bash',
+      toolUseId: 'tu_3',
+      toolInput: {},
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-double');
+    const requestId = [...session!.pendingPermissions.keys()][0];
+
+    // First resolve succeeds
+    expect(sessionManager.respondToPermission('test-double', { requestId, behavior: 'allow' })).toBe(true);
+    // Second resolve fails (already resolved)
+    expect(sessionManager.respondToPermission('test-double', { requestId, behavior: 'allow' })).toBe(false);
+
+    await sessionManager.destroySession('test-double');
+  });
+});
+
+describe('AgentSessionManager.permRequestCounter', () => {
+  it('generates unique IDs across permission requests', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-counter',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // Trigger two permission requests
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    });
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a2', toolName: 'Read', toolUseId: 'tu_2', toolInput: {},
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-counter');
+    const ids = [...session!.pendingPermissions.keys()];
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2); // All unique
+
+    await sessionManager.destroySession('test-counter');
+  });
+});
+
+describe('AgentSessionManager.setMode()', () => {
+  it('stores permissionMode on session even without queryHandle', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-mode',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    sessionManager.setMode('test-mode', 'acceptEdits');
+    const session = sessionManager.getSession('test-mode');
+    expect(session?.permissionMode).toBe('acceptEdits');
+
+    await sessionManager.destroySession('test-mode');
+  });
+
+  it('does not pass acceptEdits to SDK (only default/plan)', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-mode2',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // Give time for queryHandle to be set
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    sessionManager.setMode('test-mode2', 'acceptEdits');
+
+    const session = sessionManager.getSession('test-mode2');
+    // queryHandle.setPermissionMode should NOT have been called for acceptEdits
+    // (it's only called for 'default' and 'plan')
+    const handle = session?.queryHandle;
+    if (handle?.setPermissionMode) {
+      expect(handle.setPermissionMode).not.toHaveBeenCalledWith('acceptEdits');
     }
 
-    expect(autoSaveTriggered).toBe(true);
-  });
-
-  it('should send plan reminder after compaction if plan files exist', () => {
-    // After compaction, if there are session plan/todo files in memory,
-    // a reminder message should be sent to the agent.
-    const memoryFiles = [
-      { relativePath: 'sessions/current-plan.md', folder: 'sessions' },
-      { relativePath: 'sessions/todo.md', folder: 'sessions' },
-      { relativePath: 'repo/overview.md', folder: 'repo' },
-    ];
-
-    const planFiles = memoryFiles
-      .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
-
-    expect(planFiles).toHaveLength(2);
-
-    const fileList = planFiles.map(f => f.relativePath).join(', ');
-    const reminderMsg = `[System] Context was just compacted. You have active plan/todo files in memory: ${fileList}. Use memory_read to restore your progress before continuing.`;
-
-    expect(reminderMsg).toContain('sessions/current-plan.md');
-    expect(reminderMsg).toContain('sessions/todo.md');
-    expect(reminderMsg).toContain('memory_read');
-  });
-
-  it('should NOT send plan reminder if no plan files exist', () => {
-    const memoryFiles = [
-      { relativePath: 'repo/overview.md', folder: 'repo' },
-      { relativePath: 'conventions/naming.md', folder: 'conventions' },
-    ];
-
-    const planFiles = memoryFiles
-      .filter(f => f.folder === 'sessions' && /plan|todo/i.test(f.relativePath));
-
-    expect(planFiles).toHaveLength(0);
+    await sessionManager.destroySession('test-mode2');
   });
 });
 
-// ─── Dev server preservation on stop ───
+describe('AgentSessionManager.stopQuery()', () => {
+  it('resolves all pending permissions as denied on stop', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-stop',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
 
-describe('dev server preservation on stopQuery', () => {
-  it('should NOT kill dev servers when user stops query', () => {
-    // Dev servers should survive stop/continue cycles
-    // They are only cleaned up on natural query completion and session destroy.
-    const killDevServerCalled = false;
-    // In stopQuery, we should NOT call killDetectedPorts
-    expect(killDevServerCalled).toBe(false);
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    let permResolved: PermissionResponse | null = null;
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    }).then((r) => { permResolved = r; });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.stopQuery('test-stop');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(permResolved).toMatchObject({ behavior: 'deny' });
+
+    // Should have emitted mode_sync after stop
+    const history = sessionManager.getEventHistory('test-stop');
+    const modeSyncEvents = history.filter((e) => e.type === 'mode_sync');
+    expect(modeSyncEvents.length).toBeGreaterThanOrEqual(1);
+
+    await sessionManager.destroySession('test-stop');
   });
 
-  it('should kill dev servers on natural query completion', () => {
-    let portsKilled = false;
-    const detectedPorts = new Set([3000, 8080]);
+  it('starts a new query after stopping (adapter.start called again)', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-restart',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
 
-    // Simulate natural completion (stoppedByUser = false)
-    const stoppedByUser = false;
-    if (!stoppedByUser) {
-      // Kill dev servers
-      portsKilled = detectedPorts.size > 0;
-    }
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    expect(mockAdapter.startCallCount).toBe(1);
 
-    expect(portsKilled).toBe(true);
+    await sessionManager.stopQuery('test-restart');
+    await new Promise((r) => setTimeout(r, 100));
+
+    // adapter.start() should have been called a second time
+    expect(mockAdapter.startCallCount).toBe(2);
+
+    await sessionManager.destroySession('test-restart');
   });
 });
 
-// ─── mode_sync re-emission in stopQuery ───
+describe('AgentSessionManager.healthCheckAll()', () => {
+  it('marks running sessions with null queryHandle as stopped', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-health',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
 
-describe('stopQuery mode_sync re-emission', () => {
-  it('should emit mode_sync after resolving pending permissions in stopQuery', () => {
-    const emittedEvents: any[] = [];
-    const emit = (event: any) => emittedEvents.push(event);
-    const session = { permissionMode: 'acceptEdits' };
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
 
-    // Simulate stopQuery behavior: resolve permissions, then re-sync mode
-    emit({ type: 'permission_resolved', requestId: 'req1', toolUseId: 'tu1', decision: 'deny' });
-    emit({ type: 'mode_sync', mode: session.permissionMode });
+    // Simulate system_init to move to running
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
 
-    expect(emittedEvents).toHaveLength(2);
-    expect(emittedEvents[1]).toEqual({ type: 'mode_sync', mode: 'acceptEdits' });
+    const session = sessionManager.getSession('test-health');
+    expect(session?.status).toBe('running');
+
+    // Simulate query dying silently (null out queryHandle)
+    (session as any).queryHandle = null;
+
+    sessionManager.healthCheckAll();
+
+    expect(session?.status).toBe('stopped');
+
+    await sessionManager.destroySession('test-health');
+  });
+});
+
+describe('AgentSessionManager.destroySession()', () => {
+  it('removes session from the manager', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-destroy',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    expect(sessionManager.getSession('test-destroy')).toBeDefined();
+
+    await sessionManager.destroySession('test-destroy');
+
+    expect(sessionManager.getSession('test-destroy')).toBeUndefined();
+  });
+
+  it('resolves pending permissions as denied on destroy', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-destroy-perm',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    let permResolved: PermissionResponse | null = null;
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    }).then((r) => { permResolved = r; });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.destroySession('test-destroy-perm');
+
+    expect(permResolved).toMatchObject({ behavior: 'deny', message: 'Session destroyed' });
+  });
+});
+
+describe('AgentSessionManager.sendMessage()', () => {
+  it('forwards message to adapter queryHandle', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const sent = sessionManager.sendMessage('test-send', 'Hello agent');
+    expect(sent).toBe(true);
+
+    // Verify it was recorded in event history
+    const history = sessionManager.getEventHistory('test-send');
+    const userMsgs = history.filter((e) => e.type === 'user_message');
+    expect(userMsgs).toContainEqual({ type: 'user_message', text: 'Hello agent' });
+
+    await sessionManager.destroySession('test-send');
+  });
+
+  it('returns false for non-existent session', () => {
+    expect(sessionManager.sendMessage('nonexistent', 'hello')).toBe(false);
+  });
+});
+
+describe('AgentSessionManager.listSessions()', () => {
+  it('returns info for all sessions', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'list-1', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await sessionManager.createSession({
+      id: 'list-2', branch: 'feat', cwd: '/repo2', repoPath: '/repo2', window: win, adapterType: 'mock',
+    });
+
+    const sessions = sessionManager.listSessions();
+    const ids = sessions.map((s) => s.id);
+    expect(ids).toContain('list-1');
+    expect(ids).toContain('list-2');
+
+    await sessionManager.destroySession('list-1');
+    await sessionManager.destroySession('list-2');
   });
 });

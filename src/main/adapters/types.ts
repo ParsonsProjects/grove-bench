@@ -134,4 +134,8 @@ export interface AgentAdapter {
 
   /** Start a new agent query, returning a handle to interact with it */
   start(config: AdapterConfig): Promise<AgentQueryHandle>;
+
+  /** Release any adapter-level resources (open connections, child processes).
+   *  Called during app shutdown. Optional — stateless adapters can omit. */
+  dispose?(): Promise<void>;
 }

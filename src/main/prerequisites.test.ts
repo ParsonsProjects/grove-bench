@@ -78,9 +78,9 @@ describe('checkAllPrerequisites()', () => {
 
     const result = await checkAllPrerequisites();
     expect(result.git.available).toBe(true);
-    expect(result.claudeCode.available).toBe(true);
-    expect(result.claudeCode.authenticated).toBe(true);
-    expect(result.claudeCode.email).toBe('user@example.com');
+    expect(result.agent.available).toBe(true);
+    expect(result.agent.authenticated).toBe(true);
+    expect(result.agent.email).toBe('user@example.com');
   });
 
   it('returns combined results when agent is not available', async () => {
@@ -89,6 +89,6 @@ describe('checkAllPrerequisites()', () => {
 
     const result = await checkAllPrerequisites();
     expect(result.git.available).toBe(true);
-    expect(result.claudeCode.available).toBe(false);
+    expect(result.agent.available).toBe(false);
   });
 });

@@ -28,7 +28,7 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
   ]);
   return {
     git: gitStatus,
-    claudeCode: {
+    agent: {
       available: agentStatus.available,
       path: agentStatus.path,
       authenticated: agentStatus.authenticated,

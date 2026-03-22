@@ -56,7 +56,7 @@ export interface PrerequisiteStatus {
     version?: string;
     meetsMinimum?: boolean;
   };
-  claudeCode: {
+  agent: {
     available: boolean;
     path?: string;
     authenticated?: boolean;

@@ -75,6 +75,8 @@ interface ManagedSession {
   /** Monotonic counter for permission request IDs — persists across stopQuery restarts
    *  to avoid ID collisions with resolved permissions from previous query loops. */
   permRequestCounter: number;
+  /** Guard against concurrent runQuery calls (e.g. rapid double-stop). */
+  isStartingQuery: boolean;
 }
 
 export interface SessionCompletionResult {
@@ -215,6 +217,7 @@ class AgentSessionManager {
       autoSaveInProgress: false,
       emit: null,
       permRequestCounter: 0,
+      isStartingQuery: false,
     };
 
     this.sessions.set(id, session);
@@ -261,13 +264,22 @@ class AgentSessionManager {
   ) {
     const { id, abortController } = session;
 
+    // Guard against concurrent runQuery calls (e.g. rapid double-stop)
+    if (session.isStartingQuery) {
+      logger.warn(`[runQuery] session=${id} already starting — skipping duplicate`);
+      return;
+    }
+    session.isStartingQuery = true;
+
     const pendingPermissions = session.pendingPermissions;
 
     logger.debug(`[runQuery] session=${id} starting`);
 
     // Build adapter config from session state + app settings
     const currentSettings = settings.getSettings();
-    const handle = await session.adapter.start({
+    let handle: AgentQueryHandle;
+    try {
+    handle = await session.adapter.start({
       cwd: session.worktreePath,
       permissionMode: session.permissionMode,
       appendSystemPrompt: session.appendSystemPrompt,
@@ -318,7 +330,13 @@ class AgentSessionManager {
       },
     });
 
+    } catch (startErr) {
+      session.isStartingQuery = false;
+      throw startErr;
+    }
+
     session.queryHandle = handle;
+    session.isStartingQuery = false;
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
@@ -521,10 +539,11 @@ class AgentSessionManager {
       if (decision.behavior === 'allowAlways') {
         session.alwaysAllowedTools.add(pending.toolName);
       }
-      const result: any = { behavior: 'allow', updatedInput: pending.toolInput };
-      if (decision.updatedPermissions) {
-        result.updatedPermissions = decision.updatedPermissions;
-      }
+      const result: PermissionResponse = {
+        behavior: 'allow',
+        updatedInput: pending.toolInput,
+        ...(decision.updatedPermissions ? { updatedPermissions: decision.updatedPermissions } : {}),
+      };
       pending.resolve(result);
     } else {
       pending.resolve({
@@ -556,7 +575,7 @@ class AgentSessionManager {
     // 'acceptEdits' is an app-level concept handled by our canUseTool callback.
     if (session.queryHandle?.setPermissionMode && (mode === 'default' || mode === 'plan')) {
       try {
-        session.queryHandle.setPermissionMode(mode as any);
+        session.queryHandle.setPermissionMode(mode);
       } catch (e) {
         logger.warn(`Failed to set mode for session ${id}:`, e);
       }

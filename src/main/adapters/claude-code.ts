@@ -9,6 +9,7 @@ import type {
   AdapterConfig,
   AdapterPrerequisiteStatus,
   ModelInfo,
+  PermissionResponse,
   UserMessage,
 } from './types.js';
 import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
@@ -423,15 +424,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     const abortController = new AbortController();
     let sessionId: string | null = null;
-    let permRequestCounter = 0;
 
     // Build the canUseTool callback from the adapter config.
-    // Return type is `any` to avoid coupling our PermissionResponse to the SDK's PermissionResult.
     const canUseTool = async (
       toolName: string,
       input: Record<string, unknown>,
       options: { toolUseID: string; decisionReason?: string; suggestions?: unknown[] },
-    ): Promise<any> => {
+    ): Promise<PermissionResponse> => {
       // Allowlist check
       if (config.allowedTools && !config.allowedTools.has(toolName)) {
         return { behavior: 'deny' as const, message: `Tool "${toolName}" is not allowed in this session` };
@@ -465,8 +464,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (filePath && typeof filePath === 'string') {
           const allowWrite = (config.sandbox as any)?.filesystem?.allowWrite as string[] | undefined;
           if (allowWrite && allowWrite.length > 0) {
-            const resolved = path.resolve(filePath);
-            const allowed = allowWrite.some((dir: string) => resolved.startsWith(path.resolve(dir)));
+            const resolved = path.resolve(config.cwd, filePath);
+            const allowed = allowWrite.some((dir: string) => resolved.startsWith(path.resolve(config.cwd, dir)));
             if (!allowed) {
               return { behavior: 'deny' as const, message: `Path "${filePath}" is outside the allowed write directories` };
             }
@@ -479,10 +478,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return { behavior: 'allow' as const, updatedInput: input };
       }
 
-      // Forward to the permission handler (which prompts the user)
-      const requestId = `perm_${++permRequestCounter}`;
+      // Forward to the permission handler (which prompts the user).
+      // The session manager assigns the canonical requestId; we pass an empty
+      // placeholder that will be overwritten by onPermissionRequest.
       return config.onPermissionRequest({
-        requestId,
+        requestId: '',
         toolName,
         toolUseId: options.toolUseID,
         toolInput: input,
@@ -549,7 +549,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       events: eventGenerator(),
 
       sendMessage(message: UserMessage) {
-        if (!inputController) return;
+        if (!inputController) {
+          console.warn('[ClaudeCodeAdapter] sendMessage called but inputController is null — message dropped');
+          return;
+        }
 
         let messageContent: string | Array<Record<string, unknown>> = message.text;
         if (message.images && message.images.length > 0) {
@@ -598,7 +601,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
 
       setPermissionMode(mode) {
-        q.setPermissionMode(mode as any);
+        // The SDK accepts the same mode strings as our PermissionMode type
+        q.setPermissionMode(mode);
       },
 
       async setMaxThinkingTokens(tokens: number | null) {
