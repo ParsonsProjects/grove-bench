@@ -924,7 +924,7 @@ class MessageStore {
           text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
         });
         // Auto-remove finished tasks after a short delay
-        if (event.taskStatus !== 'running') {
+        {
           const taskId = event.taskId;
           setTimeout(() => {
             this.removeBackgroundTask(sessionId, taskId);
