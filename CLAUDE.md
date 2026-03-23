@@ -7,7 +7,7 @@ Multi-agent git worktree orchestrator for Claude Code. Windows-native Electron d
 - **Runtime:** Electron 33 (main + renderer process)
 - **UI:** Svelte 5, Tailwind CSS v4, Bits UI, xterm.js
 - **Backend:** Node.js, node-pty, execa (git CLI), Zod
-- **Build:** Vite, Electron Forge (Squirrel Windows installer)
+- **Build:** Vite, electron-builder (NSIS Windows installer)
 - **Tests:** Vitest, Testing Library (Svelte), jsdom
 - **Language:** TypeScript 5.7
 
@@ -56,7 +56,7 @@ TODO.md                # Gap analysis vs competitors
 
 ## Config Files
 
-- `forge.config.mjs` — Electron Forge config
+- `electron-builder.yml` — electron-builder config (NSIS installer, signing, publish)
 - `vite.main.config.mjs` — Vite config for main process
 - `vite.renderer.config.mjs` — Vite config for renderer
 - `vite.preload.config.mjs` — Vite config for preload script
@@ -66,9 +66,10 @@ TODO.md                # Gap analysis vs competitors
 ## Commands
 
 ```bash
-npm start              # Run in dev mode (electron-forge start)
-npm run package        # Package the app
-npm run make           # Build distributable installer
+npm start              # Run in dev mode (Vite dev server + Electron)
+npm run build          # Build main, preload, and renderer
+npm run dist           # Build + package NSIS installer (unsigned)
+npm run dist:publish   # Build + package + publish to GitHub (CI only)
 npm test               # Run all tests (vitest run)
 npm run test:watch     # Watch mode
 npm run test:coverage  # Run tests with coverage

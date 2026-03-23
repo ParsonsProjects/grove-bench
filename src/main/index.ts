@@ -12,17 +12,10 @@ import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-import electronSquirrelStartup from 'electron-squirrel-startup';
-if (electronSquirrelStartup) app.quit();
-
 // Register built-in agent adapters before anything else uses them
 initAdapters();
 
 registerHandlers();
-
-declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
-declare const MAIN_WINDOW_VITE_NAME: string;
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -38,9 +31,11 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
-    icon: path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.ico')
+      : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -62,12 +57,10 @@ function createWindow() {
     nativeTheme.themeSource = appSettings.theme;
   } catch { /* nativeTheme may not be available */ }
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
-    );
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
   mainWindow.once('ready-to-show', () => {
