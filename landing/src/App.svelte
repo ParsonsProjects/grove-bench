@@ -624,30 +624,40 @@
         {/each}
       </div>
 
-      <!-- Code example (ngrok-inspired) -->
+      <!-- What happens under the hood -->
       <div class="mt-20 {visible['steps'] ? 'animate-fade-in-up delay-4' : 'opacity-0'}">
+        <p class="text-center text-[10px] text-muted-foreground uppercase tracking-wider mb-4">What happens under the hood</p>
         <div class="bg-card border border-border max-w-xl mx-auto">
           <div class="flex items-center h-8 px-3 border-b border-border bg-sidebar">
             <span class="text-[10px] text-muted-foreground">Terminal</span>
           </div>
           <div class="p-5 text-xs space-y-2">
+            <div class="text-muted-foreground/40"># Grove Bench creates isolated worktrees automatically</div>
             <div class="flex gap-2">
               <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">grove-bench spawn --repo ./my-app --branch feat/auth</span>
+              <span class="text-muted-foreground">git worktree add ../worktrees/a3f8b2 -b feat/auth</span>
             </div>
-            <div class="text-muted-foreground/60 pl-5">Creating worktree at /worktrees/a3f8b2...</div>
-            <div class="text-muted-foreground/60 pl-5">Spawning Claude Code agent...</div>
-            <div class="text-green-500/80 pl-5">Agent 1 ready on feat/auth</div>
+            <div class="text-muted-foreground/60 pl-5">Preparing worktree (new branch 'feat/auth')</div>
+            <div class="flex gap-2">
+              <span class="text-green-500 shrink-0">$</span>
+              <span class="text-muted-foreground">git worktree add ../worktrees/c7d1e4 -b feat/api</span>
+            </div>
+            <div class="text-muted-foreground/60 pl-5">Preparing worktree (new branch 'feat/api')</div>
+            <div class="mt-2 text-muted-foreground/40"># Each agent gets its own PTY + working directory</div>
+            <div class="flex gap-2">
+              <span class="text-green-500 shrink-0">$</span>
+              <span class="text-muted-foreground">cd ../worktrees/a3f8b2 && claude</span>
+            </div>
+            <div class="text-green-500/80 pl-5">╭ Claude Code Agent ─ worktrees/a3f8b2</div>
+            <div class="text-green-500/80 pl-5">╰ Ready</div>
             <div class="mt-2 flex gap-2">
               <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">grove-bench spawn --repo ./my-app --branch feat/api</span>
+              <span class="text-muted-foreground">git worktree list</span>
             </div>
-            <div class="text-green-500/80 pl-5">Agent 2 ready on feat/api</div>
-            <div class="mt-2 flex gap-2">
-              <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">grove-bench status</span>
-            </div>
-            <div class="text-primary pl-5">2 agents running, 0 conflicts</div>
+            <div class="text-muted-foreground/60 pl-5">/my-app &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;abc1234 [main]</div>
+            <div class="text-muted-foreground/60 pl-5">/worktrees/a3f8b2 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;abc1234 [feat/auth]</div>
+            <div class="text-muted-foreground/60 pl-5">/worktrees/c7d1e4 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;abc1234 [feat/api]</div>
+            <div class="mt-2 text-primary pl-5">2 agents running · separate branches · no lock contention</div>
           </div>
         </div>
       </div>
