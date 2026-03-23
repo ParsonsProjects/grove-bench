@@ -210,6 +210,19 @@ const api: GroveBenchAPI = {
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
+
+  // Auto-update
+  checkForUpdate: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.UPDATE_DOWNLOAD),
+  installUpdate: () => ipcRenderer.send(IPC.UPDATE_INSTALL),
+  onUpdateStatus: (callback: (status: import('../shared/types.js').UpdateStatus) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: import('../shared/types.js').UpdateStatus) =>
+      callback(status);
+    ipcRenderer.on(IPC.UPDATE_STATUS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.UPDATE_STATUS, handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('groveBench', api);

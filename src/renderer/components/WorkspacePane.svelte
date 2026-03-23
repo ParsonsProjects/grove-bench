@@ -161,7 +161,7 @@
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 17h8v2H4v-2Zm-2-4h2v2H2v-2h2v-2H2V9h2V7H2V5h2V3h16v2h2v16H4v-2H2v-6Zm4-2h2v2H6v-2Zm2-2H6V7h2v2Zm2 2H8v-2h2v2Z"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><polyline points="4,6 10,12 4,18"/><line x1="12" y1="18" x2="20" y2="18"/></svg>
       Terminal
       {#if terminalRunning}
         <span class="inline-block w-2 h-2 bg-green-500 animate-pulse"></span>

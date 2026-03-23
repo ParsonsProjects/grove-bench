@@ -11,6 +11,7 @@ import { parseGitStatusPorcelain } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import { terminalManager } from './terminal.js';
+import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import { loadAppState, saveActiveTab, saveOpenTabs } from './app-state.js';
@@ -739,4 +740,10 @@ export function registerHandlers() {
     }
     return buf.toString('utf-8');
   });
+
+  // ─── Auto-updater ───
+
+  ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdate());
+  ipcMain.handle(IPC.UPDATE_DOWNLOAD, () => downloadUpdate());
+  ipcMain.on(IPC.UPDATE_INSTALL, () => installUpdate());
 }

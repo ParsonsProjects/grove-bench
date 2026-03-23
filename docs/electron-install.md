@@ -1,5 +1,7 @@
 # Electron Install & Auto-Update
 
+> **Status: Implemented.** The auto-update feature has been added to the codebase. See `src/main/auto-updater.ts` and `src/renderer/components/UpdateNotification.svelte`.
+
 ## Building the .exe
 
 The project uses Electron Forge with MakerSquirrel (Windows installer) and MakerZIP (portable zip).

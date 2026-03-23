@@ -12,21 +12,20 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 
 ## 2. Goals (v1)
 
-- Electron app for Windows that manages up to 3 concurrent agent sessions
+- Electron app for Windows that manages multiple concurrent agent sessions
 - Automatic git worktree creation and cleanup per agent
 - Each agent gets a real interactive terminal (PTY) scoped to its worktree
 - Soft directory scoping so agents stay within their worktree (ergonomic safety net, not a hard sandbox)
-- Ephemeral sessions (no state persistence across app restarts)
-- Support Claude Code as the first (and only v1) agent
+- Session state persistence across app restarts
+- Support Claude Code as the first agent, with an adapter pattern for future agents
 
 ## 3. Non-Goals (v1)
 
 - Cross-platform (macOS/Linux) support
 - Task orchestration, auto-assignment, or GitHub issue integration
-- Built-in diff viewer
-- Session persistence or reconnection
-- Support for agents other than Claude Code
 - Container-based sandboxing
+
+> **Note:** Several former non-goals have since been implemented: built-in diff viewer (`DiffView.svelte`, `DiffBlock.svelte`), session persistence (`app-state.ts`, `window-state.ts`), and an adapter pattern for multiple agent types (`src/main/adapters/`).
 
 ## 4. Architecture
 
@@ -36,12 +35,12 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 ┌─────────────────────────────────────────────────────────┐
 │                    Electron Main Process                 │
 │                                                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  AgentSession │  │  AgentSession │  │  AgentSession │  │
-│  │  - node-pty   │  │  - node-pty   │  │  - node-pty   │  │
-│  │  - worktree   │  │  - worktree   │  │  - worktree   │  │
-│  │  - branch     │  │  - branch     │  │  - branch     │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
+│  ┌──────────────┐  ┌──────────────┐  ┌─────── ─ ─    │
+│  │  AgentSession │  │  AgentSession │  │  ...N sessions │
+│  │  - node-pty   │  │  - node-pty   │  │  - node-pty   │
+│  │  - worktree   │  │  - worktree   │  │  - worktree   │
+│  │  - branch     │  │  - branch     │  │  - branch     │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬── ─ ─   │
 │         │                 │                 │           │
 │  ┌──────┴─────────────────┴─────────────────┴───────┐   │
 │  │              WorktreeManager (execa + git CLI)    │   │
@@ -55,10 +54,10 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 ┌─────────────────────────────────────────────────────────┐
 │                  Electron Renderer Process               │
 │                                                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  TerminalPane │  │  TerminalPane │  │  TerminalPane │  │
-│  │  (xterm.js)   │  │  (xterm.js)   │  │  (xterm.js)   │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│  ┌──────────────┐  ┌──────────────┐  ┌─────── ─ ─    │
+│  │  TerminalPane │  │  TerminalPane │  │  ...N panes    │
+│  │  (xterm.js)   │  │  (xterm.js)   │  │  (xterm.js)   │
+│  └──────────────┘  └──────────────┘  └─────── ─ ─      │
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │              Sidebar / Controls                    │   │
@@ -118,7 +117,7 @@ Worktrees are created inside `<repoPath>/.grove-wt/<short-id>/` where `short-id`
 
 Alternative considered: `%APPDATA%/grove-bench/worktrees/` -- rejected because worktrees perform better when they're on the same filesystem as the repo, and it's easier to reason about where they are.
 
-Alternative considered: Full UUIDs as directory names -- rejected because a path like `C:\Users\username\Documents\Projects\my-app\.grove-worktrees\550e8400-e29b-41d4-a716-446655440000\node_modules\@scope\package\dist\index.js` easily exceeds 260 characters. 8-char IDs give us 16^8 (4 billion) unique values, more than enough for 3 concurrent sessions.
+Alternative considered: Full UUIDs as directory names -- rejected because a path like `C:\Users\username\Documents\Projects\my-app\.grove-worktrees\550e8400-e29b-41d4-a716-446655440000\node_modules\@scope\package\dist\index.js` easily exceeds 260 characters. 8-char IDs give us 16^8 (4 billion) unique values, more than enough for any number of concurrent sessions.
 
 #### AgentSessionManager
 
@@ -141,8 +140,6 @@ interface CreateSessionOpts {
 
 class AgentSessionManager {
   private sessions: Map<string, AgentSession>;
-  private readonly MAX_SESSIONS = 3;
-
   async createSession(opts: CreateSessionOpts): Promise<AgentSession>;
   async destroySession(id: string): Promise<void>;
   async destroyAll(): Promise<void>;
@@ -211,8 +208,8 @@ Panes are resizable. Clicking an agent in the sidebar focuses its terminal. Pane
 UI dependencies:
 - Svelte 5 (with runes for reactivity)
 - xterm.js + @xterm/addon-fit + @xterm/addon-web-links
-- svelte-splitpanes (for resizable split panes)
-- Tailwind CSS (utility-first, no component library bloat)
+- Bits UI (component library)
+- Tailwind CSS v4 (utility-first styling)
 
 **Why Svelte over React:** The renderer UI is thin (sidebar, terminal panes, dialogs, toasts). Svelte's lighter approach is a better fit: no virtual DOM overhead, less boilerplate, and xterm.js lifecycle management is cleaner as a Svelte action than a React hook with `useEffect` cleanup. Svelte 5's runes (`$state`, `$derived`, `$effect`) give us fine-grained reactivity without the `useState`/`useCallback` ceremony.
 
@@ -570,73 +567,69 @@ If not found, show a helpful error: "Claude Code not found. Install it with `npm
 
 ## 9. Project Structure
 
+> **Note:** This is a simplified overview. See `CLAUDE.md` for the current detailed structure.
+
 ```
 grove-bench/
 ├── package.json
 ├── tsconfig.json
-├── svelte.config.js             # Svelte config
-├── vite.config.ts               # Vite config (Svelte uses Vite)
-├── forge.config.ts              # electron-forge config
+├── svelte.config.mjs            # Svelte config
+├── forge.config.mjs             # Electron Forge config
+├── vite.main.config.mjs         # Vite config for main process
+├── vite.renderer.config.mjs     # Vite config for renderer
+├── vite.preload.config.mjs      # Vite config for preload
+├── vitest.config.mts            # Test config
 ├── src/
 │   ├── main/                    # Electron main process
-│   │   ├── index.ts             # app entry point
+│   │   ├── index.ts             # App entry point
 │   │   ├── ipc.ts               # IPC handler registration
-│   │   ├── git.ts               # typed git CLI wrapper (execa)
+│   │   ├── git.ts               # Typed git CLI wrapper (execa)
 │   │   ├── worktree-manager.ts
-│   │   ├── agent-session.ts
-│   │   ├── prerequisites.ts     # git/claude detection & version checks
-│   │   ├── shell-detect.ts      # preferred shell detection
-│   │   └── preload.ts           # contextBridge definitions
+│   │   ├── agent-session.ts     # Session lifecycle
+│   │   ├── agent-utils.ts       # Agent helper utilities
+│   │   ├── prerequisites.ts     # Git/Claude detection & version checks
+│   │   ├── terminal.ts          # node-pty management
+│   │   ├── preload.ts           # contextBridge definitions
+│   │   ├── app-state.ts         # Persistent app state
+│   │   ├── memory.ts            # Project memory system
+│   │   ├── memory-autosave.ts
+│   │   ├── logger.ts            # File-based logging
+│   │   └── adapters/            # Agent adapter pattern
+│   │       ├── types.ts         # Adapter interfaces
+│   │       ├── registry.ts      # Adapter registry
+│   │       └── claude-code.ts   # Claude Code adapter
 │   ├── renderer/                # Svelte UI
-│   │   ├── index.html
 │   │   ├── main.ts              # Svelte app entry
 │   │   ├── App.svelte
-│   │   ├── components/
-│   │   │   ├── Sidebar.svelte
-│   │   │   ├── TerminalPane.svelte
-│   │   │   ├── NewAgentDialog.svelte
-│   │   │   ├── RepoSelector.svelte
-│   │   │   ├── ErrorToast.svelte
-│   │   │   └── PrerequisiteCheck.svelte
-│   │   ├── actions/
-│   │   │   └── terminal.ts      # xterm.js Svelte action
-│   │   ├── stores/
-│   │   │   └── sessions.ts      # session state (Svelte writable store)
-│   │   └── styles/
-│   │       └── globals.css      # Tailwind imports
-│   └── shared/                  # Types shared between main/renderer
-│       └── types.ts
-├── .gitignore
-└── README.md
+│   │   ├── components/          # ~34 Svelte components
+│   │   ├── lib/                 # Utilities
+│   │   ├── stores/              # Svelte stores (sessions, messages, settings, etc.)
+│   │   └── styles/              # CSS
+│   └── shared/
+│       └── types.ts             # Shared types between main/renderer
+├── docs/                        # Design docs, user stories
+└── landing/                     # GitHub Pages landing site
 ```
 
 ## 10. Dependencies
 
-### Production
-| Package | Purpose | Notes |
-|---------|---------|-------|
-| electron | App shell | Pin to v33.x (test node-pty compat before upgrading) |
-| node-pty | PTY for terminals | Native module, needs rebuild for Electron |
-| xterm | Terminal emulator UI | v5+ |
-| @xterm/addon-fit | Auto-resize terminal | |
-| @xterm/addon-web-links | Clickable URLs in terminal | |
-| execa | Git CLI wrapper | Lightweight, no native modules |
-| svelte | UI framework | v5 (with runes) |
-| svelte-splitpanes | Resizable split panes | |
+> **Note:** See `package.json` for the authoritative dependency list. Key production dependencies:
 
-### Development
 | Package | Purpose |
 |---------|---------|
-| @electron-forge/cli | Build tooling |
-| @electron-forge/plugin-vite | Vite integration for Forge |
-| @electron/rebuild | Native module rebuild |
-| @sveltejs/vite-plugin-svelte | Svelte + Vite integration |
-| vite | Bundler for renderer |
-| typescript | |
-| tailwindcss | Styling |
-| eslint | Linting |
-
-Note: `uuid` was removed. We use `crypto.randomUUID().slice(0, 8)` for short IDs, which is built into Node.js.
+| electron | App shell (v33.x) |
+| node-pty | PTY for terminals (native module) |
+| @xterm/xterm | Terminal emulator UI (v6) |
+| @xterm/addon-fit | Auto-resize terminal |
+| @xterm/addon-web-links | Clickable URLs in terminal |
+| execa | Git CLI wrapper |
+| @anthropic-ai/claude-agent-sdk | Claude Code agent integration |
+| bits-ui | UI component library |
+| marked + highlight.js + dompurify | Markdown rendering |
+| fuse.js | Fuzzy search |
+| zod | Schema validation |
+| diff | Diff computation |
+| tailwind-merge + tailwind-variants | Tailwind utility helpers |
 
 ## 11. Risk Assessment
 
@@ -649,7 +642,7 @@ Note: `uuid` was removed. We use `crypto.randomUUID().slice(0, 8)` for short IDs
 | Claude Code not installed on user's machine | High | Medium (dead feature) | Detection + clear install instructions at session creation time |
 | Git not installed or too old | Medium | High (blocks everything) | Check at startup, require 2.17+. Clear error message with install link |
 | Git worktree branch conflicts | Low | Medium | Enforce unique branch naming. Validate before creation |
-| High memory usage with 3 xterm instances | Low | Low | xterm.js is lightweight. node-pty processes are the main cost |
+| High memory usage with many xterm instances | Low | Low | xterm.js is lightweight. node-pty processes are the main cost |
 | Claude Code changes its CLI interface | Medium | High | Abstract the agent spawn config. Pin to known-good version in docs |
 | PATH_MAX exceeded on Windows | Medium | Medium (broken dependencies) | Short IDs (8 chars), short dir name (.grove-wt), document as requirement |
 | Missing node_modules in worktrees confuses users | High | Low (expected, documented) | Display note in "New Agent" dialog. Agent can npm install as first step |
@@ -689,12 +682,12 @@ All errors log to a file at `%APPDATA%/grove-bench/logs/`. Useful for debugging 
 
 ## 14. v2 Considerations (Out of Scope, Documented for Later)
 
-- Support for Codex, Gemini CLI, Aider, and other agents
-- Built-in diff viewer (compare agent branches against base)
-- Session persistence and reconnection
-- Task orchestration (assign GitHub issues to agents)
+- Support for Codex, Gemini CLI, Aider, and other agents (adapter pattern is in place)
 - Docker-based sandboxing
 - Cross-platform support (macOS, Linux)
 - Shared CLAUDE.md / agent instructions per worktree
 - Agent-to-agent communication (one agent's output feeds another)
 - Git operations UI (merge, rebase, cherry-pick between agent branches)
+- Auto-update via electron-updater (see `docs/electron-install.md`)
+
+> **Already implemented since v0.3:** Built-in diff viewer, session persistence, task orchestration foundations.
