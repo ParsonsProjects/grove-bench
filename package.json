@@ -2,6 +2,8 @@
   "name": "grove-bench",
   "version": "0.1.0",
   "description": "Multi-agent git worktree orchestrator for Claude Code",
+  "license": "MIT",
+  "author": "Alan John",
   "main": ".vite/build/index.js",
   "scripts": {
     "start": "electron-forge start",

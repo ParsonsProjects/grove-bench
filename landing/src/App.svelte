@@ -268,13 +268,13 @@
               </svg>
               <span class="text-[10px] text-muted-foreground">Grove Bench</span>
               <div class="ml-auto flex gap-1.5">
-                <span class="w-6 h-5 flex items-center justify-center hover:bg-muted cursor-default">
+                <span class="w-6 h-5 flex items-center justify-center hover:bg-muted cursor-pointer">
                   <svg width="10" height="1" fill="currentColor" class="text-muted-foreground"><rect width="10" height="1"/></svg>
                 </span>
-                <span class="w-6 h-5 flex items-center justify-center hover:bg-muted cursor-default">
+                <span class="w-6 h-5 flex items-center justify-center hover:bg-muted cursor-pointer">
                   <svg width="8" height="8" fill="none" stroke="currentColor" class="text-muted-foreground" stroke-width="1"><rect x="0.5" y="0.5" width="7" height="7"/></svg>
                 </span>
-                <span class="w-6 h-5 flex items-center justify-center hover:bg-red-500/80 hover:text-white cursor-default">
+                <span class="w-6 h-5 flex items-center justify-center hover:bg-red-500/80 hover:text-white cursor-pointer">
                   <svg width="8" height="8" fill="none" stroke="currentColor" class="text-muted-foreground" stroke-width="1.2"><line x1="1" y1="1" x2="7" y2="7"/><line x1="7" y1="1" x2="1" y2="7"/></svg>
                 </span>
               </div>
@@ -292,8 +292,13 @@
 
                   <!-- Repo -->
                   <div class="mb-1">
-                    <div class="flex items-center gap-1.5 px-1.5 py-1 text-[10px] font-medium text-foreground/80">
+                    <div class="flex items-center justify-between px-1.5 py-1 text-[10px] font-medium text-foreground/80 group">
                       <span class="text-muted-foreground/60">my-project</span>
+                      <div class="flex items-center gap-0.5">
+                        <span class="w-3.5 h-3.5 flex items-center justify-center text-muted-foreground/40 hover:text-primary cursor-pointer">
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -301,27 +306,35 @@
                   <div class="space-y-0.5">
                     {#each sessions as session}
                       <button
-                        class="w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors {activeSession === session.id ? 'bg-accent' : 'hover:bg-accent/50'}"
+                        class="w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors cursor-pointer {activeSession === session.id ? 'bg-accent' : 'hover:bg-accent/50'}"
                         onclick={() => { activeSession = session.id; activeTab = 'activity'; }}
                       >
                         <span class="w-1.5 h-1.5 shrink-0 {session.status === 'running' ? 'bg-primary animate-pulse' : 'bg-green-500'}"></span>
-                        <svg width="10" height="10" viewBox="0 0 14 14" fill="none" class="shrink-0 text-muted-foreground/50">
-                          <rect x="1" y="1" width="5" height="5" stroke="currentColor" stroke-width="1"/>
-                          <rect x="8" y="8" width="5" height="5" stroke="currentColor" stroke-width="1"/>
-                          <line x1="6" y1="3.5" x2="10.5" y2="3.5" stroke="currentColor" stroke-width="1"/>
-                          <line x1="10.5" y1="3.5" x2="10.5" y2="8" stroke="currentColor" stroke-width="1"/>
-                        </svg>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" class="shrink-0 text-muted-foreground/50"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
                         <span class="text-[10px] truncate {activeSession === session.id ? 'text-foreground' : 'text-muted-foreground'}">{session.branch}</span>
                       </button>
                     {/each}
                   </div>
                 </div>
 
-                <!-- Sidebar bottom buttons -->
-                <div class="border-t border-border p-2 space-y-1">
-                  <div class="flex items-center gap-1.5 px-2 py-1 text-[10px] text-primary cursor-default">
-                    <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><rect x="5" y="1" width="2" height="10"/><rect x="1" y="5" width="10" height="2"/></svg>
-                    <span>New Agent</span>
+                <!-- Sidebar bottom controls -->
+                <div class="border-t border-border p-2 space-y-1.5">
+                  <!-- Add Repo button -->
+                  <div class="flex items-center justify-center gap-1.5 px-2 py-1 text-[9px] text-muted-foreground border border-border/50 cursor-pointer hover:bg-accent/30 transition-colors">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                    Add Repo
+                  </div>
+                  <!-- Agent + Memory + Settings row -->
+                  <div class="flex gap-1">
+                    <div class="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[9px] text-foreground bg-primary/10 border border-primary/20 cursor-pointer">
+                      + Agent
+                    </div>
+                    <div class="w-6 h-6 flex items-center justify-center text-muted-foreground/60 hover:text-foreground cursor-pointer" title="Project Memory">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+                    </div>
+                    <div class="w-6 h-6 flex items-center justify-center text-muted-foreground/60 hover:text-foreground cursor-pointer" title="Settings">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -332,7 +345,7 @@
                 <div class="flex items-center bg-card border-b border-border shrink-0 overflow-x-auto">
                   {#each sessions.filter(s => s.status !== 'idle' || s.id === activeSession) as session}
                     <button
-                      class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] border-r border-border shrink-0 transition-colors
+                      class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] border-r border-border shrink-0 transition-colors cursor-pointer
                         {activeSession === session.id ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}"
                       onclick={() => { activeSession = session.id; activeTab = 'activity'; }}
                     >
@@ -345,31 +358,31 @@
                 <!-- Workspace tab bar -->
                 <div class="flex items-center border-b border-border bg-card/50 shrink-0">
                   <button
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] transition-colors
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] transition-colors cursor-pointer
                       {activeTab === 'activity' ? 'text-foreground border-b border-b-primary' : 'text-muted-foreground hover:text-foreground border-b border-b-transparent'}"
                     onclick={() => activeTab = 'activity'}
                   >
-                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><polyline points="1,8 3,4 5,6 7,2 9,5 11,3"/></svg>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
                     Activity
                     {#if sessions.find(s => s.id === activeSession)?.status === 'running'}
                       <span class="w-1 h-1 bg-primary animate-pulse"></span>
                     {/if}
                   </button>
                   <button
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] transition-colors
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] transition-colors cursor-pointer
                       {activeTab === 'changes' ? 'text-foreground border-b border-b-primary' : 'text-muted-foreground hover:text-foreground border-b border-b-transparent'}"
                     onclick={() => activeTab = 'changes'}
                   >
-                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2,1 L2,11 M6,1 L6,11 M10,1 L10,11"/></svg>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
                     Changes
                     <span class="bg-primary text-white text-[8px] px-1 font-bold">3</span>
                   </button>
                   <button
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] transition-colors
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] transition-colors cursor-pointer
                       {activeTab === 'terminal' ? 'text-foreground border-b border-b-primary' : 'text-muted-foreground hover:text-foreground border-b border-b-transparent'}"
                     onclick={() => activeTab = 'terminal'}
                   >
-                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><polyline points="2,3 5,6 2,9"/><line x1="6" y1="9" x2="10" y2="9"/></svg>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,6 10,12 4,18"/><line x1="12" y1="18" x2="20" y2="18"/></svg>
                     Terminal
                   </button>
                 </div>
@@ -491,12 +504,12 @@
     <div class="max-w-5xl mx-auto px-6 py-8" use:observe={'values'}>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-0 md:divide-x md:divide-border text-center {visible['values'] ? 'animate-fade-in-up' : 'opacity-0'}">
         <div class="md:px-8">
-          <div class="text-2xl font-bold text-primary">1:1</div>
-          <div class="text-xs text-muted-foreground mt-1">agent to worktree isolation</div>
+          <div class="text-2xl font-bold text-primary">Unlimited</div>
+          <div class="text-xs text-muted-foreground mt-1">parallel agents</div>
         </div>
         <div class="md:px-8">
           <div class="text-2xl font-bold text-foreground">0</div>
-          <div class="text-xs text-muted-foreground mt-1">branch conflicts</div>
+          <div class="text-xs text-muted-foreground mt-1">config required</div>
         </div>
         <div class="md:px-8">
           <div class="text-2xl font-bold text-green-500">100%</div>
@@ -733,6 +746,22 @@
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           Releases
+        </a>
+        <a
+          href="https://github.com/alanpjohn/grove-bench/blob/main/CONTRIBUTING.md"
+          target="_blank"
+          rel="noopener"
+          class="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Contributing
+        </a>
+        <a
+          href="https://github.com/alanpjohn/grove-bench/blob/main/LICENSE"
+          target="_blank"
+          rel="noopener"
+          class="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          License
         </a>
         <a
           href="https://github.com/alanpjohn/grove-bench/issues"
