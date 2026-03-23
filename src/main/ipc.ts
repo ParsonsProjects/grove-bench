@@ -592,7 +592,12 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PTY_SPAWN, (event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (!worktree) {
+      // Worktree may not exist yet (still being created in background).
+      // Return false so the renderer can retry later instead of showing an error.
+      logger.debug(`[PTY_SPAWN] Worktree not ready for session ${sessionId}`);
+      return false;
+    }
     return terminalManager.spawnPty(sessionId, worktree.path, event.sender);
   });
 

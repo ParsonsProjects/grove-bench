@@ -1172,17 +1172,20 @@ class MessageStore {
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.
-   *  Also unsubscribes any existing listener to avoid duplicate subscriptions. */
+   *  Also unsubscribes any existing listener to avoid duplicate subscriptions.
+   *  NOTE: isReady is NOT reset here — it is driven by system_init events and
+   *  SESSION_STATUS updates. Resetting it here races with the SESSION_STATUS
+   *  handler in App.svelte that sets isReady=true when the session transitions
+   *  to 'running'. The caller's post-replay check handles the state correctly. */
   clearSession(sessionId: string) {
     this.unsubscribe(sessionId);
     this.messagesBySession[sessionId] = [];
     this.streamingText[sessionId] = '';
     this.streamingThinking[sessionId] = '';
-    this.isReady[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
     delete this.stoppingSession[sessionId];
-    // Preserve isRunning — caller controls this based on history
+    // Preserve isRunning and isReady — caller controls these based on history/status
   }
 
   /** Subscribe to events from the main process for a session */
