@@ -7,6 +7,8 @@ export interface WorktreeConfig {
   useExisting?: boolean;
   /** Pre-generated ID — if omitted, a random one is created. */
   id?: string;
+  /** Which adapter will run in this worktree (for generating agent-specific settings). */
+  adapterType?: string;
 }
 
 export interface WorktreeInfo {
@@ -32,6 +34,8 @@ export interface CreateSessionOpts {
   useExisting?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
+  /** Which adapter to use for this session (defaults to registry default). */
+  adapterType?: string;
 }
 
 export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
@@ -42,7 +46,7 @@ export interface SessionInfo {
   worktreePath: string;
   repoPath: string;
   status: SessionStatus;
-  agentType: 'claude-code';
+  agentType: string;
   createdAt: number;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
@@ -56,29 +60,42 @@ export interface PrerequisiteStatus {
     version?: string;
     meetsMinimum?: boolean;
   };
-  claudeCode: {
+  agent: {
     available: boolean;
     path?: string;
     authenticated?: boolean;
     authMethod?: string;
     email?: string;
+    /** Adapter-provided error message when not available (e.g. install instructions). */
+    errorMessage?: string;
+    /** Adapter-provided message when not authenticated. */
+    authErrorMessage?: string;
   };
 }
+
+// ─── Tool Categories (adapter-agnostic) ───
+
+/**
+ * Adapter-agnostic tool categories for renderer display logic.
+ * Adapters map their provider-specific tool names to these categories
+ * so the renderer doesn't need to know provider-specific tool names.
+ */
+export type ToolCategory = 'edit' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
 
 // ─── Agent Events (renderer-side, serializable) ───
 
 /**
  * Serializable events sent from main → renderer via IPC.
- * These are derived from the SDK's SDKMessage types but simplified
- * for safe serialization across the IPC boundary.
+ * These are adapter-agnostic events simplified for safe serialization
+ * across the IPC boundary.
  */
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[] }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
@@ -109,7 +126,7 @@ export type AgentEvent =
   | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
   // Files persisted to disk
   | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
-  // Permission mode sync (from SDK status messages)
+  // Permission mode sync (from adapter status messages)
   | { type: 'mode_sync'; mode: PermissionMode }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
@@ -131,7 +148,7 @@ export interface PermissionDecision {
   requestId: string;
   behavior: 'allow' | 'deny' | 'allowAlways';
   message?: string; // denial message
-  updatedPermissions?: unknown[]; // PermissionUpdate[] from SDK suggestions
+  updatedPermissions?: unknown[]; // PermissionUpdate[] from adapter suggestions
 }
 
 // ─── Git Status ───
@@ -296,6 +313,12 @@ export interface GroveBenchAPI {
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
 
+  // Shell / Terminal (legacy)
+  shellRun(sessionId: string, command: string): Promise<string>;
+  shellKill(execId: string): Promise<void>;
+  shellInput(execId: string, data: string): void;
+  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
+
   // PTY Terminal (per-session persistent shell)
   ptySpawn(sessionId: string): Promise<boolean>;
   ptyWrite(sessionId: string, data: string): void;
@@ -324,6 +347,10 @@ export interface GroveBenchAPI {
   winMaximize(): void;
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
+
+  // Agent adapters
+  listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
+  getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string }>>;
 }
 
 // ─── Settings ───
@@ -438,6 +465,10 @@ export const IPC = {
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
+  SHELL_RUN: 'shell:run',
+  SHELL_KILL: 'shell:kill',
+  SHELL_INPUT: 'shell:input',
+  SHELL_OUTPUT: 'shell:output',
   // PTY channels (per-session persistent terminal)
   PTY_SPAWN: 'pty:spawn',
   PTY_WRITE: 'pty:write',
@@ -446,4 +477,6 @@ export const IPC = {
   PTY_IS_ALIVE: 'pty:isAlive',
   PTY_DATA: 'pty:data',      // pty:data:{sessionId}
   PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
+  AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  AGENT_GET_MODELS: 'agent:getModels',
 } as const;

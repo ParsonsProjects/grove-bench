@@ -2,20 +2,7 @@ import { logger } from './logger.js';
 import * as memory from './memory.js';
 import * as settings from './settings.js';
 import type { AgentEvent } from '../shared/types.js';
-
-// The Agent SDK is ESM-only; reuse the same dynamic import trick.
-const dynamicImport = new Function('specifier', 'return import(specifier)') as
-  (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
-
-let _query: typeof import('@anthropic-ai/claude-agent-sdk').query | null = null;
-
-async function getQuery() {
-  if (!_query) {
-    const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
-    _query = sdk.query;
-  }
-  return _query;
-}
+import { adapterRegistry } from './adapters/index.js';
 
 // ─── Types ───
 
@@ -164,8 +151,16 @@ async function runExtraction(
   cwd: string,
   events: AgentEvent[],
   sessionId: string,
+  adapterType?: string,
 ): Promise<ExtractionResult | null> {
-  const query = await getQuery();
+  const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+
+  // If the adapter doesn't support text generation, skip extraction
+  if (!adapter.generateText) {
+    logger.info(`[memory-autosave] Adapter "${adapter.id}" does not support generateText — skipping extraction`);
+    return null;
+  }
+
   const existingMemories = readAllMemoryContents(repoPath);
   const summary = summarizeEvents(events, MAX_EVENTS_FOR_EXTRACTION);
   const systemPrompt = buildExtractionPrompt(summary, existingMemories);
@@ -173,45 +168,15 @@ async function runExtraction(
   logger.info(`[memory-autosave] Running extraction for session ${sessionId} (${events.length} events)`);
 
   try {
-    // Create a single-shot input stream with one message
-    let controller: ReadableStreamDefaultController<{ type: 'user'; content: string }>;
-    const inputStream = new ReadableStream<{ type: 'user'; content: string }>({
-      start(c) { controller = c; },
-    });
-
-    // Push the extraction request and close
-    controller!.enqueue({
-      type: 'user',
-      content: 'Extract memories from the conversation above. Respond with JSON only.',
-    });
-    controller!.close();
-
     const abortController = new AbortController();
     // Safety timeout: 60 seconds
     const timeout = setTimeout(() => abortController.abort(), 60_000);
 
-    let resultText = '';
-
-    const q = query({
-      prompt: inputStream as any,
-      options: {
-        cwd,
-        abortController,
-        systemPrompt: systemPrompt,
-        permissionMode: 'plan', // no tool use needed
-        maxTurns: 1,
-      },
-    });
-
-    for await (const message of q) {
-      if (message.type === 'assistant' && 'content' in message) {
-        for (const block of (message as any).content ?? []) {
-          if (block.type === 'text') {
-            resultText += block.text;
-          }
-        }
-      }
-    }
+    const resultText = await adapter.generateText(
+      systemPrompt,
+      'Extract memories from the conversation above. Respond with JSON only.',
+      { cwd, abortSignal: abortController.signal },
+    );
 
     clearTimeout(timeout);
 
@@ -315,6 +280,8 @@ export interface AutoSaveOptions {
   repoPath: string;
   cwd: string;
   events: AgentEvent[];
+  /** Which adapter to use for text generation (defaults to registry default). */
+  adapterType?: string;
   /** Callback when auto-save starts/finishes. */
   onStatus?: (status: 'started' | 'completed' | 'skipped', filesWritten?: string[]) => void;
 }
@@ -389,13 +356,13 @@ export async function triggerAutoSaveImmediate(opts: AutoSaveOptions): Promise<v
 }
 
 async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
-  const { sessionId, repoPath, cwd, events, onStatus } = opts;
+  const { sessionId, repoPath, cwd, events, adapterType, onStatus } = opts;
 
   inProgress.add(sessionId);
   onStatus?.('started');
 
   try {
-    const extraction = await runExtraction(repoPath, cwd, events, sessionId);
+    const extraction = await runExtraction(repoPath, cwd, events, sessionId, adapterType);
 
     if (!extraction) {
       onStatus?.('skipped');

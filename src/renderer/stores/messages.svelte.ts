@@ -22,6 +22,8 @@ export interface ChatToolCallMessage {
   pending: boolean;
   /** True while a permission_request is pending for this tool — suppresses rendering until approved */
   awaitingPermission?: boolean;
+  /** Adapter-agnostic tool category for display logic. */
+  toolCategory?: import('../../shared/types.js').ToolCategory;
 }
 
 export interface ChatUserMessage {
@@ -64,6 +66,10 @@ export interface ChatPermissionMessage {
   decision?: 'allow' | 'deny';
   decisionReason?: string;
   suggestions?: unknown[];
+  /** Set by the adapter when this permission is for executing a plan. */
+  isPlanExecution?: boolean;
+  /** Adapter-agnostic tool category for display logic. */
+  toolCategory?: import('../../shared/types.js').ToolCategory;
 }
 
 export interface ChatThinkingMessage {
@@ -124,7 +130,7 @@ class MessageStore {
   /** Streaming thinking text that hasn't been finalized yet */
   streamingThinking = $state<Record<string, string>>({});
 
-  /** Whether Claude is currently processing for a session */
+  /** Whether the agent is currently processing for a session */
   isRunning = $state<Record<string, boolean>>({});
 
   /** Whether a /clear was issued and we're waiting for re-init */
@@ -336,11 +342,12 @@ class MessageStore {
     return pending;
   }
 
-  private summarizeToolInput(toolName: string, input: unknown): string {
+  private summarizeToolInput(toolName: string, input: unknown, toolCategory?: import('../../shared/types.js').ToolCategory): string {
     if (typeof input !== 'object' || input === null) return '';
     const obj = input as Record<string, unknown>;
-    if (toolName === 'Bash' && obj.command) return String(obj.command).slice(0, 60);
-    if (toolName === 'Agent' && obj.prompt) return String(obj.prompt).slice(0, 60);
+    // Use toolCategory when available (adapter-agnostic), fall back to tool name heuristics
+    if ((toolCategory === 'bash' || obj.command) && obj.command) return String(obj.command).slice(0, 60);
+    if ((toolCategory === 'agent' || obj.prompt) && obj.prompt) return String(obj.prompt).slice(0, 60);
     if (obj.file_path) return String(obj.file_path);
     if (obj.pattern) return String(obj.pattern);
     if (obj.description) return String(obj.description).slice(0, 60);
@@ -580,22 +587,12 @@ class MessageStore {
         if (this.streamingText[sessionId]) {
           this.flushStreamingText(sessionId);
         }
-        // Sync mode when LLM calls mode-changing tools.
-        // Preserve 'acceptEdits' — that's a user-set mode that should persist
-        // across plan mode transitions. ExitPlanMode returns to the mode the
-        // user had before (acceptEdits if set, otherwise default).
-        if (event.toolName === 'EnterPlanMode') {
-          this.modeBySession[sessionId] = 'plan';
-        } else if (event.toolName === 'ExitPlanMode') {
-          const current = this.modeBySession[sessionId];
-          if (current !== 'acceptEdits') {
-            this.modeBySession[sessionId] = 'default';
-          }
-        }
+        // Mode syncing is handled by mode_sync events from the adapter,
+        // not by detecting specific tool names (which would be adapter-specific).
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
-          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput),
+          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput, event.toolCategory),
         };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -605,6 +602,7 @@ class MessageStore {
           toolUseId: event.toolUseId,
           uuid: event.uuid,
           pending: true,
+          toolCategory: event.toolCategory,
         });
         break;
 
@@ -670,8 +668,8 @@ class MessageStore {
             ...permMsgs.slice(toolIdx + 1),
           ];
         }
-        // Detect AskUserQuestion tool — render as an interactive question, not a permission gate
-        if (event.toolName === 'AskUserQuestion') {
+        // Detect question tools — render as an interactive question, not a permission gate
+        if (event.toolCategory === 'question') {
           const input = event.toolInput as Record<string, unknown>;
           const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
           this.pushMessage(sessionId, {
@@ -693,6 +691,8 @@ class MessageStore {
             resolved: false,
             decisionReason: event.decisionReason,
             suggestions: event.suggestions,
+            isPlanExecution: event.isPlanExecution,
+            toolCategory: event.toolCategory,
           });
         }
         break;
@@ -931,7 +931,7 @@ class MessageStore {
           text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
         });
         // Auto-remove finished tasks after a short delay
-        if (event.taskStatus !== 'running') {
+        {
           const taskId = event.taskId;
           setTimeout(() => {
             this.removeBackgroundTask(sessionId, taskId);
@@ -1045,9 +1045,9 @@ class MessageStore {
     this.sendCommand(sessionId, '/clear');
   }
 
-  /** Resolve a question from Claude (AskUserQuestion) by sending the answer as a deny message.
-   *  We use 'deny' because the permission system feeds the message text back to Claude as
-   *  tool error output, which is how the SDK receives the user's answer. */
+  /** Resolve a question (AskUserQuestion) by sending the answer as a deny message.
+   *  We use 'deny' because the permission system feeds the message text back to the agent as
+   *  tool error output, which is how it receives the user's answer. */
   resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const idx = msgs.findIndex(
@@ -1066,7 +1066,7 @@ class MessageStore {
     }
 
     // Send the answer back through the permission system — "deny" with the answer as message
-    // so Claude receives the user's response as tool feedback
+    // so the agent receives the user's response as tool feedback
     const permDecision: PermissionDecision = {
       requestId,
       behavior: 'deny',
@@ -1092,6 +1092,7 @@ class MessageStore {
     // clear awaitingPermission on its matching tool_call in a single pass.
     const msgs = this.messagesBySession[sessionId] ?? [];
     let foundToolName: string | undefined;
+    let foundToolCategory: import('../../shared/types.js').ToolCategory | undefined;
     let foundToolUseId: string | undefined;
     let changed = false;
     // Resolve the LAST unresolved permission with this requestId.
@@ -1101,6 +1102,7 @@ class MessageStore {
         const pm = m as ChatPermissionMessage;
         if (pm.requestId === requestId && !pm.resolved) {
           foundToolName = pm.toolName;
+          foundToolCategory = pm.toolCategory;
           foundToolUseId = pm.toolUseId;
           changed = true;
           return { ...m, resolved: true as const, decision: resolvedDecision };
@@ -1123,10 +1125,10 @@ class MessageStore {
       this.messagesBySession[sessionId] = updated;
     }
 
-    // When "Always Allow" is used on Edit/Write/MultiEdit, switch to
+    // When "Always Allow" is used on edit tools, switch to
     // acceptEdits mode immediately — don't wait for the IPC result.
     // The user's intent is clear regardless of whether main confirms.
-    if (decision === 'allowAlways' && foundToolName && (foundToolName === 'Edit' || foundToolName === 'Write' || foundToolName === 'MultiEdit')) {
+    if (decision === 'allowAlways' && foundToolCategory === 'edit') {
       this.setMode(sessionId, 'acceptEdits').catch((e) => {
         console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
       });
