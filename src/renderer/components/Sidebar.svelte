@@ -192,7 +192,6 @@
             <button
               onclick={() => !isDestroying && focusSession(session.id)}
               onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
-              ondblclick={() => !isDestroying && startRename(session.id, sessionLabel(session))}
               oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
               disabled={isDestroying}
               title={sessionLabel(session)}
@@ -248,7 +247,6 @@
                 <button
                   onclick={() => !isDestroying && focusSession(session.id)}
                   onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
-                  ondblclick={() => !isDestroying && startRename(session.id, sessionLabel(session))}
                   oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
                   disabled={isDestroying}
                   title={sessionLabel(session)}
