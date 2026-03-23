@@ -15,29 +15,43 @@ Multi-agent git worktree orchestrator for Claude Code. Windows-native Electron d
 
 ```
 src/
-  main/           # Electron main process (IPC, git ops, PTY, sessions)
-    index.ts      # App entry point
-    preload.ts    # Context bridge (IPC exposure)
-    ipc.ts        # IPC handler registration
-    git.ts        # Git CLI wrapper (execa)
+  main/               # Electron main process
+    index.ts           # App entry point
+    preload.ts         # Context bridge (IPC exposure)
+    ipc.ts             # IPC handler registration
+    git.ts             # Git CLI wrapper (execa)
     worktree-manager.ts
-    agent-session.ts
-    terminal.ts   # node-pty management
-    app-state.ts
-    memory.ts     # Project memory system
-    settings.ts
-  renderer/       # Electron renderer (Svelte UI)
-    App.svelte    # Root component
-    main.ts       # Renderer entry
-    components/   # Svelte components
-    lib/          # Utilities
-    stores/       # Svelte stores
-    styles/       # CSS
+    agent-session.ts   # Session lifecycle management
+    agent-utils.ts     # Agent helper utilities
+    terminal.ts        # node-pty management
+    app-state.ts       # Persistent app state
+    window-state.ts    # Window position/size persistence
+    memory.ts          # Project memory system
+    memory-autosave.ts # Auto-save memory on interval
+    settings.ts        # User settings
+    prerequisites.ts   # Git/Claude detection & version checks
+    logger.ts          # File-based logging
+    dev-server.ts      # Dev server management
+    dev-command-detector.ts
+    git-status-parser.ts
+    port-killer.ts
+    adapters/          # Agent adapter pattern
+      index.ts         # Adapter exports
+      types.ts         # Adapter interfaces
+      registry.ts      # Adapter registry
+      claude-code.ts   # Claude Code adapter implementation
+  renderer/            # Electron renderer (Svelte UI)
+    App.svelte         # Root component
+    main.ts            # Renderer entry
+    components/        # Svelte components (~34 files)
+    lib/               # Utilities
+    stores/            # Svelte stores (sessions, messages, settings, etc.)
+    styles/            # CSS
   shared/
-    types.ts      # Shared types between main/renderer
-docs/             # Design docs, user stories
-DESIGN.md         # Architecture & design document (v0.3)
-TODO.md           # Gap analysis vs competitors
+    types.ts           # Shared types between main/renderer
+docs/                  # Design docs, user stories
+DESIGN.md              # Architecture & design document
+TODO.md                # Gap analysis vs competitors
 ```
 
 ## Config Files
@@ -57,6 +71,7 @@ npm run package        # Package the app
 npm run make           # Build distributable installer
 npm test               # Run all tests (vitest run)
 npm run test:watch     # Watch mode
+npm run test:coverage  # Run tests with coverage
 npm run test:main      # Tests for main process only
 npm run test:renderer  # Tests for renderer only
 ```
@@ -77,3 +92,8 @@ npm run test:renderer  # Tests for renderer only
 - `node-pty` — PTY spawning in main process
 - `bits-ui` — UI component library
 - `diff` — Diff computation for file changes
+- `marked` + `highlight.js` + `dompurify` — Markdown rendering with syntax highlighting
+- `fuse.js` — Fuzzy search
+- `tailwind-merge` + `tailwind-variants` — Tailwind utility helpers
+- `zod` — Schema validation
+- `execa` — Git CLI wrapper

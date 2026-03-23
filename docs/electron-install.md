@@ -1,5 +1,7 @@
 # Electron Install & Auto-Update
 
+> **Status: Not yet implemented.** This document is a plan for the auto-update feature. The building/packaging section below is accurate, but the auto-updater code has not been added to the codebase yet.
+
 ## Building the .exe
 
 The project uses Electron Forge with MakerSquirrel (Windows installer) and MakerZIP (portable zip).
