@@ -9,10 +9,6 @@ export default {
   packagerConfig: {
     asar: true,
     icon: 'src/main/icon',
-    extraResource: [
-      'src/main/docker/worker.mjs',
-      'src/main/docker/Dockerfile',
-    ],
   },
   makers: [
     new MakerSquirrel({}),
