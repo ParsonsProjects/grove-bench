@@ -51,6 +51,8 @@ export interface PermissionRequest {
   isPlanExecution?: boolean;
   /** Adapter-agnostic tool category for renderer display logic. */
   toolCategory?: ToolCategory;
+  /** Plan text extracted by the adapter for plan execution permissions. */
+  planText?: string;
 }
 
 export type PermissionResponse =

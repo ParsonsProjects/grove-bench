@@ -208,6 +208,7 @@
           suggestions={msg.suggestions}
           isPlanExecution={msg.isPlanExecution}
           toolCategory={msg.toolCategory}
+          planText={msg.planText}
         />
 
       {:else if msg.kind === 'question'}

@@ -70,6 +70,8 @@ export interface ChatPermissionMessage {
   isPlanExecution?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** Plan text extracted by the adapter for plan execution permissions. */
+  planText?: string;
 }
 
 export interface ChatThinkingMessage {
@@ -693,6 +695,7 @@ class MessageStore {
             suggestions: event.suggestions,
             isPlanExecution: event.isPlanExecution,
             toolCategory: event.toolCategory,
+            planText: event.planText,
           });
         }
         break;

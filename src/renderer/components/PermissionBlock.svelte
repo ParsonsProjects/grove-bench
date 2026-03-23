@@ -15,6 +15,7 @@
     suggestions,
     isPlanExecution = false,
     toolCategory,
+    planText: planTextProp,
   }: {
     sessionId: string;
     requestId: string;
@@ -26,6 +27,7 @@
     suggestions?: unknown[];
     isPlanExecution?: boolean;
     toolCategory?: import('../../shared/types.js').ToolCategory;
+    planText?: string;
   } = $props();
 
   let expanded = $state(false);
@@ -151,10 +153,15 @@
     return '';
   }
 
-  // For plan execution permissions, collect the plan text from preceding assistant messages.
-  // Walk backwards from this permission to find text between the plan start and here.
+  // For plan execution permissions, use the plan text provided by the adapter.
+  // Fallback: walk backwards from this permission to collect preceding assistant text.
   let planText = $derived.by(() => {
     if (!isExitPlanMode) return '';
+
+    // Primary: adapter extracted the plan text
+    if (planTextProp) return planTextProp;
+
+    // Fallback: walk backwards to collect assistant text before this permission
     const msgs = messageStore.getMessages(sessionId);
     const parts: string[] = [];
     let foundSelf = false;
@@ -164,7 +171,6 @@
         if (m.kind === 'permission' && m.requestId === requestId) foundSelf = true;
         continue;
       }
-      // Stop at the plan boundary — either a plan-entering tool_call or an earlier permission
       if (m.kind === 'tool_call' && (m as any).isPlanExecution) break;
       if (m.kind === 'permission') break;
       if (m.kind === 'text') parts.unshift(m.text);

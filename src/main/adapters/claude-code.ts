@@ -517,6 +517,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         suggestions: options.suggestions,
         isPlanExecution: toolName === 'ExitPlanMode',
         toolCategory: categorizeToolName(toolName),
+        planText: toolName === 'ExitPlanMode' && typeof (input as any)?.plan === 'string'
+          ? (input as any).plan
+          : undefined,
       });
     };
 

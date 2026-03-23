@@ -325,6 +325,7 @@ class AgentSessionManager {
             suggestions: request.suggestions,
             isPlanExecution: request.isPlanExecution,
             toolCategory: request.toolCategory,
+            planText: request.planText,
           });
         });
       },
