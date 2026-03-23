@@ -148,7 +148,7 @@
         <a href="#features" class="text-xs text-muted-foreground hover:text-foreground transition-colors hidden md:block">Features</a>
         <a href="#how-it-works" class="text-xs text-muted-foreground hover:text-foreground transition-colors hidden md:block">How It Works</a>
         <a
-          href="https://github.com/alanpjohn/grove-bench"
+          href="https://github.com/ParsonsProjects/grove-bench"
           target="_blank"
           rel="noopener"
           class="text-xs bg-primary text-primary-foreground px-4 py-2 font-medium hover:brightness-110 transition-all inline-flex items-center gap-2"
@@ -231,7 +231,7 @@
 
         <div class="mt-10 flex flex-wrap justify-center gap-3 animate-fade-in-up delay-3">
           <a
-            href="https://github.com/alanpjohn/grove-bench/releases"
+            href="https://github.com/ParsonsProjects/grove-bench/releases"
             target="_blank"
             rel="noopener"
             class="btn-primary"
@@ -247,7 +247,7 @@
             Download for Windows
           </a>
           <a
-            href="https://github.com/alanpjohn/grove-bench"
+            href="https://github.com/ParsonsProjects/grove-bench"
             target="_blank"
             rel="noopener"
             class="btn-secondary"
@@ -690,7 +690,7 @@
         </p>
         <div class="flex flex-wrap justify-center gap-3">
           <a
-            href="https://github.com/alanpjohn/grove-bench/releases"
+            href="https://github.com/ParsonsProjects/grove-bench/releases"
             target="_blank"
             rel="noopener"
             class="btn-primary"
@@ -706,7 +706,7 @@
             Download for Windows
           </a>
           <a
-            href="https://github.com/alanpjohn/grove-bench"
+            href="https://github.com/ParsonsProjects/grove-bench"
             target="_blank"
             rel="noopener"
             class="btn-secondary"
@@ -732,7 +732,7 @@
       </div>
       <div class="flex items-center gap-6">
         <a
-          href="https://github.com/alanpjohn/grove-bench"
+          href="https://github.com/ParsonsProjects/grove-bench"
           target="_blank"
           rel="noopener"
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -740,7 +740,7 @@
           GitHub
         </a>
         <a
-          href="https://github.com/alanpjohn/grove-bench/releases"
+          href="https://github.com/ParsonsProjects/grove-bench/releases"
           target="_blank"
           rel="noopener"
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -748,7 +748,7 @@
           Releases
         </a>
         <a
-          href="https://github.com/alanpjohn/grove-bench/blob/main/CONTRIBUTING.md"
+          href="https://github.com/ParsonsProjects/grove-bench/blob/main/CONTRIBUTING.md"
           target="_blank"
           rel="noopener"
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -756,7 +756,7 @@
           Contributing
         </a>
         <a
-          href="https://github.com/alanpjohn/grove-bench/blob/main/LICENSE"
+          href="https://github.com/ParsonsProjects/grove-bench/blob/main/LICENSE"
           target="_blank"
           rel="noopener"
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -764,7 +764,7 @@
           License
         </a>
         <a
-          href="https://github.com/alanpjohn/grove-bench/issues"
+          href="https://github.com/ParsonsProjects/grove-bench/issues"
           target="_blank"
           rel="noopener"
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
