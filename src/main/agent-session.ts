@@ -86,7 +86,7 @@ export interface SessionCompletionResult {
   durationMs?: number;
 }
 
-const EVENTS_DIR = path.join(app.getPath('userData'), 'worktrees', 'events');
+const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
 
 // Suppress "Operation aborted" unhandled rejections from agent SDKs.
 // When we abort a running query, internal async operations may reject after
@@ -209,7 +209,7 @@ class AgentSessionManager {
       outputFormat: opts.outputFormat ?? null,
       sandbox: opts.sandbox ?? null,
       extraEnv: opts.extraEnv ?? null,
-      eventLogPath: path.join(EVENTS_DIR, `${id}.jsonl`),
+      eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
       devServer: null,
       stoppedByUser: false,
@@ -222,7 +222,7 @@ class AgentSessionManager {
     this.sessions.set(id, session);
 
     // Ensure events directory exists
-    try { fs.mkdirSync(EVENTS_DIR, { recursive: true }); } catch { /* already exists */ }
+    try { fs.mkdirSync(getEventsDir(), { recursive: true }); } catch { /* already exists */ }
 
     const emit = this.createEmitter(session);
 
@@ -856,7 +856,7 @@ class AgentSessionManager {
 
   /** Load event history from the disk JSONL log for a session. */
   private loadEventHistory(id: string): AgentEvent[] {
-    const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
+    const logPath = path.join(getEventsDir(), `${id}.jsonl`);
     try {
       const data = fs.readFileSync(logPath, 'utf-8');
       return data.split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -897,7 +897,7 @@ class AgentSessionManager {
       } catch { /* non-fatal */ }
     } else {
       // Session not running — clear disk log directly
-      const logPath = path.join(EVENTS_DIR, `${id}.jsonl`);
+      const logPath = path.join(getEventsDir(), `${id}.jsonl`);
       try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
     }
   }

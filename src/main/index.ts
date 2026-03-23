@@ -12,6 +12,13 @@ import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 
+// Keep userData path consistent across dev and packaged builds.
+// In dev mode Electron defaults to "Electron"; electron-builder uses productName
+// "Grove Bench".  Force it to the package.json "name" so all builds share the
+// same data directory as the original Electron Forge build.
+app.name = 'grove-bench';
+app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
+
 // Register built-in agent adapters before anything else uses them
 initAdapters();
 
