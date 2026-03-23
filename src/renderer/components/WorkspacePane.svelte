@@ -59,8 +59,18 @@
     // duplicates. This is critical after refresh/restart where prior state is
     // lost but isReady might have been set by a leaked event.
     try {
-      // Clear existing messages so replay starts fresh
+      // Clear existing messages so replay starts fresh.
+      // clearSession does NOT reset isReady — that's handled below based on
+      // actual session state to avoid racing with the SESSION_STATUS handler.
       messageStore.clearSession(sessionId);
+
+      // Reset isReady ONLY for sessions that haven't reached 'running' yet.
+      // For sessions already 'running' or 'error', isReady should stay true
+      // (or be set true below) so the input doesn't flicker disabled.
+      const sessionBefore = store.sessions.find((s) => s.id === sessionId);
+      if (!sessionBefore || (sessionBefore.status !== 'running' && sessionBefore.status !== 'error')) {
+        messageStore.isReady[sessionId] = false;
+      }
 
       // Subscribe to live events BEFORE replaying history so no events are
       // missed for sessions that are still being set up (worktree creation,
@@ -99,10 +109,10 @@
       messageStore.resolveReplayedPermissions(sessionId);
 
       // If the session is already running but system_init was missed during
-      // replay (e.g. agent just connected), ensure the input unlocks.
-      // SESSION_STATUS 'running' only fires after system_init on the main side.
+      // replay (e.g. agent just connected, or SESSION_STATUS arrived during
+      // the await above), ensure the input unlocks.
       const session = store.sessions.find((s) => s.id === sessionId);
-      if (session?.status === 'running' && !messageStore.getIsReady(sessionId)) {
+      if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
         messageStore.isReady[sessionId] = true;
         messageStore.isRunning[sessionId] = false;
       }
