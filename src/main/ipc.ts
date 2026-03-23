@@ -5,6 +5,7 @@ import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, Session
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
+import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git } from './git.js';
 import { parseGitStatusPorcelain } from './git-status-parser.js';
 import { logger } from './logger.js';
@@ -85,6 +86,7 @@ export function registerHandlers() {
         cwd: opts.repoPath,
         repoPath: opts.repoPath,
         window: win,
+        adapterType: opts.adapterType,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
@@ -138,6 +140,7 @@ export function registerHandlers() {
           baseBranch: opts.baseBranch,
           useExisting: opts.useExisting,
           id,
+          adapterType: opts.adapterType,
         });
 
         // Auto-copy untracked files (.env, etc.)
@@ -174,7 +177,7 @@ export function registerHandlers() {
           }
         }
 
-        // Start Claude agent in the worktree
+        // Start agent in the worktree
         emitPrelaunch({ type: 'status', message: 'Starting agent…' });
         await sessionManager.createSession({
           id: worktree.id,
@@ -182,6 +185,7 @@ export function registerHandlers() {
           cwd: worktree.path,
           repoPath: opts.repoPath,
           window: win,
+          adapterType: opts.adapterType,
         });
 
         logger.info(`Session created: id=${worktree.id}`);
@@ -221,9 +225,9 @@ export function registerHandlers() {
       throw new Error(`Worktree ${id} not found`);
     }
 
-    // Look up saved Claude session ID for conversation resumption
-    const claudeSessionId = await worktreeManager.getClaudeSessionId(id);
-    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, claudeSession=${claudeSessionId ?? 'none'}`);
+    // Look up saved provider session ID for conversation resumption
+    const providerSessionId = await worktreeManager.getProviderSessionId(id);
+    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}`);
 
     const session = await sessionManager.createSession({
       id: worktree.id,
@@ -231,7 +235,7 @@ export function registerHandlers() {
       cwd: worktree.path,
       repoPath,
       window: win,
-      resumeClaudeSessionId: claudeSessionId,
+      resumeSessionId: providerSessionId,
     });
 
     logger.info(`Session resumed: id=${session.id}`);
@@ -541,48 +545,46 @@ export function registerHandlers() {
 
   // ─── Plugins ───
 
-  ipcMain.handle(IPC.PLUGIN_LIST, async () => {
+  /** Resolve adapter by optional type, falling back to registry default. */
+  function resolveAdapter(adapterType?: string) {
+    return adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+  }
+
+  ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.capabilities.plugins || !adapter.listPlugins) {
+      return { installed: [], available: [] };
+    }
     try {
-      const { stdout } = await execa('claude', ['plugin', 'list', '--json', '--available']);
-      return JSON.parse(stdout);
+      return await adapter.listPlugins();
     } catch (e: any) {
       logger.warn('Failed to list plugins:', e.message);
       return { installed: [], available: [] };
     }
   });
 
-  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user') => {
-    await execa('claude', ['plugin', 'install', pluginId, '--scope', scope]);
+  ipcMain.handle(IPC.PLUGIN_INSTALL, async (_event, pluginId: string, scope = 'user', adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.installPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.installPlugin(pluginId, scope);
   });
 
-  ipcMain.handle(IPC.PLUGIN_UNINSTALL, async (_event, pluginId: string) => {
-    await execa('claude', ['plugin', 'uninstall', pluginId]);
+  ipcMain.handle(IPC.PLUGIN_UNINSTALL, async (_event, pluginId: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.uninstallPlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.uninstallPlugin(pluginId);
   });
 
-  ipcMain.handle(IPC.PLUGIN_ENABLE, async (_event, pluginId: string) => {
-    await execa('claude', ['plugin', 'enable', pluginId]);
+  ipcMain.handle(IPC.PLUGIN_ENABLE, async (_event, pluginId: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.enablePlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.enablePlugin(pluginId);
   });
 
-  ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string) => {
-    await execa('claude', ['plugin', 'disable', pluginId]);
-  });
-
-  // ─── Memory ───
-
-  ipcMain.handle(IPC.MEMORY_LIST, (_event, repoPath: string) => {
-    return memory.listMemoryFiles(repoPath);
-  });
-
-  ipcMain.handle(IPC.MEMORY_READ, (_event, repoPath: string, relativePath: string) => {
-    return memory.readMemoryFile(repoPath, relativePath);
-  });
-
-  ipcMain.handle(IPC.MEMORY_WRITE, (_event, repoPath: string, relativePath: string, content: string) => {
-    memory.writeMemoryFile(repoPath, relativePath, content);
-  });
-
-  ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
-    return memory.deleteMemoryFile(repoPath, relativePath);
+  ipcMain.handle(IPC.PLUGIN_DISABLE, async (_event, pluginId: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.disablePlugin) throw new Error(`Adapter "${adapter.id}" does not support plugins`);
+    await adapter.disablePlugin(pluginId);
   });
 
   // ─── PTY Terminal (per-session persistent shell) ───
@@ -605,8 +607,60 @@ export function registerHandlers() {
     terminalManager.killPty(sessionId);
   });
 
-ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
+  ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
     return terminalManager.isAlive(sessionId);
+  });
+
+  // ─── Agent Adapters ───
+
+  ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
+    return adapterRegistry.list().map(a => ({
+      id: a.id,
+      displayName: a.displayName,
+      capabilities: { ...a.capabilities },
+    }));
+  });
+
+  ipcMain.handle(IPC.AGENT_GET_MODELS, (_event, adapterType?: string) => {
+    const adapter = adapterType
+      ? adapterRegistry.get(adapterType)
+      : adapterRegistry.getDefault();
+    if (!adapter) return [];
+    return adapter.getModels();
+  });
+
+  // ─── Memory ───
+
+  ipcMain.handle(IPC.MEMORY_LIST, (_event, repoPath: string) => {
+    return memory.listMemoryFiles(repoPath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_READ, (_event, repoPath: string, relativePath: string) => {
+    return memory.readMemoryFile(repoPath, relativePath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_WRITE, (_event, repoPath: string, relativePath: string, content: string) => {
+    memory.writeMemoryFile(repoPath, relativePath, content);
+  });
+
+  ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
+    return memory.deleteMemoryFile(repoPath, relativePath);
+  });
+
+  // ─── Shell / Terminal ───
+
+  ipcMain.handle(IPC.SHELL_RUN, (event, sessionId: string, command: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    return terminalManager.spawnCommand(sessionId, command, worktree.path, event.sender);
+  });
+
+  ipcMain.handle(IPC.SHELL_KILL, (_event, execId: string) => {
+    terminalManager.killExecution(execId);
+  });
+
+  ipcMain.on(IPC.SHELL_INPUT, (_event, execId: string, data: string) => {
+    terminalManager.sendInput(execId, data);
   });
 
   // ─── Settings ───

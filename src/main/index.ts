@@ -9,10 +9,14 @@ import * as settings from './settings.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
+import { initAdapters } from './adapters/index.js';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 import electronSquirrelStartup from 'electron-squirrel-startup';
 if (electronSquirrelStartup) app.quit();
+
+// Register built-in agent adapters before anything else uses them
+initAdapters();
 
 registerHandlers();
 

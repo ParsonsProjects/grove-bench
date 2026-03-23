@@ -365,7 +365,7 @@
     if (!files || files.length === 0) return;
 
     const MAX_TEXT_SIZE = 100 * 1024; // 100KB
-    const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB (Claude API limit)
+    const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
     const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
     const textExtensions = new Set([
       'ts', 'tsx', 'js', 'jsx', 'svelte', 'vue', 'html', 'css', 'scss', 'less',
@@ -542,7 +542,7 @@
       oninput={handleInput}
       onkeydown={handleKeydown}
       disabled={!isReady}
-      placeholder={!isReady ? 'Setting up session...' : isRunning ? 'Waiting for Claude...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
+      placeholder={!isReady ? 'Setting up session...' : isRunning ? 'Waiting for agent...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
       rows="1"
       class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
         placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring

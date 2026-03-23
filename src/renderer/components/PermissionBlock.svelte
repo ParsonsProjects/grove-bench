@@ -13,6 +13,8 @@
     decision,
     decisionReason,
     suggestions,
+    isPlanExecution = false,
+    toolCategory,
   }: {
     sessionId: string;
     requestId: string;
@@ -22,6 +24,8 @@
     decision?: 'allow' | 'deny';
     decisionReason?: string;
     suggestions?: unknown[];
+    isPlanExecution?: boolean;
+    toolCategory?: import('../../shared/types.js').ToolCategory;
   } = $props();
 
   let expanded = $state(false);
@@ -33,10 +37,10 @@
   let pendingDecision = $state<'allow' | 'deny' | null>(null);
 
   let input = $derived(toolInput as Record<string, unknown>);
-  let isEditTool = $derived(toolName === 'Edit' || toolName === 'Write');
-  let isBashTool = $derived(toolName === 'Bash');
-  let isExitPlanMode = $derived(toolName === 'ExitPlanMode');
-  let isWebFetch = $derived(toolName === 'WebFetch' || toolName === 'mcp__WebFetch' || (typeof input?.url === 'string'));
+  let isEditTool = $derived(toolCategory === 'edit' || toolName === 'Edit' || toolName === 'Write');
+  let isBashTool = $derived(toolCategory === 'bash' || toolName === 'Bash');
+  let isExitPlanMode = $derived(isPlanExecution);
+  let isWebFetch = $derived(toolCategory === 'web_fetch' || toolName === 'WebFetch' || toolName === 'mcp__WebFetch' || (typeof input?.url === 'string'));
   let filePath = $derived(isEditTool ? String(input?.file_path ?? input?.filePath ?? '') : '');
   let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
@@ -147,12 +151,12 @@
     return '';
   }
 
-  // For ExitPlanMode, collect the plan text from preceding assistant messages
+  // For plan execution permissions, collect the plan text from preceding assistant messages.
+  // Walk backwards from this permission to find text between the plan start and here.
   let planText = $derived.by(() => {
     if (!isExitPlanMode) return '';
     const msgs = messageStore.getMessages(sessionId);
     const parts: string[] = [];
-    // Walk backwards from the end to find this permission, then collect text between EnterPlanMode and here
     let foundSelf = false;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
@@ -160,7 +164,9 @@
         if (m.kind === 'permission' && m.requestId === requestId) foundSelf = true;
         continue;
       }
-      if (m.kind === 'tool_call' && m.toolName === 'EnterPlanMode') break;
+      // Stop at the plan boundary — either a plan-entering tool_call or an earlier permission
+      if (m.kind === 'tool_call' && (m as any).isPlanExecution) break;
+      if (m.kind === 'permission') break;
       if (m.kind === 'text') parts.unshift(m.text);
     }
     return parts.join('\n\n');
@@ -187,7 +193,7 @@
 <div class="py-1 my-1 border-l-4 {borderColor} pl-3">
   <div class="flex items-center gap-2 text-xs">
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
-    <span class="text-foreground">{isExitPlanMode ? 'Claude wants to execute the plan' : toolName}</span>
+    <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolName}</span>
     {#if filePath}
       <button
         onclick={openInEditor}
