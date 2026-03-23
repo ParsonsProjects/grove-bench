@@ -351,6 +351,12 @@ export interface GroveBenchAPI {
   // Agent adapters
   listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
   getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string }>>;
+
+  // Auto-update
+  checkForUpdate(): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  installUpdate(): void;
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
 // ─── Settings ───
@@ -404,6 +410,23 @@ export interface MemoryEntry {
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
 }
+
+// ─── Auto-Update ───
+
+export interface UpdateInfo {
+  version: string;
+  releaseNotes?: string;
+  releaseName?: string;
+  releaseDate?: string;
+}
+
+export type UpdateStatus =
+  | { state: 'checking' }
+  | { state: 'available'; info: UpdateInfo }
+  | { state: 'not-available' }
+  | { state: 'downloading'; percent: number }
+  | { state: 'downloaded'; info: UpdateInfo }
+  | { state: 'error'; message: string };
 
 // ─── IPC Channel Names ───
 
@@ -479,4 +502,9 @@ export const IPC = {
   PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_MODELS: 'agent:getModels',
+  // Auto-updater
+  UPDATE_CHECK: 'update:check',
+  UPDATE_DOWNLOAD: 'update:download',
+  UPDATE_INSTALL: 'update:install',
+  UPDATE_STATUS: 'update:status',
 } as const;

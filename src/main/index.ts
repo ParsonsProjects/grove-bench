@@ -10,6 +10,7 @@ import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
+import { initAutoUpdater } from './auto-updater.js';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 import electronSquirrelStartup from 'electron-squirrel-startup';
@@ -72,6 +73,8 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
   });
+
+  initAutoUpdater(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;

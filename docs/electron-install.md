@@ -1,6 +1,6 @@
 # Electron Install & Auto-Update
 
-> **Status: Not yet implemented.** This document is a plan for the auto-update feature. The building/packaging section below is accurate, but the auto-updater code has not been added to the codebase yet.
+> **Status: Implemented.** The auto-update feature has been added to the codebase. See `src/main/auto-updater.ts` and `src/renderer/components/UpdateNotification.svelte`.
 
 ## Building the .exe
 
