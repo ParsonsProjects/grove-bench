@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -67,7 +68,16 @@
   );
 
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  let isReady = $derived(messageStore.getIsReady(sessionId));
+  // Derive isReady from both the message store flag AND session status.
+  // The session status is updated via a $state array reassignment which is
+  // more reliable in Svelte 5 than key-level changes on a $state<Record>.
+  // This prevents the input from staying disabled when system_init fires
+  // and SESSION_STATUS 'running' arrives but the Record proxy change
+  // doesn't propagate to this $derived.
+  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
+  let isReady = $derived(
+    messageStore.getIsReady(sessionId) || sessionStatus === 'running' || sessionStatus === 'error',
+  );
   let canSend = $derived(!isRunning && isReady);
   let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 

@@ -1193,6 +1193,12 @@ class MessageStore {
     if (this.cleanups.has(sessionId)) {
       return;
     }
+    // Pre-initialize isReady so the $state<Record> proxy has the key
+    // before any $derived reads it. Without this, a $derived that reads
+    // a non-existent key may not re-evaluate when the key is later set.
+    if (!(sessionId in this.isReady)) {
+      this.isReady[sessionId] = false;
+    }
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
       this.ingestEvent(sessionId, event);
     });
