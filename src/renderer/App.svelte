@@ -264,7 +264,7 @@
   }
 
   onMount(() => {
-    restoreWorktrees();
+    store.loadRepos().then(() => restoreWorktrees());
     window.addEventListener('keydown', handleGlobalKeydown);
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {

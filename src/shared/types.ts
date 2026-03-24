@@ -244,6 +244,7 @@ export interface GroveBenchAPI {
 
   // Worktree operations
   listWorktrees(repoPath: string): Promise<WorktreeInfo[]>;
+  listRepos(): Promise<string[]>;
 
   // Branch operations
   listBranches(repoPath: string): Promise<string[]>;
@@ -444,6 +445,7 @@ export const IPC = {
   SESSION_RENAME: 'session:rename',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
+  WORKTREE_LIST_REPOS: 'worktree:listRepos',
   BRANCH_LIST: 'branch:list',
   BRANCH_RENAME: 'branch:rename',
   PREREQUISITES_CHECK: 'prerequisites:check',

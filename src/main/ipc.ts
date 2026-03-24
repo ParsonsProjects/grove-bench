@@ -289,6 +289,10 @@ export function registerHandlers() {
     return worktrees;
   });
 
+  ipcMain.handle(IPC.WORKTREE_LIST_REPOS, async () => {
+    return worktreeManager.listRepos();
+  });
+
   // ─── Prerequisites ───
 
   ipcMain.handle(IPC.PREREQUISITES_CHECK, async (): Promise<PrerequisiteStatus> => {

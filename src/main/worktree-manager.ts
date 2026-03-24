@@ -353,6 +353,16 @@ export class WorktreeManager {
     }
   }
 
+  /** Return all unique repo paths recorded in the manifest. */
+  async listRepos(): Promise<string[]> {
+    const manifest = await this.loadManifest();
+    const repos = new Set<string>();
+    for (const entry of Object.values(manifest)) {
+      repos.add(entry.repoPath);
+    }
+    return [...repos];
+  }
+
   async cleanupAll(): Promise<void> {
     // Collect repo paths before removal (remove() deletes from the map)
     const repoPaths = new Set([...this.worktrees.values()].map((w) => w.repoPath));

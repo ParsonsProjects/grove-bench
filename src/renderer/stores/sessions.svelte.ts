@@ -1,16 +1,5 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
 
-const REPOS_KEY = 'grove-bench:repos';
-
-function loadRepos(): string[] {
-  try {
-    const saved = localStorage.getItem(REPOS_KEY);
-    return saved ? JSON.parse(saved) : [];
-  } catch {
-    return [];
-  }
-}
-
 interface SessionEntry {
   id: string;
   branch: string;
@@ -23,7 +12,7 @@ interface SessionEntry {
 
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
-  repos = $state<string[]>(loadRepos());
+  repos = $state<string[]>([]);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
@@ -45,20 +34,32 @@ class SessionStore {
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
   }
 
-  private persistRepos() {
-    localStorage.setItem(REPOS_KEY, JSON.stringify(this.repos));
+  /** Load repos from the worktree manifest (main process). Must be called before restoreWorktrees. */
+  async loadRepos() {
+    this.repos = await window.groveBench.listRepos();
+    // Migrate any repos stuck in legacy localStorage
+    try {
+      const legacy = localStorage.getItem('grove-bench:repos');
+      if (legacy) {
+        const legacyRepos: string[] = JSON.parse(legacy);
+        for (const r of legacyRepos) {
+          if (!this.repos.includes(r)) {
+            this.repos = [...this.repos, r];
+          }
+        }
+        localStorage.removeItem('grove-bench:repos');
+      }
+    } catch { /* ignore */ }
   }
 
   addRepo(path: string) {
     if (!this.repos.includes(path)) {
       this.repos = [...this.repos, path];
-      this.persistRepos();
     }
   }
 
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
-    this.persistRepos();
   }
 
   canRemoveRepo(path: string): boolean {
@@ -85,6 +86,8 @@ class SessionStore {
     if (focus) {
       this.activeSessionId = entry.id;
     }
+    // Ensure the repo is tracked when a session is added
+    this.addRepo(entry.repoPath);
   }
 
   removeSession(id: string) {

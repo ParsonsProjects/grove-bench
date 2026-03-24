@@ -23,6 +23,7 @@ const api: GroveBenchAPI = {
 
   // Worktree operations
   listWorktrees: (repoPath: string) => ipcRenderer.invoke(IPC.WORKTREE_LIST, repoPath),
+  listRepos: () => ipcRenderer.invoke(IPC.WORKTREE_LIST_REPOS) as Promise<string[]>,
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
@@ -184,7 +185,6 @@ const api: GroveBenchAPI = {
   setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
   getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
   setOpenTabs: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_OPEN_TABS, ids),
-
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();
