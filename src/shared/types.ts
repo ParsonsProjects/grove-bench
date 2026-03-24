@@ -401,6 +401,8 @@ export interface GroveBenchSettings {
   // Editor
   /** Default diff view mode in the Changes tab. */
   diffViewMode: 'unified' | 'side-by-side';
+  /** Enable spell checking in the prompt textarea. */
+  spellcheck: boolean;
 }
 
 // ─── Memory ───

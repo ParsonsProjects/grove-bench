@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Editor
   diffViewMode: 'unified',
+  spellcheck: true,
 };
 
 let cached: GroveBenchSettings | null = null;
