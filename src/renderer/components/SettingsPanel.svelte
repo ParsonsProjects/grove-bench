@@ -388,6 +388,15 @@
             Auto-install dependencies in new worktrees
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">Run npm install automatically when creating a worktree. Off by default.</p>
+
+          <Separator />
+
+          <!-- Analytics -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.analyticsEnabled} />
+            Help improve Grove Bench by sending anonymous usage data
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">No personal information or code content is collected.</p>
         </div>
 
       {:else if tab === 'plugins'}

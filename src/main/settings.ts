@@ -33,6 +33,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Editor
   diffViewMode: 'unified',
   spellcheck: true,
+
+  // Privacy
+  analyticsEnabled: false,
+  analyticsPrompted: false,
 };
 
 let cached: GroveBenchSettings | null = null;

@@ -21,6 +21,8 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   alwaysOnTop: false,
   diffViewMode: 'unified',
   spellcheck: true,
+  analyticsEnabled: false,
+  analyticsPrompted: false,
 };
 
 beforeEach(() => {

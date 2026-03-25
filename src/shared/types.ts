@@ -403,6 +403,12 @@ export interface GroveBenchSettings {
   diffViewMode: 'unified' | 'side-by-side';
   /** Enable spell checking in the prompt textarea. */
   spellcheck: boolean;
+
+  // Privacy
+  /** Enable anonymous usage analytics (PostHog). Off by default. */
+  analyticsEnabled: boolean;
+  /** Whether the user has been shown the analytics consent prompt. */
+  analyticsPrompted: boolean;
 }
 
 // ─── Memory ───
