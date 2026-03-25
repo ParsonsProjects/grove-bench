@@ -358,6 +358,14 @@
 
           <Separator />
 
+          <!-- Spell Check -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.spellcheck} />
+            Enable spell checking
+          </label>
+
+          <Separator />
+
           <!-- Diff View Mode -->
           <div>
             <Label class="mb-1 block">Default Diff View</Label>
