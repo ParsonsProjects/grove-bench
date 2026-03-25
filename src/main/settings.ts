@@ -32,6 +32,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Editor
   diffViewMode: 'unified',
+
+  // Privacy
+  analyticsEnabled: false,
+  analyticsPrompted: false,
 };
 
 let cached: GroveBenchSettings | null = null;

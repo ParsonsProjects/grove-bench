@@ -2,6 +2,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { trackEvent } from '../lib/analytics.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import NewAgentDialog from './NewAgentDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -72,6 +73,7 @@
 
     try {
       await window.groveBench.destroySession(id, deleteBranch);
+      trackEvent('session_destroyed');
       store.removeSession(id);
       gitStatusStore.clear(id);
     } catch (e: any) {

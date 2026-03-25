@@ -16,6 +16,8 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   theme: 'system',
   alwaysOnTop: false,
   diffViewMode: 'unified',
+  analyticsEnabled: false,
+  analyticsPrompted: false,
 };
 
 class SettingsStore {
