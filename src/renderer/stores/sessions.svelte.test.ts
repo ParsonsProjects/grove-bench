@@ -50,14 +50,6 @@ describe('SessionStore', () => {
       expect(store.repos).toEqual(['/repo/b']);
     });
 
-    it('persists repos to localStorage', () => {
-      store.addRepo('/repo/a');
-      expect(localStorageMock.setItem).toHaveBeenCalledWith(
-        'grove-bench:repos',
-        expect.stringContaining('/repo/a'),
-      );
-    });
-
     it('canCreate is false with no repos', () => {
       expect(store.canCreate).toBe(false);
     });

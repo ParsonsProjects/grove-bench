@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
+  import { trackEvent } from '../lib/analytics.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -130,6 +131,7 @@
         : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
 
       const result = await window.groveBench.createSession(opts);
+      trackEvent('session_created', { mode });
       // Direct sessions are ready immediately; worktree sessions go through
       // starting → installing → running, so start with the correct initial status.
       const initialStatus = mode === 'direct' ? 'running' : 'starting';

@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
+  import { settingsStore } from './stores/settings.svelte.js';
+  import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -9,8 +11,11 @@
   import SessionFinder from './components/SessionFinder.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import SessionContextMenu from './components/SessionContextMenu.svelte';
+  import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
+
+  let showAnalyticsConsent = $state(false);
 
   let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
 
@@ -186,6 +191,25 @@
     }
   });
 
+  // Sync analytics opt-in/out when setting changes (no restart needed).
+  // Also fires app_launched once after consent has been resolved.
+  let appLaunchedTracked = false;
+  $effect(() => {
+    const { analyticsEnabled, analyticsPrompted } = settingsStore.current;
+    setAnalyticsEnabled(analyticsEnabled);
+    if (analyticsEnabled && analyticsPrompted && !appLaunchedTracked) {
+      trackEvent('app_launched');
+      appLaunchedTracked = true;
+    }
+  });
+
+  // Show analytics consent banner on first launch
+  $effect(() => {
+    if (!settingsStore.loading && !settingsStore.current.analyticsPrompted) {
+      showAnalyticsConsent = true;
+    }
+  });
+
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
@@ -264,7 +288,8 @@
   }
 
   onMount(() => {
-    restoreWorktrees();
+    settingsStore.load();
+    store.loadRepos().then(() => restoreWorktrees());
     window.addEventListener('keydown', handleGlobalKeydown);
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
@@ -489,6 +514,8 @@
     </Dialog.Content>
   </Dialog.Root>
 {/if}
+
+<AnalyticsConsent visible={showAnalyticsConsent} />
 
 <style>
   :global(.tab-flash) {
