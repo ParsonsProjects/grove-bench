@@ -49,4 +49,5 @@ publish:
   provider: github
   owner: ParsonsProjects
   repo: grove-bench
-  releaseType: draft
+  releaseType: release
+  vPrefixedTagName: true
