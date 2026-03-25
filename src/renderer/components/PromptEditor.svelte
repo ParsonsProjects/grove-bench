@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -549,6 +550,7 @@
     <textarea
       bind:this={textarea}
       bind:value
+      spellcheck={settingsStore.current.spellcheck}
       oninput={handleInput}
       onkeydown={handleKeydown}
       disabled={!isReady}

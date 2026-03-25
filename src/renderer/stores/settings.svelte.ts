@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   theme: 'system',
   alwaysOnTop: false,
   diffViewMode: 'unified',
+  spellcheck: true,
 };
 
 class SettingsStore {
