@@ -47,8 +47,8 @@
     const session = store.sessions.find((s) => s.id === sessionId);
     const ready = messageStore.getIsReady(sessionId);
     if (session && (session.status === 'running' || session.status === 'error') && !ready) {
-      messageStore.isReady[sessionId] = true;
-      messageStore.isRunning[sessionId] = false;
+      messageStore.setIsReady(sessionId, true);
+      messageStore.setIsRunning(sessionId, false);
     }
   });
 
@@ -69,7 +69,7 @@
       // (or be set true below) so the input doesn't flicker disabled.
       const sessionBefore = store.sessions.find((s) => s.id === sessionId);
       if (!sessionBefore || (sessionBefore.status !== 'running' && sessionBefore.status !== 'error')) {
-        messageStore.isReady[sessionId] = false;
+        messageStore.setIsReady(sessionId, false);
       }
 
       // Subscribe to live events BEFORE replaying history so no events are
@@ -100,7 +100,7 @@
       if (history.length > 0) {
         const last = history[history.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {
-          messageStore.isRunning[sessionId] = false;
+          messageStore.setIsRunning(sessionId, false);
         }
       }
       // After replay, resolve any permissions/tool_calls still unresolved
@@ -113,8 +113,8 @@
       // the await above), ensure the input unlocks.
       const session = store.sessions.find((s) => s.id === sessionId);
       if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
-        messageStore.isReady[sessionId] = true;
-        messageStore.isRunning[sessionId] = false;
+        messageStore.setIsReady(sessionId, true);
+        messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
       messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);

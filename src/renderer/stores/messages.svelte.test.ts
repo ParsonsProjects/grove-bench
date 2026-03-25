@@ -272,7 +272,7 @@ describe('ingestEvent — permission_request', () => {
 
 describe('ingestEvent — result', () => {
   it('marks session as not running and idle', () => {
-    messageStore.isRunning[SID] = true;
+    messageStore.setIsRunning(SID, true);
     messageStore.ingestEvent(SID, {
       type: 'result',
       subtype: 'success',
@@ -431,7 +431,7 @@ describe('ingestEvent — activity', () => {
   });
 
   it('does not set running for idle', () => {
-    messageStore.isRunning[SID] = false;
+    messageStore.setIsRunning(SID, false);
     messageStore.ingestEvent(SID, { type: 'activity', activity: 'idle' } as AgentEvent);
     expect(messageStore.getIsRunning(SID)).toBe(false);
   });
@@ -439,7 +439,7 @@ describe('ingestEvent — activity', () => {
 
 describe('ingestEvent — process_exit', () => {
   it('marks session as stopped', () => {
-    messageStore.isRunning[SID] = true;
+    messageStore.setIsRunning(SID, true);
     messageStore.streamingText[SID] = 'leftover';
     messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
 
@@ -796,7 +796,7 @@ describe('addUserMessage', () => {
 
 describe('markSessionStopped', () => {
   it('resets running state and flushes streaming', () => {
-    messageStore.isRunning[SID] = true;
+    messageStore.setIsRunning(SID, true);
     messageStore.streamingText[SID] = 'partial';
     messageStore.markSessionStopped(SID);
 
@@ -900,7 +900,7 @@ describe('resolveStaleToolCalls', () => {
     messageStore.messagesBySession[SID] = [
       { kind: 'tool_call', id: '1', toolName: 'Bash', toolInput: {}, toolUseId: 'tu-stale', uuid: 'u', pending: true },
     ] as any;
-    messageStore.isRunning[SID] = false;
+    messageStore.setIsRunning(SID, false);
 
     messageStore.resolveStaleToolCalls(SID);
 
@@ -912,7 +912,7 @@ describe('resolveStaleToolCalls', () => {
     messageStore.messagesBySession[SID] = [
       { kind: 'tool_call', id: '1', toolName: 'Bash', toolInput: {}, toolUseId: 'tu-active', uuid: 'u', pending: true },
     ] as any;
-    messageStore.isRunning[SID] = true;
+    messageStore.setIsRunning(SID, true);
 
     messageStore.resolveStaleToolCalls(SID);
 
