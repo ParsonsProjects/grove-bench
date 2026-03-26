@@ -221,8 +221,22 @@ class MessageStore {
     return this.isRunning[sessionId] ?? false;
   }
 
+  /** Set isRunning for a session using full object reassignment so Svelte 5
+   *  reliably notifies all $derived subscribers (key-level mutations on
+   *  $state<Record> proxies can silently fail to propagate). */
+  setIsRunning(sessionId: string, value: boolean) {
+    this.isRunning = { ...this.isRunning, [sessionId]: value };
+  }
+
   getIsReady(sessionId: string): boolean {
     return this.isReady[sessionId] ?? false;
+  }
+
+  /** Set isReady for a session using full object reassignment so Svelte 5
+   *  reliably notifies all $derived subscribers (key-level mutations on
+   *  $state<Record> proxies can silently fail to propagate). */
+  setIsReady(sessionId: string, value: boolean) {
+    this.isReady = { ...this.isReady, [sessionId]: value };
   }
 
   /** Whether a session has any unresolved permission requests */
@@ -472,7 +486,7 @@ class MessageStore {
   markSessionStopped(sessionId: string) {
     this.flushStreamingText(sessionId);
     this.streamingThinking[sessionId] = '';
-    this.isRunning[sessionId] = false;
+    this.setIsRunning(sessionId, false);
     this.activityBySession[sessionId] = { activity: 'idle' };
 
     // Suppress late permission_request events from the dying query.
@@ -505,7 +519,7 @@ class MessageStore {
       id: nextId(),
       text,
     });
-    this.isRunning[sessionId] = true;
+    this.setIsRunning(sessionId, true);
     this.activityBySession[sessionId] = { activity: 'generating' };
     // Clear stale suggestions when user sends a new message
     this.promptSuggestionsBySession[sessionId] = [];
@@ -526,8 +540,8 @@ class MessageStore {
           // Truncate event history on disk so old messages don't reappear on restart
           window.groveBench.clearEventHistory(sessionId).catch(() => {});
         }
-        this.isReady[sessionId] = true;
-        this.isRunning[sessionId] = false;
+        this.setIsReady(sessionId, true);
+        this.setIsRunning(sessionId, false);
         delete this.stoppingSession[sessionId];
         this.modelBySession[sessionId] = event.model;
         this.systemInfoBySession[sessionId] = {
@@ -558,7 +572,7 @@ class MessageStore {
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
         // Clear streaming text (it was a preview) and push the finalized message.
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingText[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'text',
@@ -569,19 +583,19 @@ class MessageStore {
         break;
 
       case 'partial_text':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
         this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
         break;
 
       case 'partial_thinking':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.activityBySession[sessionId] = { activity: 'thinking' };
         this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + event.text;
         break;
 
       case 'assistant_tool_use':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
         // If partial text was streaming but no assistant_text arrived to finalize it
         // (e.g., the assistant switched from text to tool_use mid-message), flush it.
@@ -726,7 +740,7 @@ class MessageStore {
       }
 
       case 'thinking':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'thinking',
@@ -737,7 +751,7 @@ class MessageStore {
 
       case 'result':
         this.flushStreamingText(sessionId);
-        this.isRunning[sessionId] = false;
+        this.setIsRunning(sessionId, false);
         this.activityBySession[sessionId] = { activity: 'idle' };
         this.toolProgressBySession[sessionId] = {};
         if (event.contextWindow) {
@@ -768,9 +782,9 @@ class MessageStore {
         });
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
-        if (!this.isReady[sessionId]) {
-          this.isReady[sessionId] = true;
-          this.isRunning[sessionId] = false;
+        if (!this.getIsReady(sessionId)) {
+          this.setIsReady(sessionId, true);
+          this.setIsRunning(sessionId, false);
         }
         break;
 
@@ -820,7 +834,7 @@ class MessageStore {
 
       case 'activity':
         if (event.activity !== 'idle') {
-          this.isRunning[sessionId] = true;
+          this.setIsRunning(sessionId, true);
         }
         this.activityBySession[sessionId] = {
           activity: event.activity,
@@ -847,10 +861,10 @@ class MessageStore {
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
-        this.isRunning[sessionId] = false;
+        this.setIsRunning(sessionId, false);
         // If the agent exited before system_init, unlock the input
-        if (!this.isReady[sessionId]) {
-          this.isReady[sessionId] = true;
+        if (!this.getIsReady(sessionId)) {
+          this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
         gitStatusStore.scheduleRefresh(sessionId, 100);
@@ -1038,7 +1052,7 @@ class MessageStore {
       id: nextId(),
       text: command,
     });
-    this.isRunning[sessionId] = true;
+    this.setIsRunning(sessionId, true);
     window.groveBench.sendMessage(sessionId, command);
   }
 
@@ -1193,11 +1207,10 @@ class MessageStore {
     if (this.cleanups.has(sessionId)) {
       return;
     }
-    // Pre-initialize isReady so the $state<Record> proxy has the key
-    // before any $derived reads it. Without this, a $derived that reads
-    // a non-existent key may not re-evaluate when the key is later set.
-    if (!(sessionId in this.isReady)) {
-      this.isReady[sessionId] = false;
+    // Pre-initialize isReady via full-object reassignment so Svelte 5
+    // reliably tracks it from the start.
+    if (!this.getIsReady(sessionId)) {
+      this.setIsReady(sessionId, false);
     }
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
       this.ingestEvent(sessionId, event);
@@ -1219,7 +1232,7 @@ class MessageStore {
    *  During replay the tool_result handler should match, but if events arrive
    *  out of order or the session is idle, we clean up so spinners don't linger. */
   resolveStaleToolCalls(sessionId: string) {
-    if (this.isRunning[sessionId]) return; // genuinely in-flight
+    if (this.getIsRunning(sessionId)) return; // genuinely in-flight
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
     const updated = msgs.map((m) => {
@@ -1239,7 +1252,7 @@ class MessageStore {
    *  If the session is still running, leave them unresolved (genuinely pending).
    *  Otherwise, mark as denied (timeout/stop/destroy happened before replay). */
   resolveReplayedPermissions(sessionId: string) {
-    if (this.isRunning[sessionId]) return;
+    if (this.getIsRunning(sessionId)) return;
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
     const updated = msgs.map((m) => {

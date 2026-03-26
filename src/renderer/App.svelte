@@ -299,11 +299,11 @@
         // Ensure the input unlocks even if system_init was missed due to a
         // subscribe/replay race. system_init will fill in model/tools info
         // when it arrives; this just guarantees the input is usable.
-        messageStore.isReady[sessionId] = true;
-        messageStore.isRunning[sessionId] = false;
+        messageStore.setIsReady(sessionId, true);
+        messageStore.setIsRunning(sessionId, false);
       } else if (status === 'error') {
-        messageStore.isReady[sessionId] = true;
-        messageStore.isRunning[sessionId] = false;
+        messageStore.setIsReady(sessionId, true);
+        messageStore.setIsRunning(sessionId, false);
       } else if (status === 'stopped') {
         // Session died (possibly during sleep) — update UI
         messageStore.markSessionStopped(sessionId);
