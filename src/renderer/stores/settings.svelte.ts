@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 class SettingsStore {
   current = $state<GroveBenchSettings>({ ...DEFAULT_SETTINGS });
   draft = $state<GroveBenchSettings>({ ...DEFAULT_SETTINGS });
-  loading = $state(false);
+  loading = $state(true);
   saving = $state(false);
   error = $state<string | null>(null);
 
