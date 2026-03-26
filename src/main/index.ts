@@ -19,6 +19,10 @@ import { initAutoUpdater } from './auto-updater.js';
 app.name = 'grove-bench';
 app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
 
+// Set the App User Model ID so Windows can associate the pinned taskbar
+// shortcut with the running application (prevents icon from disappearing).
+app.setAppUserModelId('com.parsonsprojects.grove-bench');
+
 // Register built-in agent adapters before anything else uses them
 initAdapters();
 
