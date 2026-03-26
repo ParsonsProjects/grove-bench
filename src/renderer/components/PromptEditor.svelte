@@ -69,16 +69,19 @@
   );
 
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  // Derive isReady from both the message store flag AND session status.
-  // The session status is updated via a $state array reassignment which is
-  // more reliable in Svelte 5 than key-level changes on a $state<Record>.
-  // This prevents the input from staying disabled when system_init fires
-  // and SESSION_STATUS 'running' arrives but the Record proxy change
-  // doesn't propagate to this $derived.
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isReady = $derived(
-    messageStore.getIsReady(sessionId) || sessionStatus === 'running' || sessionStatus === 'error',
-  );
+
+  // Use $effect + $state instead of $derived for isReady.  Previous attempts
+  // used $derived over messageStore.getIsReady() and store.sessions.find(),
+  // but Svelte 5's fine-grained proxy tracking silently fails to propagate
+  // changes through method calls on $state<Record> and .find() on $state
+  // arrays, leaving the input permanently disabled.  An $effect reliably
+  // re-runs when any tracked $state changes and sets a local $state flag.
+  let isReady = $state(false);
+  $effect(() => {
+    const storeReady = messageStore.isReady[sessionId] ?? false;
+    const status = store.sessions.find((s) => s.id === sessionId)?.status;
+    isReady = storeReady || status === 'running' || status === 'error';
+  });
   let canSend = $derived(!isRunning && isReady);
   let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 
