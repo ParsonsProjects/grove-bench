@@ -62,6 +62,10 @@ vi.mock('./memory-autosave.js', () => ({
   saveSessionMetadata: vi.fn(),
 }));
 
+vi.mock('./git.js', () => ({
+  getGitIdentity: vi.fn().mockResolvedValue({ name: 'Test User', email: 'test@example.com' }),
+}));
+
 // Mock the adapter registry with a controllable mock adapter
 let mockAdapter: MockAdapter;
 
