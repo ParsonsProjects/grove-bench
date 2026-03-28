@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
+import { getGitIdentity } from './git.js';
 
 interface PendingPermission {
   requestId: string;
@@ -275,6 +276,22 @@ class AgentSessionManager {
     logger.debug(`[runQuery] session=${id} starting`);
     // Build adapter config from session state + app settings
     const currentSettings = settings.getSettings();
+
+    // Read the user's git identity so we can force it via env vars.
+    // Environment variables take highest precedence in git's identity
+    // resolution, ensuring commits are attributed to the user even if
+    // the agent SDK sets its own git config.
+    let gitIdentityEnv: Record<string, string> = {};
+    try {
+      const identity = await getGitIdentity(session.worktreePath);
+      gitIdentityEnv = {
+        GIT_AUTHOR_NAME: identity.name,
+        GIT_AUTHOR_EMAIL: identity.email,
+        GIT_COMMITTER_NAME: identity.name,
+        GIT_COMMITTER_EMAIL: identity.email,
+      };
+    } catch { /* best effort */ }
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -285,7 +302,7 @@ class AgentSessionManager {
       allowedTools: session.allowedTools,
       outputFormat: session.outputFormat,
       sandbox: session.sandbox,
-      extraEnv: session.extraEnv,
+      extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       resumeSessionId: session.providerSessionId,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
