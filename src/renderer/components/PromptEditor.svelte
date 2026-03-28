@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
@@ -69,17 +68,13 @@
   );
 
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  // Derive isReady from both the message store flag AND session status.
-  // The session status is updated via a $state array reassignment which is
-  // more reliable in Svelte 5 than key-level changes on a $state<Record>.
-  // This prevents the input from staying disabled when system_init fires
-  // and SESSION_STATUS 'running' arrives but the Record proxy change
-  // doesn't propagate to this $derived.
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isReady = $derived(
-    messageStore.getIsReady(sessionId) || sessionStatus === 'running' || sessionStatus === 'error',
-  );
-  let canSend = $derived(!isRunning && isReady);
+
+  // The input is always usable once mounted — no need to wait for system_init.
+  // The SDK's system_init can take 30+ seconds (or never arrive for the first
+  // query) but messages are queued in the ReadableStream and processed once
+  // the SDK connects.  Gating on system_init left worktree inputs permanently
+  // disabled.
+  let canSend = $derived(!isRunning);
   let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 
   function handleSubmit() {
@@ -553,13 +548,12 @@
       spellcheck={settingsStore.current.spellcheck}
       oninput={handleInput}
       onkeydown={handleKeydown}
-      disabled={!isReady}
-      placeholder={!isReady ? 'Setting up session...' : isRunning ? 'Waiting for agent...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
+      placeholder={isRunning ? 'Waiting for agent...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
       rows="1"
       class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
         placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
         disabled:opacity-50 disabled:cursor-not-allowed font-mono
-        {!isReady || isRunning ? 'border-muted opacity-60' : 'border-input'}"
+        {isRunning ? 'border-muted opacity-60' : 'border-input'}"
     ></textarea>
 
     {#if isRunning}
