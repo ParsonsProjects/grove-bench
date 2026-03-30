@@ -390,15 +390,16 @@ class AgentSessionManager {
             w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
           }
 
-          // Capture baseline checkpoint (turn 0)
-          session.checkpoints.capture(id, session.worktreePath, '__baseline__').catch(err => {
-            logger.warn(`Checkpoint baseline failed for ${id}:`, err);
-          });
-
-          // Resume existing checkpoint state if this is a resumed session
+          // Resume existing checkpoint state if this is a resumed session,
+          // otherwise capture a baseline checkpoint for new sessions.
+          // These are mutually exclusive to avoid turn counter collisions.
           if (session.providerSessionId) {
             session.checkpoints.resume(id, session.worktreePath).catch(err => {
               logger.warn(`Checkpoint resume failed for ${id}:`, err);
+            });
+          } else {
+            session.checkpoints.capture(id, session.worktreePath, '__baseline__').catch(err => {
+              logger.warn(`Checkpoint baseline failed for ${id}:`, err);
             });
           }
         }
@@ -930,10 +931,6 @@ class AgentSessionManager {
   async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Session ${id} not found`);
-
-    if (!session.checkpoints.has(id, userMessageId)) {
-      return 'No checkpoint found for this message';
-    }
 
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }

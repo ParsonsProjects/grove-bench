@@ -80,11 +80,45 @@ export class CheckpointManager {
   }
 
   /**
+   * Resolve the git ref for a uuid, falling back to git refs if the in-memory map misses.
+   */
+  private async resolveRef(sessionId: string, cwd: string, uuid: string): Promise<string | null> {
+    const s = this.sessions.get(sessionId);
+    const cached = s?.uuidToRef.get(uuid);
+    if (cached) return cached;
+
+    // Fallback: scan git refs
+    try {
+      const output = await git(
+        ['for-each-ref', '--format=%(refname) %(subject)', `refs/grove/checkpoints/${sessionId}/`],
+        cwd
+      );
+      logger.debug(`[checkpoints] resolveRef fallback session=${sessionId} uuid=${uuid} refs=${output.split('\n').filter(Boolean).length}`);
+      for (const line of output.split('\n')) {
+        if (!line.trim()) continue;
+        const spaceIdx = line.indexOf(' ');
+        if (spaceIdx === -1) continue;
+        const ref = line.slice(0, spaceIdx);
+        const subject = line.slice(spaceIdx + 1);
+        const uuidMatch = subject.match(/uuid=(\S+)/);
+        if (uuidMatch?.[1] === uuid) {
+          // Cache for future lookups
+          if (s) s.uuidToRef.set(uuid, ref);
+          return ref;
+        }
+      }
+      logger.debug(`[checkpoints] resolveRef fallback: uuid=${uuid} not found in refs`);
+    } catch (err) {
+      logger.debug(`[checkpoints] resolveRef fallback failed:`, err);
+    }
+    return null;
+  }
+
+  /**
    * Restore the working tree to the state at a specific checkpoint.
    */
   async restore(sessionId: string, cwd: string, uuid: string): Promise<void> {
-    const s = this.sessions.get(sessionId);
-    const ref = s?.uuidToRef.get(uuid);
+    const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) throw new Error(`No checkpoint found for uuid=${uuid}`);
 
     const oid = (await git(['rev-parse', ref], cwd)).trim();
@@ -105,8 +139,7 @@ export class CheckpointManager {
    * Get a unified diff between a checkpoint and the current working tree.
    */
   async diff(sessionId: string, cwd: string, uuid: string): Promise<string> {
-    const s = this.sessions.get(sessionId);
-    const ref = s?.uuidToRef.get(uuid);
+    const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) return 'No checkpoint found for this message';
 
     const output = await git(['diff', ref, '--', '.'], cwd);
@@ -194,9 +227,11 @@ export class CheckpointManager {
 
         items.push({ uuid: uuidMatch[1], turn, ref });
       }
+      // Filter out internal baseline checkpoint
+      const visible = items.filter(i => i.uuid !== '__baseline__');
       // Sort newest first (descending turn)
-      items.sort((a, b) => b.turn - a.turn);
-      return items;
+      visible.sort((a, b) => b.turn - a.turn);
+      return visible;
     } catch {
       return [];
     }

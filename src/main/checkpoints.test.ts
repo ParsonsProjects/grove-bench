@@ -266,6 +266,22 @@ describe('CheckpointManager', () => {
       expect(result[0].uuid).toBe('uuid-a');
     });
 
+    it('filters out __baseline__ checkpoint', async () => {
+      mockGit.mockResolvedValueOnce(
+        'refs/grove/checkpoints/sess1/turn/1 grove checkpoint turn=1 uuid=__baseline__\n' +
+        'refs/grove/checkpoints/sess1/turn/2 grove checkpoint turn=2 uuid=uuid-a\n' +
+        'refs/grove/checkpoints/sess1/turn/3 grove checkpoint turn=3 uuid=uuid-b'
+      );
+
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('sess1', '/repo');
+
+      expect(result).toHaveLength(2);
+      expect(result.every(c => c.uuid !== '__baseline__')).toBe(true);
+      expect(result[0].uuid).toBe('uuid-b');
+      expect(result[1].uuid).toBe('uuid-a');
+    });
+
     it('calls git for-each-ref with correct args', async () => {
       mockGit.mockResolvedValueOnce('');
       const mgr = new CheckpointManager();

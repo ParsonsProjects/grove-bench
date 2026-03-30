@@ -41,7 +41,6 @@
       } else {
         await messageStore.executeRewind(sessionId, selectedUuid);
       }
-      checkpointStore.clearSelection(sessionId);
       checkpointStore.refresh(sessionId);
     } catch (e: any) {
       error = e?.message || 'Rewind failed';
@@ -54,11 +53,11 @@
 </script>
 
 {#if isLoading && checkpoints.length === 0}
-  <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
+  <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
     Loading checkpoints...
   </div>
 {:else if checkpoints.length === 0}
-  <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
+  <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
     No checkpoints yet — send a message to create one.
   </div>
 {:else}
@@ -89,7 +88,7 @@
     </div>
 
     <!-- Right: Detail pane -->
-    <div class="flex-1 flex flex-col overflow-hidden">
+    <div class="pixel-bg flex-1 flex flex-col overflow-hidden relative">
       {#if !selectedUuid}
         <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
           Select a checkpoint to view changes
@@ -132,16 +131,16 @@
         {/if}
 
         <!-- Diff content -->
-        <div class="flex-1 overflow-y-auto">
+        <div class="flex-1 flex flex-col overflow-y-auto">
           {#if isDiffLoading}
-            <div class="flex items-center justify-center py-8 text-muted-foreground text-xs">
+            <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
               Loading diff...
             </div>
-          {:else if diff && diff !== '(no changes)'}
+          {:else if diff && diff !== '(no changes)' && !diff.startsWith('No checkpoint')}
             <DiffView lines={parseDiffLines(diff)} />
           {:else}
-            <div class="flex items-center justify-center py-8 text-muted-foreground text-xs">
-              No file changes since this checkpoint
+            <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
+              {diff?.startsWith('No checkpoint') ? diff : 'No file changes since this checkpoint'}
             </div>
           {/if}
         </div>
