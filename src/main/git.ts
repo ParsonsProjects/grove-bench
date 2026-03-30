@@ -5,6 +5,13 @@ export async function git(args: string[], cwd: string): Promise<string> {
   return result.stdout;
 }
 
+export async function gitEnv(
+  args: string[], cwd: string, env: Record<string, string>
+): Promise<string> {
+  const result = await execa('git', args, { cwd, env: { ...process.env, ...env } });
+  return result.stdout;
+}
+
 export async function gitVersion(): Promise<{ version: string; major: number; minor: number; patch: number } | null> {
   try {
     const { stdout } = await execa('git', ['--version']);

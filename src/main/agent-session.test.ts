@@ -706,7 +706,9 @@ describe('AgentSessionManager.sendMessage()', () => {
     // Verify it was recorded in event history
     const history = sessionManager.getEventHistory('test-send');
     const userMsgs = history.filter((e) => e.type === 'user_message');
-    expect(userMsgs).toContainEqual({ type: 'user_message', text: 'Hello agent' });
+    expect(userMsgs).toHaveLength(1);
+    expect(userMsgs[0]).toMatchObject({ type: 'user_message', text: 'Hello agent' });
+    expect(userMsgs[0]).toHaveProperty('uuid');
 
     await sessionManager.destroySession('test-send');
   });

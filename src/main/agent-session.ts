@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
+import { CheckpointManager } from './checkpoints.js';
 
 interface PendingPermission {
   requestId: string;
@@ -78,6 +79,8 @@ interface ManagedSession {
   permRequestCounter: number;
   /** Guard against concurrent runQuery calls (e.g. rapid double-stop). */
   isStartingQuery: boolean;
+  /** Git-based checkpoint manager for rewind functionality. */
+  checkpoints: CheckpointManager;
 }
 
 export interface SessionCompletionResult {
@@ -218,6 +221,7 @@ class AgentSessionManager {
       emit: null,
       permRequestCounter: 0,
       isStartingQuery: false,
+      checkpoints: new CheckpointManager(),
     };
 
     this.sessions.set(id, session);
@@ -366,6 +370,9 @@ class AgentSessionManager {
         logger.debug(`[runQuery] session=${id} event type=${event.type}`);
         if (abortController.signal.aborted) break;
 
+        // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
+        if (event.type === 'user_message') continue;
+
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
           session.status = 'running';
@@ -381,6 +388,18 @@ class AgentSessionManager {
           const w = session.window;
           if (!w.isDestroyed()) {
             w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
+          }
+
+          // Capture baseline checkpoint (turn 0)
+          session.checkpoints.capture(id, session.worktreePath, '__baseline__').catch(err => {
+            logger.warn(`Checkpoint baseline failed for ${id}:`, err);
+          });
+
+          // Resume existing checkpoint state if this is a resumed session
+          if (session.providerSessionId) {
+            session.checkpoints.resume(id, session.worktreePath).catch(err => {
+              logger.warn(`Checkpoint resume failed for ${id}:`, err);
+            });
           }
         }
 
@@ -518,10 +537,16 @@ class AgentSessionManager {
       return false;
     }
 
-    // Record in event history so user messages survive renderer refresh
-    const userEvent: AgentEvent = { type: 'user_message', text: content };
-    session.eventHistory.push(userEvent);
-    try { fs.appendFileSync(session.eventLogPath, JSON.stringify(userEvent) + '\n'); } catch { /* non-fatal */ }
+    // Record in event history with UUID for checkpoint tracking.
+    // Use emit() which handles eventHistory, disk persistence, and renderer notification.
+    const uuid = crypto.randomUUID();
+    const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
+    session.emit?.(userEvent);
+
+    // Capture checkpoint (fire-and-forget)
+    session.checkpoints.capture(id, session.worktreePath, uuid).catch(err => {
+      logger.warn(`Checkpoint capture failed for ${id}:`, err);
+    });
 
     const sessionId = session.providerSessionId ?? '';
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
@@ -781,6 +806,11 @@ class AgentSessionManager {
     // Kill any dev servers not already cleaned up on query completion
     await this.killDetectedPorts(session);
 
+    // Clean up checkpoint refs
+    await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {
+      logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
+    });
+
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
     this.eventListeners.delete(id);
@@ -888,14 +918,9 @@ class AgentSessionManager {
   async rewindFiles(id: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Session ${id} not found`);
-    if (!session.queryHandle) throw new Error(`Session ${id} has no active query`);
 
     if (!options?.conversationOnly) {
-      const q = session.queryHandle as any;
-      if (typeof q.rewindFiles !== 'function') {
-        throw new Error('SDK does not support rewindFiles — upgrade @anthropic-ai/claude-agent-sdk');
-      }
-      await q.rewindFiles(userMessageId);
+      await session.checkpoints.restore(id, session.worktreePath, userMessageId);
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
@@ -905,21 +930,12 @@ class AgentSessionManager {
   async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Session ${id} not found`);
-    if (!session.queryHandle) throw new Error(`Session ${id} has no active query`);
-    const q = session.queryHandle as any;
-    if (typeof q.rewindFiles !== 'function') {
-      throw new Error('SDK does not support rewindFiles — upgrade @anthropic-ai/claude-agent-sdk');
+
+    if (!session.checkpoints.has(id, userMessageId)) {
+      return 'No checkpoint found for this message';
     }
-    const result = await q.rewindFiles(userMessageId, { dryRun: true });
-    // Return a human-readable summary of files that would be restored
-    if (result && typeof result === 'object') {
-      const files = result.files ?? result.changedFiles ?? [];
-      if (Array.isArray(files) && files.length > 0) {
-        return files.map((f: any) => typeof f === 'string' ? f : f.path ?? f.filename ?? JSON.stringify(f)).join('\n');
-      }
-      return JSON.stringify(result, null, 2);
-    }
-    return String(result ?? 'No changes');
+
+    return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
 
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */

@@ -69,7 +69,7 @@
       <Dialog.Description>
         Select a message to rewind to. Files on disk will be restored to their state at that point.
         <span class="text-muted-foreground text-xs block mt-1">
-          Only tracks Write/Edit changes — Bash file modifications are not included.
+          Captures full working tree state including all file changes.
         </span>
       </Dialog.Description>
     </Dialog.Header>
