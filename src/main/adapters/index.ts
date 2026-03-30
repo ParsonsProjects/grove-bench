@@ -9,6 +9,7 @@ export type {
   PermissionRequest,
   PermissionResponse,
   PermissionHandler,
+  MemoryOperations,
 } from './types.js';
 
 export { adapterRegistry } from './registry.js';

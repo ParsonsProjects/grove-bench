@@ -213,7 +213,8 @@ describe('AgentSessionManager.createSession()', () => {
     expect(result.branch).toBe('main');
     expect(result.status).toBe('starting');
     expect(result.agentType).toBe('mock');
-    expect(mockAdapter.startCallCount).toBe(1);
+    // runQuery is fire-and-forget — wait for adapter.start() to be called
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
 
     // Clean up
     await sessionManager.destroySession('test-1');
@@ -243,6 +244,8 @@ describe('AgentSessionManager.createSession()', () => {
       permissionMode: 'plan',
     });
 
+    // runQuery is fire-and-forget — wait for adapter.start() to be called
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
     expect(mockAdapter.lastConfig?.permissionMode).toBe('plan');
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
