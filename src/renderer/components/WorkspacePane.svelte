@@ -2,9 +2,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import OutputPanel from './OutputPanel.svelte';
   import ChangesReviewPanel from './ChangesReviewPanel.svelte';
+  import CheckpointsPanel from './CheckpointsPanel.svelte';
   import TerminalPanel from './TerminalPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
@@ -19,23 +21,27 @@
   let hasChanges = $derived(gitStatus.entries.length > 0);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let terminalRunning = $derived(terminalStore.isAlive(sessionId));
+  let checkpointCount = $derived(checkpointStore.getCheckpoints(sessionId).length);
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
 
-  function switchTab(tab: 'activity' | 'changes' | 'plan' | 'terminal') {
+  function switchTab(tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
     if (tab === 'changes') {
       gitStatusStore.refresh(sessionId);
     }
+    if (tab === 'checkpoints') {
+      checkpointStore.refresh(sessionId);
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    // Alt+1 / Alt+2 to switch tabs
     if (e.altKey && e.key === '1') { e.preventDefault(); switchTab('activity'); }
     if (e.altKey && e.key === '2') { e.preventDefault(); switchTab('changes'); }
-    if (e.altKey && e.key === '3') { e.preventDefault(); switchTab('terminal'); }
+    if (e.altKey && e.key === '3') { e.preventDefault(); switchTab('checkpoints'); }
+    if (e.altKey && e.key === '4') { e.preventDefault(); switchTab('terminal'); }
   }
 
   // Reactively unlock the input whenever the session reaches 'running' (or 'error')
@@ -167,6 +173,21 @@
       <span class="text-muted-foreground/60 ml-1">Alt+2</span>
     </button>
     <button
+      onclick={() => switchTab('checkpoints')}
+      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'checkpoints'
+        ? 'border-primary text-foreground'
+        : 'border-transparent text-muted-foreground hover:text-foreground'}"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+      Checkpoints
+      {#if checkpointCount > 0}
+        <span class="bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
+          {checkpointCount}
+        </span>
+      {/if}
+      <span class="text-muted-foreground/60 ml-1">Alt+3</span>
+    </button>
+    <button
       onclick={() => switchTab('terminal')}
       class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'terminal'
         ? 'border-primary text-foreground'
@@ -177,7 +198,7 @@
       {#if terminalRunning}
         <span class="inline-block w-2 h-2 bg-green-500 animate-pulse"></span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+3</span>
+      <span class="text-muted-foreground/60 ml-1">Alt+4</span>
     </button>
   </div>
 
@@ -187,6 +208,9 @@
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
     <ChangesReviewPanel {sessionId} />
+  </div>
+  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
+    <CheckpointsPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     <TerminalPanel {sessionId} />

@@ -10,6 +10,12 @@ interface SessionCheckpoints {
   captureQueue: Promise<void>;
 }
 
+export interface CheckpointInfo {
+  uuid: string;
+  turn: number;
+  ref: string;
+}
+
 export class CheckpointManager {
   private sessions = new Map<string, SessionCheckpoints>();
 
@@ -160,6 +166,39 @@ export class CheckpointManager {
       logger.debug(`[checkpoints] resumed session=${sessionId} turns=${maxTurn} uuids=${s.uuidToRef.size}`);
     } catch {
       // No existing refs — fresh session
+    }
+  }
+
+  /**
+   * List all checkpoints for a session, sorted newest-first.
+   */
+  async list(sessionId: string, cwd: string): Promise<CheckpointInfo[]> {
+    try {
+      const output = await git(
+        ['for-each-ref', '--format=%(refname) %(subject)', `refs/grove/checkpoints/${sessionId}/`],
+        cwd
+      );
+      const items: CheckpointInfo[] = [];
+      for (const line of output.split('\n')) {
+        if (!line.trim()) continue;
+        const spaceIdx = line.indexOf(' ');
+        if (spaceIdx === -1) continue;
+        const ref = line.slice(0, spaceIdx);
+        const subject = line.slice(spaceIdx + 1);
+
+        const turnMatch = ref.match(/\/turn\/(\d+)$/);
+        const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
+
+        const uuidMatch = subject.match(/uuid=(\S+)/);
+        if (!uuidMatch) continue;
+
+        items.push({ uuid: uuidMatch[1], turn, ref });
+      }
+      // Sort newest first (descending turn)
+      items.sort((a, b) => b.turn - a.turn);
+      return items;
+    } catch {
+      return [];
     }
   }
 

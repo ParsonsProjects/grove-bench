@@ -524,6 +524,10 @@ export function registerHandlers() {
     return sessionManager.getCheckpointDiff(sessionId, userMessageId);
   });
 
+  ipcMain.handle(IPC.AGENT_LIST_CHECKPOINTS, async (_event, sessionId: string) => {
+    return sessionManager.listCheckpoints(sessionId);
+  });
+
   // ─── Git status ───
 
   ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string) => {

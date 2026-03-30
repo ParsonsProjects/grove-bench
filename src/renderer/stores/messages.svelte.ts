@@ -1,5 +1,6 @@
 import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { checkpointStore } from './checkpoints.svelte.js';
 
 // ─── Chat message types ───
 
@@ -190,7 +191,7 @@ class MessageStore {
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan' | 'terminal'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
 
   /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
   showDetailsBySession = $state<Record<string, boolean>>({});
@@ -292,11 +293,11 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' | 'terminal' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan' | 'terminal') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
     this.activeTabBySession[sessionId] = tab;
   }
 
@@ -886,6 +887,10 @@ class MessageStore {
           text: event.text,
           uuid: event.uuid,
         });
+        // Schedule checkpoint list refresh so the Checkpoints tab updates
+        if (event.uuid) {
+          checkpointStore.scheduleRefresh(sessionId);
+        }
         break;
       }
 

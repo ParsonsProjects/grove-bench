@@ -22,6 +22,7 @@ const mockGroveBench = {
   revertFile: vi.fn(),
   rewindSession: vi.fn(() => Promise.resolve()),
   getCheckpointDiff: vi.fn(() => Promise.resolve('')),
+  listCheckpoints: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CheckpointListItem[])),
   clearEventHistory: vi.fn(() => Promise.resolve()),
   sendMessage: vi.fn(),
   getSettings: vi.fn(),

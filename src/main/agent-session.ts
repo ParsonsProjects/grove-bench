@@ -938,6 +938,13 @@ class AgentSessionManager {
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
 
+  /** List all checkpoints for a session. */
+  async listCheckpoints(id: string): Promise<import('../shared/types.js').CheckpointListItem[]> {
+    const session = this.sessions.get(id);
+    if (!session) return [];
+    return session.checkpoints.list(id, session.worktreePath);
+  }
+
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
   getEventHistory(id: string): AgentEvent[] {
     const session = this.sessions.get(id);

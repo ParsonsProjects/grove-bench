@@ -81,6 +81,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_REWIND, sessionId, userMessageId, options),
   getCheckpointDiff: (sessionId: string, userMessageId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_DIFF, sessionId, userMessageId),
+  listCheckpoints: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_LIST_CHECKPOINTS, sessionId),
 
   // Git status
   getGitStatus: (sessionId: string) =>

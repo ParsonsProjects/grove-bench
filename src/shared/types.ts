@@ -168,6 +168,12 @@ export interface GitStatusResult {
   entries: GitStatusEntry[];
 }
 
+export interface CheckpointListItem {
+  uuid: string;
+  turn: number;
+  ref: string;
+}
+
 // ─── PR Info ───
 
 export interface PrInfo {
@@ -287,6 +293,7 @@ export interface GroveBenchAPI {
   // Checkpoint rewind
   rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
+  listCheckpoints(sessionId: string): Promise<CheckpointListItem[]>;
 
   // Git status
   getGitStatus(sessionId: string): Promise<GitStatusResult>;
@@ -518,6 +525,7 @@ export const IPC = {
   PTY_EXIT: 'pty:exit',      // pty:exit:{sessionId}
   AGENT_REWIND: 'agent:rewind',
   AGENT_CHECKPOINT_DIFF: 'agent:checkpointDiff',
+  AGENT_LIST_CHECKPOINTS: 'agent:listCheckpoints',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater

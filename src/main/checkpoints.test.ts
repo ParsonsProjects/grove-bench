@@ -224,6 +224,60 @@ describe('CheckpointManager', () => {
     });
   });
 
+  describe('list()', () => {
+    it('returns empty array for unknown session', async () => {
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('unknown', '/repo');
+      expect(result).toEqual([]);
+    });
+
+    it('returns empty array when no refs exist', async () => {
+      mockGit.mockRejectedValueOnce(new Error('no refs'));
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('sess1', '/repo');
+      expect(result).toEqual([]);
+    });
+
+    it('returns checkpoints sorted newest-first', async () => {
+      mockGit.mockResolvedValueOnce(
+        'refs/grove/checkpoints/sess1/turn/1 grove checkpoint turn=1 uuid=uuid-a\n' +
+        'refs/grove/checkpoints/sess1/turn/3 grove checkpoint turn=3 uuid=uuid-c\n' +
+        'refs/grove/checkpoints/sess1/turn/2 grove checkpoint turn=2 uuid=uuid-b'
+      );
+
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('sess1', '/repo');
+
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual({ uuid: 'uuid-c', turn: 3, ref: 'refs/grove/checkpoints/sess1/turn/3' });
+      expect(result[1]).toEqual({ uuid: 'uuid-b', turn: 2, ref: 'refs/grove/checkpoints/sess1/turn/2' });
+      expect(result[2]).toEqual({ uuid: 'uuid-a', turn: 1, ref: 'refs/grove/checkpoints/sess1/turn/1' });
+    });
+
+    it('skips lines without uuid', async () => {
+      mockGit.mockResolvedValueOnce(
+        'refs/grove/checkpoints/sess1/turn/1 grove checkpoint turn=1 uuid=uuid-a\n' +
+        'refs/grove/checkpoints/sess1/turn/2 malformed line'
+      );
+
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('sess1', '/repo');
+      expect(result).toHaveLength(1);
+      expect(result[0].uuid).toBe('uuid-a');
+    });
+
+    it('calls git for-each-ref with correct args', async () => {
+      mockGit.mockResolvedValueOnce('');
+      const mgr = new CheckpointManager();
+      await mgr.list('sess1', '/repo');
+
+      expect(mockGit).toHaveBeenCalledWith(
+        ['for-each-ref', '--format=%(refname) %(subject)', 'refs/grove/checkpoints/sess1/'],
+        '/repo'
+      );
+    });
+  });
+
   describe('resume()', () => {
     it('rebuilds state from existing refs', async () => {
       mockGit.mockResolvedValueOnce(
