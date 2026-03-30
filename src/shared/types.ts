@@ -126,8 +126,9 @@ export type AgentEvent =
   | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
   // Files persisted to disk
   | { type: 'files_persisted'; files: { filename: string; fileId: string }[]; failed: { filename: string; error: string }[] }
-  // Permission mode sync (from adapter status messages)
-  | { type: 'mode_sync'; mode: PermissionMode }
+  // Permission mode sync — source is required so the renderer knows whether to
+  // respect user-explicit overrides ('sdk' may be stale, 'session' is authoritative)
+  | { type: 'mode_sync'; mode: PermissionMode; source: 'sdk' | 'session' }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
   // Memory auto-save status

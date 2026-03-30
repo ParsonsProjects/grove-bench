@@ -114,18 +114,18 @@ export function transformMessage(
         }
         const modeValue = m.permissionMode ?? m.permission_mode;
         if (modeValue) {
-          events.push({ type: 'mode_sync', mode: modeValue });
+          events.push({ type: 'mode_sync', mode: modeValue, source: 'sdk' });
         }
       } else if (message.subtype === 'local_command_output') {
         const content = (message as any).content;
         if (content) {
           events.push({ type: 'status', message: content });
           if (/mode.*plan/i.test(content) || /plan mode/i.test(content)) {
-            events.push({ type: 'mode_sync', mode: 'plan' });
+            events.push({ type: 'mode_sync', mode: 'plan', source: 'sdk' });
           } else if (/mode.*code/i.test(content) || /code mode/i.test(content) || /default mode/i.test(content)) {
-            events.push({ type: 'mode_sync', mode: 'default' });
+            events.push({ type: 'mode_sync', mode: 'default', source: 'sdk' });
           } else if (/mode.*accept/i.test(content) || /acceptEdits/i.test(content) || /edit mode/i.test(content)) {
-            events.push({ type: 'mode_sync', mode: 'acceptEdits' });
+            events.push({ type: 'mode_sync', mode: 'acceptEdits', source: 'sdk' });
           }
         }
       } else if (message.subtype === 'task_started') {
@@ -215,7 +215,7 @@ export function transformMessage(
         const m = message as any;
         const modeVal = m.permissionMode ?? m.permission_mode ?? m.mode;
         if (modeVal && typeof modeVal === 'string') {
-          events.push({ type: 'mode_sync', mode: modeVal as any });
+          events.push({ type: 'mode_sync', mode: modeVal as any, source: 'sdk' });
         }
       }
       break;

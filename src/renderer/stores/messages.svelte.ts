@@ -209,6 +209,11 @@ class MessageStore {
    *  from the dying query until the next system_init re-initializes the session. */
   private stoppingSession: Record<string, boolean> = {};
 
+  /** Set when the user explicitly changes mode via UI (cycleMode / setMode).
+   *  Prevents stale SDK mode_sync events from overwriting the user's choice.
+   *  Cleared on system_init (new query) or authoritative session mode_sync. */
+  private userExplicitMode: Record<string, boolean> = {};
+
   private cleanups = new Map<string, () => void>();
 
   /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
@@ -537,12 +542,15 @@ class MessageStore {
   async setMode(sessionId: string, mode: PermissionMode) {
     const previousMode = this.modeBySession[sessionId] ?? 'default';
     this.modeBySession[sessionId] = mode;
+    // Mark as user-explicit so stale SDK mode_sync events don't overwrite it
+    this.userExplicitMode[sessionId] = true;
     try {
       await window.groveBench.setMode(sessionId, mode);
     } catch (e) {
       // Roll back to previous mode if the IPC failed
       console.warn('[setMode] IPC failed, rolling back:', e);
       this.modeBySession[sessionId] = previousMode;
+      delete this.userExplicitMode[sessionId];
     }
   }
 
@@ -694,6 +702,7 @@ class MessageStore {
         this.setIsReady(sessionId, true);
         this.setIsRunning(sessionId, false);
         delete this.stoppingSession[sessionId];
+        delete this.userExplicitMode[sessionId];
         this.modelBySession[sessionId] = event.model;
         this.systemInfoBySession[sessionId] = {
           tools: event.tools ?? [],
@@ -1193,9 +1202,15 @@ class MessageStore {
         break;
 
       case 'mode_sync':
-        // Don't let SDK-driven mode_sync overwrite user-set 'acceptEdits'
-        // unless the sync explicitly sets acceptEdits or the user changed mode.
-        if (event.mode === 'acceptEdits' || this.modeBySession[sessionId] !== 'acceptEdits') {
+        // Session-sourced mode_sync (from stopQuery) is authoritative — always apply.
+        // SDK-sourced mode_sync may be stale (e.g. the SDK was in 'default' while
+        // the app showed 'acceptEdits', and emitted a stale 'default' after the
+        // user already cycled to 'plan').  Only apply SDK mode_sync when the user
+        // hasn't explicitly set a different mode since the last query start.
+        if (event.source === 'session') {
+          this.modeBySession[sessionId] = event.mode;
+          delete this.userExplicitMode[sessionId];
+        } else if (!this.userExplicitMode[sessionId]) {
           this.modeBySession[sessionId] = event.mode;
         }
         // mode_sync is emitted by stopQuery after all old pending permissions
@@ -1319,6 +1334,7 @@ class MessageStore {
     let foundToolName: string | undefined;
     let foundToolCategory: import('../../shared/types.js').ToolCategory | undefined;
     let foundToolUseId: string | undefined;
+    let foundIsPlanExecution = false;
     let changed = false;
     // Resolve the LAST unresolved permission with this requestId.
     // Skip already-resolved ones (stale duplicates from prior query loops).
@@ -1329,6 +1345,7 @@ class MessageStore {
           foundToolName = pm.toolName;
           foundToolCategory = pm.toolCategory;
           foundToolUseId = pm.toolUseId;
+          foundIsPlanExecution = !!pm.isPlanExecution;
           changed = true;
           return { ...m, resolved: true as const, decision: resolvedDecision };
         }
@@ -1356,6 +1373,14 @@ class MessageStore {
     if (decision === 'allowAlways' && foundToolCategory === 'edit') {
       this.setMode(sessionId, 'acceptEdits').catch((e) => {
         console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
+      });
+    }
+
+    // When a plan execution (ExitPlanMode) is approved, switch to acceptEdits
+    // so the plan's edits don't each require individual permission prompts.
+    if (foundIsPlanExecution && resolvedDecision === 'allow') {
+      this.setMode(sessionId, 'acceptEdits').catch((e) => {
+        console.warn('[resolvePermission] setMode to acceptEdits for plan execution failed:', e);
       });
     }
 
@@ -1446,6 +1471,7 @@ class MessageStore {
     this.toolProgressBySession[sessionId] = {};
     delete this.backgroundTasksBySession[sessionId];
     delete this.stoppingSession[sessionId];
+    delete this.userExplicitMode[sessionId];
     // Preserve isRunning and isReady — caller controls these based on history/status
   }
 

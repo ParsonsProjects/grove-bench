@@ -44,7 +44,7 @@ describe('transformMessage()', () => {
         { type: 'system', subtype: 'status', permissionMode: 'plan' } as any,
         makeCtx(),
       );
-      expect(events).toContainEqual({ type: 'mode_sync', mode: 'plan' });
+      expect(events).toContainEqual({ type: 'mode_sync', mode: 'plan', source: 'sdk' });
     });
 
     it('extracts mode_sync from status message (snake_case)', () => {
@@ -52,7 +52,7 @@ describe('transformMessage()', () => {
         { type: 'system', subtype: 'status', permission_mode: 'default' } as any,
         makeCtx(),
       );
-      expect(events).toContainEqual({ type: 'mode_sync', mode: 'default' });
+      expect(events).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'sdk' });
     });
 
     it('detects plan mode from local_command_output', () => {
@@ -60,7 +60,7 @@ describe('transformMessage()', () => {
         { type: 'system', subtype: 'local_command_output', content: 'Switched to plan mode' } as any,
         makeCtx(),
       );
-      expect(events).toContainEqual({ type: 'mode_sync', mode: 'plan' });
+      expect(events).toContainEqual({ type: 'mode_sync', mode: 'plan', source: 'sdk' });
     });
 
     it('emits compacting status', () => {
