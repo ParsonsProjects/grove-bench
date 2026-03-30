@@ -921,6 +921,44 @@ describe('resolveStaleToolCalls', () => {
   });
 });
 
+describe('resolveStaleBackgroundTasks', () => {
+  it('removes running bg tasks when session is not running', () => {
+    messageStore.backgroundTasksBySession[SID] = {
+      't1': { taskId: 't1', description: 'task 1', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
+      't2': { taskId: 't2', description: 'task 2', status: 'completed', totalTokens: 10, toolUses: 1, durationMs: 500 },
+    } as any;
+    messageStore.setIsRunning(SID, false);
+
+    messageStore.resolveStaleBackgroundTasks(SID);
+
+    const tasks = messageStore.getBackgroundTasks(SID);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].taskId).toBe('t2');
+  });
+
+  it('does not touch bg tasks when session is running', () => {
+    messageStore.backgroundTasksBySession[SID] = {
+      't1': { taskId: 't1', description: 'task 1', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
+    } as any;
+    messageStore.setIsRunning(SID, true);
+
+    messageStore.resolveStaleBackgroundTasks(SID);
+
+    expect(messageStore.getBackgroundTasks(SID)).toHaveLength(1);
+  });
+
+  it('is called on result event to clean up orphaned bg tasks', () => {
+    messageStore.backgroundTasksBySession[SID] = {
+      't1': { taskId: 't1', description: 'orphan', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
+    } as any;
+    messageStore.setIsRunning(SID, true);
+
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 100 } as any);
+
+    expect(messageStore.getBackgroundTasks(SID)).toHaveLength(0);
+  });
+});
+
 describe('getters with defaults', () => {
   it('getMessages returns empty array for unknown session', () => {
     expect(messageStore.getMessages('unknown')).toEqual([]);

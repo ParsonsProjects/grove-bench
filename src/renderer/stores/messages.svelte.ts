@@ -770,6 +770,7 @@ class MessageStore {
           isError: event.isError,
           errors: event.errors,
         });
+        this.resolveStaleBackgroundTasks(sessionId);
         gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
 
@@ -867,6 +868,7 @@ class MessageStore {
           this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
+        this.resolveStaleBackgroundTasks(sessionId);
         gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
 
@@ -1198,6 +1200,7 @@ class MessageStore {
     this.streamingThinking[sessionId] = '';
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
+    delete this.backgroundTasksBySession[sessionId];
     delete this.stoppingSession[sessionId];
     // Preserve isRunning and isReady — caller controls these based on history/status
   }
@@ -1244,6 +1247,27 @@ class MessageStore {
     });
     if (changed) {
       this.messagesBySession[sessionId] = updated;
+    }
+  }
+
+  /** Remove background tasks that are still marked 'running' after the session
+   *  has gone idle. This handles cases where the agent exited without sending
+   *  a task_notification for in-flight background tasks. */
+  resolveStaleBackgroundTasks(sessionId: string) {
+    if (this.getIsRunning(sessionId)) return;
+    const tasks = this.backgroundTasksBySession[sessionId];
+    if (!tasks) return;
+    const remaining: Record<string, (typeof tasks)[string]> = {};
+    let changed = false;
+    for (const [id, task] of Object.entries(tasks)) {
+      if (task.status === 'running') {
+        changed = true; // drop stale running tasks
+      } else {
+        remaining[id] = task;
+      }
+    }
+    if (changed) {
+      this.backgroundTasksBySession[sessionId] = Object.keys(remaining).length > 0 ? remaining : {};
     }
   }
 

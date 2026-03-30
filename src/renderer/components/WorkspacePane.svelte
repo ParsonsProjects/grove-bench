@@ -106,6 +106,7 @@
       // After replay, resolve any permissions/tool_calls still unresolved
       // (denied permissions have no tool_result, stopped sessions cleared theirs)
       messageStore.resolveStaleToolCalls(sessionId);
+      messageStore.resolveStaleBackgroundTasks(sessionId);
       messageStore.resolveReplayedPermissions(sessionId);
 
       // If the session is already running but system_init was missed during
