@@ -80,9 +80,10 @@
 
       // Suppress git status refreshes during replay to avoid N IPC calls
       gitStatusStore.suppressRefresh = true;
-      const history = await window.groveBench.getEventHistory(sessionId);
-      // Skip transient events during replay — partial_text is superseded by
-      // assistant_text, and activity/tool_progress are ephemeral status updates.
+
+      // Load only the most recent events to avoid stalling on large histories.
+      // Older events are loaded on demand when the user scrolls up.
+      const INITIAL_PAGE_SIZE = 200;
       const skipDuringReplay = new Set([
         'partial_text', 'activity', 'tool_progress', 'usage',
         // Dev server URLs from history point to servers that are no longer
@@ -90,15 +91,15 @@
         'devserver_detected',
       ]);
 
-      // Replay all events in order. permission_request events create unresolved
-      // permission messages; permission_resolved and tool_result events resolve
-      // them via the store's ingestEvent handler.
-      for (const event of history) {
-        if (skipDuringReplay.has(event.type)) continue;
-        messageStore.ingestEvent(sessionId, event);
-      }
-      if (history.length > 0) {
-        const last = history[history.length - 1];
+      const page = await window.groveBench.getEventHistoryPage(sessionId, INITIAL_PAGE_SIZE);
+      messageStore.setPagination(sessionId, page.totalCount, page.startIndex);
+
+      // Batch-replay events. replayEvents accumulates messages in a plain
+      // array and flushes to the reactive store in one assignment at the end,
+      // avoiding O(n²) array copies and hundreds of intermediate re-renders.
+      messageStore.replayEvents(sessionId, page.events, skipDuringReplay);
+      if (page.events.length > 0) {
+        const last = page.events[page.events.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {
           messageStore.setIsRunning(sessionId, false);
         }

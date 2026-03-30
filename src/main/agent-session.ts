@@ -889,6 +889,34 @@ class AgentSessionManager {
     return this.loadEventHistory(id);
   }
 
+  /** Return the total number of events for a session. */
+  getEventHistoryCount(id: string): number {
+    const session = this.sessions.get(id);
+    if (session) return session.eventHistory.length;
+    const logPath = path.join(getEventsDir(), `${id}.jsonl`);
+    try {
+      const data = fs.readFileSync(logPath, 'utf-8');
+      return data.split('\n').filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Return a page of events from the end of the history.
+   *  Returns `limit` events ending before `beforeIndex` (exclusive).
+   *  If beforeIndex is undefined, returns the last `limit` events. */
+  getEventHistoryPage(id: string, limit: number, beforeIndex?: number): { events: AgentEvent[]; totalCount: number; startIndex: number } {
+    const all = this.getEventHistory(id);
+    const totalCount = all.length;
+    const end = beforeIndex !== undefined ? Math.min(beforeIndex, totalCount) : totalCount;
+    const start = Math.max(0, end - limit);
+    return {
+      events: all.slice(start, end),
+      totalCount,
+      startIndex: start,
+    };
+  }
+
   /** Clear event history (in-memory and on disk) for a session.
    *  Called after /clear so replays don't resurrect old messages.
    *  Triggers memory auto-save before wiping so context isn't lost. */

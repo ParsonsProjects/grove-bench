@@ -334,6 +334,34 @@ export function registerHandlers() {
     return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
   });
 
+  ipcMain.handle(IPC.AGENT_HISTORY_PAGE, (_event, sessionId: string, limit: number, beforeIndex?: number) => {
+    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
+    const page = sessionManager.getEventHistoryPage(sessionId, limit, beforeIndex);
+    // If this is the first page (includes the start of history) and there are
+    // prelaunch events, prepend them so the renderer sees worktree/install status.
+    if (page.startIndex === 0 && prelaunch.length > 0) {
+      return {
+        events: [...prelaunch, ...page.events],
+        totalCount: page.totalCount + prelaunch.length,
+        startIndex: 0,
+      };
+    }
+    // Adjust indices to account for prelaunch events
+    if (prelaunch.length > 0) {
+      return {
+        events: page.events,
+        totalCount: page.totalCount + prelaunch.length,
+        startIndex: page.startIndex + prelaunch.length,
+      };
+    }
+    return page;
+  });
+
+  ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
+    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
+    return sessionManager.getEventHistoryCount(sessionId) + prelaunch.length;
+  });
+
   ipcMain.handle(IPC.AGENT_CLEAR_HISTORY, (_event, sessionId: string) => {
     sessionManager.clearEventHistory(sessionId);
   });
