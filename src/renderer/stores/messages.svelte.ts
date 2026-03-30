@@ -221,7 +221,7 @@ class MessageStore {
   private _replaySessionId: string | null = null;
 
   /** Pagination state per session — tracks how far back we've loaded from the event log. */
-  private paginationBySession: Record<string, { totalCount: number; loadedFromIndex: number; loading: boolean }> = {};
+  paginationBySession = $state<Record<string, { totalCount: number; loadedFromIndex: number; loading: boolean }>>({});
 
   /** Whether there are older events that haven't been loaded yet. */
   hasOlderEvents(sessionId: string): boolean {
@@ -250,7 +250,7 @@ class MessageStore {
     const p = this.paginationBySession[sessionId];
     if (!p || p.loadedFromIndex <= 0 || p.loading) return;
 
-    p.loading = true;
+    this.paginationBySession[sessionId] = { ...p, loading: true };
     try {
       const skipDuringReplay = new Set([
         'partial_text', 'activity', 'tool_progress', 'usage', 'devserver_detected',
@@ -280,9 +280,13 @@ class MessageStore {
       this.resolveStaleToolCalls(sessionId);
       this.resolveReplayedPermissions(sessionId);
 
-      p.loadedFromIndex = page.startIndex;
+      this.paginationBySession[sessionId] = { totalCount: p.totalCount, loadedFromIndex: page.startIndex, loading: false };
     } finally {
-      p.loading = false;
+      // Ensure loading is cleared even on error
+      const cur = this.paginationBySession[sessionId];
+      if (cur?.loading) {
+        this.paginationBySession[sessionId] = { ...cur, loading: false };
+      }
     }
   }
 

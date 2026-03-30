@@ -28,6 +28,7 @@ beforeEach(() => {
   messageStore.turnsBySession = {};
   messageStore.thinkingBySession = {};
   messageStore.rewindDialogOpen = {};
+  messageStore.paginationBySession = {};
 });
 
 describe('ingestEvent — system_init', () => {
@@ -1184,6 +1185,86 @@ describe('executeRewind', () => {
   it('calls rewindSession on the API bridge', async () => {
     await messageStore.executeRewind(SID, 'cp-1');
     expect(mockGroveBench.rewindSession).toHaveBeenCalledWith(SID, 'cp-1', undefined);
+  });
+});
+
+describe('pagination — hasOlderEvents / olderEventCount', () => {
+  it('returns false / 0 before setPagination is called', () => {
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+  });
+
+  it('returns false when all events are loaded (loadedFromIndex === 0)', () => {
+    messageStore.setPagination(SID, 50, 0);
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+  });
+
+  it('returns true with correct count when older events exist', () => {
+    messageStore.setPagination(SID, 500, 300);
+    expect(messageStore.hasOlderEvents(SID)).toBe(true);
+    expect(messageStore.olderEventCount(SID)).toBe(300);
+  });
+});
+
+describe('pagination — loadOlderEvents', () => {
+  it('updates loadedFromIndex after loading older events', async () => {
+    // Set pagination indicating 300 older events remain
+    messageStore.setPagination(SID, 500, 300);
+    expect(messageStore.hasOlderEvents(SID)).toBe(true);
+    expect(messageStore.olderEventCount(SID)).toBe(300);
+
+    // Mock the IPC to return a page that starts at index 100
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [],
+      totalCount: 500,
+      startIndex: 100,
+    });
+
+    await messageStore.loadOlderEvents(SID, 200);
+
+    // loadedFromIndex updated from 300 → 100
+    expect(messageStore.hasOlderEvents(SID)).toBe(true);
+    expect(messageStore.olderEventCount(SID)).toBe(100);
+    expect(messageStore.isLoadingOlder(SID)).toBe(false);
+  });
+
+  it('sets hasOlderEvents to false when all events are loaded', async () => {
+    messageStore.setPagination(SID, 100, 50);
+
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [],
+      totalCount: 100,
+      startIndex: 0,
+    });
+
+    await messageStore.loadOlderEvents(SID, 200);
+
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+  });
+
+  it('is a no-op when loadedFromIndex is already 0', async () => {
+    messageStore.setPagination(SID, 50, 0);
+    await messageStore.loadOlderEvents(SID);
+    expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when already loading', async () => {
+    messageStore.setPagination(SID, 500, 300);
+    // Manually set loading state
+    messageStore.paginationBySession[SID] = { totalCount: 500, loadedFromIndex: 300, loading: true };
+    await messageStore.loadOlderEvents(SID);
+    expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+
+  it('clears loading flag on error', async () => {
+    messageStore.setPagination(SID, 500, 300);
+    mockGroveBench.getEventHistoryPage.mockRejectedValueOnce(new Error('fail'));
+
+    await messageStore.loadOlderEvents(SID).catch(() => {});
+
+    expect(messageStore.isLoadingOlder(SID)).toBe(false);
   });
 });
 
