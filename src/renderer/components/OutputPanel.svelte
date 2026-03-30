@@ -52,6 +52,11 @@
     hasOlderMessages ? filteredMessages.length - visibleCount : 0
   );
 
+  // Whether there are older events on disk that haven't been loaded into the store yet
+  let hasUnloadedEvents = $derived(messageStore.hasOlderEvents(sessionId));
+  let unloadedEventCount = $derived(messageStore.olderEventCount(sessionId));
+  let isLoadingOlderEvents = $derived(messageStore.isLoadingOlder(sessionId));
+
   // Reset visible count when switching sessions
   $effect(() => {
     sessionId; // track
@@ -73,6 +78,17 @@
 
   function showAllMessages() {
     expandVisibleCount(filteredMessages.length);
+  }
+
+  async function loadOlderEvents() {
+    const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
+    await messageStore.loadOlderEvents(sessionId);
+    // Show all messages after loading older events (they're already in the store)
+    visibleCount = filteredMessages.length;
+    await tick();
+    if (scrollContainer) {
+      scrollContainer.scrollTop += scrollContainer.scrollHeight - prevScrollHeight;
+    }
   }
 
   // Message search state
@@ -211,6 +227,18 @@
         <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
         <p class="text-xs opacity-40">Type a message below to start the conversation.</p>
       </div>
+    </div>
+  {/if}
+
+  {#if hasUnloadedEvents}
+    <div class="flex items-center justify-center gap-2 py-2 relative z-10">
+      <button
+        onclick={loadOlderEvents}
+        disabled={isLoadingOlderEvents}
+        class="px-3 py-1 text-xs font-medium border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors disabled:opacity-50"
+      >
+        {isLoadingOlderEvents ? 'Loading...' : `\u2191 Load ${unloadedEventCount} older events from history`}
+      </button>
     </div>
   {/if}
 

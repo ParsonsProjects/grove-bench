@@ -205,6 +205,76 @@ class MessageStore {
 
   private cleanups = new Map<string, () => void>();
 
+  /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
+  private _replayBuffer: ChatMessage[] | null = null;
+  private _replaySessionId: string | null = null;
+
+  /** Pagination state per session — tracks how far back we've loaded from the event log. */
+  private paginationBySession: Record<string, { totalCount: number; loadedFromIndex: number; loading: boolean }> = {};
+
+  /** Whether there are older events that haven't been loaded yet. */
+  hasOlderEvents(sessionId: string): boolean {
+    const p = this.paginationBySession[sessionId];
+    return p ? p.loadedFromIndex > 0 : false;
+  }
+
+  /** How many older events remain unloaded. */
+  olderEventCount(sessionId: string): number {
+    const p = this.paginationBySession[sessionId];
+    return p ? p.loadedFromIndex : 0;
+  }
+
+  /** Whether older events are currently being loaded. */
+  isLoadingOlder(sessionId: string): boolean {
+    return this.paginationBySession[sessionId]?.loading ?? false;
+  }
+
+  /** Set pagination state after initial page load. */
+  setPagination(sessionId: string, totalCount: number, loadedFromIndex: number) {
+    this.paginationBySession[sessionId] = { totalCount, loadedFromIndex, loading: false };
+  }
+
+  /** Load an older page of events and prepend them to the message list. */
+  async loadOlderEvents(sessionId: string, pageSize = 200) {
+    const p = this.paginationBySession[sessionId];
+    if (!p || p.loadedFromIndex <= 0 || p.loading) return;
+
+    p.loading = true;
+    try {
+      const skipDuringReplay = new Set([
+        'partial_text', 'activity', 'tool_progress', 'usage', 'devserver_detected',
+      ]);
+      const page = await window.groveBench.getEventHistoryPage(sessionId, pageSize, p.loadedFromIndex);
+
+      // Process the older events in batch mode to build messages
+      this._replayBuffer = [];
+      this._replaySessionId = sessionId;
+      try {
+        for (const event of page.events) {
+          if (skipDuringReplay.has(event.type)) continue;
+          this.ingestEvent(sessionId, event);
+        }
+      } finally {
+        const buffer = this._replayBuffer;
+        this._replayBuffer = null;
+        this._replaySessionId = null;
+        if (buffer && buffer.length > 0) {
+          // Prepend older messages before existing ones
+          const existing = this.messagesBySession[sessionId] ?? [];
+          this.messagesBySession[sessionId] = [...buffer, ...existing];
+        }
+      }
+
+      // Resolve stale tool calls/permissions in the prepended messages
+      this.resolveStaleToolCalls(sessionId);
+      this.resolveReplayedPermissions(sessionId);
+
+      p.loadedFromIndex = page.startIndex;
+    } finally {
+      p.loading = false;
+    }
+  }
+
   getMessages(sessionId: string): ChatMessage[] {
     return this.messagesBySession[sessionId] ?? [];
   }
@@ -465,6 +535,11 @@ class MessageStore {
   }
 
   private pushMessage(sessionId: string, msg: ChatMessage) {
+    // During batch replay, append to the buffer without triggering reactivity
+    if (this._replayBuffer && this._replaySessionId === sessionId) {
+      this._replayBuffer.push(msg);
+      return;
+    }
     const current = this.messagesBySession[sessionId] ?? [];
     this.messagesBySession[sessionId] = [...current, msg];
   }
@@ -479,6 +554,62 @@ class MessageStore {
         uuid: '',
       });
       this.streamingText[sessionId] = '';
+    }
+  }
+
+  /**
+   * Return the current messages for a session, including the replay buffer
+   * if a batch replay is active.  During replay the reactive store hasn't
+   * been flushed yet, so callers inside ingestEvent need to see both.
+   */
+  private getMessagesForMutation(sessionId: string): ChatMessage[] {
+    if (this._replayBuffer && this._replaySessionId === sessionId) {
+      return this._replayBuffer;
+    }
+    return this.messagesBySession[sessionId] ?? [];
+  }
+
+  /**
+   * Replace the full message array for a session.  During replay this
+   * replaces the buffer; outside replay it triggers reactivity.
+   */
+  private setMessagesForMutation(sessionId: string, msgs: ChatMessage[]) {
+    if (this._replayBuffer && this._replaySessionId === sessionId) {
+      this._replayBuffer = msgs;
+      return;
+    }
+    this.messagesBySession[sessionId] = msgs;
+  }
+
+  /**
+   * Batch-ingest a list of events without triggering per-event reactive
+   * updates.  All messages are accumulated in a plain array and flushed to
+   * the reactive store in a single assignment at the end.
+   *
+   * This turns the O(n²) replay (pushMessage spreads on every event) into
+   * O(n) and avoids hundreds of intermediate Svelte re-renders.
+   */
+  replayEvents(sessionId: string, events: AgentEvent[], skipSet?: Set<string>) {
+    // Start batch mode
+    this._replayBuffer = [];
+    this._replaySessionId = sessionId;
+
+    try {
+      for (const event of events) {
+        if (skipSet && skipSet.has(event.type)) continue;
+        this.ingestEvent(sessionId, event);
+      }
+    } finally {
+      // Flush the accumulated messages in one reactive assignment
+      const buffer = this._replayBuffer;
+      this._replayBuffer = null;
+      this._replaySessionId = null;
+      if (buffer && buffer.length > 0) {
+        const existing = this.messagesBySession[sessionId] ?? [];
+        this.messagesBySession[sessionId] = existing.length > 0
+          ? [...existing, ...buffer]
+          : buffer;
+      }
     }
   }
 
@@ -532,7 +663,7 @@ class MessageStore {
         // If /clear was issued, wipe all messages for a fresh start
         const wasCleared = !!this.pendingClear[sessionId];
         if (wasCleared) {
-          this.messagesBySession[sessionId] = [];
+          this.setMessagesForMutation(sessionId, []);
           this.streamingText[sessionId] = '';
           delete this.usageBySession[sessionId];
           delete this.turnsBySession[sessionId];
@@ -625,7 +756,7 @@ class MessageStore {
       case 'tool_result': {
         // Build a single updated array that handles both the tool_call result
         // and any matching permission/question resolution in one pass.
-        const msgs = this.messagesBySession[sessionId] ?? [];
+        const msgs = this.getMessagesForMutation(sessionId);
         let changed = false;
         let matchedToolName: string | undefined;
         const updated = msgs.map((m) => {
@@ -649,7 +780,7 @@ class MessageStore {
           return m;
         });
         if (changed) {
-          this.messagesBySession[sessionId] = updated;
+          this.setMessagesForMutation(sessionId, updated);
         }
         // Clear tool progress for this tool
         const prog = this.toolProgressBySession[sessionId];
@@ -672,17 +803,17 @@ class MessageStore {
         this.flushStreamingText(sessionId);
         // Mark the matching tool_call as awaiting permission so it doesn't
         // render before the user has approved/denied.
-        const permMsgs = this.messagesBySession[sessionId] ?? [];
+        const permMsgs = this.getMessagesForMutation(sessionId);
         const toolIdx = permMsgs.findIndex(
           (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
         );
         if (toolIdx >= 0) {
           const updated = { ...(permMsgs[toolIdx] as ChatToolCallMessage), awaitingPermission: true };
-          this.messagesBySession[sessionId] = [
+          this.setMessagesForMutation(sessionId, [
             ...permMsgs.slice(0, toolIdx),
             updated,
             ...permMsgs.slice(toolIdx + 1),
-          ];
+          ]);
         }
         // Detect question tools — render as an interactive question, not a permission gate
         if (event.toolCategory === 'question') {
@@ -716,7 +847,7 @@ class MessageStore {
       }
 
       case 'permission_resolved': {
-        const msgs = this.messagesBySession[sessionId] ?? [];
+        const msgs = this.getMessagesForMutation(sessionId);
         let changed = false;
         const updated = msgs.map((m) => {
           if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
@@ -734,7 +865,7 @@ class MessageStore {
           return m;
         });
         if (changed) {
-          this.messagesBySession[sessionId] = updated;
+          this.setMessagesForMutation(sessionId, updated);
         }
         break;
       }

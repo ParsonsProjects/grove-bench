@@ -256,6 +256,10 @@ export interface GroveBenchAPI {
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
+  /** Load the last `limit` events, optionally ending before `beforeIndex`. */
+  getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<{ events: AgentEvent[]; totalCount: number; startIndex: number }>;
+  /** Get the total number of persisted events for a session. */
+  getEventHistoryCount(sessionId: string): Promise<number>;
   clearEventHistory(sessionId: string): Promise<void>;
 
   // Prerequisites
@@ -461,6 +465,8 @@ export const IPC = {
   AGENT_SEND: 'agent:send',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
+  AGENT_HISTORY_PAGE: 'agent:history-page',
+  AGENT_HISTORY_COUNT: 'agent:history-count',
   AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
