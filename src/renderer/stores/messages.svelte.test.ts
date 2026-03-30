@@ -501,8 +501,13 @@ describe('ingestEvent — prompt_suggestion', () => {
 });
 
 describe('ingestEvent — mode_sync', () => {
-  it('syncs mode from SDK', () => {
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan' } as AgentEvent);
+  it('syncs mode from SDK when user has not explicitly set mode', () => {
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'sdk' } as AgentEvent);
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
+  it('session-sourced mode_sync always applies', () => {
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'session' } as AgentEvent);
     expect(messageStore.getMode(SID)).toBe('plan');
   });
 
@@ -514,7 +519,7 @@ describe('ingestEvent — mode_sync', () => {
     // mode_sync and system_init would be silently dropped.
     // mode_sync (emitted by stopQuery after resolving old permissions) should
     // clear stoppingSession so the new query's permissions get through.
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent);
 
     // Now a permission_request from the new query should NOT be suppressed
     messageStore.ingestEvent(SID, {
@@ -532,18 +537,34 @@ describe('ingestEvent — mode_sync', () => {
   });
 });
 
-describe('ingestEvent — mode_sync preserves acceptEdits', () => {
-  it('does not let SDK mode_sync overwrite user-set acceptEdits', () => {
+describe('ingestEvent — mode_sync respects user-explicit mode', () => {
+  it('does not let SDK mode_sync overwrite user-set mode', () => {
+    // Simulate user explicitly setting acceptEdits (e.g. via Always Allow)
     messageStore.modeBySession[SID] = 'acceptEdits';
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default' } as AgentEvent);
-    // acceptEdits should be preserved — SDK doesn't know about acceptEdits
+    // setMode sets userExplicitMode — simulate by calling setMode directly
+    // (IPC will fail in test env but the flag is set before the await)
+    messageStore.setMode(SID, 'acceptEdits');
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' } as AgentEvent);
+    // User-set mode should be preserved
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
   });
 
-  it('allows mode_sync to set acceptEdits explicitly', () => {
+  it('does not let SDK mode_sync overwrite user-set plan', () => {
+    messageStore.setMode(SID, 'plan');
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'sdk' } as AgentEvent);
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
+  it('session-sourced mode_sync overrides user-explicit mode', () => {
+    messageStore.setMode(SID, 'acceptEdits');
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent);
+    expect(messageStore.getMode(SID)).toBe('default');
+  });
+
+  it('allows SDK mode_sync when user has not explicitly changed mode', () => {
     messageStore.modeBySession[SID] = 'default';
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'acceptEdits' } as AgentEvent);
-    expect(messageStore.getMode(SID)).toBe('acceptEdits');
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'plan', source: 'sdk' } as AgentEvent);
+    expect(messageStore.getMode(SID)).toBe('plan');
   });
 });
 
@@ -570,7 +591,7 @@ describe('ingestEvent — stoppingSession suppresses late permission_request', (
 
     // mode_sync (emitted by stopQuery after resolving old permissions) should
     // clear stoppingSession so the new query's permissions get through.
-    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent);
 
     // Now a permission_request from the new query should NOT be suppressed
     messageStore.ingestEvent(SID, {

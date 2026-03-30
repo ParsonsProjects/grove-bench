@@ -587,9 +587,20 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
 
+    const prevMode = session.permissionMode;
+
     // Always update permissionMode on the session so it persists across
     // stop/restart cycles — even when queryHandle is temporarily null.
     session.permissionMode = mode as ManagedSession['permissionMode'];
+
+    // When leaving acceptEdits mode, clear always-allowed edit tools so
+    // switching back to default/plan re-enables permission prompts for edits.
+    // These tool names must match the adapter's 'edit' category (see categorizeToolName).
+    if (prevMode === 'acceptEdits' && mode !== 'acceptEdits') {
+      for (const tool of ['Edit', 'Write', 'MultiEdit']) {
+        session.alwaysAllowedTools.delete(tool);
+      }
+    }
 
     // Pass the mode to the adapter — it decides which modes it recognizes.
     // Some modes (like 'acceptEdits') may be handled at the app level only.
@@ -732,7 +743,7 @@ class AgentSessionManager {
 
     // Re-sync the renderer with the current permission mode so the status bar
     // reflects the correct state after a stop/restart cycle.
-    emit({ type: 'mode_sync', mode: session.permissionMode });
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
