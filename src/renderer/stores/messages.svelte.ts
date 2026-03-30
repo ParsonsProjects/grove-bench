@@ -1,5 +1,6 @@
 import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { checkpointStore } from './checkpoints.svelte.js';
 
 // ─── Chat message types ───
 
@@ -30,6 +31,8 @@ export interface ChatUserMessage {
   kind: 'user';
   id: string;
   text: string;
+  /** SDK user message UUID — used as checkpoint ID for /rewind */
+  uuid?: string;
 }
 
 export interface ChatSystemMessage {
@@ -188,13 +191,16 @@ class MessageStore {
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'plan' | 'terminal'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
 
   /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
   showDetailsBySession = $state<Record<string, boolean>>({});
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
+
+  /** Preserved edit history after conversation-only rewind (keyed by session) */
+  preservedEditHistory = $state<Record<string, { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[]>>({});
 
   /** Message to send automatically after a /clear completes (system_init) */
   private pendingMessageAfterClear: Record<string, string> = {};
@@ -357,11 +363,11 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'plan' | 'terminal' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'plan' | 'terminal') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
     this.activeTabBySession[sessionId] = tab;
   }
 
@@ -495,12 +501,26 @@ class MessageStore {
       }
     }
 
-    return [...byFile.entries()].map(([filePath, { edits }]) => ({
+    const fromMessages = [...byFile.entries()].map(([filePath, { edits }]) => ({
       filePath,
       toolName: edits[edits.length - 1].toolName,
       toolInput: edits[edits.length - 1].toolInput,
       edits,
     }));
+
+    // Merge in preserved edit history from conversation-only rewinds
+    const preserved = this.preservedEditHistory[sessionId];
+    if (!preserved || preserved.length === 0) return fromMessages;
+
+    // Current message-derived changes take precedence over preserved ones
+    const seenPaths = new Set(fromMessages.map(fc => fc.filePath));
+    const merged = [...fromMessages];
+    for (const p of preserved) {
+      if (!seenPaths.has(p.filePath)) {
+        merged.push(p);
+      }
+    }
+    return merged;
   }
 
   /** Revert a file via git checkout */
@@ -974,13 +994,37 @@ class MessageStore {
         };
         break;
 
-      case 'user_message':
+      case 'user_message': {
+        // When replay-user-messages is enabled, the SDK replays user messages
+        // with UUIDs. We stamp the UUID onto the most recent user message
+        // that doesn't already have one. Text matching is unreliable because
+        // the SDK sees the full message (with @-ref file tags prepended) while
+        // the store has the display text. So we match by position: the most
+        // recent UUID-less user message is the one the SDK is replaying.
+        if (event.uuid) {
+          const msgs = this.messagesBySession[sessionId] ?? [];
+          const existingIdx = msgs.findLastIndex(
+            (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
+          );
+          if (existingIdx >= 0) {
+            const updated = [...msgs];
+            updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
+            this.messagesBySession[sessionId] = updated;
+            break;
+          }
+        }
         this.pushMessage(sessionId, {
           kind: 'user',
           id: nextId(),
           text: event.text,
+          uuid: event.uuid,
         });
+        // Schedule checkpoint list refresh so the Checkpoints tab updates
+        if (event.uuid) {
+          checkpointStore.scheduleRefresh(sessionId);
+        }
         break;
+      }
 
       case 'devserver_detected': {
         const servers = this.devServersBySession[sessionId] ?? [];
@@ -1165,12 +1209,43 @@ class MessageStore {
           delete this.stoppingSession[sessionId];
         }
         break;
+
+      case 'rewind': {
+        // Snapshot edit history before truncation if conversation-only rewind
+        if (event.conversationOnly) {
+          this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
+        } else {
+          // Full rewind restores files — clear any preserved history
+          delete this.preservedEditHistory[sessionId];
+        }
+
+        // Truncate messages after the rewind point
+        const msgs = this.messagesBySession[sessionId] ?? [];
+        const rewindIdx = msgs.findLastIndex(
+          (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
+        );
+        if (rewindIdx >= 0) {
+          // Keep everything up to and including the rewind target user message
+          this.messagesBySession[sessionId] = msgs.slice(0, rewindIdx + 1);
+        }
+        this.isRunning[sessionId] = false;
+        this.streamingText[sessionId] = '';
+        this.streamingThinking[sessionId] = '';
+        // Refresh git status since files may have changed on disk
+        gitStatusStore.refresh(sessionId);
+        break;
+      }
     }
   }
 
-  /** Send a slash command (e.g. /compact, /clear) */
+  /** Send a slash command (e.g. /compact, /clear, /rewind) */
   sendCommand(sessionId: string, command: string) {
     const trimmed = command.trim();
+    // /rewind is handled client-side — open the dialog instead of sending to SDK
+    if (trimmed === '/rewind') {
+      this.openRewindDialog(sessionId);
+      return;
+    }
     if (trimmed === '/clear') {
       this.pendingClear[sessionId] = true;
     }
@@ -1316,6 +1391,44 @@ class MessageStore {
     }
 
     return true;
+  }
+
+  /** Whether the rewind dialog is open for a session */
+  rewindDialogOpen = $state<Record<string, boolean>>({});
+
+  /** Get available rewind points (user messages with UUIDs) for a session */
+  getRewindPoints(sessionId: string): { uuid: string; text: string; index: number }[] {
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    const points: { uuid: string; text: string; index: number }[] = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m.kind === 'user' && (m as ChatUserMessage).uuid) {
+        points.push({
+          uuid: (m as ChatUserMessage).uuid!,
+          text: m.text,
+          index: i,
+        });
+      }
+    }
+    // Most recent first
+    return points.reverse();
+  }
+
+  /** Execute a rewind to a specific user message checkpoint.
+   *  When conversationOnly is true, only truncate messages without restoring files. */
+  async executeRewind(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
+    await window.groveBench.rewindSession(sessionId, userMessageId, options);
+    // The rewind event from main will handle message truncation
+  }
+
+  /** Open the rewind dialog for a session */
+  openRewindDialog(sessionId: string) {
+    this.rewindDialogOpen[sessionId] = true;
+  }
+
+  /** Close the rewind dialog for a session */
+  closeRewindDialog(sessionId: string) {
+    this.rewindDialogOpen[sessionId] = false;
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.
