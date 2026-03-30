@@ -1,0 +1,53 @@
+appId: com.parsonsprojects.grove-bench
+productName: Grove Bench
+copyright: Copyright © 2025 Alan Parsons
+
+directories:
+  output: out
+
+files:
+  - dist/**/*
+  - node_modules/**/*
+  - package.json
+  - "!node_modules/**/{test,tests,__tests__,__mocks__,docs}/**"
+  - "!node_modules/**/*.{md,ts,map}"
+  - "!src/**"
+  - "!landing/**"
+  - "!docs/**"
+
+extraResources:
+  - from: src/main/docker/worker.mjs
+    to: worker.mjs
+  - from: src/main/docker/Dockerfile
+    to: Dockerfile
+  - from: src/main/icon.ico
+    to: icon.ico
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+  - "**/*.dll"
+  - "**/node-pty/**"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: src/main/icon.ico
+  # Signing is configured via env vars in CI (Azure Trusted Signing).
+  # Local builds are unsigned — electron-builder skips signing automatically.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+publish:
+  provider: github
+  owner: ParsonsProjects
+  repo: grove-bench
+  releaseType: release
+  vPrefixedTagName: true

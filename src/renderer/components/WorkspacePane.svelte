@@ -48,8 +48,8 @@
     const session = store.sessions.find((s) => s.id === sessionId);
     const ready = messageStore.getIsReady(sessionId);
     if (session && (session.status === 'running' || session.status === 'error') && !ready) {
-      messageStore.isReady[sessionId] = true;
-      messageStore.isRunning[sessionId] = false;
+      messageStore.setIsReady(sessionId, true);
+      messageStore.setIsRunning(sessionId, false);
     }
   });
 
@@ -60,8 +60,18 @@
     // duplicates. This is critical after refresh/restart where prior state is
     // lost but isReady might have been set by a leaked event.
     try {
-      // Clear existing messages so replay starts fresh
+      // Clear existing messages so replay starts fresh.
+      // clearSession does NOT reset isReady — that's handled below based on
+      // actual session state to avoid racing with the SESSION_STATUS handler.
       messageStore.clearSession(sessionId);
+
+      // Reset isReady ONLY for sessions that haven't reached 'running' yet.
+      // For sessions already 'running' or 'error', isReady should stay true
+      // (or be set true below) so the input doesn't flicker disabled.
+      const sessionBefore = store.sessions.find((s) => s.id === sessionId);
+      if (!sessionBefore || (sessionBefore.status !== 'running' && sessionBefore.status !== 'error')) {
+        messageStore.setIsReady(sessionId, false);
+      }
 
       // Subscribe to live events BEFORE replaying history so no events are
       // missed for sessions that are still being set up (worktree creation,
@@ -91,7 +101,7 @@
       if (history.length > 0) {
         const last = history[history.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {
-          messageStore.isRunning[sessionId] = false;
+          messageStore.setIsRunning(sessionId, false);
         }
       }
       // After replay, resolve any permissions/tool_calls still unresolved
@@ -100,12 +110,12 @@
       messageStore.resolveReplayedPermissions(sessionId);
 
       // If the session is already running but system_init was missed during
-      // replay (e.g. agent just connected), ensure the input unlocks.
-      // SESSION_STATUS 'running' only fires after system_init on the main side.
+      // replay (e.g. agent just connected, or SESSION_STATUS arrived during
+      // the await above), ensure the input unlocks.
       const session = store.sessions.find((s) => s.id === sessionId);
-      if (session?.status === 'running' && !messageStore.getIsReady(sessionId)) {
-        messageStore.isReady[sessionId] = true;
-        messageStore.isRunning[sessionId] = false;
+      if (session && (session.status === 'running' || session.status === 'error') && !messageStore.getIsReady(sessionId)) {
+        messageStore.setIsReady(sessionId, true);
+        messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
       messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);
@@ -162,7 +172,7 @@
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 17h8v2H4v-2Zm-2-4h2v2H2v-2h2v-2H2V9h2V7H2V5h2V3h16v2h2v16H4v-2H2v-6Zm4-2h2v2H6v-2Zm2-2H6V7h2v2Zm2 2H8v-2h2v2Z"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><polyline points="4,6 10,12 4,18"/><line x1="12" y1="18" x2="20" y2="18"/></svg>
       Terminal
       {#if terminalRunning}
         <span class="inline-block w-2 h-2 bg-green-500 animate-pulse"></span>

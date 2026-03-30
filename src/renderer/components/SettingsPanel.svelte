@@ -246,7 +246,7 @@
               id="settings-model"
               type="text"
               bind:value={settingsStore.draft.defaultModel}
-              placeholder="e.g. claude-sonnet-4-5-20250514"
+              placeholder="e.g. model-id"
               class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
@@ -358,6 +358,14 @@
 
           <Separator />
 
+          <!-- Spell Check -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.spellcheck} />
+            Enable spell checking
+          </label>
+
+          <Separator />
+
           <!-- Diff View Mode -->
           <div>
             <Label class="mb-1 block">Default Diff View</Label>
@@ -380,6 +388,15 @@
             Auto-install dependencies in new worktrees
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">Run npm install automatically when creating a worktree. Off by default.</p>
+
+          <Separator />
+
+          <!-- Analytics -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.analyticsEnabled} />
+            Help improve Grove Bench by sending anonymous usage data
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">No personal information or code content is collected.</p>
         </div>
 
       {:else if tab === 'plugins'}

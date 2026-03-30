@@ -1,0 +1,215 @@
+@import "tailwindcss";
+
+@theme inline {
+  --spacing: 0.25rem;
+
+  --font-sans: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+
+  --color-background: oklch(0.208 0 0);
+  --color-foreground: oklch(0.835 0 0);
+
+  --color-card: oklch(0.233 0 0);
+  --color-card-foreground: oklch(0.835 0 0);
+
+  --color-primary: oklch(0.541 0.181 254.624);
+  --color-primary-foreground: oklch(1 0 0);
+
+  --color-secondary: oklch(0.279 0 0);
+  --color-secondary-foreground: oklch(0.835 0 0);
+
+  --color-muted: oklch(0.279 0 0);
+  --color-muted-foreground: oklch(0.576 0 0);
+
+  --color-accent: oklch(0.310 0.065 245);
+  --color-accent-foreground: oklch(0.835 0 0);
+
+  --color-border: oklch(0.260 0 0);
+
+  --color-sidebar: oklch(0.176 0 0);
+}
+
+/* Runtime CSS vars for SVG fills and base styles */
+:root {
+  --spacing: 0.25rem;
+  --color-primary: oklch(0.541 0.181 254.624);
+  --color-background: oklch(0.208 0 0);
+  --color-foreground: oklch(0.835 0 0);
+  --color-card: oklch(0.233 0 0);
+  --color-border: oklch(0.260 0 0);
+  --color-sidebar: oklch(0.176 0 0);
+  --color-muted: oklch(0.279 0 0);
+  --color-muted-foreground: oklch(0.576 0 0);
+  --color-secondary: oklch(0.279 0 0);
+  --color-secondary-foreground: oklch(0.835 0 0);
+  --color-accent: oklch(0.310 0.065 245);
+  --color-primary-foreground: oklch(1 0 0);
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    border-color: oklch(0.260 0 0);
+    border-radius: 0 !important;
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.320 0 0) transparent;
+  }
+  body {
+    background-color: oklch(0.208 0 0);
+    color: oklch(0.835 0 0);
+  }
+}
+
+/* Hero glow — radial gradient behind hero (Linear-inspired) */
+.hero-glow {
+  background:
+    radial-gradient(ellipse 600px 400px at 50% 0%, oklch(0.541 0.181 254.624 / 0.06), transparent),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='6'%3E%3Crect width='4' height='4' fill='%23ffffff' opacity='0.006'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18'%3E%3Crect x='0' y='0' width='4' height='4' fill='%236888aa' opacity='0.005'/%3E%3Crect x='12' y='6' width='4' height='4' fill='%23ffffff' opacity='0.003'/%3E%3Crect x='6' y='12' width='4' height='4' fill='%236080a0' opacity='0.004'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='42' height='42'%3E%3Crect x='0' y='0' width='4' height='4' fill='%23ffffff' opacity='0.008'/%3E%3Crect x='24' y='12' width='4' height='4' fill='%235a7a9a' opacity='0.005'/%3E%3Crect x='12' y='30' width='4' height='4' fill='%23ffffff' opacity='0.003'/%3E%3Crect x='36' y='24' width='4' height='4' fill='%236888aa' opacity='0.004'/%3E%3C/svg%3E");
+}
+
+/* Gradient text for hero (Linear-inspired) */
+.text-gradient {
+  background: linear-gradient(135deg, oklch(0.541 0.181 254.624), oklch(0.65 0.15 200));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Tree glow effect */
+.tree-glow {
+  filter: drop-shadow(0 0 20px oklch(0.5 0.15 145 / 0.3));
+}
+
+/* Button styles */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background-color: var(--color-primary);
+  color: var(--color-primary-foreground);
+  transition: all 0.15s ease;
+}
+.btn-primary:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background-color: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  border: 1px solid var(--color-border);
+  transition: all 0.15s ease;
+}
+.btn-secondary:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
+/* Feature cards with hover effect */
+.feature-card {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  padding: 1.75rem;
+  transition: all 0.2s ease;
+}
+.feature-card:hover {
+  border-color: oklch(0.541 0.181 254.624 / 0.3);
+  background-color: oklch(0.245 0.005 250);
+}
+
+/* Step number squares */
+.step-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  background-color: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-size: 0.875rem;
+  font-weight: 700;
+  border-radius: 0 !important;
+}
+
+.blue-pixel {
+  background: oklch(0.541 0.181 254.624);
+  opacity: 0;
+  animation: pixel-glow 6s ease-in-out infinite;
+}
+
+@keyframes pixel-glow {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.08; }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.7s ease-out both;
+}
+
+/* Staggered animation delays */
+.delay-1 { animation-delay: 0.12s; }
+.delay-2 { animation-delay: 0.24s; }
+.delay-3 { animation-delay: 0.36s; }
+.delay-4 { animation-delay: 0.48s; }
+.delay-5 { animation-delay: 0.60s; }
+.delay-6 { animation-delay: 0.72s; }
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
+
+/* App mockup frame */
+.app-mockup {
+  transform: perspective(2000px) rotateX(2deg);
+  transition: transform 0.4s ease;
+}
+.app-mockup:hover {
+  transform: perspective(2000px) rotateX(0deg);
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Backdrop blur support for nav */
+@supports (backdrop-filter: blur(12px)) {
+  nav {
+    backdrop-filter: blur(12px);
+  }
+}

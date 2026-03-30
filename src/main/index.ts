@@ -1,4 +1,4 @@
-import { app, BrowserWindow, powerMonitor } from 'electron';
+import { app, BrowserWindow, Menu, MenuItem, powerMonitor } from 'electron';
 import path from 'node:path';
 import { registerHandlers } from './ipc.js';
 import { sessionManager } from './agent-session.js';
@@ -9,15 +9,24 @@ import * as settings from './settings.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
+import { initAdapters } from './adapters/index.js';
+import { initAutoUpdater } from './auto-updater.js';
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-import electronSquirrelStartup from 'electron-squirrel-startup';
-if (electronSquirrelStartup) app.quit();
+// Keep userData path consistent across dev and packaged builds.
+// In dev mode Electron defaults to "Electron"; electron-builder uses productName
+// "Grove Bench".  Force it to the package.json "name" so all builds share the
+// same data directory as the original Electron Forge build.
+app.name = 'grove-bench';
+app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
+
+// Set the App User Model ID so Windows can associate the pinned taskbar
+// shortcut with the running application (prevents icon from disappearing).
+app.setAppUserModelId('com.parsonsprojects.grove-bench');
+
+// Register built-in agent adapters before anything else uses them
+initAdapters();
 
 registerHandlers();
-
-declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
-declare const MAIN_WINDOW_VITE_NAME: string;
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -33,11 +42,14 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
-    icon: path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.ico')
+      : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: true,
     },
     title: 'Grove Bench',
     show: false,
@@ -57,17 +69,39 @@ function createWindow() {
     nativeTheme.themeSource = appSettings.theme;
   } catch { /* nativeTheme may not be available */ }
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  // Spell checker setup
+  mainWindow.webContents.session.setSpellCheckerLanguages(['en-US']);
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    if (!params.misspelledWord) return;
+    const menu = new Menu();
+    for (const suggestion of params.dictionarySuggestions) {
+      menu.append(new MenuItem({
+        label: suggestion,
+        click: () => mainWindow?.webContents.replaceMisspelling(suggestion),
+      }));
+    }
+    if (params.dictionarySuggestions.length === 0) {
+      menu.append(new MenuItem({ label: 'No suggestions', enabled: false }));
+    }
+    menu.append(new MenuItem({ type: 'separator' }));
+    menu.append(new MenuItem({
+      label: 'Add to Dictionary',
+      click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+    }));
+    menu.popup();
+  });
+
+  if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
-    );
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
   });
+
+  initAutoUpdater(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;

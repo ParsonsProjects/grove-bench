@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity } from './git.js';
 import { logger } from './logger.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
+import { adapterRegistry } from './adapters/index.js';
 
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
@@ -15,6 +16,8 @@ interface ManifestEntry {
   repoPath: string;
   branch: string;
   createdAt: number;
+  providerSessionId?: string;
+  /** @deprecated Use providerSessionId — kept for migration from older manifests. */
   claudeSessionId?: string;
   direct?: boolean;
 }
@@ -125,8 +128,8 @@ export class WorktreeManager {
       await git(['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])], repoPath);
     }
 
-    // Generate .claude/settings.local.json with deny rules
-    await this.generateClaudeSettings(wtPath);
+    // Generate agent-specific settings (e.g. .claude/settings.local.json)
+    await this.generateAdapterSettings(wtPath, config.adapterType);
 
     // Propagate the repo's git identity into the worktree so commits
     // are attributed to the user rather than the agent's default identity.
@@ -188,20 +191,23 @@ export class WorktreeManager {
     return info;
   }
 
-  /** Persist the Claude SDK session ID so it can be resumed after restart. */
-  async saveClaudeSessionId(worktreeId: string, claudeSessionId: string): Promise<void> {
+  /** Persist the provider session ID so it can be resumed after restart. */
+  async saveProviderSessionId(worktreeId: string, sessionId: string): Promise<void> {
     await this.withManifest((manifest) => {
       if (manifest[worktreeId]) {
-        manifest[worktreeId].claudeSessionId = claudeSessionId;
+        manifest[worktreeId].providerSessionId = sessionId;
       }
     });
   }
 
-  /** Retrieve the last Claude SDK session ID for a worktree. */
-  async getClaudeSessionId(worktreeId: string): Promise<string | undefined> {
+  /** Retrieve the last provider session ID for a worktree. */
+  async getProviderSessionId(worktreeId: string): Promise<string | undefined> {
     const manifest = await this.loadManifest();
-    return manifest[worktreeId]?.claudeSessionId;
+    const entry = manifest[worktreeId];
+    // Fall back to old claudeSessionId field for migration
+    return entry?.providerSessionId ?? entry?.claudeSessionId;
   }
+
 
   async remove(id: string, deleteBranch = false): Promise<void> {
     let info = this.worktrees.get(id);
@@ -337,6 +343,16 @@ export class WorktreeManager {
     } catch {
       return [];
     }
+  }
+
+  /** Return all unique repo paths recorded in the manifest. */
+  async listRepos(): Promise<string[]> {
+    const manifest = await this.loadManifest();
+    const repos = new Set<string>();
+    for (const entry of Object.values(manifest)) {
+      repos.add(entry.repoPath);
+    }
+    return [...repos];
   }
 
   async cleanupAll(): Promise<void> {
@@ -704,23 +720,13 @@ export class WorktreeManager {
     return null;
   }
 
-  private async generateClaudeSettings(wtPath: string): Promise<void> {
-    const claudeDir = path.join(wtPath, '.claude');
-    const settingsPath = path.join(claudeDir, 'settings.local.json');
-
-    await fs.mkdir(claudeDir, { recursive: true });
-    await fs.writeFile(
-      settingsPath,
-      JSON.stringify(
-        {
-          permissions: {
-            deny: ['Read(../../**)', 'Edit(../../**)'],
-          },
-        },
-        null,
-        2
-      )
-    );
+  private async generateAdapterSettings(wtPath: string, adapterType?: string): Promise<void> {
+    const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+    if (adapter.generateWorktreeSettings) {
+      await adapter.generateWorktreeSettings(wtPath);
+    } else {
+      logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
+    }
   }
 }
 

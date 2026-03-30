@@ -23,6 +23,7 @@ const api: GroveBenchAPI = {
 
   // Worktree operations
   listWorktrees: (repoPath: string) => ipcRenderer.invoke(IPC.WORKTREE_LIST, repoPath),
+  listRepos: () => ipcRenderer.invoke(IPC.WORKTREE_LIST_REPOS) as Promise<string[]>,
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
@@ -134,6 +135,23 @@ const api: GroveBenchAPI = {
   memoryDelete: (repoPath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
 
+  // Shell / Terminal
+  shellRun: (sessionId: string, command: string) =>
+    ipcRenderer.invoke(IPC.SHELL_RUN, sessionId, command),
+  shellKill: (execId: string) =>
+    ipcRenderer.invoke(IPC.SHELL_KILL, execId),
+  shellInput: (execId: string, data: string) =>
+    ipcRenderer.send(IPC.SHELL_INPUT, execId, data),
+  onShellOutput: (sessionId: string, callback: (event: import('../shared/types.js').ShellOutputEvent) => void) => {
+    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').ShellOutputEvent) =>
+      callback(data);
+    ipcRenderer.on(channel, handler);
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  },
+
   // PTY Terminal (per-session persistent shell)
   ptySpawn: (sessionId: string) =>
     ipcRenderer.invoke(IPC.PTY_SPAWN, sessionId),
@@ -173,7 +191,6 @@ const api: GroveBenchAPI = {
   setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
   getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
   setOpenTabs: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_OPEN_TABS, ids),
-
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();
@@ -195,6 +212,23 @@ const api: GroveBenchAPI = {
   winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
   winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
   winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
+
+  // Agent adapters
+  listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
+
+  // Auto-update
+  checkForUpdate: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.UPDATE_DOWNLOAD),
+  installUpdate: () => ipcRenderer.send(IPC.UPDATE_INSTALL),
+  onUpdateStatus: (callback: (status: import('../shared/types.js').UpdateStatus) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: import('../shared/types.js').UpdateStatus) =>
+      callback(status);
+    ipcRenderer.on(IPC.UPDATE_STATUS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.UPDATE_STATUS, handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('groveBench', api);

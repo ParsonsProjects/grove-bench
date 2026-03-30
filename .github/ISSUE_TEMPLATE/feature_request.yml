@@ -1,0 +1,74 @@
+name: Feature request
+description: Propose a scoped improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new capabilities or meaningful improvements to existing behavior.
+        Small, concrete requests that clearly explain the problem and scope are much easier to evaluate.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am describing a concrete problem or use case, not just a vague idea.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project would this change affect?
+      options:
+        - Main process (sessions, git, PTY, adapters)
+        - Renderer (UI, components, stores)
+        - Worktree management
+        - Terminal / node-pty
+        - Agent adapters (new agent support)
+        - Build, packaging, or installer
+        - Landing page
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do? What is hard, slow, or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, API, or UX you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Smallest useful scope
+      description: What is the narrowest version of this request that would still solve your problem?
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, prior art, or other approaches you considered.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be open to helping implement this.

@@ -22,6 +22,8 @@ export interface ChatToolCallMessage {
   pending: boolean;
   /** True while a permission_request is pending for this tool — suppresses rendering until approved */
   awaitingPermission?: boolean;
+  /** Adapter-agnostic tool category for display logic. */
+  toolCategory?: import('../../shared/types.js').ToolCategory;
 }
 
 export interface ChatUserMessage {
@@ -66,6 +68,12 @@ export interface ChatPermissionMessage {
   decision?: 'allow' | 'deny';
   decisionReason?: string;
   suggestions?: unknown[];
+  /** Set by the adapter when this permission is for executing a plan. */
+  isPlanExecution?: boolean;
+  /** Adapter-agnostic tool category for display logic. */
+  toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** Plan text extracted by the adapter for plan execution permissions. */
+  planText?: string;
 }
 
 export interface ChatThinkingMessage {
@@ -126,7 +134,7 @@ class MessageStore {
   /** Streaming thinking text that hasn't been finalized yet */
   streamingThinking = $state<Record<string, string>>({});
 
-  /** Whether Claude is currently processing for a session */
+  /** Whether the agent is currently processing for a session */
   isRunning = $state<Record<string, boolean>>({});
 
   /** Whether a /clear was issued and we're waiting for re-init */
@@ -218,8 +226,22 @@ class MessageStore {
     return this.isRunning[sessionId] ?? false;
   }
 
+  /** Set isRunning for a session using full object reassignment so Svelte 5
+   *  reliably notifies all $derived subscribers (key-level mutations on
+   *  $state<Record> proxies can silently fail to propagate). */
+  setIsRunning(sessionId: string, value: boolean) {
+    this.isRunning = { ...this.isRunning, [sessionId]: value };
+  }
+
   getIsReady(sessionId: string): boolean {
     return this.isReady[sessionId] ?? false;
+  }
+
+  /** Set isReady for a session using full object reassignment so Svelte 5
+   *  reliably notifies all $derived subscribers (key-level mutations on
+   *  $state<Record> proxies can silently fail to propagate). */
+  setIsReady(sessionId: string, value: boolean) {
+    this.isReady = { ...this.isReady, [sessionId]: value };
   }
 
   /** Whether a session has any unresolved permission requests */
@@ -341,11 +363,12 @@ class MessageStore {
     return pending;
   }
 
-  private summarizeToolInput(toolName: string, input: unknown): string {
+  private summarizeToolInput(toolName: string, input: unknown, toolCategory?: import('../../shared/types.js').ToolCategory): string {
     if (typeof input !== 'object' || input === null) return '';
     const obj = input as Record<string, unknown>;
-    if (toolName === 'Bash' && obj.command) return String(obj.command).slice(0, 60);
-    if (toolName === 'Agent' && obj.prompt) return String(obj.prompt).slice(0, 60);
+    // Use toolCategory when available (adapter-agnostic), fall back to tool name heuristics
+    if ((toolCategory === 'bash' || obj.command) && obj.command) return String(obj.command).slice(0, 60);
+    if ((toolCategory === 'agent' || obj.prompt) && obj.prompt) return String(obj.prompt).slice(0, 60);
     if (obj.file_path) return String(obj.file_path);
     if (obj.pattern) return String(obj.pattern);
     if (obj.description) return String(obj.description).slice(0, 60);
@@ -482,7 +505,7 @@ class MessageStore {
   markSessionStopped(sessionId: string) {
     this.flushStreamingText(sessionId);
     this.streamingThinking[sessionId] = '';
-    this.isRunning[sessionId] = false;
+    this.setIsRunning(sessionId, false);
     this.activityBySession[sessionId] = { activity: 'idle' };
 
     // Suppress late permission_request events from the dying query.
@@ -515,7 +538,7 @@ class MessageStore {
       id: nextId(),
       text,
     });
-    this.isRunning[sessionId] = true;
+    this.setIsRunning(sessionId, true);
     this.activityBySession[sessionId] = { activity: 'generating' };
     // Clear stale suggestions when user sends a new message
     this.promptSuggestionsBySession[sessionId] = [];
@@ -536,8 +559,8 @@ class MessageStore {
           // Truncate event history on disk so old messages don't reappear on restart
           window.groveBench.clearEventHistory(sessionId).catch(() => {});
         }
-        this.isReady[sessionId] = true;
-        this.isRunning[sessionId] = false;
+        this.setIsReady(sessionId, true);
+        this.setIsRunning(sessionId, false);
         delete this.stoppingSession[sessionId];
         this.modelBySession[sessionId] = event.model;
         this.systemInfoBySession[sessionId] = {
@@ -568,7 +591,7 @@ class MessageStore {
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
         // Clear streaming text (it was a preview) and push the finalized message.
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingText[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'text',
@@ -579,19 +602,19 @@ class MessageStore {
         break;
 
       case 'partial_text':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
         this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
         break;
 
       case 'partial_thinking':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.activityBySession[sessionId] = { activity: 'thinking' };
         this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + event.text;
         break;
 
       case 'assistant_tool_use':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
         // If partial text was streaming but no assistant_text arrived to finalize it
         // (e.g., the assistant switched from text to tool_use mid-message), flush it.
@@ -599,22 +622,12 @@ class MessageStore {
         if (this.streamingText[sessionId]) {
           this.flushStreamingText(sessionId);
         }
-        // Sync mode when LLM calls mode-changing tools.
-        // Preserve 'acceptEdits' — that's a user-set mode that should persist
-        // across plan mode transitions. ExitPlanMode returns to the mode the
-        // user had before (acceptEdits if set, otherwise default).
-        if (event.toolName === 'EnterPlanMode') {
-          this.modeBySession[sessionId] = 'plan';
-        } else if (event.toolName === 'ExitPlanMode') {
-          const current = this.modeBySession[sessionId];
-          if (current !== 'acceptEdits') {
-            this.modeBySession[sessionId] = 'default';
-          }
-        }
+        // Mode syncing is handled by mode_sync events from the adapter,
+        // not by detecting specific tool names (which would be adapter-specific).
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
-          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput),
+          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput, event.toolCategory),
         };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -624,6 +637,7 @@ class MessageStore {
           toolUseId: event.toolUseId,
           uuid: event.uuid,
           pending: true,
+          toolCategory: event.toolCategory,
         });
         break;
 
@@ -689,8 +703,8 @@ class MessageStore {
             ...permMsgs.slice(toolIdx + 1),
           ];
         }
-        // Detect AskUserQuestion tool — render as an interactive question, not a permission gate
-        if (event.toolName === 'AskUserQuestion') {
+        // Detect question tools — render as an interactive question, not a permission gate
+        if (event.toolCategory === 'question') {
           const input = event.toolInput as Record<string, unknown>;
           const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
           this.pushMessage(sessionId, {
@@ -712,6 +726,9 @@ class MessageStore {
             resolved: false,
             decisionReason: event.decisionReason,
             suggestions: event.suggestions,
+            isPlanExecution: event.isPlanExecution,
+            toolCategory: event.toolCategory,
+            planText: event.planText,
           });
         }
         break;
@@ -742,7 +759,7 @@ class MessageStore {
       }
 
       case 'thinking':
-        this.isRunning[sessionId] = true;
+        this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
         this.pushMessage(sessionId, {
           kind: 'thinking',
@@ -753,7 +770,7 @@ class MessageStore {
 
       case 'result':
         this.flushStreamingText(sessionId);
-        this.isRunning[sessionId] = false;
+        this.setIsRunning(sessionId, false);
         this.activityBySession[sessionId] = { activity: 'idle' };
         this.toolProgressBySession[sessionId] = {};
         if (event.contextWindow) {
@@ -784,9 +801,9 @@ class MessageStore {
         });
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
-        if (!this.isReady[sessionId]) {
-          this.isReady[sessionId] = true;
-          this.isRunning[sessionId] = false;
+        if (!this.getIsReady(sessionId)) {
+          this.setIsReady(sessionId, true);
+          this.setIsRunning(sessionId, false);
         }
         break;
 
@@ -836,7 +853,7 @@ class MessageStore {
 
       case 'activity':
         if (event.activity !== 'idle') {
-          this.isRunning[sessionId] = true;
+          this.setIsRunning(sessionId, true);
         }
         this.activityBySession[sessionId] = {
           activity: event.activity,
@@ -883,10 +900,10 @@ class MessageStore {
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
-        this.isRunning[sessionId] = false;
+        this.setIsRunning(sessionId, false);
         // If the agent exited before system_init, unlock the input
-        if (!this.isReady[sessionId]) {
-          this.isReady[sessionId] = true;
+        if (!this.getIsReady(sessionId)) {
+          this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
         gitStatusStore.scheduleRefresh(sessionId, 100);
@@ -970,7 +987,7 @@ class MessageStore {
           text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
         });
         // Auto-remove finished tasks after a short delay
-        if (event.taskStatus !== 'running') {
+        {
           const taskId = event.taskId;
           setTimeout(() => {
             this.removeBackgroundTask(sessionId, taskId);
@@ -1105,7 +1122,7 @@ class MessageStore {
       id: nextId(),
       text: command,
     });
-    this.isRunning[sessionId] = true;
+    this.setIsRunning(sessionId, true);
     window.groveBench.sendMessage(sessionId, command);
   }
 
@@ -1115,9 +1132,9 @@ class MessageStore {
     this.sendCommand(sessionId, '/clear');
   }
 
-  /** Resolve a question from Claude (AskUserQuestion) by sending the answer as a deny message.
-   *  We use 'deny' because the permission system feeds the message text back to Claude as
-   *  tool error output, which is how the SDK receives the user's answer. */
+  /** Resolve a question (AskUserQuestion) by sending the answer as a deny message.
+   *  We use 'deny' because the permission system feeds the message text back to the agent as
+   *  tool error output, which is how it receives the user's answer. */
   resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const idx = msgs.findIndex(
@@ -1136,7 +1153,7 @@ class MessageStore {
     }
 
     // Send the answer back through the permission system — "deny" with the answer as message
-    // so Claude receives the user's response as tool feedback
+    // so the agent receives the user's response as tool feedback
     const permDecision: PermissionDecision = {
       requestId,
       behavior: 'deny',
@@ -1162,6 +1179,7 @@ class MessageStore {
     // clear awaitingPermission on its matching tool_call in a single pass.
     const msgs = this.messagesBySession[sessionId] ?? [];
     let foundToolName: string | undefined;
+    let foundToolCategory: import('../../shared/types.js').ToolCategory | undefined;
     let foundToolUseId: string | undefined;
     let changed = false;
     // Resolve the LAST unresolved permission with this requestId.
@@ -1171,6 +1189,7 @@ class MessageStore {
         const pm = m as ChatPermissionMessage;
         if (pm.requestId === requestId && !pm.resolved) {
           foundToolName = pm.toolName;
+          foundToolCategory = pm.toolCategory;
           foundToolUseId = pm.toolUseId;
           changed = true;
           return { ...m, resolved: true as const, decision: resolvedDecision };
@@ -1193,10 +1212,10 @@ class MessageStore {
       this.messagesBySession[sessionId] = updated;
     }
 
-    // When "Always Allow" is used on Edit/Write/MultiEdit, switch to
+    // When "Always Allow" is used on edit tools, switch to
     // acceptEdits mode immediately — don't wait for the IPC result.
     // The user's intent is clear regardless of whether main confirms.
-    if (decision === 'allowAlways' && foundToolName && (foundToolName === 'Edit' || foundToolName === 'Write' || foundToolName === 'MultiEdit')) {
+    if (decision === 'allowAlways' && foundToolCategory === 'edit') {
       this.setMode(sessionId, 'acceptEdits').catch((e) => {
         console.warn('[resolvePermission] setMode to acceptEdits failed:', e);
       });
@@ -1275,23 +1294,31 @@ class MessageStore {
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.
-   *  Also unsubscribes any existing listener to avoid duplicate subscriptions. */
+   *  Also unsubscribes any existing listener to avoid duplicate subscriptions.
+   *  NOTE: isReady is NOT reset here — it is driven by system_init events and
+   *  SESSION_STATUS updates. Resetting it here races with the SESSION_STATUS
+   *  handler in App.svelte that sets isReady=true when the session transitions
+   *  to 'running'. The caller's post-replay check handles the state correctly. */
   clearSession(sessionId: string) {
     this.unsubscribe(sessionId);
     this.messagesBySession[sessionId] = [];
     this.streamingText[sessionId] = '';
     this.streamingThinking[sessionId] = '';
-    this.isReady[sessionId] = false;
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
     delete this.stoppingSession[sessionId];
-    // Preserve isRunning — caller controls this based on history
+    // Preserve isRunning and isReady — caller controls these based on history/status
   }
 
   /** Subscribe to events from the main process for a session */
   subscribe(sessionId: string) {
     if (this.cleanups.has(sessionId)) {
       return;
+    }
+    // Pre-initialize isReady via full-object reassignment so Svelte 5
+    // reliably tracks it from the start.
+    if (!this.getIsReady(sessionId)) {
+      this.setIsReady(sessionId, false);
     }
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
       this.ingestEvent(sessionId, event);
@@ -1313,7 +1340,7 @@ class MessageStore {
    *  During replay the tool_result handler should match, but if events arrive
    *  out of order or the session is idle, we clean up so spinners don't linger. */
   resolveStaleToolCalls(sessionId: string) {
-    if (this.isRunning[sessionId]) return; // genuinely in-flight
+    if (this.getIsRunning(sessionId)) return; // genuinely in-flight
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
     const updated = msgs.map((m) => {
@@ -1333,7 +1360,7 @@ class MessageStore {
    *  If the session is still running, leave them unresolved (genuinely pending).
    *  Otherwise, mark as denied (timeout/stop/destroy happened before replay). */
   resolveReplayedPermissions(sessionId: string) {
-    if (this.isRunning[sessionId]) return;
+    if (this.getIsRunning(sessionId)) return;
     const msgs = this.messagesBySession[sessionId] ?? [];
     let changed = false;
     const updated = msgs.map((m) => {

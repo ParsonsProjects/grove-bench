@@ -16,8 +16,9 @@ Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
 const mockGroveBench = {
   onAgentEvent: vi.fn(() => vi.fn()),
   offAgentEvent: vi.fn(),
-  respondToPermission: vi.fn(),
-  setMode: vi.fn(),
+  respondToPermission: vi.fn().mockResolvedValue(true),
+  setMode: vi.fn().mockResolvedValue(undefined),
+  clearEventHistory: vi.fn().mockResolvedValue(undefined),
   setThinking: vi.fn(),
   revertFile: vi.fn(),
   rewindSession: vi.fn(() => Promise.resolve()),

@@ -20,6 +20,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   theme: 'system',
   alwaysOnTop: false,
   diffViewMode: 'unified',
+  spellcheck: true,
+  analyticsEnabled: false,
+  analyticsPrompted: false,
 };
 
 beforeEach(() => {

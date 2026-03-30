@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UpdateNotification from './UpdateNotification.svelte';
+
   let isMaximized = $state(false);
 
   async function checkMaximized() {
@@ -145,6 +147,7 @@
       <rect x="12" y="21" width="2" height="2" fill="#6a5040"/>
     </svg>
     <span class="text-xs text-muted-foreground">Grove Bench</span>
+    <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
     <button

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ParsonsProjects.github.io/grove-bench/sitemap.xml
