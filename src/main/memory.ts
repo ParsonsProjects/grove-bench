@@ -194,7 +194,9 @@ export function getMemoryForSystemPrompt(repoPath: string): string {
     prompt += `Session memory files available: ${sessionList}\n\n`;
   }
 
-  prompt += `You have access to project memory tools (memory_list, memory_read, memory_write, memory_delete) to manage persistent notes about this project.
+  prompt += `You have access to Grove memory tools (memory_list, memory_read, memory_write, memory_delete)
+via the grove-memory MCP server to manage persistent notes about this project.
+These tools are your PRIMARY memory system — prefer them over any built-in memory.
 
 IMPORTANT — You MUST proactively save to memory. Do not wait to be asked. Follow these rules:
 - On your FIRST interaction with a project that has no memory files, immediately explore the codebase and save: tech stack, framework, language, build tools, project structure, and key architectural patterns.

@@ -302,6 +302,12 @@ class AgentSessionManager {
       allowedTools: session.allowedTools,
       outputFormat: session.outputFormat,
       sandbox: session.sandbox,
+      memoryOperations: {
+        list: () => memory.listMemoryFiles(session.repoPath),
+        read: (p) => memory.readMemoryFile(session.repoPath, p),
+        write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
+        delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
+      },
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       resumeSessionId: session.providerSessionId,
       toolAllowRules: currentSettings.toolAllowRules,

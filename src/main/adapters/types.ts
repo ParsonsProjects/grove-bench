@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, PermissionMode, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -68,6 +68,17 @@ export interface UserMessage {
   images?: ImageAttachment[];
 }
 
+// ─── Memory Operations ───
+
+/** Adapter-agnostic memory operations. Each adapter decides how to expose
+ *  these to the agent (MCP tools, function calls, etc.). */
+export interface MemoryOperations {
+  list(): MemoryEntry[];
+  read(path: string): string | null;
+  write(path: string, content: string): void;
+  delete(path: string): boolean;
+}
+
 // ─── Adapter Configuration ───
 
 export interface AdapterConfig {
@@ -79,6 +90,9 @@ export interface AdapterConfig {
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;
+  /** Memory operations for this session's repo. Adapters decide how to surface
+   *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
+  memoryOperations?: MemoryOperations | null;
   resumeSessionId?: string | null;
   onPermissionRequest: PermissionHandler;
   toolAllowRules: ToolRule[];

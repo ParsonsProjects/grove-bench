@@ -13,6 +13,7 @@ import type {
   UserMessage,
 } from './types.js';
 import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { logger } from '../logger.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -441,6 +442,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
     const queryFn = await getQuery();
 
+    // Register Grove memory operations as an SDK MCP server
+    let mcpServers: Record<string, any> | undefined;
+    if (config.memoryOperations) {
+      const memoryServer = await createMemoryMcpServer(config.memoryOperations);
+      mcpServers = { 'grove-memory': memoryServer };
+      // Auto-allow memory tools so they don't trigger permission prompts
+      for (const t of GROVE_MEMORY_TOOL_NAMES) {
+        config.alwaysAllowedTools.add(t);
+      }
+    }
+
     // Create input stream for multi-turn conversations
     let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
     const inputStream = new ReadableStream<SDKUserMessage>({
@@ -541,6 +553,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permissionMode: config.permissionMode,
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
+        ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
         canUseTool: canUseTool as any,
         env: {
