@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -27,7 +27,7 @@
   // Detail toggle — hide tool calls & thinking when off (defaults to summary mode)
   let showDetails = $derived(messageStore.getShowDetails(sessionId));
   const summaryVisibleTools = new Set(['Edit', 'Write', 'Bash']);
-  let messages = $derived(
+  let filteredMessages = $derived(
     showDetails
       ? allMessages.filter((m) => !(m.kind === 'tool_call' && m.awaitingPermission))
       : allMessages.filter((m) => {
@@ -36,18 +36,62 @@
           return true;
         })
   );
-  let hiddenCount = $derived(allMessages.length - messages.length);
+  let hiddenCount = $derived(allMessages.length - filteredMessages.length);
   let summaryMode = $derived(!showDetails);
+
+  // ─── Lazy loading: only render recent messages, load older on demand ───
+  const PAGE_SIZE = 50;
+  let visibleCount = $state(PAGE_SIZE);
+  let hasOlderMessages = $derived(filteredMessages.length > visibleCount);
+  let messages = $derived(
+    hasOlderMessages
+      ? filteredMessages.slice(filteredMessages.length - visibleCount)
+      : filteredMessages
+  );
+  let olderCount = $derived(
+    hasOlderMessages ? filteredMessages.length - visibleCount : 0
+  );
+
+  // Reset visible count when switching sessions
+  $effect(() => {
+    sessionId; // track
+    visibleCount = PAGE_SIZE;
+  });
+
+  async function expandVisibleCount(newCount: number) {
+    const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
+    visibleCount = Math.min(newCount, filteredMessages.length);
+    await tick();
+    if (scrollContainer) {
+      scrollContainer.scrollTop += scrollContainer.scrollHeight - prevScrollHeight;
+    }
+  }
+
+  function loadOlderMessages() {
+    expandVisibleCount(visibleCount + PAGE_SIZE);
+  }
+
+  function showAllMessages() {
+    expandVisibleCount(filteredMessages.length);
+  }
 
   // Message search state
   let searchOpen = $state(false);
   let matchingIds = $state<Set<string>>(new Set());
   let currentMatchId = $state<string | null>(null);
 
-  function handleSearchMatch(matchIds: string[], currentIndex: number) {
+  async function handleSearchMatch(matchIds: string[], currentIndex: number) {
     matchingIds = new Set(matchIds);
     currentMatchId = matchIds[currentIndex] ?? null;
     if (currentMatchId) {
+      // If the match is in older (not yet rendered) messages, expand to include it
+      if (hasOlderMessages && !messages.some((m) => m.id === currentMatchId)) {
+        const matchIdx = filteredMessages.findIndex((m) => m.id === currentMatchId);
+        if (matchIdx >= 0) {
+          visibleCount = Math.max(visibleCount, filteredMessages.length - matchIdx);
+        }
+        await tick();
+      }
       requestAnimationFrame(() => {
         const el = scrollContainer?.querySelector(`[data-msg-id="${currentMatchId}"]`);
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -81,11 +125,13 @@
   });
 
   // Re-enable auto-scroll when the user sends a message
+  // Track filteredMessages (not the sliced `messages`) to avoid false triggers
+  // when the user loads older messages and the visible window grows.
   let prevMsgCount = $state(0);
   $effect(() => {
-    const len = messages.length;
+    const len = filteredMessages.length;
     if (len > prevMsgCount) {
-      const last = messages[len - 1];
+      const last = filteredMessages[len - 1];
       if (last?.kind === 'user') {
         shouldAutoScroll = true;
       }
@@ -165,6 +211,25 @@
         <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
         <p class="text-xs opacity-40">Type a message below to start the conversation.</p>
       </div>
+    </div>
+  {/if}
+
+  {#if hasOlderMessages}
+    <div class="flex items-center justify-center gap-2 py-2 relative z-10">
+      <button
+        onclick={loadOlderMessages}
+        class="px-3 py-1 text-xs font-medium border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+      >
+        &uarr; Load {Math.min(PAGE_SIZE, olderCount)} older messages
+      </button>
+      {#if olderCount > PAGE_SIZE}
+        <button
+          onclick={showAllMessages}
+          class="px-3 py-1 text-xs font-medium border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+        >
+          Show all ({olderCount})
+        </button>
+      {/if}
     </div>
   {/if}
 
