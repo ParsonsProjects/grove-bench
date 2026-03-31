@@ -133,6 +133,11 @@
       }
     }
 
+    // Restore persisted tab order
+    if (persistedOpenTabs.length) {
+      store.reorderByIds(persistedOpenTabs);
+    }
+
     // Restore persisted active tab, or fall back to first running session
     const persistedTabId = await window.groveBench.getActiveTab();
     if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {

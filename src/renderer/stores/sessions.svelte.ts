@@ -100,6 +100,24 @@ class SessionStore {
     }
   }
 
+  /** Reorder sessions to match the given ID order.
+   *  Sessions whose IDs appear in `orderedIds` are placed first (in that order),
+   *  followed by any remaining sessions in their original order. */
+  reorderByIds(orderedIds: string[]) {
+    const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
+    const ordered: SessionEntry[] = [];
+    const rest: SessionEntry[] = [];
+    for (const s of this.sessions) {
+      if (orderMap.has(s.id)) {
+        ordered.push(s);
+      } else {
+        rest.push(s);
+      }
+    }
+    ordered.sort((a, b) => orderMap.get(a.id)! - orderMap.get(b.id)!);
+    this.sessions = [...ordered, ...rest];
+  }
+
   reorderSession(fromId: string, toId: string) {
     const sessions = [...this.sessions];
     const fromIdx = sessions.findIndex((s) => s.id === fromId);
