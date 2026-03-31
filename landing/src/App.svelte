@@ -59,33 +59,49 @@
     { x: 12, y: 21, fill: '#6a5040' },
   ];
 
-  const features = [
+  const featureSections = [
     {
-      title: 'Worktree Isolation',
-      desc: 'Each agent gets its own git worktree. No branch conflicts, no stepping on each other\'s changes. Clean separation by default.',
-      icon: 'worktree',
+      id: 'parallel-agents',
+      label: 'Parallel Agents',
+      title: 'Run multiple agents simultaneously',
+      description: 'Spawn unlimited Claude Code agents on the same repo. Each gets an isolated git worktree and dedicated PTY terminal. No branch conflicts, no lock contention — just parallel progress.',
+      bullets: ['Isolated git worktrees per agent', 'Dedicated PTY terminals with full color', 'Independent branches that merge when ready'],
     },
     {
-      title: 'Dedicated PTY Terminals',
-      desc: 'Real interactive terminals per session. Full color output, environment persistence, and shell state that survives restarts.',
-      icon: 'terminal',
+      id: 'terminals',
+      label: 'Dedicated Terminals',
+      title: 'Real interactive terminals per session',
+      description: 'Each agent gets a dedicated PTY terminal with full color output, environment persistence, and shell state that survives restarts. Run tests, start servers, inspect output — all in context.',
+      bullets: ['Persistent PTY per session (node-pty + xterm.js)', 'Full color output and environment persistence', 'Shell state survives app restarts'],
     },
     {
-      title: 'Parallel Agents',
-      desc: 'Run multiple Claude Code agents simultaneously on the same repository. Each works independently, merges when ready.',
-      icon: 'agents',
+      id: 'project-memory',
+      label: 'Project Memory',
+      title: 'Context that persists across sessions',
+      description: 'Organized markdown notes injected into agent system prompts automatically. Architecture decisions, coding conventions, and session context — always available, never forgotten.',
+      bullets: ['Folder-based organization with frontmatter', 'Auto-injected into agent system prompts', 'Auto-save on session end and compaction'],
     },
     {
-      title: 'Windows Native',
-      desc: 'Built with Electron for Windows. Proper file locking, PATH_MAX safety, native Squirrel installer. No WSL required.',
-      icon: 'windows',
+      id: 'checkpoints',
+      label: 'Checkpoints & Rewind',
+      title: 'Rewind to any point in time',
+      description: 'Every agent turn creates a git checkpoint. Browse the timeline, view diffs at each step, and rewind to any previous state — files and conversation restored instantly.',
+      bullets: ['Git-based snapshots at every turn', 'View file diffs between checkpoints', 'One-click rewind with full file restoration'],
     },
-  ];
-
-  const steps = [
-    { num: '01', title: 'Add a Repository', desc: 'Point Grove Bench at any local git repo.' },
-    { num: '02', title: 'Spawn Agents', desc: 'Each agent gets an isolated worktree and branch.' },
-    { num: '03', title: 'Work in Parallel', desc: 'Review diffs, manage permissions, merge when ready.' },
+    {
+      id: 'changes',
+      label: 'Changes & Diffs',
+      title: 'Review every file change',
+      description: 'Dedicated changes panel with unified and side-by-side diff views. See staged and unstaged files, revert individual changes, or open files in your editor.',
+      bullets: ['Unified and side-by-side diff views', 'Revert individual files', 'Open in editor with line numbers'],
+    },
+    {
+      id: 'control',
+      label: 'Permissions & Plugins',
+      title: 'Full control over your agents',
+      description: 'Interactive permission prompts with allow/deny rules and glob patterns. Extend functionality with a built-in plugin marketplace. Dev server auto-detection and management included.',
+      bullets: ['Default, Plan, and AcceptEdits permission modes', 'Plugin marketplace with search and versioning', 'Dev server auto-detect from package.json'],
+    },
   ];
 
   // Interactive mockup state
@@ -159,7 +175,6 @@
       </a>
       <div class="flex items-center gap-8">
         <a href="#features" class="text-xs text-muted-foreground hover:text-foreground transition-colors hidden md:block">Features</a>
-        <a href="#how-it-works" class="text-xs text-muted-foreground hover:text-foreground transition-colors hidden md:block">How It Works</a>
         <a
           href="https://github.com/ParsonsProjects/grove-bench"
           target="_blank"
@@ -515,30 +530,10 @@
     </div>
   </section>
 
-  <!-- Value prop strip (like ngrok's social proof bar) -->
-  <section class="border-y border-border bg-sidebar/50">
-    <div class="max-w-5xl mx-auto px-6 py-8" use:observe={'values'}>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-0 md:divide-x md:divide-border text-center {visible['values'] ? 'animate-fade-in-up' : 'opacity-0'}">
-        <div class="md:px-8">
-          <div class="text-2xl font-bold text-primary">Unlimited</div>
-          <div class="text-xs text-muted-foreground mt-1">parallel agents</div>
-        </div>
-        <div class="md:px-8">
-          <div class="text-2xl font-bold text-foreground">0</div>
-          <div class="text-xs text-muted-foreground mt-1">config required</div>
-        </div>
-        <div class="md:px-8">
-          <div class="text-2xl font-bold text-green-500">100%</div>
-          <div class="text-xs text-muted-foreground mt-1">open source</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- Features -->
   <section id="features" class="border-b border-border">
-    <div class="max-w-5xl mx-auto px-6 py-28 md:py-36" use:observe={'features'}>
-      <div class="text-center mb-16 {visible['features'] ? 'animate-fade-in-up' : 'opacity-0'}">
+    <div class="max-w-5xl mx-auto px-6 pt-28 md:pt-36 pb-8" use:observe={'features'}>
+      <div class="text-center mb-20 {visible['features'] ? 'animate-fade-in-up' : 'opacity-0'}">
         <p class="text-xs text-primary font-medium uppercase tracking-wider mb-3">Features</p>
         <h2 class="text-2xl md:text-4xl font-bold tracking-tight">
           Built for parallel AI coding
@@ -547,133 +542,471 @@
           Everything you need to run multiple Claude Code agents on one repository without the chaos.
         </p>
       </div>
+    </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {#each features as feature, i}
-          <div class="feature-card group {visible['features'] ? `animate-fade-in-up delay-${i + 1}` : 'opacity-0'}">
-            <div class="flex items-start gap-4">
-              <div class="shrink-0 w-10 h-10 bg-primary/10 flex items-center justify-center">
-                {#if feature.icon === 'worktree'}
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" style="image-rendering: pixelated;">
-                    <rect x="4" y="2" width="4" height="2"/>
-                    <rect x="4" y="8" width="4" height="2"/>
-                    <rect x="2" y="4" width="2" height="4"/>
-                    <rect x="8" y="4" width="2" height="4"/>
-                    <rect x="16" y="4" width="4" height="2"/>
-                    <rect x="16" y="10" width="4" height="2"/>
-                    <rect x="14" y="6" width="2" height="4"/>
-                    <rect x="20" y="6" width="2" height="4"/>
-                    <rect x="10" y="17" width="5" height="2"/>
-                    <rect x="12" y="12" width="2" height="5"/>
-                    <rect x="5" y="12" width="2" height="10"/>
-                  </svg>
-                {:else if feature.icon === 'terminal'}
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" style="image-rendering: pixelated;">
-                    <rect x="2" y="4" width="20" height="2"/>
-                    <rect x="2" y="18" width="20" height="2"/>
-                    <rect x="2" y="4" width="2" height="16"/>
-                    <rect x="20" y="4" width="2" height="16"/>
-                    <rect x="6" y="10" width="2" height="2"/>
-                    <rect x="8" y="12" width="2" height="2"/>
-                    <rect x="10" y="14" width="2" height="2"/>
-                    <rect x="12" y="14" width="4" height="2"/>
-                  </svg>
-                {:else if feature.icon === 'agents'}
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" style="image-rendering: pixelated;">
-                    <rect x="3" y="4" width="4" height="4"/>
-                    <rect x="1" y="10" width="8" height="2"/>
-                    <rect x="3" y="12" width="4" height="4"/>
-                    <rect x="10" y="2" width="4" height="4"/>
-                    <rect x="8" y="8" width="8" height="2"/>
-                    <rect x="10" y="10" width="4" height="4"/>
-                    <rect x="17" y="4" width="4" height="4"/>
-                    <rect x="15" y="10" width="8" height="2"/>
-                    <rect x="17" y="12" width="4" height="4"/>
-                  </svg>
-                {:else if feature.icon === 'windows'}
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" style="image-rendering: pixelated;">
-                    <rect x="2" y="6" width="8" height="2"/>
-                    <rect x="2" y="8" width="2" height="6"/>
-                    <rect x="8" y="8" width="2" height="6"/>
-                    <rect x="2" y="14" width="8" height="2"/>
-                    <rect x="4" y="10" width="4" height="2"/>
-                    <rect x="12" y="4" width="10" height="2"/>
-                    <rect x="12" y="6" width="2" height="8"/>
-                    <rect x="20" y="6" width="2" height="8"/>
-                    <rect x="12" y="14" width="10" height="2"/>
-                    <rect x="14" y="8" width="2" height="4"/>
-                    <rect x="18" y="8" width="2" height="4"/>
-                    <rect x="4" y="18" width="16" height="2"/>
-                  </svg>
-                {/if}
-              </div>
-              <div>
-                <h3 class="text-sm font-semibold mb-2">{feature.title}</h3>
-                <p class="text-xs text-muted-foreground leading-relaxed">{feature.desc}</p>
+    <!-- Feature 1: Parallel Agents (mockup right) -->
+    <div class="border-t border-border" use:observe={'feat-0'}>
+      <div class="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div class="flex flex-col md:flex-row gap-12 md:gap-16 items-center {visible['feat-0'] ? 'animate-fade-in-up' : 'opacity-0'}">
+          <div class="md:w-2/5 shrink-0">
+            <p class="text-[10px] text-primary font-medium uppercase tracking-wider mb-3">01</p>
+            <h3 class="text-lg md:text-2xl font-bold tracking-tight mb-4">Run multiple agents simultaneously</h3>
+            <p class="text-xs text-muted-foreground leading-relaxed mb-5">Spawn unlimited Claude Code agents on the same repo. Each gets an isolated git worktree and dedicated PTY terminal. No branch conflicts, no lock contention.</p>
+            <ul class="space-y-2">
+              {#each featureSections[0].bullets as bullet}
+                <li class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="w-1 h-1 bg-primary shrink-0"></span>
+                  {bullet}
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="md:w-3/5 w-full">
+            <div class="bg-card border border-border shadow-2xl shadow-primary/5">
+              <div class="flex gap-2 p-3">
+                <div class="flex-1 border border-border bg-background flex flex-col">
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-sidebar text-[9px]">
+                    <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+                    <span class="text-foreground/80">feat/auth</span>
+                    <span class="ml-auto text-muted-foreground/50">Opus 4.6</span>
+                  </div>
+                  <div class="flex-1 p-2 space-y-1.5 text-[9px]">
+                    <div class="text-muted-foreground/60">Adding JWT middleware...</div>
+                    <div class="flex items-center gap-1 border-l-2 border-l-primary/40 pl-1.5">
+                      <span class="text-amber-500/80">Edit</span>
+                      <span class="text-foreground/60">auth.ts</span>
+                      <span class="ml-auto text-green-500/70">+47</span>
+                    </div>
+                    <div class="flex items-center gap-1 border-l-2 border-l-primary/40 pl-1.5">
+                      <span class="text-amber-500/80">Edit</span>
+                      <span class="text-foreground/60">routes.ts</span>
+                      <span class="ml-auto text-green-500/70">+8</span>
+                    </div>
+                    <div class="flex items-center gap-1 border-l-2 border-l-primary/40 pl-1.5">
+                      <span class="text-amber-500/80">Bash</span>
+                      <span class="text-foreground/60">npm test</span>
+                    </div>
+                    <div class="flex items-center gap-1 text-primary/60">
+                      <span class="w-1 h-1 bg-primary animate-pulse"></span>
+                      Thinking...
+                    </div>
+                  </div>
+                  <div class="px-2 py-1 border-t border-border text-[8px] text-muted-foreground/50 flex items-center gap-1.5">
+                    <div class="w-10 h-1 bg-muted overflow-hidden"><div class="h-full bg-green-500/60" style="width: 6%"></div></div>
+                    12.4k / 200k
+                  </div>
+                </div>
+
+                <div class="flex-1 border border-border bg-background flex flex-col">
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-sidebar text-[9px]">
+                    <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+                    <span class="text-foreground/80">feat/api</span>
+                    <span class="ml-auto text-muted-foreground/50">Sonnet 4.6</span>
+                  </div>
+                  <div class="flex-1 p-2 space-y-1.5 text-[9px]">
+                    <div class="text-muted-foreground/60">Building profile endpoints...</div>
+                    <div class="flex items-center gap-1 border-l-2 border-l-primary/40 pl-1.5">
+                      <span class="text-amber-500/80">Write</span>
+                      <span class="text-foreground/60">profile.ts</span>
+                      <span class="ml-auto text-green-500/70">+89</span>
+                    </div>
+                    <div class="flex items-center gap-1 border-l-2 border-l-primary/40 pl-1.5">
+                      <span class="text-amber-500/80">Write</span>
+                      <span class="text-foreground/60">types.ts</span>
+                      <span class="ml-auto text-green-500/70">+24</span>
+                    </div>
+                    <div class="flex items-center gap-1 text-primary/60">
+                      <span class="w-1 h-1 bg-primary animate-pulse"></span>
+                      Thinking...
+                    </div>
+                  </div>
+                  <div class="px-2 py-1 border-t border-border text-[8px] text-muted-foreground/50 flex items-center gap-1.5">
+                    <div class="w-10 h-1 bg-muted overflow-hidden"><div class="h-full bg-green-500/60" style="width: 4%"></div></div>
+                    8.2k / 200k
+                  </div>
+                </div>
+
+                <div class="flex-1 border border-border bg-background flex-col hidden md:flex">
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-sidebar text-[9px]">
+                    <span class="w-1.5 h-1.5 bg-green-500"></span>
+                    <span class="text-foreground/80">fix/login-bug</span>
+                    <span class="ml-auto text-muted-foreground/50">Opus 4.6</span>
+                  </div>
+                  <div class="flex-1 p-2 space-y-1.5 text-[9px]">
+                    <div class="text-muted-foreground/60">Session timeout fix...</div>
+                    <div class="flex items-center gap-1 border-l-2 border-l-primary/40 pl-1.5">
+                      <span class="text-amber-500/80">Edit</span>
+                      <span class="text-foreground/60">session.ts</span>
+                      <span class="ml-auto text-green-500/70">+12</span>
+                      <span class="text-red-500/70">-4</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-green-500/5 border border-green-500/20 px-1.5 py-1">
+                      <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="currentColor" class="text-green-500" stroke-width="1.5"><polyline points="2,6 5,9 10,3"/></svg>
+                      <span class="text-green-500/80">Complete</span>
+                    </div>
+                  </div>
+                  <div class="px-2 py-1 border-t border-border text-[8px] text-muted-foreground/50 flex items-center gap-1.5">
+                    <div class="w-10 h-1 bg-muted overflow-hidden"><div class="h-full bg-green-500/60" style="width: 3%"></div></div>
+                    5.1k / 200k
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        {/each}
+        </div>
       </div>
     </div>
-  </section>
 
-  <!-- How It Works -->
-  <section id="how-it-works" class="border-b border-border bg-sidebar/30">
-    <div class="max-w-5xl mx-auto px-6 py-28 md:py-36" use:observe={'steps'}>
-      <div class="text-center mb-16 {visible['steps'] ? 'animate-fade-in-up' : 'opacity-0'}">
-        <p class="text-xs text-primary font-medium uppercase tracking-wider mb-3">Workflow</p>
-        <h2 class="text-2xl md:text-4xl font-bold tracking-tight">
-          Three steps to parallel coding
-        </h2>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12">
-        {#each steps as step, i}
-          <div class="text-center {visible['steps'] ? `animate-fade-in-up delay-${i + 1}` : 'opacity-0'}">
-            <div class="flex justify-center mb-5">
-              <span class="step-number">{step.num}</span>
-            </div>
-            <h3 class="text-sm font-semibold mb-2">{step.title}</h3>
-            <p class="text-xs text-muted-foreground leading-relaxed max-w-[220px] mx-auto">{step.desc}</p>
+    <!-- Feature 2: Dedicated Terminals (mockup left) -->
+    <div class="border-t border-border bg-sidebar/30" use:observe={'feat-1'}>
+      <div class="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div class="flex flex-col md:flex-row-reverse gap-12 md:gap-16 items-center {visible['feat-1'] ? 'animate-fade-in-up' : 'opacity-0'}">
+          <div class="md:w-2/5 shrink-0">
+            <p class="text-[10px] text-primary font-medium uppercase tracking-wider mb-3">02</p>
+            <h3 class="text-lg md:text-2xl font-bold tracking-tight mb-4">Real interactive terminals per session</h3>
+            <p class="text-xs text-muted-foreground leading-relaxed mb-5">Each agent gets a dedicated PTY terminal with full color output, environment persistence, and shell state that survives restarts. Run tests, start servers, inspect output — all in context.</p>
+            <ul class="space-y-2">
+              {#each featureSections[1].bullets as bullet}
+                <li class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="w-1 h-1 bg-primary shrink-0"></span>
+                  {bullet}
+                </li>
+              {/each}
+            </ul>
           </div>
-        {/each}
-      </div>
-
-      <!-- What happens under the hood -->
-      <div class="mt-20 {visible['steps'] ? 'animate-fade-in-up delay-4' : 'opacity-0'}">
-        <p class="text-center text-[10px] text-muted-foreground uppercase tracking-wider mb-4">What happens under the hood</p>
-        <div class="bg-card border border-border max-w-xl mx-auto">
-          <div class="flex items-center h-8 px-3 border-b border-border bg-sidebar">
-            <span class="text-[10px] text-muted-foreground">Terminal</span>
+          <div class="md:w-3/5 w-full">
+            <div class="bg-card border border-border shadow-2xl shadow-primary/5">
+              <div class="flex items-center h-7 px-3 border-b border-border bg-sidebar">
+                <span class="text-[9px] text-muted-foreground">Terminal — feat/auth</span>
+                <span class="ml-auto text-[8px] text-muted-foreground/40">PTY</span>
+              </div>
+              <div class="p-4 text-[10px]" style="height: 270px; background: #1a1a1a; color: #cccccc;">
+                <div class="space-y-1">
+                  <div><span style="color: #6ec87a;">user@DESKTOP</span>:<span style="color: #5a9bcf;">~/worktrees/a3f8b2</span>$ npm test</div>
+                  <div style="color: #888;">&nbsp;</div>
+                  <div style="color: #cccccc;"> PASS <span style="color: #888;">src/middleware/auth.test.ts</span></div>
+                  <div style="color: #6ec87a;">  ✓ validates JWT token <span style="color: #888;">(12ms)</span></div>
+                  <div style="color: #6ec87a;">  ✓ rejects expired tokens <span style="color: #888;">(3ms)</span></div>
+                  <div style="color: #6ec87a;">  ✓ handles missing auth header <span style="color: #888;">(2ms)</span></div>
+                  <div style="color: #6ec87a;">  ✓ refreshes token before expiry <span style="color: #888;">(5ms)</span></div>
+                  <div style="color: #888;">&nbsp;</div>
+                  <div>Tests:  <span style="color: #6ec87a;">4 passed</span>, 4 total</div>
+                  <div>Time:   <span style="color: #888;">0.847s</span></div>
+                  <div style="color: #888;">&nbsp;</div>
+                  <div><span style="color: #6ec87a;">user@DESKTOP</span>:<span style="color: #5a9bcf;">~/worktrees/a3f8b2</span>$ <span class="animate-cursor-blink">_</span></div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="p-5 text-xs space-y-2">
-            <div class="text-muted-foreground/40"># Grove Bench creates isolated worktrees automatically</div>
-            <div class="flex gap-2">
-              <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">git worktree add ../worktrees/a3f8b2 -b feat/auth</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 3: Project Memory (mockup right) -->
+    <div class="border-t border-border" use:observe={'feat-2'}>
+      <div class="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div class="flex flex-col md:flex-row gap-12 md:gap-16 items-center {visible['feat-2'] ? 'animate-fade-in-up' : 'opacity-0'}">
+          <div class="md:w-2/5 shrink-0">
+            <p class="text-[10px] text-primary font-medium uppercase tracking-wider mb-3">03</p>
+            <h3 class="text-lg md:text-2xl font-bold tracking-tight mb-4">Context that persists across sessions</h3>
+            <p class="text-xs text-muted-foreground leading-relaxed mb-5">Organized markdown notes injected into agent system prompts automatically. Architecture decisions, coding conventions, and session context — always available, never forgotten.</p>
+            <ul class="space-y-2">
+              {#each featureSections[2].bullets as bullet}
+                <li class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="w-1 h-1 bg-primary shrink-0"></span>
+                  {bullet}
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="md:w-3/5 w-full">
+            <div class="bg-card border border-border shadow-2xl shadow-primary/5">
+              <div class="flex text-[9px]" style="height: 300px;">
+                <div class="w-[140px] border-r border-border bg-sidebar p-2 space-y-1 shrink-0">
+                  <div class="text-[8px] text-muted-foreground/50 uppercase tracking-wider mb-1.5">Memory</div>
+                  <div class="space-y-0.5">
+                    <div class="flex items-center gap-1.5 px-1.5 py-1 text-muted-foreground/60">
+                      <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5l.5-.5h4l.5.5v1H14l.5.5v8l-.5.5H1.5l-.5-.5V3.5zm1 1V12h12V5H6l-.5-.5H2z"/></svg>
+                      conventions/
+                    </div>
+                    <div class="flex items-center gap-1.5 px-1.5 py-1 bg-accent text-foreground">
+                      <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5l.5-.5h4l.5.5v1H14l.5.5v8l-.5.5H1.5l-.5-.5V3.5zm1 1V12h12V5H6l-.5-.5H2z"/></svg>
+                      architecture/
+                    </div>
+                    <div class="flex items-center gap-1.5 px-1.5 py-1 text-muted-foreground/60 pl-5">
+                      <svg width="7" height="7" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1H13l.5.5v13l-.5.5H3.5L3 14.5v-13l.5-.5zM4 14h9V2H4v12z"/></svg>
+                      overview.md
+                    </div>
+                    <div class="flex items-center gap-1.5 px-1.5 py-1 text-muted-foreground/60 pl-5">
+                      <svg width="7" height="7" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1H13l.5.5v13l-.5.5H3.5L3 14.5v-13l.5-.5zM4 14h9V2H4v12z"/></svg>
+                      ipc-patterns.md
+                    </div>
+                    <div class="flex items-center gap-1.5 px-1.5 py-1 text-muted-foreground/60">
+                      <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5l.5-.5h4l.5.5v1H14l.5.5v8l-.5.5H1.5l-.5-.5V3.5zm1 1V12h12V5H6l-.5-.5H2z"/></svg>
+                      sessions/
+                    </div>
+                  </div>
+                </div>
+                <div class="flex-1 p-3 overflow-hidden">
+                  <div class="text-[8px] text-muted-foreground/40 mb-2">architecture / overview.md</div>
+                  <div class="space-y-1.5 text-muted-foreground/80">
+                    <div class="text-[8px] text-muted-foreground/30">---</div>
+                    <div class="text-[8px] text-muted-foreground/30">title: Architecture Overview</div>
+                    <div class="text-[8px] text-muted-foreground/30">updatedAt: 2026-03-31</div>
+                    <div class="text-[8px] text-muted-foreground/30">---</div>
+                    <div class="mt-2 text-foreground/70 font-semibold text-[10px]">Architecture Overview</div>
+                    <div class="text-muted-foreground/60 leading-relaxed">Main process manages AgentSessions via node-pty. IPC bridge through contextBridge in preload.ts. Git operations use execa calling git CLI directly.</div>
+                    <div class="mt-1.5 text-foreground/70 font-semibold text-[10px]">Key Patterns</div>
+                    <div class="text-muted-foreground/60">- Adapter pattern for agent backends</div>
+                    <div class="text-muted-foreground/60">- Zod validation at IPC boundary</div>
+                    <div class="text-muted-foreground/60">- Svelte 5 runes for reactive state</div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="text-muted-foreground/60 pl-5">Preparing worktree (new branch 'feat/auth')</div>
-            <div class="flex gap-2">
-              <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">git worktree add ../worktrees/c7d1e4 -b feat/api</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 4: Checkpoints & Rewind (mockup left) -->
+    <div class="border-t border-border bg-sidebar/30" use:observe={'feat-3'}>
+      <div class="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div class="flex flex-col md:flex-row-reverse gap-12 md:gap-16 items-center {visible['feat-3'] ? 'animate-fade-in-up' : 'opacity-0'}">
+          <div class="md:w-2/5 shrink-0">
+            <p class="text-[10px] text-primary font-medium uppercase tracking-wider mb-3">04</p>
+            <h3 class="text-lg md:text-2xl font-bold tracking-tight mb-4">Rewind to any point in time</h3>
+            <p class="text-xs text-muted-foreground leading-relaxed mb-5">Every agent turn creates a git checkpoint. Browse the timeline, view diffs at each step, and rewind to any previous state — files and conversation restored instantly.</p>
+            <ul class="space-y-2">
+              {#each featureSections[3].bullets as bullet}
+                <li class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="w-1 h-1 bg-primary shrink-0"></span>
+                  {bullet}
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="md:w-3/5 w-full">
+            <div class="bg-card border border-border shadow-2xl shadow-primary/5">
+              <div class="flex text-[9px]" style="height: 300px;">
+                <div class="w-[160px] border-r border-border p-2 space-y-0.5 shrink-0 overflow-hidden">
+                  <div class="text-[8px] text-muted-foreground/50 uppercase tracking-wider mb-1.5">Checkpoints</div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-accent/30">
+                    <div class="w-2 h-2 border border-muted-foreground/30 shrink-0"></div>
+                    <div class="min-w-0">
+                      <div class="text-foreground/70 truncate">Turn 5 · npm test</div>
+                      <div class="text-[8px] text-muted-foreground/40">2 min ago</div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 bg-accent">
+                    <div class="w-2 h-2 bg-primary shrink-0"></div>
+                    <div class="min-w-0">
+                      <div class="text-foreground truncate">Turn 4 · Edit auth.ts</div>
+                      <div class="text-[8px] text-muted-foreground/40">3 min ago</div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-accent/30">
+                    <div class="w-2 h-2 border border-muted-foreground/30 shrink-0"></div>
+                    <div class="min-w-0">
+                      <div class="text-foreground/70 truncate">Turn 3 · Read routes</div>
+                      <div class="text-[8px] text-muted-foreground/40">4 min ago</div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-accent/30">
+                    <div class="w-2 h-2 border border-muted-foreground/30 shrink-0"></div>
+                    <div class="min-w-0">
+                      <div class="text-foreground/70 truncate">Turn 2 · Write mw</div>
+                      <div class="text-[8px] text-muted-foreground/40">5 min ago</div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-accent/30">
+                    <div class="w-2 h-2 border border-muted-foreground/30 shrink-0"></div>
+                    <div class="min-w-0">
+                      <div class="text-foreground/70 truncate">Turn 1 · Initial</div>
+                      <div class="text-[8px] text-muted-foreground/40">6 min ago</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex-1 p-3 overflow-hidden">
+                  <div class="flex items-center justify-between mb-3">
+                    <div>
+                      <div class="text-foreground/80 text-[10px] font-medium">Turn 4 · Edit auth.ts</div>
+                      <div class="text-[8px] text-muted-foreground/40">3 minutes ago · 2 files changed</div>
+                    </div>
+                    <button class="px-2 py-1 bg-primary text-primary-foreground text-[9px] font-medium">Rewind here</button>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[8px] text-muted-foreground/50 uppercase tracking-wider mb-1">Files changed</div>
+                    <div class="flex items-center gap-2 px-2 py-1 hover:bg-muted/20">
+                      <span class="text-amber-500 text-[8px] font-bold w-2.5">M</span>
+                      <span class="text-foreground/70">src/middleware/auth.ts</span>
+                      <span class="ml-auto text-green-500/70">+47</span>
+                    </div>
+                    <div class="flex items-center gap-2 px-2 py-1 hover:bg-muted/20">
+                      <span class="text-amber-500 text-[8px] font-bold w-2.5">M</span>
+                      <span class="text-foreground/70">src/routes/index.ts</span>
+                      <span class="ml-auto text-green-500/70">+8</span>
+                      <span class="text-red-500/70">-3</span>
+                    </div>
+                  </div>
+                  <div class="mt-3 p-2 bg-background border border-border text-[8px] space-y-0.5">
+                    <div class="text-muted-foreground/40">@@ -12,3 +12,8 @@ import &#123; Router &#125;</div>
+                    <div class="text-green-500/70">+ import &#123; authMiddleware &#125; from './middleware/auth'</div>
+                    <div class="text-muted-foreground/50">&nbsp; const router = new Router()</div>
+                    <div class="text-green-500/70">+ router.use(authMiddleware)</div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="text-muted-foreground/60 pl-5">Preparing worktree (new branch 'feat/api')</div>
-            <div class="mt-2 text-muted-foreground/40"># Each agent gets its own PTY + working directory</div>
-            <div class="flex gap-2">
-              <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">cd ../worktrees/a3f8b2 && claude</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 5: Changes & Diffs (mockup right) -->
+    <div class="border-t border-border" use:observe={'feat-4'}>
+      <div class="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div class="flex flex-col md:flex-row gap-12 md:gap-16 items-center {visible['feat-4'] ? 'animate-fade-in-up' : 'opacity-0'}">
+          <div class="md:w-2/5 shrink-0">
+            <p class="text-[10px] text-primary font-medium uppercase tracking-wider mb-3">05</p>
+            <h3 class="text-lg md:text-2xl font-bold tracking-tight mb-4">Review every file change</h3>
+            <p class="text-xs text-muted-foreground leading-relaxed mb-5">Dedicated changes panel with unified and side-by-side diff views. See staged and unstaged files, revert individual changes, or open files in your editor.</p>
+            <ul class="space-y-2">
+              {#each featureSections[4].bullets as bullet}
+                <li class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="w-1 h-1 bg-primary shrink-0"></span>
+                  {bullet}
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="md:w-3/5 w-full">
+            <div class="bg-card border border-border shadow-2xl shadow-primary/5">
+              <div class="flex flex-col text-[9px]" style="height: 300px;">
+                <div class="border-b border-border p-2 space-y-1">
+                  <div class="flex items-center gap-2 px-2 py-1 bg-accent">
+                    <span class="text-green-500 text-[8px] font-bold w-2.5">A</span>
+                    <span class="text-foreground/80">src/middleware/auth.ts</span>
+                    <span class="ml-auto text-green-500/70">+47</span>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1 hover:bg-accent/50">
+                    <span class="text-amber-500 text-[8px] font-bold w-2.5">M</span>
+                    <span class="text-foreground/70">src/routes/index.ts</span>
+                    <span class="ml-auto text-green-500/70">+8</span>
+                    <span class="text-red-500/70">-3</span>
+                  </div>
+                  <div class="flex items-center gap-2 px-2 py-1 hover:bg-accent/50">
+                    <span class="text-amber-500 text-[8px] font-bold w-2.5">M</span>
+                    <span class="text-foreground/70">package.json</span>
+                    <span class="ml-auto text-green-500/70">+2</span>
+                    <span class="text-red-500/70">-1</span>
+                  </div>
+                </div>
+                <div class="flex-1 overflow-hidden p-2">
+                  <div class="flex items-center justify-between px-2 py-1 mb-1.5">
+                    <span class="text-foreground/70 text-[10px] font-medium">src/middleware/auth.ts</span>
+                    <div class="flex gap-1">
+                      <span class="px-1.5 py-0.5 bg-muted text-muted-foreground text-[8px]">Unified</span>
+                      <span class="px-1.5 py-0.5 text-muted-foreground/40 text-[8px]">Side-by-side</span>
+                    </div>
+                  </div>
+                  <div class="bg-background border border-border text-[8px] space-y-0 overflow-hidden">
+                    <div class="flex">
+                      <span class="w-8 text-right pr-1.5 text-muted-foreground/30 shrink-0 bg-green-500/5">1</span>
+                      <span class="flex-1 px-1.5 bg-green-500/5 text-green-500/80">+ import &#123; verify &#125; from 'jsonwebtoken'</span>
+                    </div>
+                    <div class="flex">
+                      <span class="w-8 text-right pr-1.5 text-muted-foreground/30 shrink-0 bg-green-500/5">2</span>
+                      <span class="flex-1 px-1.5 bg-green-500/5 text-green-500/80">+ import &#123; Request, Response &#125; from 'express'</span>
+                    </div>
+                    <div class="flex">
+                      <span class="w-8 text-right pr-1.5 text-muted-foreground/30 shrink-0">3</span>
+                      <span class="flex-1 px-1.5 text-muted-foreground/60">&nbsp;</span>
+                    </div>
+                    <div class="flex">
+                      <span class="w-8 text-right pr-1.5 text-muted-foreground/30 shrink-0 bg-green-500/5">4</span>
+                      <span class="flex-1 px-1.5 bg-green-500/5 text-green-500/80">+ export function authMiddleware(req, res, next) &#123;</span>
+                    </div>
+                    <div class="flex">
+                      <span class="w-8 text-right pr-1.5 text-muted-foreground/30 shrink-0 bg-green-500/5">5</span>
+                      <span class="flex-1 px-1.5 bg-green-500/5 text-green-500/80">+   const token = req.headers.authorization?.split(' ')[1]</span>
+                    </div>
+                    <div class="flex">
+                      <span class="w-8 text-right pr-1.5 text-muted-foreground/30 shrink-0 bg-green-500/5">6</span>
+                      <span class="flex-1 px-1.5 bg-green-500/5 text-green-500/80">+   if (!token) return res.status(401).json(&#123; error: 'No token' &#125;)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="text-green-500/80 pl-5">╭ Claude Code Agent ─ worktrees/a3f8b2</div>
-            <div class="text-green-500/80 pl-5">╰ Ready</div>
-            <div class="mt-2 flex gap-2">
-              <span class="text-green-500 shrink-0">$</span>
-              <span class="text-muted-foreground">git worktree list</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 6: Control (permissions + plugins + dev server) (mockup left) -->
+    <div class="border-t border-border bg-sidebar/30" use:observe={'feat-5'}>
+      <div class="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div class="flex flex-col md:flex-row-reverse gap-12 md:gap-16 items-center {visible['feat-5'] ? 'animate-fade-in-up' : 'opacity-0'}">
+          <div class="md:w-2/5 shrink-0">
+            <p class="text-[10px] text-primary font-medium uppercase tracking-wider mb-3">06</p>
+            <h3 class="text-lg md:text-2xl font-bold tracking-tight mb-4">Full control over your agents</h3>
+            <p class="text-xs text-muted-foreground leading-relaxed mb-5">Interactive permission prompts with allow/deny rules and glob patterns. Extend functionality with a built-in plugin marketplace. Dev server auto-detection and management included.</p>
+            <ul class="space-y-2">
+              {#each featureSections[5].bullets as bullet}
+                <li class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="w-1 h-1 bg-primary shrink-0"></span>
+                  {bullet}
+                </li>
+              {/each}
+            </ul>
+          </div>
+          <div class="md:w-3/5 w-full">
+            <div class="bg-card border border-border shadow-2xl shadow-primary/5">
+              <div class="flex flex-col p-3 text-[9px] space-y-2.5" style="height: 300px;">
+                <!-- Pending permission -->
+                <div class="border-l-4 border-l-amber-500 bg-amber-500/5 border border-amber-500/20 p-2.5">
+                  <div class="flex items-center gap-2 mb-2">
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" class="text-amber-500" stroke-width="1.5"><path d="M8 1L1 14h14L8 1z"/><line x1="8" y1="6" x2="8" y2="9"/><circle cx="8" cy="11" r="0.5" fill="currentColor"/></svg>
+                    <span class="text-amber-500 font-medium text-[10px]">Permission Required</span>
+                  </div>
+                  <div class="flex items-center gap-2 mb-2">
+                    <span class="text-foreground/70">Edit</span>
+                    <span class="text-muted-foreground/60">→</span>
+                    <span class="text-foreground/80">src/middleware/auth.ts</span>
+                  </div>
+                  <div class="bg-background border border-border p-1.5 mb-2.5 text-[8px] space-y-0.5">
+                    <div class="text-red-500/60">- const TOKEN_EXPIRY = 300</div>
+                    <div class="text-green-500/70">+ const TOKEN_EXPIRY = 3600</div>
+                    <div class="text-green-500/70">+ const REFRESH_BUFFER = 30</div>
+                  </div>
+                  <div class="flex gap-1.5">
+                    <button class="px-2.5 py-1 bg-primary text-primary-foreground text-[8px] font-medium">Allow</button>
+                    <button class="px-2.5 py-1 bg-muted text-muted-foreground text-[8px] border border-border">Deny</button>
+                    <button class="px-2.5 py-1 text-muted-foreground/60 text-[8px]">Always allow Edit</button>
+                  </div>
+                </div>
+
+                <!-- Resolved permission -->
+                <div class="border-l-4 border-l-green-500 bg-green-500/5 border border-green-500/20 p-2.5">
+                  <div class="flex items-center gap-2">
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" class="text-green-500" stroke-width="1.5"><polyline points="2,6 5,9 10,3"/></svg>
+                    <span class="text-green-500/80 font-medium">Allowed</span>
+                    <span class="text-foreground/60 ml-1">Bash</span>
+                    <span class="text-muted-foreground/60">→</span>
+                    <span class="text-foreground/70">npm test</span>
+                  </div>
+                </div>
+
+                <!-- Mode selector -->
+                <div class="mt-auto pt-2 border-t border-border flex items-center gap-3">
+                  <span class="text-[8px] text-muted-foreground/50 uppercase tracking-wider">Mode</span>
+                  <span class="px-2 py-0.5 bg-primary text-primary-foreground text-[8px] font-medium">Default</span>
+                  <span class="px-2 py-0.5 bg-muted text-muted-foreground/60 text-[8px]">Plan</span>
+                  <span class="px-2 py-0.5 bg-muted text-muted-foreground/60 text-[8px]">AcceptEdits</span>
+                </div>
+              </div>
             </div>
-            <div class="text-muted-foreground/60 pl-5">/my-app &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;abc1234 [main]</div>
-            <div class="text-muted-foreground/60 pl-5">/worktrees/a3f8b2 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;abc1234 [feat/auth]</div>
-            <div class="text-muted-foreground/60 pl-5">/worktrees/c7d1e4 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;abc1234 [feat/api]</div>
-            <div class="mt-2 text-primary pl-5">2 agents running · separate branches · no lock contention</div>
           </div>
         </div>
       </div>
