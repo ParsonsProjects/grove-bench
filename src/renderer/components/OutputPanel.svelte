@@ -205,7 +205,7 @@
   {showDetails ? 'Detailed' : 'Summary'}{#if hiddenCount > 0} ({hiddenCount} hidden){/if}
 </button>
 <div
-  class="pixel-bg h-full overflow-y-auto px-4 py-3 relative"
+  class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
 >
