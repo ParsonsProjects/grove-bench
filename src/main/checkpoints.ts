@@ -234,9 +234,21 @@ export class CheckpointManager {
 
   /**
    * Rebuild checkpoint state from existing refs (for session resumption).
+   * Serialized through the captureQueue to prevent races with concurrent captures.
    */
   async resume(sessionId: string, cwd: string): Promise<void> {
     const s = this.getOrCreate(sessionId);
+    s.captureQueue = s.captureQueue.then(() =>
+      this._doResume(s, sessionId, cwd)
+    ).catch(err => {
+      logger.warn(`[checkpoints] resume failed session=${sessionId}:`, err);
+    });
+    return s.captureQueue;
+  }
+
+  private async _doResume(
+    s: SessionCheckpoints, sessionId: string, cwd: string
+  ): Promise<void> {
     try {
       const output = await git(
         ['for-each-ref', '--format=%(refname) %(subject)', `refs/grove/checkpoints/${sessionId}/`],
@@ -261,8 +273,11 @@ export class CheckpointManager {
           s.uuidToRef.set(uuidMatch[1], ref);
         }
       }
-      s.turnCount = maxTurn;
-      logger.debug(`[checkpoints] resumed session=${sessionId} turns=${maxTurn} uuids=${s.uuidToRef.size}`);
+      // Only advance turnCount — never reset it below what captures have already used
+      if (maxTurn > s.turnCount) {
+        s.turnCount = maxTurn;
+      }
+      logger.debug(`[checkpoints] resumed session=${sessionId} turns=${s.turnCount} uuids=${s.uuidToRef.size}`);
     } catch {
       // No existing refs — fresh session
     }

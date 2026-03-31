@@ -1023,6 +1023,8 @@ class MessageStore {
             const updated = [...msgs];
             updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
             this.setMessagesForMutation(sessionId, updated);
+            // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
+            checkpointStore.scheduleRefresh(sessionId);
             break;
           }
         }
