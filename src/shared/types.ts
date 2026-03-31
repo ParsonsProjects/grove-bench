@@ -173,6 +173,7 @@ export interface CheckpointListItem {
   uuid: string;
   turn: number;
   ref: string;
+  text?: string;
 }
 
 // ─── PR Info ───

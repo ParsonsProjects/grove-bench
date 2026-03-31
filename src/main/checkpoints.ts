@@ -31,20 +31,29 @@ export class CheckpointManager {
   /**
    * Capture a checkpoint of the current working tree state.
    * Uses a temporary git index so we don't interfere with the user's real index.
+   * @param text Optional user message text to store in the checkpoint for display.
    */
-  async capture(sessionId: string, cwd: string, uuid: string): Promise<void> {
+  async capture(sessionId: string, cwd: string, uuid: string, text?: string): Promise<void> {
     const s = this.getOrCreate(sessionId);
     // Queue captures to prevent concurrent git index corruption
     s.captureQueue = s.captureQueue.then(() =>
-      this._doCapture(s, sessionId, cwd, uuid)
+      this._doCapture(s, sessionId, cwd, uuid, text)
     ).catch(err => {
       logger.warn(`[checkpoints] capture failed session=${sessionId} uuid=${uuid}:`, err);
     });
     return s.captureQueue;
   }
 
+  /**
+   * Wait for any pending capture to complete.
+   */
+  async waitForPending(sessionId: string): Promise<void> {
+    const s = this.sessions.get(sessionId);
+    if (s) await s.captureQueue;
+  }
+
   private async _doCapture(
-    s: SessionCheckpoints, sessionId: string, cwd: string, uuid: string
+    s: SessionCheckpoints, sessionId: string, cwd: string, uuid: string, text?: string
   ): Promise<void> {
     const turn = ++s.turnCount;
     const ref = `refs/grove/checkpoints/${sessionId}/turn/${turn}`;
@@ -62,8 +71,10 @@ export class CheckpointManager {
       // Write the tree object
       const treeOid = (await gitEnv(['write-tree'], cwd, env)).trim();
 
-      // Create a commit object pointing to this tree
-      const commitMsg = `grove checkpoint turn=${turn} uuid=${uuid}`;
+      // Encode message text into commit message so list() can display it
+      // without depending on in-memory messages. Truncate to keep refs light.
+      const safeText = text ? text.replace(/[\r\n]+/g, ' ').slice(0, 200) : '';
+      const commitMsg = `grove checkpoint turn=${turn} uuid=${uuid}${safeText ? `\n\ntext=${safeText}` : ''}`;
       const commitOid = (await git(
         ['commit-tree', treeOid, '-m', commitMsg], cwd
       )).trim();
@@ -147,6 +158,52 @@ export class CheckpointManager {
   }
 
   /**
+   * Remove all checkpoint refs with turns strictly after the given uuid's turn.
+   * Called on rewind to prevent orphaned future checkpoints from lingering.
+   */
+  async pruneAfter(sessionId: string, cwd: string, uuid: string): Promise<void> {
+    // Wait for any in-flight capture to finish before pruning,
+    // otherwise it could complete after we prune and create an orphaned ref.
+    await this.waitForPending(sessionId);
+
+    const ref = await this.resolveRef(sessionId, cwd, uuid);
+    if (!ref) return;
+
+    const turnMatch = ref.match(/\/turn\/(\d+)$/);
+    if (!turnMatch) return;
+    const rewindTurn = parseInt(turnMatch[1], 10);
+
+    try {
+      const output = await git(
+        ['for-each-ref', '--format=%(refname)', `refs/grove/checkpoints/${sessionId}/`],
+        cwd
+      );
+      const s = this.sessions.get(sessionId);
+      for (const line of output.split('\n')) {
+        const r = line.trim();
+        if (!r) continue;
+        const m = r.match(/\/turn\/(\d+)$/);
+        if (!m) continue;
+        const turn = parseInt(m[1], 10);
+        if (turn > rewindTurn) {
+          await git(['update-ref', '-d', r], cwd).catch(() => {});
+          // Remove from in-memory map
+          if (s) {
+            for (const [u, cachedRef] of s.uuidToRef) {
+              if (cachedRef === r) { s.uuidToRef.delete(u); break; }
+            }
+          }
+        }
+      }
+      // Reset turnCount so next capture continues from the rewind point
+      if (s) s.turnCount = rewindTurn;
+      logger.debug(`[checkpoints] pruned turns after ${rewindTurn} for session=${sessionId}`);
+    } catch (err) {
+      logger.warn(`[checkpoints] pruneAfter failed:`, err);
+    }
+  }
+
+  /**
    * Delete all checkpoint refs for a session.
    */
   async cleanup(sessionId: string, cwd: string): Promise<void> {
@@ -205,19 +262,25 @@ export class CheckpointManager {
   /**
    * List all checkpoints for a session, sorted newest-first.
    */
-  async list(sessionId: string, cwd: string): Promise<CheckpointInfo[]> {
+  async list(sessionId: string, cwd: string): Promise<(CheckpointInfo & { text?: string })[]> {
+    // Wait for any in-flight capture so the latest checkpoint is included
+    await this.waitForPending(sessionId);
+
     try {
+      // Use a delimiter to separate fields since body can contain spaces
+      const SEP = '@@GROVE_SEP@@';
       const output = await git(
-        ['for-each-ref', '--format=%(refname) %(subject)', `refs/grove/checkpoints/${sessionId}/`],
+        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, `refs/grove/checkpoints/${sessionId}/`],
         cwd
       );
-      const items: CheckpointInfo[] = [];
+      const items: (CheckpointInfo & { text?: string })[] = [];
       for (const line of output.split('\n')) {
         if (!line.trim()) continue;
-        const spaceIdx = line.indexOf(' ');
-        if (spaceIdx === -1) continue;
-        const ref = line.slice(0, spaceIdx);
-        const subject = line.slice(spaceIdx + 1);
+        const parts = line.split(SEP);
+        if (parts.length < 2) continue;
+        const ref = parts[0].trim();
+        const subject = parts[1].trim();
+        const body = (parts[2] ?? '').trim();
 
         const turnMatch = ref.match(/\/turn\/(\d+)$/);
         const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
@@ -225,7 +288,11 @@ export class CheckpointManager {
         const uuidMatch = subject.match(/uuid=(\S+)/);
         if (!uuidMatch) continue;
 
-        items.push({ uuid: uuidMatch[1], turn, ref });
+        // Extract display text from commit body (text=...)
+        const textMatch = body.match(/^text=(.*)/);
+        const text = textMatch?.[1] || undefined;
+
+        items.push({ uuid: uuidMatch[1], turn, ref, text });
       }
       // Filter out internal baseline checkpoint
       const visible = items.filter(i => i.uuid !== '__baseline__');

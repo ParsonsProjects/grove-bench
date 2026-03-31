@@ -550,8 +550,8 @@ class AgentSessionManager {
     const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
     session.emit?.(userEvent);
 
-    // Capture checkpoint (fire-and-forget)
-    session.checkpoints.capture(id, session.worktreePath, uuid).catch(err => {
+    // Capture checkpoint (fire-and-forget), include message text for display
+    session.checkpoints.capture(id, session.worktreePath, uuid, content).catch(err => {
       logger.warn(`Checkpoint capture failed for ${id}:`, err);
     });
 
@@ -940,6 +940,9 @@ class AgentSessionManager {
     if (!options?.conversationOnly) {
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
     }
+
+    // Remove orphaned checkpoint refs for turns after the rewind point
+    await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
   }
