@@ -1124,6 +1124,35 @@ describe('ingestEvent — rewind', () => {
     // Messages should be unchanged (no truncation)
     expect(messageStore.getMessages(SID)).toHaveLength(2);
   });
+
+  it('truncates correctly during replayEvents (uses replay buffer)', () => {
+    // Simulate a rewind + continue scenario replayed on refresh:
+    // user sends A, agent responds, user sends B, agent responds, rewind to A, user sends C
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'first', uuid: 'cp-1' },
+      { type: 'assistant_text', text: 'response 1', uuid: 'r-1' },
+      { type: 'result', subtype: 'success', totalCostUsd: 0, durationMs: 0, isError: false, numTurns: 1 },
+      { type: 'user_message', text: 'second', uuid: 'cp-2' },
+      { type: 'assistant_text', text: 'response 2', uuid: 'r-2' },
+      { type: 'result', subtype: 'success', totalCostUsd: 0, durationMs: 0, isError: false, numTurns: 1 },
+      { type: 'rewind', toMessageId: 'cp-1' },
+      { type: 'user_message', text: 'third', uuid: 'cp-3' },
+      { type: 'assistant_text', text: 'response 3', uuid: 'r-3' },
+      { type: 'result', subtype: 'success', totalCostUsd: 0, durationMs: 0, isError: false, numTurns: 1 },
+    ] as AgentEvent[];
+
+    messageStore.replayEvents(SID, events);
+    const msgs = messageStore.getMessages(SID);
+
+    // After rewind to cp-1, only first prompt remains, then third is added
+    const userMsgs = msgs.filter((m) => m.kind === 'user');
+    expect(userMsgs).toHaveLength(2);
+    expect((userMsgs[0] as any).text).toBe('first');
+    expect((userMsgs[1] as any).text).toBe('third');
+
+    // "second" and its response should have been truncated by the rewind
+    expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'second')).toBeUndefined();
+  });
 });
 
 describe('getRewindPoints', () => {

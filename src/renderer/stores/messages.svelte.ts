@@ -1015,14 +1015,14 @@ class MessageStore {
         // the store has the display text. So we match by position: the most
         // recent UUID-less user message is the one the SDK is replaying.
         if (event.uuid) {
-          const msgs = this.messagesBySession[sessionId] ?? [];
+          const msgs = this.getMessagesForMutation(sessionId);
           const existingIdx = msgs.findLastIndex(
             (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
           );
           if (existingIdx >= 0) {
             const updated = [...msgs];
             updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
-            this.messagesBySession[sessionId] = updated;
+            this.setMessagesForMutation(sessionId, updated);
             break;
           }
         }
@@ -1238,14 +1238,16 @@ class MessageStore {
           delete this.preservedEditHistory[sessionId];
         }
 
-        // Truncate messages after the rewind point
-        const msgs = this.messagesBySession[sessionId] ?? [];
+        // Truncate messages after the rewind point.
+        // Use getMessagesForMutation/setMessagesForMutation so this works
+        // during replay (when messages are in _replayBuffer, not messagesBySession).
+        const msgs = this.getMessagesForMutation(sessionId);
         const rewindIdx = msgs.findLastIndex(
           (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
         );
         if (rewindIdx >= 0) {
           // Keep everything up to and including the rewind target user message
-          this.messagesBySession[sessionId] = msgs.slice(0, rewindIdx + 1);
+          this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx + 1));
         }
         this.isRunning[sessionId] = false;
         this.streamingText[sessionId] = '';

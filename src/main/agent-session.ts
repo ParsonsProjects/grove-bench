@@ -944,6 +944,20 @@ class AgentSessionManager {
     // Remove orphaned checkpoint refs for turns after the rewind point
     await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
 
+    // Truncate event history to the rewind point so replays after refresh
+    // don't resurrect events that occurred after the rewound turn.
+    const rewindIdx = session.eventHistory.findLastIndex(
+      (e) => e.type === 'user_message' && e.uuid === userMessageId,
+    );
+    if (rewindIdx >= 0) {
+      session.eventHistory = session.eventHistory.slice(0, rewindIdx + 1);
+      // Rewrite the disk log to match
+      try {
+        const lines = session.eventHistory.map(e => JSON.stringify(e)).join('\n') + '\n';
+        fs.writeFileSync(session.eventLogPath, lines);
+      } catch { /* non-fatal */ }
+    }
+
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
   }
 
