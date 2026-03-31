@@ -412,30 +412,56 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> {
+    // Try to locate the claude CLI binary.  On Windows, Electron processes
+    // launched from Start Menu / desktop shortcuts often inherit a minimal
+    // PATH that does not include user-level directories such as
+    // %USERPROFILE%\.local\bin or npm global bin.  We therefore try
+    // `where.exe` / `which` first, and if that fails, probe well-known
+    // install locations before giving up.
+    let claudePath: string | undefined;
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
-      const { stdout } = await execFileAsync(cmd, ['claude']);
-      const firstMatch = stdout.trim().split('\n')[0];
-
-      try {
-        const { stdout: authJson } = await execFileAsync('claude', ['auth', 'status', '--json'], { shell: true });
-        const auth = JSON.parse(authJson.trim());
-        return {
-          available: true,
-          path: firstMatch,
-          authenticated: auth.loggedIn === true,
-          authMethod: auth.authMethod,
-          email: auth.email,
-        };
-      } catch {
-        return { available: true, path: firstMatch, authenticated: false };
-      }
+      const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true });
+      claudePath = stdout.trim().split(/\r?\n/)[0];
     } catch {
+      // `where`/`which` failed — try known Windows install locations
+      if (process.platform === 'win32') {
+        const fs = await import('node:fs');
+        const home = process.env.USERPROFILE ?? process.env.HOME ?? '';
+        const candidates = [
+          path.join(home, '.local', 'bin', 'claude.exe'),
+          path.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+          path.join(home, 'AppData', 'Roaming', 'npm', 'claude'),
+        ];
+        for (const c of candidates) {
+          if (fs.existsSync(c)) {
+            claudePath = c;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!claudePath) {
       return {
         available: false,
         errorMessage: 'Claude Code CLI not found',
         installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
       };
+    }
+
+    try {
+      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true });
+      const auth = JSON.parse(authJson.trim());
+      return {
+        available: true,
+        path: claudePath,
+        authenticated: auth.loggedIn === true,
+        authMethod: auth.authMethod,
+        email: auth.email,
+      };
+    } catch {
+      return { available: true, path: claudePath, authenticated: false };
     }
   }
 
