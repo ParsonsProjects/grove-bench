@@ -919,12 +919,23 @@ class AgentSessionManager {
     }
   }
 
-  /** Load event history from the disk JSONL log for a session. */
+  /** Load event history from the disk JSONL log for a session.
+   *  Parses each line individually so a single corrupt line (e.g. from a
+   *  crash mid-write) doesn't discard the entire history. */
   private loadEventHistory(id: string): AgentEvent[] {
     const logPath = path.join(getEventsDir(), `${id}.jsonl`);
     try {
       const data = fs.readFileSync(logPath, 'utf-8');
-      return data.split('\n').filter(Boolean).map(line => JSON.parse(line));
+      const events: AgentEvent[] = [];
+      for (const line of data.split('\n')) {
+        if (!line) continue;
+        try {
+          events.push(JSON.parse(line));
+        } catch {
+          logger.warn(`[loadEventHistory] skipping corrupt line in ${id}.jsonl`);
+        }
+      }
+      return events;
     } catch {
       return [];
     }

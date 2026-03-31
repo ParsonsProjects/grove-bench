@@ -10,16 +10,19 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-// Mock fs.rmSync
+// Mock fs — capture() now writes commit messages to a temp file
 vi.mock('node:fs', () => ({
   rmSync: vi.fn(),
+  writeFileSync: vi.fn(),
 }));
 
 import { git, gitEnv } from './git.js';
 import { CheckpointManager } from './checkpoints.js';
+import * as fs from 'node:fs';
 
 const mockGit = vi.mocked(git);
 const mockGitEnv = vi.mocked(gitEnv);
+const mockFs = vi.mocked(fs);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,9 +52,9 @@ describe('CheckpointManager', () => {
         ['write-tree'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
       );
 
-      // Verify commit-tree and update-ref
+      // Verify commit-tree uses -F (temp file) for Windows newline compat
       expect(mockGit).toHaveBeenCalledWith(
-        ['commit-tree', 'abc123tree', '-m', expect.stringContaining('uuid=uuid-1')], '/repo'
+        ['commit-tree', 'abc123tree', '-F', expect.any(String)], '/repo'
       );
       expect(mockGit).toHaveBeenCalledWith(
         ['update-ref', 'refs/grove/checkpoints/sess1/turn/1', 'def456commit'], '/repo'
@@ -312,6 +315,14 @@ describe('CheckpointManager', () => {
   });
 
   describe('capture() with text', () => {
+    /** Helper: get the commit message written to the temp file by capture(). */
+    function getWrittenCommitMsg(): string {
+      const writeCall = mockFs.writeFileSync.mock.calls.find(
+        (c) => String(c[0]).includes('grove-msg-'),
+      );
+      return writeCall ? String(writeCall[1]) : '';
+    }
+
     it('includes text in commit message with double newline for body separation', async () => {
       mockGitEnv.mockResolvedValue('');
       mockGitEnv.mockResolvedValueOnce(''); // read-tree
@@ -323,12 +334,15 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       await mgr.capture('sess1', '/repo', 'uuid-1', 'Fix the login bug');
 
-      const commitTreeCall = mockGit.mock.calls.find(c => c[0][0] === 'commit-tree');
-      const msg = commitTreeCall![0][3] as string;
+      const msg = getWrittenCommitMsg();
       // Subject line should have uuid
       expect(msg).toContain('uuid=uuid-1');
       // Body should be separated by blank line and contain text=
       expect(msg).toContain('\n\ntext=Fix the login bug');
+
+      // commit-tree should use -F (temp file) not -m
+      const commitTreeCall = mockGit.mock.calls.find(c => c[0][0] === 'commit-tree');
+      expect(commitTreeCall![0]).toContain('-F');
     });
 
     it('strips \\r\\n from text for Windows compatibility', async () => {
@@ -342,8 +356,7 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       await mgr.capture('sess1', '/repo', 'uuid-1', 'line1\r\nline2\nline3');
 
-      const commitTreeCall = mockGit.mock.calls.find(c => c[0][0] === 'commit-tree');
-      const msg = commitTreeCall![0][3] as string;
+      const msg = getWrittenCommitMsg();
       expect(msg).toContain('text=line1 line2 line3');
     });
 
@@ -359,8 +372,7 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       await mgr.capture('sess1', '/repo', 'uuid-1', longText);
 
-      const commitTreeCall = mockGit.mock.calls.find(c => c[0][0] === 'commit-tree');
-      const msg = commitTreeCall![0][3] as string;
+      const msg = getWrittenCommitMsg();
       const textPart = msg.split('text=')[1];
       expect(textPart).toHaveLength(200);
     });
@@ -376,8 +388,7 @@ describe('CheckpointManager', () => {
       const mgr = new CheckpointManager();
       await mgr.capture('sess1', '/repo', 'uuid-1');
 
-      const commitTreeCall = mockGit.mock.calls.find(c => c[0][0] === 'commit-tree');
-      const msg = commitTreeCall![0][3] as string;
+      const msg = getWrittenCommitMsg();
       expect(msg).not.toContain('text=');
       expect(msg).not.toContain('\n\n');
     });

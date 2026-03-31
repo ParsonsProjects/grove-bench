@@ -73,11 +73,20 @@ export class CheckpointManager {
 
       // Encode message text into commit message so list() can display it
       // without depending on in-memory messages. Truncate to keep refs light.
+      // Use a temp file (-F) instead of -m because Windows mangles newlines
+      // in command-line arguments, which breaks the body (%(body) returns empty).
       const safeText = text ? text.replace(/[\r\n]+/g, ' ').slice(0, 200) : '';
       const commitMsg = `grove checkpoint turn=${turn} uuid=${uuid}${safeText ? `\n\ntext=${safeText}` : ''}`;
-      const commitOid = (await git(
-        ['commit-tree', treeOid, '-m', commitMsg], cwd
-      )).trim();
+      const msgFile = path.join(os.tmpdir(), `grove-msg-${sessionId}-${turn}-${Date.now()}`);
+      let commitOid: string;
+      try {
+        fs.writeFileSync(msgFile, commitMsg);
+        commitOid = (await git(
+          ['commit-tree', treeOid, '-F', msgFile], cwd
+        )).trim();
+      } finally {
+        try { fs.rmSync(msgFile, { force: true }); } catch { /* ignore */ }
+      }
 
       // Store the ref
       await git(['update-ref', ref, commitOid], cwd);
