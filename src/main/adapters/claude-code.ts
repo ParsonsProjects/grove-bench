@@ -753,6 +753,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           permissions: {
             deny: ['Read(../../**)', 'Edit(../../**)'],
           },
+          attribution: {
+            commit: '',
+            pr: '',
+          },
         },
         null,
         2
