@@ -34,7 +34,7 @@
   let showMemory = $state(false);
   let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
-  let destroying = $state<string | null>(null);
+  let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
   let deleteBranchOnDestroy = $state(false);
   let renamingSessionId = $state<string | null>(null);
@@ -60,7 +60,7 @@
     const id = confirmDestroyId;
     const deleteBranch = deleteBranchOnDestroy;
     confirmDestroyId = null;
-    destroying = id;
+    destroying = new Set([...destroying, id]);
 
     // Mark stopped immediately so the tab closes right away
     store.updateStatus(id, 'stopped');
@@ -79,7 +79,9 @@
     } catch (e: any) {
       store.setError(e.message || String(e));
     } finally {
-      destroying = null;
+      const next = new Set(destroying);
+      next.delete(id);
+      destroying = next;
     }
   }
 
@@ -190,7 +192,7 @@
           {#if sessions.length === 1}
             <!-- Single session — render flat (no branch header) -->
             {@const session = sessions[0]}
-            {@const isDestroying = destroying === session.id}
+            {@const isDestroying = destroying.has(session.id)}
             <button
               onclick={() => !isDestroying && focusSession(session.id)}
               onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
@@ -201,7 +203,7 @@
                 {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
             >
               <div class="flex items-center gap-2 min-w-0">
-                {#if destroying === session.id}
+                {#if destroying.has(session.id)}
                   <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
                 {:else if session.status === 'error'}
                   <span class="w-2 h-2 bg-red-500 shrink-0"></span>
@@ -245,7 +247,7 @@
                 <span class="text-muted-foreground/40">({sessions.length})</span>
               </div>
               {#each sessions as session, i (session.id)}
-                {@const isDestroying = destroying === session.id}
+                {@const isDestroying = destroying.has(session.id)}
                 <button
                   onclick={() => !isDestroying && focusSession(session.id)}
                   onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
@@ -256,7 +258,7 @@
                     {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
                 >
                   <div class="flex items-center gap-2 min-w-0">
-                    {#if destroying === session.id}
+                    {#if destroying.has(session.id)}
                       <span class="w-1.5 h-1.5 bg-muted-foreground animate-pulse shrink-0"></span>
                     {:else if session.status === 'error'}
                       <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>

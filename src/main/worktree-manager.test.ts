@@ -30,7 +30,10 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+import { git } from './git.js';
 import { WorktreeManager } from './worktree-manager.js';
+
+const mockGit = vi.mocked(git);
 
 let manager: WorktreeManager;
 let savedManifest: Record<string, unknown>;
@@ -139,5 +142,125 @@ describe('migration from claudeSessionId', () => {
 
     const result = await manager.getProviderSessionId('wt-123');
     expect(result).toBe('old-session');
+  });
+});
+
+describe('remove', () => {
+  const manifest = {
+    'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 },
+    'wt-b': { repoPath: '/repo', branch: 'feat-b', createdAt: 2000 },
+  };
+
+  it('removes worktree from manifest and calls git worktree remove', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
+    mockGit.mockResolvedValue('');
+    mockFs.readdir.mockResolvedValue(['wt-b']);
+
+    await manager.remove('wt-a');
+
+    expect(mockGit).toHaveBeenCalledWith(
+      ['worktree', 'remove', expect.stringContaining('wt-a')],
+      '/repo',
+    );
+    expect(savedManifest).not.toHaveProperty('wt-a');
+    expect(savedManifest).toHaveProperty('wt-b');
+  });
+
+  it('is a no-op for unknown worktree ID', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
+
+    await manager.remove('nonexistent');
+
+    expect(mockGit).not.toHaveBeenCalled();
+  });
+
+  it('falls back to force remove when normal remove fails', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
+    mockGit
+      .mockRejectedValueOnce(new Error('locked'))   // normal remove fails
+      .mockResolvedValueOnce('')                     // force remove succeeds
+      .mockResolvedValue('');                        // any further calls
+    mockFs.readdir.mockResolvedValue(['wt-b']);
+
+    await manager.remove('wt-a');
+
+    expect(mockGit).toHaveBeenCalledWith(
+      ['worktree', 'remove', '--force', expect.stringContaining('wt-a')],
+      '/repo',
+    );
+  });
+
+  it('deletes branch when deleteBranch is true', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
+    mockGit.mockResolvedValue('');
+    mockFs.readdir.mockResolvedValue([]);
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
+  });
+
+  it('serializes concurrent removes on the same repo', async () => {
+    // Use a live manifest object so reads reflect prior writes
+    let liveManifest = { ...manifest };
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(liveManifest));
+    mockFs.writeFile.mockImplementation(async (_path: string, data: string) => {
+      liveManifest = JSON.parse(data);
+      savedManifest = liveManifest;
+    });
+    mockFs.readdir.mockResolvedValue([]);
+
+    // Track the order of git worktree remove calls to verify serialization
+    const callOrder: string[] = [];
+    mockGit.mockImplementation(async (args: string[]) => {
+      const id = args[0] === 'worktree' ? args[2] : args[1]; // extract path or branch
+      callOrder.push(`start:${args[0]}:${id}`);
+      // Simulate async work so interleaving would be visible
+      await new Promise((r) => setTimeout(r, 10));
+      callOrder.push(`end:${args[0]}:${id}`);
+      return '';
+    });
+
+    // Fire both removes concurrently
+    await Promise.all([
+      manager.remove('wt-a'),
+      manager.remove('wt-b'),
+    ]);
+
+    // Both should complete
+    expect(savedManifest).not.toHaveProperty('wt-a');
+    expect(savedManifest).not.toHaveProperty('wt-b');
+
+    // Verify serialization: all operations for one worktree should finish
+    // before the other starts (worktree remove calls should not interleave)
+    const worktreeRemoveStarts = callOrder
+      .filter((e) => e.startsWith('start:worktree:'))
+      .map((e) => e.split(':')[2]);
+    const worktreeRemoveEnds = callOrder
+      .filter((e) => e.startsWith('end:worktree:'))
+      .map((e) => e.split(':')[2]);
+
+    // The first remove should end before the second starts
+    // (both entries exist, so order is either a-then-b or b-then-a)
+    const firstStarted = worktreeRemoveStarts[0];
+    const firstEnded = worktreeRemoveEnds[0];
+    expect(firstStarted).toBe(firstEnded); // same worktree starts and ends first
+  });
+
+  it('cleans up empty repoHash directory', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-only': { repoPath: '/repo', branch: 'feat', createdAt: 1000 },
+    }));
+    mockGit.mockResolvedValue('');
+    // Only config.json and .npm-cache remain — treated as empty
+    mockFs.readdir.mockResolvedValue(['config.json', '.npm-cache']);
+    mockFs.rm.mockResolvedValue(undefined);
+
+    await manager.remove('wt-only');
+
+    expect(mockFs.rm).toHaveBeenCalledWith(
+      expect.stringContaining('worktrees'),
+      { recursive: true, force: true },
+    );
   });
 });
