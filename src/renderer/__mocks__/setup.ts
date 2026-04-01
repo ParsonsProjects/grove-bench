@@ -28,6 +28,11 @@ const mockGroveBench = {
   sendMessage: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
+  listSessions: vi.fn(() => Promise.resolve([])),
+  validateRepo: vi.fn(() => Promise.resolve(true)),
+  listWorktrees: vi.fn(() => Promise.resolve([])),
+  resumeSession: vi.fn(() => Promise.resolve({ id: '' })),
+  listRepos: vi.fn(() => Promise.resolve([])),
 };
 Object.defineProperty(globalThis, 'window', {
   value: { groveBench: mockGroveBench },

@@ -5,6 +5,7 @@
   import { settingsStore } from './stores/settings.svelte.js';
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { getRepoColor, getTabPendingClass } from './lib/repo-colors.js';
+  import { restoreWorktrees } from './lib/restore-worktrees.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -81,44 +82,8 @@
 
   let restored = $state(false);
 
-  async function restoreWorktrees() {
-    const runningSessions = await window.groveBench.listSessions();
-    const runningMap = new Map(runningSessions.filter((s) => s.status === 'running').map((s) => [s.id, s]));
-
-    for (const repo of [...store.repos]) {
-      try {
-        const valid = await window.groveBench.validateRepo(repo);
-        if (!valid) {
-          store.removeRepo(repo);
-          continue;
-        }
-        const worktrees = await window.groveBench.listWorktrees(repo);
-        for (const wt of worktrees) {
-          if (store.sessions.find((s) => s.id === wt.id)) continue;
-
-          const runningSession = runningMap.get(wt.id);
-          const isRunning = !!runningSession;
-          store.addSession({
-            id: wt.id,
-            branch: wt.branch,
-            repoPath: repo,
-            status: isRunning ? 'running' : 'stopped',
-            direct: wt.direct,
-            displayName: runningSession?.displayName ?? null,
-          }, false);
-
-          if (isRunning) {
-            // Just reattach the window — history replay and subscription
-            // are handled by WorkspacePane when it mounts.
-            window.groveBench.resumeSession(wt.id, repo).catch((e: any) => {
-              store.setError(e.message || String(e));
-            });
-          }
-        }
-      } catch (e) {
-        console.error(`Failed to restore worktrees for ${repo}:`, e);
-      }
-    }
+  async function restoreApp() {
+    await restoreWorktrees();
 
     // Resume all previously-open tabs, not just the active one
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
@@ -295,7 +260,7 @@
 
   onMount(() => {
     settingsStore.load();
-    store.loadRepos().then(() => restoreWorktrees()).catch((e) => {
+    store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });
     window.addEventListener('keydown', handleGlobalKeydown);
