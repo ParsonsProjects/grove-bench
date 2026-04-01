@@ -672,10 +672,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
 
       setPermissionMode(mode) {
-        // 'acceptEdits' is an app-level concept — the Claude SDK only knows 'default' and 'plan'
-        if (mode === 'default' || mode === 'plan') {
-          q.setPermissionMode(mode);
-        }
+        q.setPermissionMode(mode);
       },
 
       async setMaxThinkingTokens(tokens: number | null) {

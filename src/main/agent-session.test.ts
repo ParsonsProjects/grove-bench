@@ -522,7 +522,7 @@ describe('AgentSessionManager.setMode()', () => {
     await sessionManager.destroySession('test-mode');
   });
 
-  it('does not pass acceptEdits to SDK (only default/plan)', async () => {
+  it('passes acceptEdits through to the adapter', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
       id: 'test-mode2',
