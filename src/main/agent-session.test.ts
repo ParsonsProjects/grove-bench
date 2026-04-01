@@ -703,7 +703,7 @@ describe('AgentSessionManager.sendMessage()', () => {
     mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
     await new Promise((r) => setTimeout(r, 50));
 
-    const sent = sessionManager.sendMessage('test-send', 'Hello agent');
+    const sent = await sessionManager.sendMessage('test-send', 'Hello agent');
     expect(sent).toBe(true);
 
     // Verify it was recorded in event history
@@ -716,8 +716,8 @@ describe('AgentSessionManager.sendMessage()', () => {
     await sessionManager.destroySession('test-send');
   });
 
-  it('returns false for non-existent session', () => {
-    expect(sessionManager.sendMessage('nonexistent', 'hello')).toBe(false);
+  it('returns false for non-existent session', async () => {
+    expect(await sessionManager.sendMessage('nonexistent', 'hello')).toBe(false);
   });
 });
 

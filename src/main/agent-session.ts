@@ -79,6 +79,11 @@ interface ManagedSession {
   permRequestCounter: number;
   /** Guard against concurrent runQuery calls (e.g. rapid double-stop). */
   isStartingQuery: boolean;
+  /** Resolves when the current runQuery() finishes initializing queryHandle.
+   *  sendMessage() awaits this so messages sent right after stop aren't lost. */
+  queryReady: Promise<void> | null;
+  /** Resolver for queryReady — called in runQuery after queryHandle is set. */
+  resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
   checkpoints: CheckpointManager;
 }
@@ -221,6 +226,8 @@ class AgentSessionManager {
       emit: null,
       permRequestCounter: 0,
       isStartingQuery: false,
+      queryReady: null,
+      resolveQueryReady: null,
       checkpoints: new CheckpointManager(),
     };
 
@@ -360,11 +367,23 @@ class AgentSessionManager {
 
     } catch (startErr) {
       session.isStartingQuery = false;
+      // Reject any pending sendMessage() waiters
+      if (session.resolveQueryReady) {
+        session.resolveQueryReady();
+        session.resolveQueryReady = null;
+        session.queryReady = null;
+      }
       throw startErr;
     }
 
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // Signal any pending sendMessage() that the queryHandle is ready
+    if (session.resolveQueryReady) {
+      session.resolveQueryReady();
+      session.resolveQueryReady = null;
+      session.queryReady = null;
+    }
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
@@ -536,11 +555,30 @@ class AgentSessionManager {
     });
   }
 
-  sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): boolean {
+  async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
     const session = this.sessions.get(id);
+    if (!session) {
+      logger.debug(`[sendMessage] session=${id} no session`);
+      return false;
+    }
 
-    if (!session?.queryHandle) {
-      logger.debug(`[sendMessage] session=${id} no session or queryHandle`);
+    // If queryHandle is not yet available but a new query is being initialized
+    // (e.g. right after stop), wait for it to become ready.
+    if (!session.queryHandle && session.queryReady) {
+      logger.debug(`[sendMessage] session=${id} waiting for queryHandle after stop`);
+      const QUERY_READY_TIMEOUT_MS = 30_000;
+      const timeout = new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), QUERY_READY_TIMEOUT_MS),
+      );
+      const result = await Promise.race([session.queryReady, timeout]);
+      if (result === 'timeout' || !session.queryHandle) {
+        logger.warn(`[sendMessage] session=${id} timed out waiting for queryHandle`);
+        return false;
+      }
+    }
+
+    if (!session.queryHandle) {
+      logger.debug(`[sendMessage] session=${id} no queryHandle`);
       return false;
     }
 
@@ -776,6 +814,11 @@ class AgentSessionManager {
     // Re-sync the renderer with the current permission mode so the status bar
     // reflects the correct state after a stop/restart cycle.
     emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
+
+    // Create a deferred promise so sendMessage() can wait for the new queryHandle
+    session.queryReady = new Promise<void>((resolve) => {
+      session.resolveQueryReady = resolve;
+    });
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {

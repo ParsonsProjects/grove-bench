@@ -302,12 +302,13 @@ export function registerHandlers() {
   // ─── Agent I/O ───
 
   ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
-    const ok = sessionManager.sendMessage(sessionId, content, images);
-    if (!ok) {
-      // Session is dead — notify renderer so it doesn't stay stuck in "Writing message"
-      const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
-      event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
-    }
+    sessionManager.sendMessage(sessionId, content, images).then((ok) => {
+      if (!ok) {
+        // Session is dead — notify renderer so it doesn't stay stuck in "Writing message"
+        const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+        event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
+      }
+    });
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
