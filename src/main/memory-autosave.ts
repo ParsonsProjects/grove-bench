@@ -24,6 +24,8 @@ interface ExtractionResult {
 // ─── Constants ───
 
 const MIN_TURNS_FOR_AUTOSAVE = 3;
+const MAX_SESSION_SLUG_LENGTH = 60;
+const BRANCH_PREFIXES = /^(?:feature|bug|fix|hotfix)\//;
 const MAX_EVENTS_FOR_EXTRACTION = 60;
 const DEBOUNCE_MS = 5_000;
 
@@ -90,6 +92,33 @@ function summarizeEvents(events: AgentEvent[], maxEvents: number): string {
  */
 function countUserTurns(events: AgentEvent[]): number {
   return events.filter(e => e.type === 'user_message').length;
+}
+
+/**
+ * Generate a descriptive session filename from the branch name.
+ * Falls back to session ID when no branch is available.
+ */
+export function generateSessionFilename(sessionId: string, branchName?: string): string {
+  if (!branchName) return `sessions/${sessionId}.md`;
+
+  // Strip common branch prefixes
+  let slug = branchName.replace(BRANCH_PREFIXES, '');
+
+  // Lowercase, replace non-alphanumeric with dashes, collapse multiples, trim edges
+  slug = slug
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  if (!slug) return `sessions/${sessionId}.md`;
+
+  // Truncate
+  if (slug.length > MAX_SESSION_SLUG_LENGTH) {
+    slug = slug.slice(0, MAX_SESSION_SLUG_LENGTH).replace(/-$/, '');
+  }
+
+  return `sessions/${slug}.md`;
 }
 
 // ─── Extraction prompt ───
@@ -204,7 +233,7 @@ async function runExtraction(
 /**
  * Apply extraction results by writing/updating memory files.
  */
-function applyExtraction(repoPath: string, extraction: ExtractionResult, sessionId: string): string[] {
+function applyExtraction(repoPath: string, extraction: ExtractionResult, sessionId: string, branchName?: string): string[] {
   const written: string[] = [];
 
   for (const file of extraction.files) {
@@ -221,7 +250,7 @@ function applyExtraction(repoPath: string, extraction: ExtractionResult, session
   }
 
   if (extraction.sessionNote.shouldSave && extraction.sessionNote.content) {
-    const sessionPath = `sessions/${sessionId}.md`;
+    const sessionPath = generateSessionFilename(sessionId, branchName);
     try {
       memory.writeMemoryFile(repoPath, sessionPath, extraction.sessionNote.content);
       written.push(sessionPath);
@@ -240,7 +269,7 @@ function applyExtraction(repoPath: string, extraction: ExtractionResult, session
  * Save minimal session metadata from event history without making an API call.
  * Used when a session is destroyed or crashes.
  */
-export function saveSessionMetadata(repoPath: string, sessionId: string, events: AgentEvent[]): void {
+export function saveSessionMetadata(repoPath: string, sessionId: string, events: AgentEvent[], branchName?: string): void {
   const userMessages = events.filter(e => e.type === 'user_message');
   const resultEvents = events.filter(e => e.type === 'result');
 
@@ -254,8 +283,11 @@ export function saveSessionMetadata(repoPath: string, sessionId: string, events:
     ? (userMessages[0] as any).text.slice(0, 200)
     : 'unknown';
 
+  const sessionPath = generateSessionFilename(sessionId, branchName);
+  const title = branchName ? `Session: ${branchName}` : `Session ${sessionId.slice(0, 8)}`;
+
   const content = `---
-title: "Session ${sessionId.slice(0, 8)}"
+title: "${title}"
 updatedAt: "${new Date().toISOString()}"
 ---
 
@@ -266,8 +298,8 @@ updatedAt: "${new Date().toISOString()}"
 `;
 
   try {
-    memory.writeMemoryFile(repoPath, `sessions/${sessionId}.md`, content);
-    logger.info(`[memory-autosave] Saved session metadata: sessions/${sessionId}.md`);
+    memory.writeMemoryFile(repoPath, sessionPath, content);
+    logger.info(`[memory-autosave] Saved session metadata: ${sessionPath}`);
   } catch (err) {
     logger.warn(`[memory-autosave] Failed to save session metadata: ${err}`);
   }
@@ -280,6 +312,8 @@ export interface AutoSaveOptions {
   repoPath: string;
   cwd: string;
   events: AgentEvent[];
+  /** Branch name used to generate a descriptive session filename. */
+  branchName?: string;
   /** Which adapter to use for text generation (defaults to registry default). */
   adapterType?: string;
   /** Callback when auto-save starts/finishes. */
@@ -356,7 +390,7 @@ export async function triggerAutoSaveImmediate(opts: AutoSaveOptions): Promise<v
 }
 
 async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
-  const { sessionId, repoPath, cwd, events, adapterType, onStatus } = opts;
+  const { sessionId, repoPath, cwd, events, branchName, adapterType, onStatus } = opts;
 
   inProgress.add(sessionId);
   onStatus?.('started');
@@ -369,7 +403,7 @@ async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
       return;
     }
 
-    const written = applyExtraction(repoPath, extraction, sessionId);
+    const written = applyExtraction(repoPath, extraction, sessionId, branchName);
 
     if (written.length > 0) {
       logger.info(`[memory-autosave] Session ${sessionId}: wrote ${written.length} files: ${written.join(', ')}`);
