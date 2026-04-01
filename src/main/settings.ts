@@ -30,6 +30,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   theme: 'system',
   alwaysOnTop: false,
 
+  // Appearance
+  repoColors: {},
+
   // Editor
   diffViewMode: 'unified',
   spellcheck: true,

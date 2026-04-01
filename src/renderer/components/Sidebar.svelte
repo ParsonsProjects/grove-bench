@@ -1,8 +1,10 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
+  import { getRepoColor } from '../lib/repo-colors.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import NewAgentDialog from './NewAgentDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -158,12 +160,18 @@
     {#each store.repos as repo (repo)}
       {@const repoSessions = store.sessionsForRepo(repo)}
       {@const canRemove = store.canRemoveRepo(repo)}
+      {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
       <div class="mb-3">
         <!-- Repo header -->
         <div class="flex items-center justify-between group px-1 py-1">
-          <span class="text-xs font-medium text-muted-foreground truncate" title={repo}>
-            {store.repoDisplayName(repo)}
-          </span>
+          <div class="flex items-center gap-1.5 min-w-0">
+            {#if repoColor}
+              <span class="w-2 h-2 shrink-0" style="background-color: {repoColor}"></span>
+            {/if}
+            <span class="text-xs font-medium text-muted-foreground truncate" title={repo}>
+              {store.repoDisplayName(repo)}
+            </span>
+          </div>
           <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             {#if store.canCreate}
               <button

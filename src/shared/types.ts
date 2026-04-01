@@ -417,6 +417,10 @@ export interface GroveBenchSettings {
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
 
+  // Appearance
+  /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */
+  repoColors: Record<string, string>;
+
   // Editor
   /** Default diff view mode in the Changes tab. */
   diffViewMode: 'unified' | 'side-by-side';
