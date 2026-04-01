@@ -240,7 +240,7 @@
             <!-- Multiple sessions on same branch — show branch header with nested sessions -->
             <div class="pl-3 mt-0.5">
               <div class="flex items-center gap-1.5 px-1 py-0.5 text-xs text-muted-foreground/70">
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v12"/><path d="M18 9a3 3 0 0 0-3-3H9"/><path d="M6 21a3 3 0 0 0 3-3V9"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
                 <span class="truncate" title={branch}>{branch}</span>
                 <span class="text-muted-foreground/40">({sessions.length})</span>
               </div>

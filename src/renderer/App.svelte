@@ -78,6 +78,14 @@
     if (e.key === 'Enter') { e.preventDefault(); confirmTabRename(); }
   }
 
+  /** Return '#n' suffix when multiple sessions share the same branch, empty string otherwise */
+  function branchIndex(session: { id: string; repoPath: string; branch: string }): string {
+    const siblings = store.sessionsForRepo(session.repoPath).filter(s => s.branch === session.branch);
+    if (siblings.length <= 1) return '';
+    const idx = siblings.findIndex(s => s.id === session.id);
+    return `#${idx + 1} `;
+  }
+
   let restored = $state(false);
 
   async function restoreWorktrees() {
@@ -427,7 +435,7 @@
               <span class="truncate">{store.repoDisplayName(session.repoPath)}</span>
               <span class="text-muted-foreground/40">/</span>
             {/if}
-            <span class="truncate">{session.displayName || session.branch}</span>
+            <span class="truncate">{session.displayName || (branchIndex(session) + session.branch)}</span>
             <span
               role="button"
               tabindex="-1"
