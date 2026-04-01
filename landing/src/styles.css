@@ -136,20 +136,6 @@
   background-color: oklch(0.245 0.005 250);
 }
 
-/* Step number squares */
-.step-number {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 3rem;
-  height: 3rem;
-  background-color: var(--color-primary);
-  color: var(--color-primary-foreground);
-  font-size: 0.875rem;
-  font-weight: 700;
-  border-radius: 0 !important;
-}
-
 .blue-pixel {
   background: oklch(0.541 0.181 254.624);
   opacity: 0;
