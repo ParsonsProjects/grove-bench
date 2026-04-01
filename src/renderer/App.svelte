@@ -115,8 +115,8 @@
             });
           }
         }
-      } catch {
-        store.removeRepo(repo);
+      } catch (e) {
+        console.error(`Failed to restore worktrees for ${repo}:`, e);
       }
     }
 
@@ -295,7 +295,9 @@
 
   onMount(() => {
     settingsStore.load();
-    store.loadRepos().then(() => restoreWorktrees());
+    store.loadRepos().then(() => restoreWorktrees()).catch((e) => {
+      console.error('Failed to load repos:', e);
+    });
     window.addEventListener('keydown', handleGlobalKeydown);
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
