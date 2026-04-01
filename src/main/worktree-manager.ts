@@ -27,6 +27,26 @@ type Manifest = Record<string, ManifestEntry>;
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeInfo>();
   private manifestLock = Promise.resolve();
+  /** Per-repo locks to serialize git worktree operations (e.g. concurrent removes). */
+  private repoLocks = new Map<string, Promise<void>>();
+
+  /** Serialize operations on the same repo to prevent concurrent git conflicts. */
+  private async withRepoLock<T>(repoPath: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.repoLocks.get(repoPath) ?? Promise.resolve();
+    let resolve!: () => void;
+    const next = new Promise<void>((r) => { resolve = r; });
+    this.repoLocks.set(repoPath, next);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve();
+      // Clean up lock entry when queue is drained
+      if (this.repoLocks.get(repoPath) === next) {
+        this.repoLocks.delete(repoPath);
+      }
+    }
+  }
 
   /** Serialize manifest reads/writes to prevent concurrent clobber. */
   private async withManifest<T>(fn: (manifest: Manifest) => T | Promise<T>): Promise<T> {
@@ -230,56 +250,59 @@ export class WorktreeManager {
 
     const { path: wtPath, repoPath, branch } = info;
 
-    if (!info.direct) {
-      // Retry chain for Windows file locking
-      try {
-        await git(['worktree', 'remove', wtPath], repoPath);
-      } catch {
+    // Serialize git operations per-repo to prevent concurrent worktree remove conflicts
+    await this.withRepoLock(repoPath, async () => {
+      if (!info.direct) {
+        // Retry chain for Windows file locking
         try {
-          await git(['worktree', 'remove', '--force', wtPath], repoPath);
+          await git(['worktree', 'remove', wtPath], repoPath);
         } catch {
           try {
-            await fs.rm(wtPath, { recursive: true, force: true });
-            await git(['worktree', 'prune'], repoPath);
-          } catch (e) {
-            console.warn(`Failed to clean up worktree ${id}:`, e);
+            await git(['worktree', 'remove', '--force', wtPath], repoPath);
+          } catch {
+            try {
+              await fs.rm(wtPath, { recursive: true, force: true });
+              await git(['worktree', 'prune'], repoPath);
+            } catch (e) {
+              console.warn(`Failed to clean up worktree ${id}:`, e);
+            }
           }
         }
       }
-    }
 
-    // Optionally delete branch (skip for direct sessions — it's the checked-out branch)
-    if (deleteBranch && !info.direct) {
-      try {
-        await git(['branch', '-d', branch], repoPath);
-      } catch {
+      // Optionally delete branch (skip for direct sessions — it's the checked-out branch)
+      if (deleteBranch && !info.direct) {
         try {
-          await git(['branch', '-D', branch], repoPath);
-        } catch (e) {
-          console.warn(`Failed to delete branch ${branch}:`, e);
+          await git(['branch', '-d', branch], repoPath);
+        } catch {
+          try {
+            await git(['branch', '-D', branch], repoPath);
+          } catch (e) {
+            console.warn(`Failed to delete branch ${branch}:`, e);
+          }
         }
       }
-    }
 
-    this.worktrees.delete(id);
+      this.worktrees.delete(id);
 
-    // Remove entry from manifest
-    await this.withManifest((manifest) => {
-      delete manifest[id];
+      // Remove entry from manifest
+      await this.withManifest((manifest) => {
+        delete manifest[id];
+      });
+
+      // Clean up empty repoHash directory (skip for direct — no worktree dir was created)
+      if (!info.direct) {
+        const hash = this.repoHash(repoPath);
+        const repoDir = path.join(this.getWorktreeRoot(), hash);
+        try {
+          const entries = await fs.readdir(repoDir);
+          const remaining = entries.filter((e) => e !== CONFIG_FILE && e !== NPM_CACHE_DIR);
+          if (remaining.length === 0) {
+            await fs.rm(repoDir, { recursive: true, force: true });
+          }
+        } catch { /* directory may not exist */ }
+      }
     });
-
-    // Clean up empty repoHash directory (skip for direct — no worktree dir was created)
-    if (!info.direct) {
-      const hash = this.repoHash(repoPath);
-      const repoDir = path.join(this.getWorktreeRoot(), hash);
-      try {
-        const entries = await fs.readdir(repoDir);
-        const remaining = entries.filter((e) => e !== CONFIG_FILE && e !== NPM_CACHE_DIR);
-        if (remaining.length === 0) {
-          await fs.rm(repoDir, { recursive: true, force: true });
-        }
-      } catch { /* directory may not exist */ }
-    }
   }
 
   async list(repoPath: string): Promise<WorktreeInfo[]> {
