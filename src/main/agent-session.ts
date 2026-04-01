@@ -672,8 +672,7 @@ class AgentSessionManager {
       }
     }
 
-    // Pass the mode to the adapter — it decides which modes it recognizes.
-    // Some modes (like 'acceptEdits') may be handled at the app level only.
+    // Pass the mode to the adapter so the SDK is kept in sync.
     if (session.queryHandle?.setPermissionMode) {
       try {
         session.queryHandle.setPermissionMode(mode as any);
