@@ -4,6 +4,8 @@
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
+  import { getRepoColor, getTabPendingClass } from './lib/repo-colors.js';
+  import { restoreWorktrees } from './lib/restore-worktrees.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -88,44 +90,8 @@
 
   let restored = $state(false);
 
-  async function restoreWorktrees() {
-    const runningSessions = await window.groveBench.listSessions();
-    const runningMap = new Map(runningSessions.filter((s) => s.status === 'running').map((s) => [s.id, s]));
-
-    for (const repo of [...store.repos]) {
-      try {
-        const valid = await window.groveBench.validateRepo(repo);
-        if (!valid) {
-          store.removeRepo(repo);
-          continue;
-        }
-        const worktrees = await window.groveBench.listWorktrees(repo);
-        for (const wt of worktrees) {
-          if (store.sessions.find((s) => s.id === wt.id)) continue;
-
-          const runningSession = runningMap.get(wt.id);
-          const isRunning = !!runningSession;
-          store.addSession({
-            id: wt.id,
-            branch: wt.branch,
-            repoPath: repo,
-            status: isRunning ? 'running' : 'stopped',
-            direct: wt.direct,
-            displayName: runningSession?.displayName ?? null,
-          }, false);
-
-          if (isRunning) {
-            // Just reattach the window — history replay and subscription
-            // are handled by WorkspacePane when it mounts.
-            window.groveBench.resumeSession(wt.id, repo).catch((e: any) => {
-              store.setError(e.message || String(e));
-            });
-          }
-        }
-      } catch {
-        store.removeRepo(repo);
-      }
-    }
+  async function restoreApp() {
+    await restoreWorktrees();
 
     // Resume all previously-open tabs, not just the active one
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
@@ -302,7 +268,9 @@
 
   onMount(() => {
     settingsStore.load();
-    store.loadRepos().then(() => restoreWorktrees());
+    store.loadRepos().then(() => restoreApp()).catch((e) => {
+      console.error('Failed to load repos:', e);
+    });
     window.addEventListener('keydown', handleGlobalKeydown);
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
@@ -402,6 +370,7 @@
           {@const running = messageStore.getIsRunning(session.id)}
           {@const needsAttention = !isActive && !running && (sessionCompletedWhileInactive[session.id] ?? false)}
           {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
+          {@const tabColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
           <button
             draggable="true"
             ondragstart={(e) => handleTabDragStart(e, session.id)}
@@ -413,17 +382,18 @@
             onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(session.id); } }}
             oncontextmenu={(e) => openContextMenu(e, session.id)}
             class="flex items-center gap-2 px-3 py-1.5 text-xs border-r border-border last:border-r-0 transition-colors group/tab shrink-0
-              {isActive ? 'bg-background text-foreground/80 border-b-2 border-b-primary' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
-              {pendingBySession[session.id] ? 'tab-action-required' : ''}
+              {isActive ? 'bg-background text-foreground/80 border-b-2' : 'bg-card text-muted-foreground hover:text-foreground border-b-2 border-b-transparent'}
+              {getTabPendingClass(isActive, !!pendingBySession[session.id])}
               {dragTabId === session.id ? 'opacity-40' : ''}
               {isDragOver ? 'border-l-2 border-l-primary' : ''}"
+            style={isActive && tabColor ? `border-bottom-color: ${tabColor}` : isActive ? 'border-bottom-color: var(--primary)' : ''}
           >
             {#if session.status === 'error'}
               <span class="w-2 h-2 shrink-0 bg-red-500"></span>
             {:else if session.status === 'starting' || session.status === 'installing'}
               <span class="w-2 h-2 shrink-0 bg-yellow-500 animate-pulse"></span>
             {:else if pendingBySession[session.id]}
-              <span class="w-2 h-2 shrink-0 bg-orange-500 animate-pulse"></span>
+              <span class="w-2 h-2 shrink-0 {isActive ? 'bg-orange-500' : 'bg-orange-500 animate-pulse'}"></span>
             {:else if !isActive && running}
               <span class="w-2 h-2 shrink-0 bg-primary animate-pulse"></span>
             {:else if needsAttention}
@@ -545,5 +515,8 @@
   @keyframes tab-glow {
     0%, 100% { box-shadow: inset 0 0 6px 0 rgba(249, 115, 22, 0.15); }
     50% { box-shadow: inset 0 0 14px 2px rgba(249, 115, 22, 0.3); }
+  }
+  :global(.tab-action-required-active) {
+    box-shadow: inset 0 0 10px 1px rgba(249, 115, 22, 0.2);
   }
 </style>

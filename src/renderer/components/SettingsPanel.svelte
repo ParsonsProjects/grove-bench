@@ -1,6 +1,8 @@
 <script lang="ts">
   import { settingsStore } from '../stores/settings.svelte.js';
   import { pluginStore } from '../stores/plugins.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
+  import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
   import PluginCard from './PluginCard.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -349,6 +351,47 @@
           </div>
 
           <Separator />
+
+          <!-- Repository Accent Colors -->
+          {#if store.repos.length > 0}
+            <div>
+              <Label class="mb-1 block">Repository Colors</Label>
+              <p class="text-xs text-muted-foreground mb-2">Accent colors help identify which tabs belong to each repository.</p>
+              <div class="flex flex-col gap-2">
+                {#each store.repos as repo, i (repo)}
+                  {@const currentColor = settingsStore.draft.repoColors[repo] || DEFAULT_REPO_COLORS[i % DEFAULT_REPO_COLORS.length]}
+                  <div class="flex items-center gap-2">
+                    <label class="relative w-6 h-6 shrink-0 cursor-pointer border border-border hover:border-foreground/30 transition-colors" style="background-color: {currentColor}">
+                      <input
+                        type="color"
+                        value={currentColor}
+                        oninput={(e) => {
+                          const target = e.target as HTMLInputElement;
+                          settingsStore.draft.repoColors = { ...settingsStore.draft.repoColors, [repo]: target.value };
+                        }}
+                        class="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                    </label>
+                    <span class="text-sm text-muted-foreground truncate">{store.repoDisplayName(repo)}</span>
+                    {#if settingsStore.draft.repoColors[repo]}
+                      <button
+                        onclick={() => {
+                          const { [repo]: _, ...rest } = settingsStore.draft.repoColors;
+                          settingsStore.draft.repoColors = rest;
+                        }}
+                        class="text-xs text-muted-foreground/50 hover:text-foreground transition-colors"
+                        title="Reset to default"
+                      >
+                        reset
+                      </button>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+
+            <Separator />
+          {/if}
 
           <!-- Always on Top -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">

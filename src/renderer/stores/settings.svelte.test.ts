@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
+  repoColors: {},
   diffViewMode: 'unified',
   spellcheck: true,
   analyticsEnabled: false,
