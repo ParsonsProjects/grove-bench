@@ -2,6 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { store } from '../stores/sessions.svelte.js';
 import { restoreWorktrees } from './restore-worktrees.js';
+import type { WorktreeInfo, SessionInfo } from '../../shared/types.js';
+
+function makeWorktree(overrides: Partial<WorktreeInfo> & { id: string; branch: string }): WorktreeInfo {
+  return { path: '/wt', repoPath: '/repo', createdAt: Date.now(), ...overrides };
+}
+
+function makeSessionInfo(overrides: Partial<SessionInfo> & { id: string }): SessionInfo {
+  return { branch: 'main', worktreePath: '/wt', repoPath: '/repo', status: 'running', agentType: 'claude-code', createdAt: Date.now(), ...overrides };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -67,7 +76,7 @@ describe('restoreWorktrees', () => {
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
     mockGroveBench.validateRepo.mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
-      { id: 'wt1', branch: 'feat/test', direct: false },
+      makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
     ]);
 
     await restoreWorktrees();
@@ -81,11 +90,11 @@ describe('restoreWorktrees', () => {
     store.repos = ['/repo/a'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([
-      { id: 'wt1', status: 'running', displayName: 'My Session' },
+      makeSessionInfo({ id: 'wt1', status: 'running', displayName: 'My Session' }),
     ]);
     mockGroveBench.validateRepo.mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
-      { id: 'wt1', branch: 'feat/test', direct: false },
+      makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
     ]);
     mockGroveBench.resumeSession.mockResolvedValueOnce({ id: 'wt1' });
 
@@ -104,7 +113,7 @@ describe('restoreWorktrees', () => {
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
-      { id: 'wt1', branch: 'main', direct: true },
+      makeWorktree({ id: 'wt1', branch: 'main', direct: true }),
     ]);
 
     await restoreWorktrees();
