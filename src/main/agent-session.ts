@@ -441,6 +441,7 @@ class AgentSessionManager {
             repoPath: session.repoPath,
             cwd: session.worktreePath,
             events: session.eventHistory,
+            branchName: session.branch,
             adapterType: session.adapter.id,
             onStatus: (status, filesWritten) => {
               emit({ type: 'memory_autosave', status, filesWritten });
@@ -527,6 +528,7 @@ class AgentSessionManager {
       repoPath: session.repoPath,
       cwd: session.worktreePath,
       events: session.eventHistory,
+      branchName: session.branch,
       adapterType: session.adapter.id,
       onStatus: (status, filesWritten) => {
         emit({ type: 'memory_autosave', status, filesWritten });
@@ -794,7 +796,7 @@ class AgentSessionManager {
 
     // Cancel any pending auto-save debounce and save heuristic metadata
     memoryAutosave.cancelAutoSave(id);
-    memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory);
+    memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory, session.branch);
 
     // Close the query and input stream before aborting to allow graceful cleanup
     try {
@@ -1035,6 +1037,7 @@ class AgentSessionManager {
           repoPath: session.repoPath,
           cwd: session.worktreePath,
           events: session.eventHistory,
+          branchName: session.branch,
           adapterType: session.adapter.id,
           onStatus: (status, filesWritten) => {
             session.emit?.({ type: 'memory_autosave', status, filesWritten });
