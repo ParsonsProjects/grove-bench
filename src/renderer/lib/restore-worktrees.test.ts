@@ -49,7 +49,7 @@ describe('restoreWorktrees', () => {
     expect(store.repos).toContain('/repo/a');
   });
 
-  it('removes repo when validateRepo returns false', async () => {
+  it('keeps repo when validateRepo returns false (e.g. git not in PATH)', async () => {
     store.repos = ['/repo/a'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
@@ -57,7 +57,8 @@ describe('restoreWorktrees', () => {
 
     await restoreWorktrees();
 
-    expect(store.repos).not.toContain('/repo/a');
+    expect(store.repos).toContain('/repo/a');
+    expect(mockGroveBench.listWorktrees).not.toHaveBeenCalled();
   });
 
   it('restores worktree sessions from valid repos', async () => {

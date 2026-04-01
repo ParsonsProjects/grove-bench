@@ -3,8 +3,10 @@ import { store } from '../stores/sessions.svelte.js';
 /**
  * Restore worktree sessions from disk on app startup.
  *
- * IMPORTANT: repos must NEVER be removed when an IPC call throws.
- * Only explicitly-invalid repos (validateRepo returns false) may be removed.
+ * IMPORTANT: repos must NEVER be removed during restore. The user explicitly
+ * added them — if validation fails (e.g. git not in PATH yet), just skip
+ * restoring sessions for that repo. The repo stays in the sidebar so the
+ * user can retry or remove it manually.
  */
 export async function restoreWorktrees() {
   const runningSessions = await window.groveBench.listSessions();
@@ -14,7 +16,7 @@ export async function restoreWorktrees() {
     try {
       const valid = await window.groveBench.validateRepo(repo);
       if (!valid) {
-        store.removeRepo(repo);
+        console.warn(`Repo validation failed during restore, skipping: ${repo}`);
         continue;
       }
       const worktrees = await window.groveBench.listWorktrees(repo);
