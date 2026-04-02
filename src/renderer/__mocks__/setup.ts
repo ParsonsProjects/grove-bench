@@ -42,18 +42,18 @@ const mockGroveBench = {
   ptyKill: vi.fn(() => Promise.resolve()),
   ptyIsAlive: vi.fn(() => Promise.resolve(true)),
   // Plugin mocks
-  pluginList: vi.fn(() => Promise.resolve({ installed: [], available: [] })),
+  pluginList: vi.fn(() => Promise.resolve({ installed: [] as import('../../shared/types.js').InstalledPlugin[], available: [] as import('../../shared/types.js').AvailablePlugin[] })),
   pluginInstall: vi.fn(() => Promise.resolve()),
   pluginUninstall: vi.fn(() => Promise.resolve()),
   pluginEnable: vi.fn(() => Promise.resolve()),
   pluginDisable: vi.fn(() => Promise.resolve()),
   // Memory mocks
-  memoryList: vi.fn(() => Promise.resolve([])),
-  memoryRead: vi.fn(() => Promise.resolve('')),
+  memoryList: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryEntry[])),
+  memoryRead: vi.fn(() => Promise.resolve('' as string | null)),
   memoryWrite: vi.fn(() => Promise.resolve()),
   memoryDelete: vi.fn(() => Promise.resolve()),
   // Git status mock
-  getGitStatus: vi.fn(() => Promise.resolve({ entries: [] })),
+  getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
 };
 Object.defineProperty(globalThis, 'window', {
   value: { groveBench: mockGroveBench },

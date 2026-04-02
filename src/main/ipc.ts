@@ -467,8 +467,7 @@ export function registerHandlers() {
       if (diff) return diff;
       // If empty diff, file may be untracked — synthesize an all-add diff
       const content = await fs.readFile(resolved, 'utf-8');
-      if (content) return synthesizeNewFileDiff(relPath, content);
-      return '';
+      return synthesizeNewFileDiff(relPath, content);
     } catch {
       // File may be untracked (new file) — try to read and synthesize diff
       try {

@@ -123,6 +123,15 @@ describe('synthesizeNewFileDiff()', () => {
     const diff = synthesizeNewFileDiff('file.ts', '');
     expect(diff).toContain('@@ -0,0 +1,1 @@');
   });
+
+  it('strips trailing newline to avoid phantom blank line', () => {
+    const diff = synthesizeNewFileDiff('file.ts', 'line1\nline2\n');
+    expect(diff).toContain('@@ -0,0 +1,2 @@');
+    expect(diff).toContain('+line1');
+    expect(diff).toContain('+line2');
+    // Should NOT have a trailing +<empty> line
+    expect(diff).not.toMatch(/\+\n\+$/);
+  });
 });
 
 // ─── validatePort ───

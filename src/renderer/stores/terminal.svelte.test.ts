@@ -123,7 +123,7 @@ describe('TerminalStore', () => {
 
     it('forwards PTY data to registered handler', () => {
       let capturedCallback: (data: string) => void;
-      mockGroveBench.onPtyData.mockImplementation((_id: string, cb: (data: string) => void) => {
+      (mockGroveBench.onPtyData as ReturnType<typeof vi.fn>).mockImplementation((_id: string, cb: (data: string) => void) => {
         capturedCallback = cb;
         return vi.fn();
       });
@@ -138,7 +138,7 @@ describe('TerminalStore', () => {
 
     it('marks session dead and calls exit handler on PTY exit', () => {
       let capturedExitCb: (exitCode: number, signal?: number) => void;
-      mockGroveBench.onPtyExit.mockImplementation((_id: string, cb: (exitCode: number, signal?: number) => void) => {
+      (mockGroveBench.onPtyExit as ReturnType<typeof vi.fn>).mockImplementation((_id: string, cb: (exitCode: number, signal?: number) => void) => {
         capturedExitCb = cb;
         return vi.fn();
       });

@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { pluginStore } from './plugins.svelte.js';
+import type { InstalledPlugin, AvailablePlugin } from '../../shared/types.js';
+
+function makeInstalledPlugin(id: string): InstalledPlugin {
+  return { id, version: '1.0.0', scope: 'user', enabled: true, installPath: '/path', installedAt: '2026-01-01', lastUpdated: '2026-01-01' };
+}
+
+function makeAvailablePlugin(pluginId: string, name: string): AvailablePlugin {
+  return { pluginId, name, description: '', marketplaceName: name, version: '1.0.0', source: 'npm', installCount: 0 };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -14,8 +23,8 @@ beforeEach(() => {
 describe('PluginStore', () => {
   describe('refresh()', () => {
     it('fetches installed and available plugins', async () => {
-      const installed = [{ id: 'p1', name: 'Plugin 1', enabled: true }];
-      const available = [{ id: 'p2', name: 'Plugin 2' }];
+      const installed = [makeInstalledPlugin('p1')];
+      const available = [makeAvailablePlugin('p2', 'Plugin 2')];
       mockGroveBench.pluginList.mockResolvedValue({ installed, available });
 
       await pluginStore.refresh();
@@ -141,12 +150,12 @@ describe('PluginStore', () => {
 
   describe('isInstalled()', () => {
     it('returns true when plugin is installed', () => {
-      pluginStore.installed = [{ id: 'p1', name: 'Plugin 1', enabled: true }];
+      pluginStore.installed = [makeInstalledPlugin('p1')];
       expect(pluginStore.isInstalled('p1')).toBe(true);
     });
 
     it('returns false when plugin is not installed', () => {
-      pluginStore.installed = [{ id: 'p1', name: 'Plugin 1', enabled: true }];
+      pluginStore.installed = [makeInstalledPlugin('p1')];
       expect(pluginStore.isInstalled('p2')).toBe(false);
     });
 

@@ -52,7 +52,9 @@ export function extractDirsFromFiles(files: string[]): string[] {
  */
 export function synthesizeNewFileDiff(relPath: string, content: string): string {
   const normalizedPath = relPath.replace(/\\/g, '/');
-  const lines = content.split('\n');
+  // Strip a single trailing newline to avoid phantom blank line in diff
+  const trimmed = content.endsWith('\n') ? content.slice(0, -1) : content;
+  const lines = trimmed.split('\n');
   const header = `--- /dev/null\n+++ b/${normalizedPath}\n@@ -0,0 +1,${lines.length} @@\n`;
   return header + lines.map(l => `+${l}`).join('\n');
 }

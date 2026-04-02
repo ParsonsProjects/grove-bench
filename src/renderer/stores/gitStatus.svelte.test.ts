@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import type { GitStatusResult } from '../../shared/types.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -44,7 +45,7 @@ describe('GitStatusStore', () => {
 
   describe('refresh()', () => {
     it('fetches git status and updates store', async () => {
-      const result = { entries: [{ path: 'a.ts', status: 'M' }] };
+      const result: GitStatusResult = { entries: [{ filePath: 'a.ts', status: 'modified', staged: false }] };
       mockGroveBench.getGitStatus.mockResolvedValue(result);
 
       await gitStatusStore.refresh('s1');

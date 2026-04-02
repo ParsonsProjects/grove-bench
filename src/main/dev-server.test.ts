@@ -209,47 +209,51 @@ describe('DevServer', () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', { value: 'linux' });
 
-      const proc = makeFakeProc();
-      mockSpawn.mockReturnValue(proc);
+      try {
+        const proc = makeFakeProc();
+        mockSpawn.mockReturnValue(proc);
 
-      const server = new DevServer('s1', '/cwd', 'npm run dev', vi.fn());
-      server.start();
+        const server = new DevServer('s1', '/cwd', 'npm run dev', vi.fn());
+        server.start();
 
-      const stopPromise = server.stop();
-      // Simulate process exit
-      proc.emit('exit', 0);
+        const stopPromise = server.stop();
+        // Simulate process exit
+        proc.emit('exit', 0);
 
-      await stopPromise;
-      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
-
-      Object.defineProperty(process, 'platform', { value: originalPlatform });
+        await stopPromise;
+        expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
+      }
     });
 
     it('uses taskkill on win32', async () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', { value: 'win32' });
 
-      const proc = makeFakeProc();
-      mockSpawn.mockReturnValue(proc);
+      try {
+        const proc = makeFakeProc();
+        mockSpawn.mockReturnValue(proc);
 
-      const server = new DevServer('s1', '/cwd', 'npm run dev', vi.fn());
-      server.start();
+        const server = new DevServer('s1', '/cwd', 'npm run dev', vi.fn());
+        server.start();
 
-      const stopPromise = server.stop();
-      // Simulate taskkill callback
-      const taskkillCb = mockExecFile.mock.calls[0]?.[2];
-      if (taskkillCb) taskkillCb(null, '', '');
-      // Simulate timeout finish
-      vi.advanceTimersByTime(3000);
+        const stopPromise = server.stop();
+        // Simulate taskkill callback
+        const taskkillCb = mockExecFile.mock.calls[0]?.[2];
+        if (taskkillCb) taskkillCb(null, '', '');
+        // Simulate timeout finish
+        vi.advanceTimersByTime(3000);
 
-      await stopPromise;
-      expect(mockExecFile).toHaveBeenCalledWith(
-        'taskkill',
-        ['/F', '/T', '/PID', '1234'],
-        expect.any(Function),
-      );
-
-      Object.defineProperty(process, 'platform', { value: originalPlatform });
+        await stopPromise;
+        expect(mockExecFile).toHaveBeenCalledWith(
+          'taskkill',
+          ['/F', '/T', '/PID', '1234'],
+          expect.any(Function),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
+      }
     });
   });
 });
