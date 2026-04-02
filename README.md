@@ -29,7 +29,7 @@ npm start
 | Command | Description |
 |---|---|
 | `npm start` | Run in dev mode |
-| `npm run make` | Build distributable installer |
+| `npm run dist` | Build distributable installer |
 | `npm test` | Run all tests |
 | `npm run test:watch` | Watch mode |
 | `npm run test:coverage` | Run tests with coverage |

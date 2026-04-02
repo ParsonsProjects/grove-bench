@@ -25,7 +25,7 @@ Running multiple AI coding agents (starting with Claude Code) on the same reposi
 - Task orchestration, auto-assignment, or GitHub issue integration
 - Container-based sandboxing
 
-> **Note:** Several former non-goals have since been implemented: built-in diff viewer (`DiffView.svelte`, `DiffBlock.svelte`), session persistence (`app-state.ts`, `window-state.ts`), and an adapter pattern for multiple agent types (`src/main/adapters/`).
+> **Note:** Several former non-goals have since been implemented: built-in diff viewer (`DiffView.svelte`, `DiffBlock.svelte`), session persistence (`app-state.ts`, `window-state.ts`), an adapter pattern for multiple agent types (`src/main/adapters/`), settings UI, slash commands, MCP server connections, drag-and-drop image attachments, and auto-update (`auto-updater.ts`).
 
 ## 4. Architecture
 
@@ -688,6 +688,5 @@ All errors log to a file at `%APPDATA%/grove-bench/logs/`. Useful for debugging 
 - Shared CLAUDE.md / agent instructions per worktree
 - Agent-to-agent communication (one agent's output feeds another)
 - Git operations UI (merge, rebase, cherry-pick between agent branches)
-- Auto-update via electron-updater (see `docs/electron-install.md`)
 
-> **Already implemented since v0.3:** Built-in diff viewer, session persistence, task orchestration foundations.
+> **Already implemented since v0.3:** Built-in diff viewer, session persistence, settings UI, slash commands, skills, MCP server connections, drag-and-drop image attachments, dev server management, auto-update via electron-updater (see `docs/electron-install.md`).

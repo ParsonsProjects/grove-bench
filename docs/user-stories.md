@@ -27,27 +27,31 @@
 
 ## Orchestration (Multi-Agent)
 
+> **Note:** Orchestration was explored as a prototype but the dedicated orchestration UI and task decomposition engine have been removed. Multi-agent work is handled through manual parallel sessions. The stories below are retained for future reference.
+
 20. **As a developer, I want to describe a high-level goal and have it decomposed into 2-5 parallel tasks** so I can accomplish complex work faster with multiple agents.
-21. **As a developer, I want to review the generated task plan and edit task descriptions, instructions, and branch names before execution** so I can correct the plan before committing resources. *(Task scope, dependencies, and priority are not editable in the UI.)*
+21. **As a developer, I want to review the generated task plan and edit task descriptions, instructions, and branch names before execution** so I can correct the plan before committing resources.
 22. **As a developer, I want tasks to run in parallel across isolated worktrees** so agents don't interfere with each other's changes.
 23. **As a developer, I want to see real-time progress on each orchestration task** (status, live summaries, completion counter) so I know how the job is progressing.
-24. **As a developer, I want task `dependsOn` relationships respected** so that dependent tasks don't start until their prerequisites complete. *(Note: the `parallelizable` flag is tracked but not independently enforced.)*
-25. **As a developer, I want a circuit breaker to halt remaining tasks** if a failure threshold is reached, so I don't waste time and API credits on a doomed plan. *(Known bug: threshold stored as percentage 0-100 but compared as ratio 0-1, so the breaker rarely triggers.)*
+24. **As a developer, I want task `dependsOn` relationships respected** so that dependent tasks don't start until their prerequisites complete.
+25. **As a developer, I want a circuit breaker to halt remaining tasks** if a failure threshold is reached, so I don't waste time and API credits on a doomed plan.
 26. **As a developer, I want completed task branches merged via an integration agent** that runs `git merge --no-ff` with AI-assisted conflict resolution, so results are combined back to the base branch.
-27. **As a developer, I want to be notified when the merge agent fails and retry it** so failed integrations aren't silently dropped. *(There is no interactive conflict editor — "Resolve" retries the merge agent.)*
+27. **As a developer, I want to be notified when the merge agent fails and retry it** so failed integrations aren't silently dropped.
 28. **As a developer, I want orchestration jobs to persist across app restarts** so a long-running job isn't lost if I close the app.
 
 ## Docker Isolation
 
-29. **As a developer, I want orchestration subtasks to run inside Docker containers** so agents are sandboxed from my host system. *(Docker isolation applies to orchestration subtasks only, not single-agent sessions.)*
-30. **As a developer, I want resource limits enforced on containers** (2 GB RAM, 2 CPUs, 256 PIDs) so a runaway agent can't consume all my system resources. *(Limits are hardcoded, not user-configurable.)*
+> **Note:** Docker isolation was planned but not implemented. Docker path sanitization exists in `ipc.ts` for compatibility with agents that run inside containers externally.
+
+29. **As a developer, I want orchestration subtasks to run inside Docker containers** so agents are sandboxed from my host system.
+30. **As a developer, I want resource limits enforced on containers** (2 GB RAM, 2 CPUs, 256 PIDs) so a runaway agent can't consume all my system resources.
 
 ## Configuration & Settings
 
 31. **As a developer, I want to set a default permission mode** (default, plan, acceptEdits, bypassPermissions) so sessions start with my preferred safety level.
 32. **As a developer, I want to configure tool allow/deny rules** (e.g., allow `Bash(npm run *)`) so I can pre-approve common safe patterns.
 33. **As a developer, I want untracked config files (.env, .npmrc, etc.) auto-detected and copied into new worktrees** so agents have the config they need to build and run. *(Auto-detected from a default pattern list; no UI to customize per-repo.)*
-34. **As a developer, I want to set task timeouts for orchestration** so I can control how long each subtask runs. *(The `maxParallelAgents` setting exists in the UI but is not currently enforced.)*
+34. ~~**As a developer, I want to set task timeouts for orchestration** so I can control how long each subtask runs.~~ *(Removed — orchestration engine not present.)*
 35. **As a developer, I want to choose a theme** (dark, light, or system) to match my preferences.
 36. **As a developer, I want to manage Claude Code plugins** via a dedicated panel so I can extend agent capabilities.
 
@@ -68,6 +72,4 @@
 
 ## Known Issues
 
-- **Story 25**: Circuit breaker comparison bug — `failedCount / totalCount >= threshold` should be `>= threshold / 100`.
-- **Story 34**: `maxParallelAgents` is stored in settings but `spawnTasks` launches all ready tasks without checking it.
-- **Story 29**: Docker flag is never passed for single-agent sessions in the IPC handler.
+*No active known issues. Previous bugs related to the orchestration engine (circuit breaker threshold, maxParallelAgents enforcement, Docker flag) are no longer applicable — that code has been removed.*

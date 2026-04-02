@@ -1,5 +1,7 @@
 # /rewind — Implementation Plan
 
+> **Status: Implemented.** The /rewind feature has been added to the codebase. See `src/renderer/components/RewindDialog.svelte` and the rewind logic in `src/renderer/stores/messages.svelte.ts`.
+
 ## Overview
 
 `/rewind` lets the user roll back to a previous message checkpoint. Files on disk are restored to their state at that point, and UI messages after that point are removed. The user can then continue the conversation from there.

@@ -4,20 +4,19 @@
 
 ## Building the .exe
 
-The project uses Electron Forge with MakerSquirrel (Windows installer) and MakerZIP (portable zip).
+The project uses electron-builder with NSIS (Windows installer). Configuration is in `electron-builder.yml`.
 
 ### Prerequisites
 
-- Ensure `extraResource` files exist in `forge.config.mjs`, or remove the entry if not needed
 - Icon files are at `src/main/icon.ico` and `src/main/icon.png`
 
 ### Commands
 
 | Command | Output |
 |---------|--------|
-| `npm run package` | Raw packaged app directory with `.exe` at `out/grove-bench-win32-x64/grove-bench.exe` |
-| `npm run make` | Squirrel installer at `out/make/squirrel.windows/x64/grove-bench-X.Y.Z Setup.exe` + portable zip at `out/make/zip/win32/x64/` |
-| `npx electron-forge publish` | Builds, then uploads assets to a draft GitHub Release |
+| `npm run build` | Build main, preload, and renderer |
+| `npm run dist` | Build + package NSIS installer (unsigned) |
+| `npm run dist:publish` | Build + package + publish to GitHub (CI only) |
 
 ---
 
@@ -136,59 +135,9 @@ Add `repository` field (required by electron-updater's GitHub provider):
 }
 ```
 
-#### `forge.config.mjs`
+#### `electron-builder.yml`
 
-Add publisher and `postMake` hook to generate `latest.yml`:
-
-```js
-import { PublisherGithub } from '@electron-forge/publisher-github';
-
-// Add to config:
-publishers: [
-  new PublisherGithub({
-    repository: { owner: 'OWNER', name: 'grove-bench' },
-    prerelease: false,
-    draft: true,
-  }),
-],
-hooks: {
-  postMake: async (forgeConfig, makeResults) => {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const crypto = await import('node:crypto');
-
-    for (const result of makeResults) {
-      if (result.platform === 'win32') {
-        for (const artifact of result.artifacts) {
-          if (artifact.endsWith('.exe')) {
-            const stat = await fs.stat(artifact);
-            const fileBuffer = await fs.readFile(artifact);
-            const sha512 = crypto.createHash('sha512').update(fileBuffer).digest('base64');
-            const fileName = path.basename(artifact);
-            const version = result.packageJSON.version;
-
-            const latestYml = [
-              `version: ${version}`,
-              `files:`,
-              `  - url: ${fileName}`,
-              `    sha512: ${sha512}`,
-              `    size: ${stat.size}`,
-              `path: ${fileName}`,
-              `sha512: ${sha512}`,
-              `releaseDate: '${new Date().toISOString()}'`,
-            ].join('\n');
-
-            const ymlPath = path.join(path.dirname(artifact), 'latest.yml');
-            await fs.writeFile(ymlPath, latestYml);
-            result.artifacts.push(ymlPath);
-          }
-        }
-      }
-    }
-    return makeResults;
-  },
-},
-```
+Publishing is configured in `electron-builder.yml` with the GitHub provider. electron-builder automatically generates `latest.yml` during the build.
 
 #### `vite.main.config.mjs`
 
@@ -252,7 +201,7 @@ Embed `<UpdateNotification />` next to the "Grove Bench" text.
 
 1. Bump version in `package.json`
 2. Commit and tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
-3. Build and publish: `npx electron-forge publish`
+3. Build and publish: `npm run dist:publish`
 4. Verify the draft release on GitHub
 5. Publish the release (un-draft it)
 
@@ -263,7 +212,7 @@ Embed `<UpdateNotification />` next to the "Grove Bench" text.
 ## Gotchas
 
 - **Vite externalization**: `electron-updater` must be in `rollupOptions.external` — it has native bindings that can't be bundled
-- **Squirrel startup**: Existing `electron-squirrel-startup` handler stays — no conflict with `electron-updater`
+- **NSIS installer**: electron-builder uses NSIS for Windows installers — no Squirrel dependency
 - **Code signing**: Unsigned apps show SmartScreen warnings. Recommended for production
 - **Dev mode**: `app.isPackaged` guard is critical — `electron-updater` throws errors without a packaged app
 - **Tag format**: Use `vX.Y.Z` — `electron-updater` strips the `v` prefix automatically

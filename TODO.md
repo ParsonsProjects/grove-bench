@@ -21,8 +21,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Revert workspace to any previous turn's checkpoint
 
 ### Settings UI
-- [ ] GUI-based settings panel (no manual JSON editing)
-- [ ] Configurable UI layouts (full-featured to minimal)
+- [x] GUI-based settings panel (no manual JSON editing)
+- [x] Configurable UI layouts (full-featured to minimal)
 
 ## Priority 2 — Notable Gaps
 
@@ -63,15 +63,15 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Auto-grow input with max height and manual resize
 - [ ] Markdown rendering in input (preview mode)
 - [x] Context length indicator (token usage / remaining)
-- [ ] Drag and drop (files, images into prompt)
-- [ ] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
+- [x] Drag and drop (files, images into prompt)
+- [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
 
 ### Agent Capabilities
 - [x] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`
 - [ ] `/btw` — Ephemeral side question that doesn't enter conversation history. Runs while agent is working, no tool access, shows in dismissible overlay. No SDK support — needs separate `query()` call with `maxTurns: 1`
-- [ ] Commands (slash commands for common actions)
-- [ ] Skills (reusable prompt templates / workflows)
-- [ ] MCP server connections (connect to external MCP servers)
+- [x] Commands (slash commands for common actions)
+- [x] Skills (reusable prompt templates / workflows)
+- [x] MCP server connections (connect to external MCP servers)
 
 ### Git & Workflow
 - [ ] Branch → PR link (create PR from session branch)
@@ -83,7 +83,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Project scripts (user-defined scripts bound to keyboard shortcuts)
 
 ### Dev & Preview
-- [ ] Localhost run (start/preview dev server from worktree)
+- [x] Localhost run (start/preview dev server from worktree)
 
 ## Already at Parity or Better
 
