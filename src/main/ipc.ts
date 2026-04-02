@@ -15,15 +15,20 @@ import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import { loadAppState, saveActiveTab, saveOpenTabs } from './app-state.js';
+import {
+  sanitizeFilePath,
+  extractDirsFromFiles,
+  synthesizeNewFileDiff,
+  validatePort,
+  validateExternalUrl,
+  PrelaunchBuffer,
+} from './ipc-utils.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 
-/** Buffer for events emitted before the session object exists (worktree creation, npm install).
- *  These are sent live via IPC but not persisted — the AGENT_HISTORY handler
- *  prepends them so the renderer's history replay can show them. */
-const prelaunchEvents = new Map<string, import('../shared/types.js').AgentEvent[]>();
+const prelaunchEvents = new PrelaunchBuffer();
 
 export function registerHandlers() {
   // ─── Repo ───
@@ -121,9 +126,9 @@ export function registerHandlers() {
     // Helper to emit agent events before the session object exists.
     // Events are buffered so history replay can show them even if the
     // renderer subscribes after they were sent.
-    prelaunchEvents.set(id, []);
+    prelaunchEvents.create(id);
     const emitPrelaunch = (evt: import('../shared/types.js').AgentEvent) => {
-      prelaunchEvents.get(id)?.push(evt);
+      prelaunchEvents.push(id, evt);
       if (!win.isDestroyed()) {
         win.webContents.send(`${IPC.AGENT_EVENT}:${id}`, evt);
       }
@@ -198,8 +203,6 @@ export function registerHandlers() {
           win.webContents.send(IPC.SESSION_STATUS, id, 'error');
         }
       } finally {
-        // Clean up prelaunch buffer — events are now in the session's
-        // own eventHistory or no longer needed.
         prelaunchEvents.delete(id);
       }
     })();
@@ -328,39 +331,17 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
-    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     const history = sessionManager.getEventHistory(sessionId);
-    // Prepend prelaunch events (worktree/install status) that aren't in the
-    // session's own history — they were emitted before the session existed.
-    return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
+    return prelaunchEvents.prependToHistory(sessionId, history);
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY_PAGE, (_event, sessionId: string, limit: number, beforeIndex?: number) => {
-    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     const page = sessionManager.getEventHistoryPage(sessionId, limit, beforeIndex);
-    // If this is the first page (includes the start of history) and there are
-    // prelaunch events, prepend them so the renderer sees worktree/install status.
-    if (page.startIndex === 0 && prelaunch.length > 0) {
-      return {
-        events: [...prelaunch, ...page.events],
-        totalCount: page.totalCount + prelaunch.length,
-        startIndex: 0,
-      };
-    }
-    // Adjust indices to account for prelaunch events
-    if (prelaunch.length > 0) {
-      return {
-        events: page.events,
-        totalCount: page.totalCount + prelaunch.length,
-        startIndex: page.startIndex + prelaunch.length,
-      };
-    }
-    return page;
+    return prelaunchEvents.adjustPage(sessionId, page);
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
-    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
-    return sessionManager.getEventHistoryCount(sessionId) + prelaunch.length;
+    return sessionManager.getEventHistoryCount(sessionId) + prelaunchEvents.count(sessionId);
   });
 
   ipcMain.handle(IPC.AGENT_CLEAR_HISTORY, (_event, sessionId: string) => {
@@ -374,30 +355,14 @@ export function registerHandlers() {
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const output = await git(['ls-files'], worktree.path);
     const files = output.split('\n').map(l => l.trim()).filter(Boolean);
-
-    // Extract unique directories from file paths
-    const dirs = new Set<string>();
-    for (const f of files) {
-      const parts = f.split('/');
-      for (let i = 1; i < parts.length; i++) {
-        dirs.add(parts.slice(0, i).join('/') + '/');
-      }
-    }
-
-    // Return dirs first (sorted), then files
-    const sortedDirs = [...dirs].sort();
-    return [...sortedDirs, ...files];
+    const dirs = extractDirsFromFiles(files);
+    return [...dirs, ...files];
   });
 
   ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath);
-    const normalizedResolved = path.normalize(resolved);
-    const normalizedWorktree = path.normalize(worktree.path) + path.sep;
-    if (!normalizedResolved.startsWith(normalizedWorktree)) {
-      throw new Error('Path traversal not allowed');
-    }
+    const resolved = sanitizeFilePath(worktree.path, filePath);
 
     // Try VS Code first, then fall back to system default
     const gotoArg = line ? `${resolved}:${line}` : resolved;
@@ -436,10 +401,7 @@ export function registerHandlers() {
   // ─── External links & process cleanup ───
 
   ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
-    // Only allow http/https URLs for security
-    if (!/^https?:\/\//i.test(url)) {
-      throw new Error('Only http/https URLs are allowed');
-    }
+    validateExternalUrl(url);
     await shell.openExternal(url);
   });
 
@@ -458,9 +420,7 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.KILL_PORT, async (_event, port: number) => {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error('Invalid port number');
-    }
+    validatePort(port);
     return killProcessOnPort(port);
   });
 
@@ -479,16 +439,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    // Sanitize: strip Docker container paths (/workspace/...) and make relative
-    let relPath = filePath.replace(/^\/workspace\//, '');
-    const normalWt = path.normalize(worktree.path) + path.sep;
-    if (path.normalize(relPath).startsWith(normalWt)) {
-      relPath = path.relative(worktree.path, relPath);
-    }
-    const resolved = path.resolve(worktree.path, relPath);
-    if (!path.normalize(resolved).startsWith(normalWt)) {
-      throw new Error('Path traversal not allowed');
-    }
+    const resolved = sanitizeFilePath(worktree.path, filePath);
+    const relPath = path.relative(worktree.path, resolved);
     // Check if the file is untracked (git checkout won't work for untracked files)
     const statusRaw = await git(['status', '--porcelain', '--', relPath], worktree.path);
     const isUntracked = statusRaw.trimStart().startsWith('??');
@@ -507,36 +459,21 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    // Sanitize: strip Docker container paths (/workspace/...) and make relative
-    let relPath = filePath.replace(/^\/workspace\//, '');
-    // Also strip the host worktree prefix if it's an absolute path
-    const normalWt = path.normalize(worktree.path) + path.sep;
-    if (path.normalize(relPath).startsWith(normalWt)) {
-      relPath = path.relative(worktree.path, relPath);
-    }
-    const resolved = path.resolve(worktree.path, relPath);
-    if (!path.normalize(resolved).startsWith(normalWt)) {
-      throw new Error('Path traversal not allowed');
-    }
+    const resolved = sanitizeFilePath(worktree.path, filePath);
+    const relPath = path.relative(worktree.path, resolved);
     // Get unified diff of this file vs HEAD
     try {
       const diff = await git(['diff', 'HEAD', '--', relPath], worktree.path);
       if (diff) return diff;
       // If empty diff, file may be untracked — synthesize an all-add diff
       const content = await fs.readFile(resolved, 'utf-8');
-      if (content) {
-        const lines = content.split('\n');
-        const header = `--- /dev/null\n+++ b/${relPath.replace(/\\/g, '/')}\n@@ -0,0 +1,${lines.length} @@\n`;
-        return header + lines.map(l => `+${l}`).join('\n');
-      }
+      if (content) return synthesizeNewFileDiff(relPath, content);
       return '';
     } catch {
       // File may be untracked (new file) — try to read and synthesize diff
       try {
         const content = await fs.readFile(resolved, 'utf-8');
-        const lines = content.split('\n');
-        const header = `--- /dev/null\n+++ b/${relPath.replace(/\\/g, '/')}\n@@ -0,0 +1,${lines.length} @@\n`;
-        return header + lines.map(l => `+${l}`).join('\n');
+        return synthesizeNewFileDiff(relPath, content);
       } catch {
         return '';
       }
@@ -770,11 +707,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_READ, async (_event, sessionId: string, filePath: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const resolved = path.resolve(worktree.path, filePath.replace(/\/$/, ''));
-    // Security: ensure resolved path is within the worktree
-    if (!path.normalize(resolved).startsWith(path.normalize(worktree.path) + path.sep)) {
-      throw new Error('Path traversal not allowed');
-    }
+    const resolved = sanitizeFilePath(worktree.path, filePath);
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {
       // Return a listing of tracked files under this directory
