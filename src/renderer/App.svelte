@@ -97,7 +97,7 @@
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     for (const tabId of persistedOpenTabs) {
       const session = store.sessions.find((s) => s.id === tabId);
-      if (session && session.status === 'stopped' && !runningMap.has(tabId)) {
+      if (session && session.status === 'stopped') {
         window.groveBench.resumeSession(tabId, session.repoPath).then((result) => {
           store.updateStatus(result.id, 'running');
         }).catch((e: any) => {
