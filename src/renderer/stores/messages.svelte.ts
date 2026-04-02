@@ -699,7 +699,10 @@ class MessageStore {
           this.streamingText[sessionId] = '';
           delete this.usageBySession[sessionId];
           delete this.turnsBySession[sessionId];
+          delete this.paginationBySession[sessionId];
           delete this.pendingClear[sessionId];
+          // Reset checkpoint store so stale checkpoints don't linger in the UI
+          checkpointStore.clear(sessionId);
           // Truncate event history on disk so old messages don't reappear on restart
           window.groveBench.clearEventHistory(sessionId).catch(() => {});
         }

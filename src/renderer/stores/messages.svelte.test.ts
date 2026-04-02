@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
+import { checkpointStore } from './checkpoints.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'test-session';
@@ -74,6 +75,42 @@ describe('ingestEvent — system_init', () => {
     // Only the re-init system message should remain
     expect(msgs).toHaveLength(1);
     expect((msgs[0] as any).text).toContain('cleared');
+  });
+
+  it('resets pagination state after /clear', () => {
+    // Simulate having loaded a partial page (300 older events remain)
+    messageStore.paginationBySession[SID] = { totalCount: 500, loadedFromIndex: 300, loading: false };
+    messageStore.pendingClear[SID] = true;
+
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'opus',
+      tools: [],
+    } as AgentEvent);
+
+    // Pagination should be fully reset — no older events to load
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+  });
+
+  it('resets checkpoint store after /clear', () => {
+    // Simulate checkpoints existing for this session
+    checkpointStore.checkpointsBySession[SID] = [
+      { uuid: 'uuid-1', turn: 1, ref: 'refs/grove/checkpoints/s/turn/1' },
+    ];
+    checkpointStore.selectedBySession[SID] = 'uuid-1';
+
+    messageStore.pendingClear[SID] = true;
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'opus',
+      tools: [],
+    } as AgentEvent);
+
+    expect(checkpointStore.getCheckpoints(SID)).toEqual([]);
+    expect(checkpointStore.getSelected(SID)).toBeNull();
   });
 
   it('stores system info (tools, agents, skills)', () => {

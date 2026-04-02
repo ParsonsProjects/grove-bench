@@ -19,6 +19,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Git-based snapshots at each agent turn
 - [x] Per-turn diff viewing (what changed in each turn)
 - [x] Revert workspace to any previous turn's checkpoint
+- [ ] Preserve checkpoints across `/clear` — currently checkpoints are reset on clear; a better solution would keep git checkpoint refs and rebuild the checkpoint list independently of message history
 
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)
