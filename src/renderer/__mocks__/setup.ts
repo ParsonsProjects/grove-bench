@@ -33,6 +33,27 @@ const mockGroveBench = {
   listWorktrees: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').WorktreeInfo[])),
   resumeSession: vi.fn(() => Promise.resolve({ id: '' })),
   listRepos: vi.fn(() => Promise.resolve([] as string[])),
+  // Terminal (PTY) mocks
+  onPtyData: vi.fn(() => vi.fn()),
+  onPtyExit: vi.fn(() => vi.fn()),
+  ptySpawn: vi.fn(() => Promise.resolve(true)),
+  ptyWrite: vi.fn(),
+  ptyResize: vi.fn(),
+  ptyKill: vi.fn(() => Promise.resolve()),
+  ptyIsAlive: vi.fn(() => Promise.resolve(true)),
+  // Plugin mocks
+  pluginList: vi.fn(() => Promise.resolve({ installed: [], available: [] })),
+  pluginInstall: vi.fn(() => Promise.resolve()),
+  pluginUninstall: vi.fn(() => Promise.resolve()),
+  pluginEnable: vi.fn(() => Promise.resolve()),
+  pluginDisable: vi.fn(() => Promise.resolve()),
+  // Memory mocks
+  memoryList: vi.fn(() => Promise.resolve([])),
+  memoryRead: vi.fn(() => Promise.resolve('')),
+  memoryWrite: vi.fn(() => Promise.resolve()),
+  memoryDelete: vi.fn(() => Promise.resolve()),
+  // Git status mock
+  getGitStatus: vi.fn(() => Promise.resolve({ entries: [] })),
 };
 Object.defineProperty(globalThis, 'window', {
   value: { groveBench: mockGroveBench },
