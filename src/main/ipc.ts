@@ -14,7 +14,7 @@ import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
-import { loadAppState, saveActiveTab, saveOpenTabs } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -731,6 +731,7 @@ export function registerHandlers() {
   // ─── App State ───
 
   ipcMain.handle(IPC.APP_STATE_GET_ACTIVE_TAB, () => {
+    flushPendingSaves();
     return loadAppState().activeTabId;
   });
 
@@ -739,6 +740,9 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
+    // Flush any debounced writes so the renderer always reads the latest state
+    // (prevents closed tabs from reopening after Vite hot-reload).
+    flushPendingSaves();
     return loadAppState().openTabIds;
   });
 
