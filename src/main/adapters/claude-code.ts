@@ -479,6 +479,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       }
     }
 
+    // Merge any additional MCP servers (e.g. pipeline task tools)
+    if (config.additionalMcpServers) {
+      mcpServers = { ...(mcpServers ?? {}), ...config.additionalMcpServers };
+    }
+
     // Create input stream for multi-turn conversations
     let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
     const inputStream = new ReadableStream<SDKUserMessage>({

@@ -5,8 +5,10 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
+  import { pipelineStore } from '../stores/pipelines.svelte.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import NewAgentDialog from './NewAgentDialog.svelte';
+  import NewPipelineDialog from './NewPipelineDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -32,9 +34,16 @@
   }
 
   let showNewAgent = $state(false);
+  let showNewPipeline = $state(false);
   let showSettings = $state(false);
   let showMemory = $state(false);
   let newAgentDefaultRepo = $state('');
+  let newPipelineDefaultRepo = $state('');
+
+  function openNewPipeline(defaultRepo = '') {
+    newPipelineDefaultRepo = defaultRepo;
+    showNewPipeline = true;
+  }
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
@@ -177,6 +186,13 @@
           <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             {#if store.canCreate}
               <button
+                onclick={() => openNewPipeline(repo)}
+                class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
+                title="New pipeline in this repo"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
+              </button>
+              <button
                 onclick={() => openNewAgent(repo)}
                 class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
                 title="New agent in this repo"
@@ -194,6 +210,38 @@
             </button>
           </div>
         </div>
+
+        <!-- Pipelines for this repo -->
+        {#each pipelineStore.getPipelinesForRepo(repo) as pipeline (pipeline._id)}
+          <div class="pl-4 pr-2 py-1 space-y-0.5">
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="text-muted-foreground">⚙</span>
+              <span class="font-medium truncate" title={pipeline.context}>
+                {pipeline.context.slice(0, 30)}{pipeline.context.length > 30 ? '…' : ''}
+              </span>
+              <span class="ml-auto text-[10px] px-1 rounded
+                {pipeline.status === 'running' ? 'text-blue-500' :
+                 pipeline.status === 'gate-waiting' ? 'text-yellow-500' :
+                 pipeline.status === 'completed' ? 'text-green-500' :
+                 pipeline.status === 'failed' ? 'text-red-500' :
+                 'text-muted-foreground'}">
+                {pipeline.status === 'gate-waiting' ? 'gate' : pipeline.status}
+              </span>
+            </div>
+            <div class="flex items-center gap-0.5 text-[10px] text-muted-foreground pl-4">
+              {#each pipeline.stages as stage, i}
+                {#if i > 0}<span class="mx-0.5">→</span>{/if}
+                <button
+                  class="capitalize hover:text-primary transition-colors {stage.status === 'running' ? 'text-blue-500 font-medium' : stage.status === 'completed' ? 'text-green-500' : stage.status === 'failed' ? 'text-red-500' : ''}"
+                  onclick={() => { if (stage.sessionId) store.activeSessionId = stage.sessionId; }}
+                  disabled={!stage.sessionId}
+                >
+                  {stage.role}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/each}
 
         <!-- Sessions grouped by branch -->
         {#each getBranchGroups(repo) as [branch, sessions] (branch)}
@@ -346,6 +394,10 @@
 
 {#if showNewAgent}
   <NewAgentDialog onclose={() => showNewAgent = false} defaultRepo={newAgentDefaultRepo} />
+{/if}
+
+{#if showNewPipeline}
+  <NewPipelineDialog onclose={() => showNewPipeline = false} defaultRepo={newPipelineDefaultRepo} />
 {/if}
 
 <SettingsPanel open={showSettings} onclose={() => showSettings = false} />

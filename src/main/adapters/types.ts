@@ -98,6 +98,10 @@ export interface AdapterConfig {
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
   alwaysAllowedTools: Set<string>;
+  /** Additional MCP servers to inject into the agent session (e.g. pipeline task tools).
+   *  Keys are server names, values are server objects from createSdkMcpServer().
+   *  The corresponding tool names should be added to alwaysAllowedTools by the caller. */
+  additionalMcpServers?: Record<string, unknown> | null;
 }
 
 // ─── Running Query Handle ───

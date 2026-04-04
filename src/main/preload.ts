@@ -235,6 +235,30 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.UPDATE_STATUS, handler);
     };
   },
+  // Pipeline orchestration
+  createPipeline: (opts: import('../shared/types.js').CreatePipelineOpts) =>
+    ipcRenderer.invoke(IPC.PIPELINE_CREATE, opts),
+  listPipelines: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.PIPELINE_LIST, repoPath),
+  getPipeline: (id: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.PIPELINE_GET, id, repoPath),
+  getPipelineTasks: (pipelineId: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.PIPELINE_TASKS, pipelineId, repoPath),
+  approvePipelineGate: (id: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.PIPELINE_APPROVE_GATE, id, repoPath),
+  cancelPipeline: (id: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.PIPELINE_CANCEL, id, repoPath),
+  retryPipelineStage: (id: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.PIPELINE_RETRY, id, repoPath),
+  getPipelineTemplates: () => ipcRenderer.invoke(IPC.PIPELINE_TEMPLATES),
+  onPipelineEvent: (callback: (event: import('../shared/types.js').PipelineEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').PipelineEvent) =>
+      callback(data);
+    ipcRenderer.on(IPC.PIPELINE_EVENT, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.PIPELINE_EVENT, handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('groveBench', api);

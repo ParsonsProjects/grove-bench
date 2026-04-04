@@ -6,8 +6,10 @@
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { getRepoColor, getTabPendingClass } from './lib/repo-colors.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
+  import { pipelineStore } from './stores/pipelines.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
+  import PipelineProgress from './components/PipelineProgress.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
@@ -279,6 +281,7 @@
 
   onMount(() => {
     settingsStore.load();
+    pipelineStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });
@@ -325,6 +328,7 @@
     return () => {
       unsub();
       unsubPower();
+      pipelineStore.dispose();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
   });
@@ -336,6 +340,11 @@
   // glow updates immediately when a permission is resolved.
   let pendingBySession = $derived(
     Object.fromEntries(openSessions.map((s) => [s.id, messageStore.hasPendingPermission(s.id)])),
+  );
+
+  // Pipeline for the active session (if any)
+  let activePipeline = $derived(
+    store.activeSessionId ? pipelineStore.getPipelineForSession(store.activeSessionId) : null,
   );
 </script>
 
@@ -429,6 +438,11 @@
           </button>
         {/each}
       </div>
+
+      <!-- Pipeline progress bar (when active session belongs to a pipeline) -->
+      {#if activePipeline && store.activeSessionId}
+        <PipelineProgress pipelineId={activePipeline._id} repoPath={activePipeline.repoPath} />
+      {/if}
 
       <!-- Active session -->
       {#if store.activeSessionId}

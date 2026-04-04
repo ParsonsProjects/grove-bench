@@ -11,6 +11,7 @@ import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
+import { initPipelineManager } from './pipeline.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -25,6 +26,9 @@ app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
 // Register built-in agent adapters before anything else uses them
 initAdapters();
+
+// Initialize pipeline orchestrator
+initPipelineManager({ worktreeManager, sessionManager });
 
 registerHandlers();
 

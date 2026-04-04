@@ -14,6 +14,9 @@ import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
+import { getPipelineManager } from './pipeline.js';
+import { PIPELINE_TEMPLATES } from './pipeline-templates.js';
+import type { CreatePipelineOpts } from '../shared/types.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -802,4 +805,43 @@ export function registerHandlers() {
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdate());
   ipcMain.handle(IPC.UPDATE_DOWNLOAD, () => downloadUpdate());
   ipcMain.on(IPC.UPDATE_INSTALL, () => installUpdate());
+
+  // ─── Pipeline Orchestration ───
+
+  ipcMain.handle(IPC.PIPELINE_CREATE, async (event, opts: CreatePipelineOpts) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+    return getPipelineManager().createPipeline(opts, win);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_LIST, async (_event, repoPath: string) => {
+    return getPipelineManager().listPipelines(repoPath);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_GET, async (_event, id: string, repoPath: string) => {
+    return getPipelineManager().getPipeline(id, repoPath);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_TASKS, async (_event, pipelineId: string, repoPath: string) => {
+    return getPipelineManager().getTasksForPipeline(pipelineId, repoPath);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_APPROVE_GATE, async (event, id: string, repoPath: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+    return getPipelineManager().approveGate(id, repoPath, win);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_CANCEL, async (event, id: string, repoPath: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return getPipelineManager().cancelPipeline(id, repoPath, win ?? undefined);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_RETRY, async (event, id: string, repoPath: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) throw new Error('No window found');
+    return getPipelineManager().retryStage(id, repoPath, win);
+  });
+
+  ipcMain.handle(IPC.PIPELINE_TEMPLATES, () => PIPELINE_TEMPLATES);
 }

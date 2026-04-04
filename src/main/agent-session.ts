@@ -86,6 +86,12 @@ interface ManagedSession {
   resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
   checkpoints: CheckpointManager;
+  /** Pipeline this session belongs to, if any. */
+  pipelineId: string | null;
+  /** Role this session plays in its pipeline, if any. */
+  pipelineRole: import('../shared/types.js').PipelineRoleId | null;
+  /** Additional MCP servers injected by the pipeline orchestrator. */
+  additionalMcpServers: Record<string, unknown> | null;
 }
 
 export interface SessionCompletionResult {
@@ -162,6 +168,9 @@ class AgentSessionManager {
     sandbox?: Record<string, unknown> | null;
     extraEnv?: Record<string, string> | null;
     adapterType?: string;
+    pipelineId?: string | null;
+    pipelineRole?: import('../shared/types.js').PipelineRoleId | null;
+    additionalMcpServers?: Record<string, unknown> | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -229,6 +238,9 @@ class AgentSessionManager {
       queryReady: null,
       resolveQueryReady: null,
       checkpoints: new CheckpointManager(),
+      pipelineId: opts.pipelineId ?? null,
+      pipelineRole: opts.pipelineRole ?? null,
+      additionalMcpServers: opts.additionalMcpServers ?? null,
     };
 
     this.sessions.set(id, session);
@@ -266,6 +278,8 @@ class AgentSessionManager {
       status: session.status,
       agentType: session.agentType,
       createdAt: session.createdAt,
+      pipelineId: session.pipelineId,
+      pipelineRole: session.pipelineRole,
     };
   }
 
@@ -324,6 +338,7 @@ class AgentSessionManager {
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
+      additionalMcpServers: session.additionalMcpServers,
       onPermissionRequest: async (request) => {
         const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
         const requestId = `perm_${id}_${++session.permRequestCounter}`;
@@ -898,6 +913,8 @@ class AgentSessionManager {
       agentType: s.agentType,
       createdAt: s.createdAt,
       displayName: s.displayName,
+      pipelineId: s.pipelineId,
+      pipelineRole: s.pipelineRole,
     }));
   }
 

@@ -50,6 +50,10 @@ export interface SessionInfo {
   createdAt: number;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
+  /** Pipeline this session belongs to, if any. */
+  pipelineId?: string | null;
+  /** Role this session plays in its pipeline, if any. */
+  pipelineRole?: PipelineRoleId | null;
 }
 
 // ─── Prerequisites ───
@@ -377,6 +381,17 @@ export interface GroveBenchAPI {
   downloadUpdate(): Promise<void>;
   installUpdate(): void;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
+
+  // Pipeline orchestration
+  createPipeline(opts: CreatePipelineOpts): Promise<PipelineDoc>;
+  listPipelines(repoPath: string): Promise<PipelineDoc[]>;
+  getPipeline(id: string, repoPath: string): Promise<PipelineDoc | null>;
+  getPipelineTasks(pipelineId: string, repoPath: string): Promise<TaskDoc[]>;
+  approvePipelineGate(id: string, repoPath: string): Promise<void>;
+  cancelPipeline(id: string, repoPath: string): Promise<void>;
+  retryPipelineStage(id: string, repoPath: string): Promise<void>;
+  getPipelineTemplates(): Promise<PipelineTemplate[]>;
+  onPipelineEvent(callback: (event: PipelineEvent) => void): () => void;
 }
 
 // ─── Settings ───
@@ -442,6 +457,93 @@ export interface MemoryEntry {
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
 }
+
+// ─── Pipeline ───
+
+export type PipelineStatus = 'running' | 'gate-waiting' | 'completed' | 'failed' | 'cancelled';
+export type PipelineStageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+export type TaskStatus = 'new' | 'planned' | 'in-progress' | 'implemented' | 'qa-passed' | 'completed' | 'failed';
+export type PipelineRoleId = 'planner' | 'engineer' | 'qa' | 'reviewer';
+
+export interface PipelineStage {
+  role: PipelineRoleId;
+  status: PipelineStageStatus;
+  sessionId: string | null;
+  taskId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  cost: number;
+  gate: boolean;
+}
+
+export interface PipelineDoc {
+  _id: string;
+  repoPath: string;
+  branch: string;
+  worktreeId: string;
+  worktreePath: string;
+  templateId: string;
+  status: PipelineStatus;
+  createdAt: string;
+  updatedAt: string;
+  currentStageIndex: number;
+  totalCost: number;
+  context: string;
+  stages: PipelineStage[];
+}
+
+export interface TaskDoc {
+  _id: string;
+  pipelineId: string;
+  title: string;
+  body: string;
+  status: TaskStatus;
+  assignedRole: PipelineRoleId;
+  priority: number;
+  branch: string | null;
+  labels: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoleDefinition {
+  id: PipelineRoleId;
+  displayName: string;
+  systemPrompt: string;
+  permissionMode: PermissionMode;
+  allowedTools?: string[] | null;
+}
+
+export interface PipelineTemplateStage {
+  role: PipelineRoleId;
+  gate: boolean;
+}
+
+export interface PipelineTemplate {
+  id: string;
+  displayName: string;
+  description: string;
+  stages: PipelineTemplateStage[];
+}
+
+export interface CreatePipelineOpts {
+  repoPath: string;
+  branchName: string;
+  baseBranch?: string;
+  templateId: string;
+  context: string;
+  /** Override default gate settings per stage index. */
+  gates?: Record<number, boolean>;
+}
+
+export type PipelineEvent =
+  | { type: 'stage_started'; pipelineId: string; stageIndex: number; role: PipelineRoleId; sessionId: string }
+  | { type: 'stage_completed'; pipelineId: string; stageIndex: number; role: PipelineRoleId; isError: boolean }
+  | { type: 'gate_waiting'; pipelineId: string; stageIndex: number; role: PipelineRoleId }
+  | { type: 'pipeline_completed'; pipelineId: string }
+  | { type: 'pipeline_failed'; pipelineId: string; stageIndex: number; error: string }
+  | { type: 'pipeline_cancelled'; pipelineId: string }
+  | { type: 'pipeline_updated'; pipeline: PipelineDoc };
 
 // ─── Auto-Update ───
 
@@ -545,4 +647,14 @@ export const IPC = {
   UPDATE_DOWNLOAD: 'update:download',
   UPDATE_INSTALL: 'update:install',
   UPDATE_STATUS: 'update:status',
+  // Pipeline orchestration
+  PIPELINE_CREATE: 'pipeline:create',
+  PIPELINE_LIST: 'pipeline:list',
+  PIPELINE_GET: 'pipeline:get',
+  PIPELINE_TASKS: 'pipeline:tasks',
+  PIPELINE_APPROVE_GATE: 'pipeline:approveGate',
+  PIPELINE_CANCEL: 'pipeline:cancel',
+  PIPELINE_RETRY: 'pipeline:retry',
+  PIPELINE_EVENT: 'pipeline:event',    // pipeline:event:{pipelineId}
+  PIPELINE_TEMPLATES: 'pipeline:templates',
 } as const;
