@@ -138,6 +138,24 @@ describe('transformMessage()', () => {
         cacheReadTokens: 10,
       });
     });
+
+    it('ignores usage from subagent assistant messages (parent_tool_use_id set)', () => {
+      const events = transformMessage(
+        {
+          type: 'assistant',
+          uuid: 'u5',
+          parent_tool_use_id: 'tu-agent-123',
+          message: {
+            content: [{ type: 'text', text: 'subagent reply' }],
+            usage: { input_tokens: 200, output_tokens: 30 },
+          },
+        } as any,
+        makeCtx(),
+      );
+      expect(events.find((e) => e.type === 'usage')).toBeUndefined();
+      // text should still come through
+      expect(events.find((e) => e.type === 'assistant_text')).toMatchObject({ text: 'subagent reply' });
+    });
   });
 
   describe('user messages (tool results)', () => {
