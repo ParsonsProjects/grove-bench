@@ -5,6 +5,7 @@
   import { settingsStore } from './stores/settings.svelte.js';
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { getRepoColor, getTabPendingClass } from './lib/repo-colors.js';
+  import { canScrollLeft, canScrollRight, scrollToTab, scrollByAmount } from './lib/tab-scroll.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
@@ -332,6 +333,36 @@
   let openSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error'));
   let hasTabContent = $derived(openSessions.length > 0);
 
+  // Tab scroll state
+  let tabContainerEl = $state<HTMLElement | null>(null);
+  let showLeftArrow = $state(false);
+  let showRightArrow = $state(false);
+  let tabEls = $state<Record<string, HTMLElement>>({});
+
+  function updateScrollArrows() {
+    if (!tabContainerEl) return;
+    showLeftArrow = canScrollLeft(tabContainerEl);
+    showRightArrow = canScrollRight(tabContainerEl);
+  }
+
+  // Scroll active tab into view when it changes
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    if (activeId && tabContainerEl && tabEls[activeId]) {
+      requestAnimationFrame(() => {
+        scrollToTab(tabContainerEl!, tabEls[activeId]);
+        updateScrollArrows();
+      });
+    }
+  });
+
+  // Update arrow visibility when tabs are added/removed
+  $effect(() => {
+    // Subscribe to openSessions length to re-check overflow
+    openSessions.length;
+    requestAnimationFrame(updateScrollArrows);
+  });
+
   // Track pending permissions per session reactively via $derived so the tab
   // glow updates immediately when a permission is resolved.
   let pendingBySession = $derived(
@@ -375,7 +406,21 @@
       </div>
     {:else}
       <!-- Tab bar -->
-      <div class="flex items-center bg-card border-b border-border shrink-0 overflow-x-auto">
+      <div class="flex items-center bg-card border-b border-border shrink-0 relative">
+        {#if showLeftArrow}
+          <button
+            onclick={() => { scrollByAmount(tabContainerEl!, 'left'); requestAnimationFrame(updateScrollArrows); }}
+            class="sticky left-0 z-10 flex items-center justify-center w-6 h-full bg-card border-r border-border text-muted-foreground hover:text-foreground shrink-0"
+            aria-label="Scroll tabs left"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+        {/if}
+        <div
+          bind:this={tabContainerEl}
+          onscroll={updateScrollArrows}
+          class="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none"
+        >
         {#each openSessions as session (session.id)}
           {@const isActive = store.activeSessionId === session.id}
           {@const running = messageStore.getIsRunning(session.id)}
@@ -383,6 +428,7 @@
           {@const isDragOver = dropTargetId === session.id && dragTabId !== session.id}
           {@const tabColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
           <button
+            bind:this={tabEls[session.id]}
             draggable="true"
             ondragstart={(e) => handleTabDragStart(e, session.id)}
             ondragover={(e) => handleTabDragOver(e, session.id)}
@@ -428,6 +474,16 @@
             </span>
           </button>
         {/each}
+        </div>
+        {#if showRightArrow}
+          <button
+            onclick={() => { scrollByAmount(tabContainerEl!, 'right'); requestAnimationFrame(updateScrollArrows); }}
+            class="sticky right-0 z-10 flex items-center justify-center w-6 h-full bg-card border-l border-border text-muted-foreground hover:text-foreground shrink-0"
+            aria-label="Scroll tabs right"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+        {/if}
       </div>
 
       <!-- Active session -->
@@ -529,5 +585,11 @@
   }
   :global(.tab-action-required-active) {
     box-shadow: inset 0 0 10px 1px rgba(249, 115, 22, 0.2);
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 </style>
