@@ -1084,11 +1084,14 @@ describe('ingestEvent — rewind', () => {
     } as AgentEvent);
 
     const msgs = messageStore.getMessages(SID);
-    // Should keep messages up to and including the user message with uuid cp-2
-    expect(msgs).toHaveLength(3);
+    // Should keep messages before the rewind target (exclude it)
+    expect(msgs).toHaveLength(2);
     expect(msgs[0].id).toBe('1');
     expect(msgs[1].id).toBe('2');
-    expect(msgs[2].id).toBe('3');
+    // Rewind target text should be placed into draft
+    expect(messageStore.getDraft(SID)).toBe('second prompt');
+    // Should switch to activity tab
+    expect(messageStore.getActiveTab(SID)).toBe('activity');
   });
 
   it('resets running state and streaming buffers', () => {
@@ -1144,13 +1147,14 @@ describe('ingestEvent — rewind', () => {
     messageStore.replayEvents(SID, events);
     const msgs = messageStore.getMessages(SID);
 
-    // After rewind to cp-1, only first prompt remains, then third is added
+    // After rewind to cp-1, the first prompt is removed (placed into draft),
+    // then "third" is added as the new prompt
     const userMsgs = msgs.filter((m) => m.kind === 'user');
-    expect(userMsgs).toHaveLength(2);
-    expect((userMsgs[0] as any).text).toBe('first');
-    expect((userMsgs[1] as any).text).toBe('third');
+    expect(userMsgs).toHaveLength(1);
+    expect((userMsgs[0] as any).text).toBe('third');
 
-    // "second" and its response should have been truncated by the rewind
+    // "first", "second" and their responses should have been truncated by the rewind
+    expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'first')).toBeUndefined();
     expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'second')).toBeUndefined();
   });
 });
