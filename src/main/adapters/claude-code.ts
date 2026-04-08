@@ -246,8 +246,12 @@ export function transformMessage(
           }
         }
       }
+      // Only track token usage from the main conversation — subagent messages
+      // carry a parent_tool_use_id and would cause the status-bar values to
+      // fluctuate wildly as their smaller contexts overwrite the main context size.
+      const isSubagent = !!(message as any).parent_tool_use_id;
       const usage = (message.message as any)?.usage;
-      if (usage) {
+      if (usage && !isSubagent) {
         events.push({
           type: 'usage',
           inputTokens: usage.input_tokens ?? 0,
