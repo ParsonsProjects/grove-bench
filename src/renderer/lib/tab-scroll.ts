@@ -8,7 +8,7 @@ export function canScrollLeft(container: HTMLElement): boolean {
 
 /** Whether the container can scroll further right. */
 export function canScrollRight(container: HTMLElement): boolean {
-  return container.scrollLeft + container.clientWidth < container.scrollWidth;
+  return Math.ceil(container.scrollLeft) + container.clientWidth < container.scrollWidth;
 }
 
 /** Smoothly scroll the container so the given tab is fully visible. */

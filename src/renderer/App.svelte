@@ -348,12 +348,14 @@
   // Scroll active tab into view when it changes
   $effect(() => {
     const activeId = store.activeSessionId;
-    if (activeId && tabContainerEl && tabEls[activeId]) {
-      requestAnimationFrame(() => {
-        scrollToTab(tabContainerEl!, tabEls[activeId]);
+    if (!activeId || !tabContainerEl || !tabEls[activeId]) return;
+    const rafId = requestAnimationFrame(() => {
+      if (tabContainerEl && tabEls[activeId]) {
+        scrollToTab(tabContainerEl, tabEls[activeId]);
         updateScrollArrows();
-      });
-    }
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
   });
 
   // Update arrow visibility when tabs are added/removed

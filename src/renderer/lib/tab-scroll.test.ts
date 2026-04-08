@@ -44,6 +44,12 @@ describe('canScrollRight', () => {
     const el = mockContainer({ scrollLeft: 0, scrollWidth: 300, clientWidth: 300 });
     expect(canScrollRight(el)).toBe(false);
   });
+
+  it('returns false when scrollLeft is fractional but effectively at end', () => {
+    // scrollLeft can be subpixel (e.g. 199.7) — should not flicker the arrow
+    const el = mockContainer({ scrollLeft: 199.7, scrollWidth: 500, clientWidth: 300 });
+    expect(canScrollRight(el)).toBe(false);
+  });
 });
 
 describe('scrollToTab', () => {
