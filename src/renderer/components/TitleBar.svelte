@@ -1,5 +1,8 @@
 <script lang="ts">
   import UpdateNotification from './UpdateNotification.svelte';
+  import HelpPanel from './HelpPanel.svelte';
+
+  let showHelp = $state(false);
 
   let isMaximized = $state(false);
 
@@ -151,6 +154,13 @@
   </div>
   <div class="flex items-center h-full relative z-10">
     <button
+      onclick={() => showHelp = true}
+      class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+      title="Help"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+    </button>
+    <button
       onclick={() => window.groveBench.winMinimize()}
       class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
       title="Minimize"
@@ -186,6 +196,8 @@
     </button>
   </div>
 </div>
+
+<HelpPanel open={showHelp} onclose={() => showHelp = false} />
 
 <style>
   .app-drag {
