@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disableBypassMode: false,
   defaultModel: '',
   extendedThinking: false,
+  cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   devCommand: '',

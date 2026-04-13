@@ -192,7 +192,7 @@ function makeMockWindow() {
 
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
-const settingsMock = await import('./settings.js') as { getSettings: ReturnType<typeof vi.fn> };
+const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
