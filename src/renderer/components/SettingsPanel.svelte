@@ -290,6 +290,18 @@
 
           <Separator />
 
+          <!-- Token Optimization -->
+          <div>
+            <Label class="mb-1 block">Token Optimization</Label>
+            <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <Checkbox bind:checked={settingsStore.draft.outputFiltering} />
+              Filter command output to reduce token usage
+            </label>
+            <p class="text-xs text-muted-foreground -mt-2 ml-6">Compresses verbose output from git, test runners, build tools, and directory listings. Takes effect on new sessions.</p>
+          </div>
+
+          <Separator />
+
           <!-- Working Directories -->
           <div>
             <Label class="mb-1 block">Additional Working Directories</Label>

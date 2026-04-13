@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   spellcheck: true,
   analyticsEnabled: false,
   analyticsPrompted: false,
+  outputFiltering: true,
 };
 
 beforeEach(() => {

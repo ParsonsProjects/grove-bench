@@ -790,4 +790,41 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       )
     );
   }
+
+  async configureOutputFiltering(wtPath: string, filterScriptPath: string, hookScriptPath: string): Promise<void> {
+    const fs = await import('node:fs/promises');
+    const claudeDir = path.join(wtPath, '.claude');
+    const settingsPath = path.join(claudeDir, 'settings.local.json');
+
+    // Read existing settings (written by generateWorktreeSettings)
+    let settings: Record<string, unknown> = {};
+    try {
+      const raw = await fs.readFile(settingsPath, 'utf-8');
+      settings = JSON.parse(raw);
+    } catch {
+      // File may not exist yet — start fresh
+    }
+
+    // Add PreToolUse hook for Bash commands.
+    // Set GROVE_FILTER_SCRIPT so the hook knows where grove-filter.js lives.
+    const fwdFilterPath = filterScriptPath.replace(/\\/g, '/');
+    const fwdHookPath = hookScriptPath.replace(/\\/g, '/');
+    const hookCommand = `GROVE_FILTER_SCRIPT="${fwdFilterPath}" node "${fwdHookPath}"`;
+    settings.hooks = {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            {
+              type: 'command',
+              command: hookCommand,
+            },
+          ],
+        },
+      ],
+    };
+
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+  }
 }
