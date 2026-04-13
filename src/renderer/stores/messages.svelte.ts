@@ -1251,8 +1251,11 @@ class MessageStore {
           (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
         );
         if (rewindIdx >= 0) {
-          // Keep everything up to and including the rewind target user message
-          this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx + 1));
+          // Remove the rewind target message and place its text into the input
+          const rewindMsg = msgs[rewindIdx] as ChatUserMessage;
+          this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
+          this.setDraft(sessionId, rewindMsg.text);
+          this.setActiveTab(sessionId, 'activity');
         }
         this.isRunning[sessionId] = false;
         this.streamingText[sessionId] = '';

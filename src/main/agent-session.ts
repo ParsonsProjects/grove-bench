@@ -1005,7 +1005,8 @@ class AgentSessionManager {
       (e) => e.type === 'user_message' && e.uuid === userMessageId,
     );
     if (rewindIdx >= 0) {
-      session.eventHistory = session.eventHistory.slice(0, rewindIdx + 1);
+      // Exclude the rewind target message — it gets placed back into the input
+      session.eventHistory = session.eventHistory.slice(0, rewindIdx);
       // Rewrite the disk log to match
       try {
         const lines = session.eventHistory.map(e => JSON.stringify(e)).join('\n') + '\n';
