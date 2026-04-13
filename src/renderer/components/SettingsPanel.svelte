@@ -10,7 +10,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
-  import type { SettingsPermissionMode } from '../../shared/types.js';
+  import type { SettingsPermissionMode, CavemanMode } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
   interface Props {
@@ -102,6 +102,13 @@
     { value: 'acceptEdits', label: 'Accept Edits' },
     { value: 'plan', label: 'Plan (read-only)' },
     { value: 'bypassPermissions', label: 'Bypass Permissions' },
+  ];
+
+  const cavemanModes: { value: CavemanMode; label: string; description: string }[] = [
+    { value: 'off', label: 'Off', description: 'Normal verbose output' },
+    { value: 'lite', label: 'Lite', description: 'Drop filler/hedging, keep articles' },
+    { value: 'full', label: 'Full', description: 'Drop articles, fragments OK' },
+    { value: 'ultra', label: 'Ultra', description: 'Max compression, abbreviations' },
   ];
 
   const themes: { value: 'system' | 'dark' | 'light'; label: string }[] = [
@@ -259,6 +266,29 @@
             <Checkbox bind:checked={settingsStore.draft.extendedThinking} />
             Enable extended thinking by default
           </label>
+
+          <Separator />
+
+          <!-- Caveman Mode -->
+          <div>
+            <Label class="mb-1 block">Caveman Mode</Label>
+            <Select.Root type="single" value={settingsStore.draft.cavemanMode} onValueChange={(v) => { if (v) settingsStore.draft.cavemanMode = v as CavemanMode; }}>
+              <Select.Trigger class="w-48">
+                {cavemanModes.find(m => m.value === settingsStore.draft.cavemanMode)?.label ?? 'Off'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each cavemanModes as mode (mode.value)}
+                  <Select.Item value={mode.value} label={mode.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground mt-1">
+              {cavemanModes.find(m => m.value === settingsStore.draft.cavemanMode)?.description ?? ''}
+              {#if settingsStore.draft.cavemanMode !== 'off'}
+                — reduces output tokens ~65-75%. Code blocks stay normal.
+              {/if}
+            </p>
+          </div>
 
           <Separator />
 

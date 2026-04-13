@@ -379,6 +379,10 @@ export interface GroveBenchAPI {
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
+// ─── Caveman ───
+
+export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra';
+
 // ─── Settings ───
 
 export interface ToolRule {
@@ -397,6 +401,8 @@ export interface GroveBenchSettings {
   // Agent Defaults
   defaultModel: string;
   extendedThinking: boolean;
+  /** Caveman mode — terse output to reduce token usage. Default 'off'. */
+  cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
 
