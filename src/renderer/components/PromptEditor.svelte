@@ -6,6 +6,13 @@
   import FilePickerPopup from './FilePickerPopup.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
+  import {
+    type AttachedFile,
+    processFiles,
+    extractClipboardImages,
+    IMAGE_MIME_TYPES,
+    TEXT_EXTENSIONS,
+  } from '$lib/file-attachments.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -34,8 +41,7 @@
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
 
-  // Drag-and-drop file attachments
-  type AttachedFile = { name: string; content: string; type: 'text' } | { name: string; dataUrl: string; type: 'image' };
+  // File attachments (drag-drop, paste, file picker)
   let attachedFiles = $state<AttachedFile[]>([]);
   let dragOver = $state(false);
   let dropMessage = $state<{ text: string; isError: boolean } | null>(null);
@@ -365,68 +371,64 @@
     dropMessageTimer = setTimeout(() => { dropMessage = null; }, 3000);
   }
 
-  function handleDrop(e: DragEvent) {
+  async function handleDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
-    const MAX_TEXT_SIZE = 100 * 1024; // 100KB
-    const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-    const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-    const textExtensions = new Set([
-      'ts', 'tsx', 'js', 'jsx', 'svelte', 'vue', 'html', 'css', 'scss', 'less',
-      'json', 'yaml', 'yml', 'toml', 'xml', 'md', 'txt', 'csv', 'sql', 'sh',
-      'bash', 'zsh', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'cpp', 'h',
-      'hpp', 'cs', 'swift', 'php', 'r', 'lua', 'pl', 'ex', 'exs', 'elm',
-      'hs', 'ml', 'fs', 'clj', 'scala', 'dart', 'conf', 'ini', 'env',
-      'gitignore', 'dockerignore', 'dockerfile', 'makefile', 'cmake',
-      'lock', 'log', 'diff', 'patch', 'svg',
-    ]);
-
-    const skipped: string[] = [];
-
-    for (const file of Array.from(files)) {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-      const nameLC = file.name.toLowerCase();
-      const isImage = imageTypes.has(file.type);
-      const isText = textExtensions.has(ext) || textExtensions.has(nameLC) || file.type.startsWith('text/');
-
-      if (isImage) {
-        if (file.size > MAX_IMAGE_SIZE) {
-          skipped.push(`${file.name} (too large, max 5MB)`);
-          continue;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          if (!attachedFiles.some((f) => f.name === file.name)) {
-            attachedFiles = [...attachedFiles, { name: file.name, dataUrl, type: 'image' }];
-          }
-        };
-        reader.readAsDataURL(file);
-      } else if (isText) {
-        if (file.size > MAX_TEXT_SIZE) {
-          skipped.push(`${file.name} (too large, max 100KB)`);
-          continue;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-          const content = reader.result as string;
-          if (!attachedFiles.some((f) => f.name === file.name)) {
-            attachedFiles = [...attachedFiles, { name: file.name, content, type: 'text' }];
-          }
-        };
-        reader.readAsText(file);
-      } else {
-        skipped.push(`${file.name} (unsupported type)`);
-      }
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles);
+    if (newFiles.length > 0) {
+      attachedFiles = [...attachedFiles, ...newFiles];
     }
-
     if (skipped.length > 0) {
       showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
     }
+    textarea?.focus();
+  }
 
+  // ─── Clipboard paste ───
+
+  async function handlePaste(e: ClipboardEvent) {
+    if (!e.clipboardData) return;
+
+    const images = extractClipboardImages(e.clipboardData);
+    if (images.length === 0) return;
+
+    // Prevent default only when we have images to handle (preserve normal text paste)
+    e.preventDefault();
+
+    const { files: newFiles, skipped } = await processFiles(images, attachedFiles);
+    if (newFiles.length > 0) {
+      attachedFiles = [...attachedFiles, ...newFiles];
+    }
+    if (skipped.length > 0) {
+      showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
+    }
+    textarea?.focus();
+  }
+
+  // ─── File picker ───
+
+  let fileInput: HTMLInputElement;
+
+  function openFilePicker() {
+    fileInput?.click();
+  }
+
+  async function handleFileInputChange() {
+    const files = fileInput?.files;
+    if (!files || files.length === 0) return;
+
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles);
+    if (newFiles.length > 0) {
+      attachedFiles = [...attachedFiles, ...newFiles];
+    }
+    if (skipped.length > 0) {
+      showDropMessage(`Skipped: ${skipped.join(', ')}`, true);
+    }
+    // Reset so the same file can be re-selected
+    fileInput.value = '';
     textarea?.focus();
   }
 
@@ -543,12 +545,34 @@
   {/if}
 
   <div class="flex gap-2 items-end px-4 pb-3 pt-2">
+    <!-- Hidden file input for picker -->
+    <input
+      bind:this={fileInput}
+      type="file"
+      multiple
+      accept="image/jpeg,image/png,image/gif,image/webp,.ts,.tsx,.js,.jsx,.svelte,.vue,.html,.css,.scss,.less,.json,.yaml,.yml,.toml,.xml,.md,.txt,.csv,.sql,.py,.rb,.go,.rs,.java,.kt,.c,.cpp,.h,.hpp,.cs,.swift,.php,.sh,.bash,.lua,.dart,.zig,.jl,.graphql,.log,.diff,.patch,.svg"
+      onchange={handleFileInputChange}
+      class="hidden"
+    />
+
+    <button
+      onclick={openFilePicker}
+      disabled={isRunning}
+      title="Attach files"
+      class="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed p-1 self-center"
+    >
+      <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M10.5 4.5l-5 5a2.12 2.12 0 003 3l5.5-5.5a3.54 3.54 0 00-5-5L3.5 7.5a4.95 4.95 0 007 7L15 10" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
     <textarea
       bind:this={textarea}
       bind:value
       spellcheck={settingsStore.current.spellcheck}
       oninput={handleInput}
       onkeydown={handleKeydown}
+      onpaste={handlePaste}
       placeholder={isRunning ? 'Waiting for agent...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
       rows="1"
       class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
