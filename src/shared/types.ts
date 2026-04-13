@@ -427,6 +427,10 @@ export interface GroveBenchSettings {
   /** Enable spell checking in the prompt textarea. */
   spellcheck: boolean;
 
+  // Token Optimization
+  /** Enable command output filtering to reduce token usage. Default true. */
+  outputFiltering: boolean;
+
   // Privacy
   /** Enable anonymous usage analytics (PostHog). Off by default. */
   analyticsEnabled: boolean;

@@ -22,6 +22,10 @@ extraResources:
     to: Dockerfile
   - from: src/main/icon.ico
     to: icon.ico
+  - from: resources/grove-filter.js
+    to: grove-filter/grove-filter.js
+  - from: resources/grove-filter-hook.js
+    to: grove-filter/grove-filter-hook.js
 
 asar: true
 asarUnpack:

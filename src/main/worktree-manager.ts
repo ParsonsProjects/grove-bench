@@ -6,6 +6,8 @@ import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, valid
 import { logger } from './logger.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
+import { getSettings } from './settings.js';
+import { getFilterScriptPaths } from './filters/paths.js';
 
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
@@ -150,6 +152,9 @@ export class WorktreeManager {
 
     // Generate agent-specific settings (e.g. .claude/settings.local.json)
     await this.generateAdapterSettings(wtPath, config.adapterType);
+
+    // Configure output filtering if enabled
+    await this.configureOutputFiltering(wtPath, config.adapterType);
 
     // Propagate the repo's git identity into the worktree so commits
     // are attributed to the user rather than the agent's default identity.
@@ -749,6 +754,28 @@ export class WorktreeManager {
       await adapter.generateWorktreeSettings(wtPath);
     } else {
       logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
+    }
+  }
+
+  private async configureOutputFiltering(wtPath: string, adapterType?: string): Promise<void> {
+    const settings = getSettings();
+    if (!settings.outputFiltering) {
+      logger.debug('[WorktreeManager] Output filtering disabled in settings');
+      return;
+    }
+
+    const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
+    if (!adapter.configureOutputFiltering) {
+      logger.debug(`[WorktreeManager] Adapter "${adapter.id}" does not support output filtering`);
+      return;
+    }
+
+    try {
+      const { filterScriptPath, hookScriptPath } = getFilterScriptPaths();
+      await adapter.configureOutputFiltering(wtPath, filterScriptPath, hookScriptPath);
+      logger.info(`[WorktreeManager] Output filtering configured for ${wtPath}`);
+    } catch (err) {
+      logger.warn(`[WorktreeManager] Failed to configure output filtering: ${err}`);
     }
   }
 }

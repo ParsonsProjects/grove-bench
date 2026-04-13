@@ -187,4 +187,12 @@ export interface AgentAdapter {
   /** Generate agent-specific settings files inside a worktree directory.
    *  E.g. Claude Code creates `.claude/settings.local.json`. */
   generateWorktreeSettings?(wtPath: string): Promise<void>;
+
+  /** Configure output filtering for a worktree. Each adapter wires up the shared
+   *  filter runner (grove-filter.js) using its native mechanism (hooks, PATH, etc.).
+   *  @param wtPath — worktree directory
+   *  @param filterScriptPath — absolute path to grove-filter.js
+   *  @param hookScriptPath — absolute path to grove-filter-hook.js (for hook-based adapters)
+   */
+  configureOutputFiltering?(wtPath: string, filterScriptPath: string, hookScriptPath: string): Promise<void>;
 }
