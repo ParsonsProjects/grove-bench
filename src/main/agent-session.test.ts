@@ -47,6 +47,7 @@ vi.mock('./settings.js', () => ({
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
     toolDenyRules: [],
+    cavemanMode: 'off',
   })),
   loadSettings: vi.fn(() => ({ alwaysOnTop: false, theme: 'system' })),
 }));
@@ -191,6 +192,7 @@ function makeMockWindow() {
 
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
+const settingsMock = await import('./settings.js') as { getSettings: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -250,6 +252,79 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager caveman mode', () => {
+  it('does not include caveman prompt when mode is off', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cave-off',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.appendSystemPrompt).not.toContain('Caveman Mode');
+
+    await sessionManager.destroySession('test-cave-off');
+  });
+
+  it('includes caveman prompt when mode is full', async () => {
+    settingsMock.getSettings.mockReturnValue({
+      defaultPermissionMode: 'default',
+      defaultSystemPromptAppend: null,
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'full',
+    });
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cave-full',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.appendSystemPrompt).toContain('Caveman Mode: Full');
+
+    await sessionManager.destroySession('test-cave-full');
+  });
+
+  it('places caveman prompt after path rules', async () => {
+    settingsMock.getSettings.mockReturnValue({
+      defaultPermissionMode: 'default',
+      defaultSystemPromptAppend: null,
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'lite',
+    });
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cave-order',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const prompt = mockAdapter.lastConfig?.appendSystemPrompt ?? '';
+    const pathIdx = prompt.indexOf('IMPORTANT PATH RULES');
+    const caveIdx = prompt.indexOf('Caveman Mode');
+    expect(pathIdx).toBeGreaterThanOrEqual(0);
+    expect(caveIdx).toBeGreaterThan(pathIdx);
+
+    await sessionManager.destroySession('test-cave-order');
   });
 });
 
