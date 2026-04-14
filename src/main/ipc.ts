@@ -564,7 +564,7 @@ export function registerHandlers() {
     if (!worktree) return { entries: [] };
 
     try {
-      const raw = await git(['status', '--porcelain=v1', '-z'], worktree.path);
+      const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], worktree.path);
       return parseGitStatusPorcelain(raw);
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
