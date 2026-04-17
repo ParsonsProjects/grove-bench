@@ -603,6 +603,8 @@ class AgentSessionManager {
         images: images,
       });
       logger.debug(`[sendMessage] session=${id} sent successfully`);
+      // Update last-active timestamp (fire-and-forget)
+      worktreeManager.updateLastActive(id).catch(() => {});
       return true;
     } catch (e) {
       console.error(`[sendMessage] session=${id} send FAILED:`, e);

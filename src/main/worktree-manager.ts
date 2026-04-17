@@ -16,6 +16,7 @@ interface ManifestEntry {
   repoPath: string;
   branch: string;
   createdAt: number;
+  lastActiveAt?: number;
   providerSessionId?: string;
   /** @deprecated Use providerSessionId — kept for migration from older manifests. */
   claudeSessionId?: string;
@@ -220,6 +221,18 @@ export class WorktreeManager {
     });
   }
 
+  /** Update the last-active timestamp for a worktree (persisted to manifest). */
+  async updateLastActive(worktreeId: string): Promise<void> {
+    const now = Date.now();
+    const info = this.worktrees.get(worktreeId);
+    if (info) info.lastActiveAt = now;
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].lastActiveAt = now;
+      }
+    });
+  }
+
   /** Retrieve the last provider session ID for a worktree. */
   async getProviderSessionId(worktreeId: string): Promise<string | undefined> {
     const manifest = await this.loadManifest();
@@ -244,6 +257,7 @@ export class WorktreeManager {
         branch: entry.branch,
         repoPath: entry.repoPath,
         createdAt: entry.createdAt,
+        lastActiveAt: entry.lastActiveAt,
         direct: entry.direct,
       };
     }
@@ -337,6 +351,7 @@ export class WorktreeManager {
             branch: entry.branch,
             repoPath,
             createdAt: entry.createdAt,
+            lastActiveAt: entry.lastActiveAt,
             direct: true,
           });
           continue;
@@ -359,6 +374,7 @@ export class WorktreeManager {
           branch,
           repoPath,
           createdAt: entry.createdAt,
+          lastActiveAt: entry.lastActiveAt,
         });
       }
 
@@ -475,6 +491,7 @@ export class WorktreeManager {
       branch: entry.branch,
       repoPath: entry.repoPath,
       createdAt: entry.createdAt,
+      lastActiveAt: entry.lastActiveAt,
       direct: entry.direct,
     };
 

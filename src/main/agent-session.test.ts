@@ -30,7 +30,7 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), close: vi.fn() },
 }));
 vi.mock('./worktree-manager.js', () => ({
-  worktreeManager: { saveProviderSessionId: vi.fn().mockResolvedValue(undefined) },
+  worktreeManager: { saveProviderSessionId: vi.fn().mockResolvedValue(undefined), updateLastActive: vi.fn().mockResolvedValue(undefined) },
 }));
 vi.mock('./port-killer.js', () => ({
   killProcessOnPort: vi.fn().mockResolvedValue(undefined),

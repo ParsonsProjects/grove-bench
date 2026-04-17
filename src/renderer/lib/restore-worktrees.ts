@@ -32,6 +32,8 @@ export async function restoreWorktrees() {
           status: isRunning ? 'running' : 'stopped',
           direct: wt.direct,
           displayName: runningSession?.displayName ?? null,
+          createdAt: wt.createdAt,
+          lastActiveAt: wt.lastActiveAt,
         }, false);
 
         if (isRunning) {
