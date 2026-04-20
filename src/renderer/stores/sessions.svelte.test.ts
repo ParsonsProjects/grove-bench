@@ -273,6 +273,53 @@ describe('SessionStore', () => {
     });
   });
 
+  describe('recentlyClosed', () => {
+    it('pushRecentlyClosed adds to stack', () => {
+      store.pushRecentlyClosed('s1');
+      expect(store.popRecentlyClosed()).toBe('s1');
+    });
+
+    it('popRecentlyClosed returns most recently closed first (LIFO)', () => {
+      store.pushRecentlyClosed('s1');
+      store.pushRecentlyClosed('s2');
+      store.pushRecentlyClosed('s3');
+      expect(store.popRecentlyClosed()).toBe('s3');
+      expect(store.popRecentlyClosed()).toBe('s2');
+      expect(store.popRecentlyClosed()).toBe('s1');
+    });
+
+    it('popRecentlyClosed returns null when empty', () => {
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+
+    it('does not duplicate consecutive entries for the same id', () => {
+      store.pushRecentlyClosed('s1');
+      store.pushRecentlyClosed('s1');
+      expect(store.popRecentlyClosed()).toBe('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+
+    it('caps stack size at 20', () => {
+      for (let i = 0; i < 25; i++) {
+        store.pushRecentlyClosed(`s${i}`);
+      }
+      // Should only keep 20, oldest dropped
+      let count = 0;
+      while (store.popRecentlyClosed() !== null) count++;
+      expect(count).toBe(20);
+    });
+
+    it('removes id from stack when session is re-opened via removeFromRecentlyClosed', () => {
+      store.pushRecentlyClosed('s1');
+      store.pushRecentlyClosed('s2');
+      store.pushRecentlyClosed('s3');
+      store.removeFromRecentlyClosed('s2');
+      expect(store.popRecentlyClosed()).toBe('s3');
+      expect(store.popRecentlyClosed()).toBe('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+  });
+
   describe('error handling', () => {
     it('setError sets the error', () => {
       store.setError('Something went wrong');

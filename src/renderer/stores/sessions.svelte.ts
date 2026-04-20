@@ -22,6 +22,9 @@ class SessionStore {
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
 
+  /** LIFO stack of recently-closed session IDs for Ctrl+Shift+T re-open. */
+  private recentlyClosedStack: string[] = [];
+
   get count() {
     return this.sessions.length;
   }
@@ -150,6 +153,24 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, displayName } : s
     );
+  }
+
+  pushRecentlyClosed(id: string) {
+    // Don't duplicate the top of stack
+    if (this.recentlyClosedStack[this.recentlyClosedStack.length - 1] === id) return;
+    this.recentlyClosedStack.push(id);
+    // Cap at 20 entries
+    if (this.recentlyClosedStack.length > 20) {
+      this.recentlyClosedStack = this.recentlyClosedStack.slice(-20);
+    }
+  }
+
+  popRecentlyClosed(): string | null {
+    return this.recentlyClosedStack.pop() ?? null;
+  }
+
+  removeFromRecentlyClosed(id: string) {
+    this.recentlyClosedStack = this.recentlyClosedStack.filter((s) => s !== id);
   }
 
   setError(msg: string | null) {
