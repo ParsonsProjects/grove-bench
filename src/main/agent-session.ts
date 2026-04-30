@@ -1015,6 +1015,17 @@ class AgentSessionManager {
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
+
+    // Clear the provider session ID so the next query starts with a fresh
+    // LLM context — otherwise the SDK resumes the old conversation which
+    // still contains the rewound messages.
+    session.providerSessionId = null;
+    worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+
+    // Restart the query so the SDK gets a fresh context.  stopQuery() tears
+    // down the current handle and immediately calls runQuery() which will
+    // see providerSessionId === null and skip the resume option.
+    await this.stopQuery(id);
   }
 
   /** Dry-run rewind to get the diff of what would change. */

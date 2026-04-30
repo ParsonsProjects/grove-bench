@@ -66,6 +66,19 @@ vi.mock('./git.js', () => ({
   getGitIdentity: vi.fn().mockResolvedValue({ name: 'Test User', email: 'test@example.com' }),
 }));
 
+vi.mock('./checkpoints.js', () => {
+  class MockCheckpointManager {
+    capture = vi.fn().mockResolvedValue(undefined);
+    restore = vi.fn().mockResolvedValue(undefined);
+    pruneAfter = vi.fn().mockResolvedValue(undefined);
+    resume = vi.fn().mockResolvedValue(undefined);
+    cleanup = vi.fn().mockResolvedValue(undefined);
+    list = vi.fn().mockResolvedValue([]);
+    diff = vi.fn().mockResolvedValue('');
+  }
+  return { CheckpointManager: MockCheckpointManager };
+});
+
 // Mock the adapter registry with a controllable mock adapter
 let mockAdapter: MockAdapter;
 
@@ -738,5 +751,159 @@ describe('AgentSessionManager.listSessions()', () => {
 
     await sessionManager.destroySession('list-1');
     await sessionManager.destroySession('list-2');
+  });
+});
+
+describe('AgentSessionManager.rewindFiles()', () => {
+  it('clears providerSessionId so the next query starts fresh', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // Simulate system_init to set providerSessionId
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind');
+    expect(session?.providerSessionId).toBe('mock-session-id');
+
+    // Send a user message to create event history with a UUID
+    await sessionManager.sendMessage('test-rewind', 'Hello');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
+    expect(userMsg).toBeDefined();
+    const uuid = (userMsg as any).uuid;
+
+    // Rewind to that message
+    await sessionManager.rewindFiles('test-rewind', uuid);
+    await new Promise((r) => setTimeout(r, 50));
+
+    // providerSessionId should be cleared
+    expect(session?.providerSessionId).toBeNull();
+
+    await sessionManager.destroySession('test-rewind');
+  });
+
+  it('restarts the query after rewind so SDK context is fresh', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-restart',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    expect(mockAdapter.startCallCount).toBe(1);
+
+    // Simulate system_init
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send a user message
+    await sessionManager.sendMessage('test-rewind-restart', 'Hello');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-restart');
+    const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
+    const uuid = (userMsg as any).uuid;
+
+    // Rewind
+    await sessionManager.rewindFiles('test-rewind-restart', uuid);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // adapter.start() should be called again (query restarted)
+    expect(mockAdapter.startCallCount).toBe(2);
+
+    // The new query should NOT have a resumeSessionId
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBeFalsy();
+
+    await sessionManager.destroySession('test-rewind-restart');
+  });
+
+  it('truncates event history up to (excluding) the rewind target', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-history',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Send two user messages
+    await sessionManager.sendMessage('test-rewind-history', 'First message');
+    await new Promise((r) => setTimeout(r, 50));
+    await sessionManager.sendMessage('test-rewind-history', 'Second message');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-history');
+    const userMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
+    expect(userMsgs).toHaveLength(2);
+
+    // Rewind to the second message — should remove it from history
+    const secondUuid = (userMsgs[1] as any).uuid;
+    await sessionManager.rewindFiles('test-rewind-history', secondUuid);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const remainingUserMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
+    expect(remainingUserMsgs).toHaveLength(1);
+    expect((remainingUserMsgs[0] as any).text).toBe('First message');
+
+    await sessionManager.destroySession('test-rewind-history');
+  });
+
+  it('emits rewind event to renderer', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-emit',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.sendMessage('test-rewind-emit', 'Hello');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-emit');
+    const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
+    const uuid = (userMsg as any).uuid;
+
+    await sessionManager.rewindFiles('test-rewind-emit', uuid);
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Check that rewind event was emitted
+    const agentEventCalls = win._send.mock.calls.filter(
+      (c: any[]) => c[0].includes('agent:event'),
+    );
+    const rewindEvent = agentEventCalls.find(
+      (c: any[]) => c[1]?.type === 'rewind',
+    );
+    expect(rewindEvent).toBeDefined();
+    expect(rewindEvent![1]).toMatchObject({ type: 'rewind', toMessageId: uuid });
+
+    await sessionManager.destroySession('test-rewind-emit');
   });
 });
