@@ -201,10 +201,23 @@
     }
   });
 
+  function reopenLastClosedTab() {
+    const id = store.popRecentlyClosed();
+    if (!id) return;
+    const session = store.sessions.find((s) => s.id === id);
+    if (!session || session.status !== 'stopped') return;
+    // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
+    store.activeSessionId = id;
+  }
+
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
       showSessionFinder = !showSessionFinder;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'T') {
+      e.preventDefault();
+      reopenLastClosedTab();
     }
   }
 
@@ -265,7 +278,9 @@
   }
 
   async function closeTab(id: string) {
-    const session = store.sessions.find((s) => s.id === id);
+    // Track for Ctrl+Shift+T re-open
+    store.pushRecentlyClosed(id);
+
     // Remove from tab bar immediately (prevents flicker)
     if (store.activeSessionId === id) {
       const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
