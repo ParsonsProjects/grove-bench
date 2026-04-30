@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Agent Defaults
   defaultModel: '',
   extendedThinking: false,
+  cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
 

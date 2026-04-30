@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
+import { getCavemanPrompt } from './caveman.js';
 import { CheckpointManager } from './checkpoints.js';
 
 interface PendingPermission {
@@ -187,7 +188,8 @@ class AgentSessionManager {
       '- Do NOT use `cd` to navigate to your current working directory before running commands — you are already there.',
       '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.',
     ].join('\n');
-    const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, userAppend].filter(Boolean).join('\n\n') || null;
+    const cavemanPrompt = getCavemanPrompt(appSettings.cavemanMode);
+    const effectiveAppendPrompt = [builtInPrompt, memoryPrompt, cavemanPrompt, userAppend].filter(Boolean).join('\n\n') || null;
 
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
