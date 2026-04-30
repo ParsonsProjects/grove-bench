@@ -17,6 +17,8 @@ export interface WorktreeInfo {
   branch: string;
   repoPath: string;
   createdAt: number;
+  /** Timestamp (ms) of the last user interaction (message sent). */
+  lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
 }

@@ -8,6 +8,10 @@ interface SessionEntry {
   direct?: boolean;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
+  /** Timestamp (ms) when the worktree was created. */
+  createdAt?: number;
+  /** Timestamp (ms) of the last user interaction. */
+  lastActiveAt?: number;
 }
 
 class SessionStore {
@@ -146,6 +150,13 @@ class SessionStore {
   updateBranch(id: string, branch: string) {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, branch } : s
+    );
+  }
+
+  updateLastActive(id: string) {
+    const now = Date.now();
+    this.sessions = this.sessions.map((s) =>
+      s.id === id ? { ...s, lastActiveAt: now } : s
     );
   }
 

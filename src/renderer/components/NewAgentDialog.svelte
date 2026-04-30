@@ -135,7 +135,7 @@
       // Direct sessions are ready immediately; worktree sessions go through
       // starting → installing → running, so start with the correct initial status.
       const initialStatus = mode === 'direct' ? 'running' : 'starting';
-      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: initialStatus, ...(mode === 'direct' ? { direct: true } : {}) });
+      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: initialStatus, createdAt: Date.now(), ...(mode === 'direct' ? { direct: true } : {}) });
       open = false;
       onclose();
     } catch (e: any) {

@@ -42,7 +42,7 @@
   async function newSessionForRepo(repoPath: string, branch: string) {
     try {
       const result = await window.groveBench.createSession({ repoPath, branchName: branch, direct: true });
-      store.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true });
+      store.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, createdAt: Date.now() });
       store.activeSessionId = result.id;
     } catch (e: any) {
       store.setError(e.message || String(e));

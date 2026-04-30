@@ -13,6 +13,7 @@
   import SettingsPanel from './SettingsPanel.svelte';
   import MemoryPanel from './MemoryPanel.svelte';
   import SessionContextMenu from './SessionContextMenu.svelte';
+  import { formatAge } from '../lib/format-age.js';
 
   let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
 
@@ -234,6 +235,10 @@
                 <span class="text-sm truncate">{sessionLabel(session)}</span>
               </div>
               <div class="flex items-center gap-1 shrink-0">
+                {#if session.lastActiveAt || session.createdAt}
+                  {@const ts = session.lastActiveAt ?? session.createdAt}
+                  <span class="text-[10px] text-muted-foreground/50 group-hover/session:hidden" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
+                {/if}
                 <span
                   role="button"
                   tabindex="-1"
@@ -283,16 +288,22 @@
                     {/if}
                     <span class="text-xs truncate">{session.displayName || `session ${i + 1}`}</span>
                   </div>
-                  <span
-                    role="button"
-                    tabindex="-1"
-                    onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
-                    onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
-                    class="w-4 h-4 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
-                      {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                  </span>
+                  <div class="flex items-center gap-1 shrink-0">
+                    {#if session.lastActiveAt || session.createdAt}
+                      {@const ts = session.lastActiveAt ?? session.createdAt}
+                      <span class="text-[10px] text-muted-foreground/50 group-hover/session:hidden" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
+                    {/if}
+                    <span
+                      role="button"
+                      tabindex="-1"
+                      onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
+                      onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
+                      class="w-4 h-4 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
+                        {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </span>
+                  </div>
                 </button>
               {/each}
             </div>

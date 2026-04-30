@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
@@ -150,6 +151,7 @@
     function send(prefix: string) {
       messageStore.addUserMessage(sessionId, displayText);
       window.groveBench.sendMessage(sessionId, prefix + text, images.length > 0 ? images : undefined);
+      store.updateLastActive(sessionId);
     }
 
     if (refs.length > 0) {
