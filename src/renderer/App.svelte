@@ -15,6 +15,7 @@
   import TitleBar from './components/TitleBar.svelte';
   import SessionContextMenu from './components/SessionContextMenu.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
+  import TycoonView from './components/tycoon/TycoonView.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -395,7 +396,22 @@
   <Sidebar />
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if !hasTabContent && store.sessions.length === 0}
+    {#if settingsStore.current.uiMode === 'tycoon'}
+      <TycoonView
+        {openSessions}
+        {pendingBySession}
+        {sessionCompletedWhileInactive}
+        {dragTabId}
+        {dropTargetId}
+        onCloseTab={closeTab}
+        onOpenContextMenu={openContextMenu}
+        onTabDragStart={handleTabDragStart}
+        onTabDragOver={handleTabDragOver}
+        onTabDrop={handleTabDrop}
+        onTabDragEnd={handleTabDragEnd}
+        onTabDragLeave={(id) => { if (dropTargetId === id) dropTargetId = null; }}
+      />
+    {:else if !hasTabContent && store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span

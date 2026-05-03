@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // General
   defaultBaseBranch: 'main',
   theme: 'system',
+  uiMode: 'standard',
   alwaysOnTop: false,
 
   // Appearance

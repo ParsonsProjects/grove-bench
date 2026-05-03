@@ -1,10 +1,17 @@
 <script lang="ts">
   import UpdateNotification from './UpdateNotification.svelte';
   import HelpPanel from './HelpPanel.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
 
   let showHelp = $state(false);
 
   let isMaximized = $state(false);
+
+  async function toggleUiMode() {
+    const next = settingsStore.draft.uiMode === 'tycoon' ? 'standard' : 'tycoon';
+    settingsStore.draft.uiMode = next;
+    await settingsStore.save();
+  }
 
   async function checkMaximized() {
     isMaximized = await window.groveBench.winIsMaximized();
@@ -153,6 +160,20 @@
     <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
+    <button
+      onclick={toggleUiMode}
+      class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+      title={settingsStore.current.uiMode === 'tycoon' ? 'Switch to Standard UI' : 'Switch to Game Dev Tycoon UI'}
+      aria-label="Toggle UI mode"
+    >
+      {#if settingsStore.current.uiMode === 'tycoon'}
+        <!-- monitor / standard icon -->
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      {:else}
+        <!-- briefcase / tycoon icon -->
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      {/if}
+    </button>
     <button
       onclick={() => showHelp = true}
       class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

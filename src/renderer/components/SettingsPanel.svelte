@@ -116,6 +116,11 @@
     { value: 'dark', label: 'Dark' },
     { value: 'light', label: 'Light' },
   ];
+
+  const uiModes: { value: 'standard' | 'tycoon'; label: string }[] = [
+    { value: 'standard', label: 'Standard' },
+    { value: 'tycoon', label: 'Game Dev Tycoon' },
+  ];
 </script>
 
 <Dialog.Root {open} onOpenChange={(o) => { if (!o) onclose(); }}>
@@ -378,6 +383,24 @@
                 {/each}
               </Select.Content>
             </Select.Root>
+          </div>
+
+          <Separator />
+
+          <!-- UI Mode -->
+          <div>
+            <Label class="mb-1 block">UI Mode</Label>
+            <Select.Root type="single" value={settingsStore.draft.uiMode} onValueChange={(v) => { if (v) settingsStore.draft.uiMode = v as 'standard' | 'tycoon'; }}>
+              <Select.Trigger class="w-48">
+                {uiModes.find(m => m.value === settingsStore.draft.uiMode)?.label ?? 'Standard'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each uiModes as mode (mode.value)}
+                  <Select.Item value={mode.value} label={mode.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground mt-1">Game Dev Tycoon mode shows each agent as a pixel-art developer at a desk.</p>
           </div>
 
           <Separator />

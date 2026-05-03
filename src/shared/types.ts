@@ -423,6 +423,8 @@ export interface GroveBenchSettings {
   // General
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
+  /** UI mode. 'standard' = classic tab bar; 'tycoon' = Game Dev Tycoon office floor. */
+  uiMode: 'standard' | 'tycoon';
   alwaysOnTop: boolean;
 
   // Appearance

@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoInstallDeps: false,
   defaultBaseBranch: 'main',
   theme: 'system',
+  uiMode: 'standard',
   alwaysOnTop: false,
   repoColors: {},
   diffViewMode: 'unified',
