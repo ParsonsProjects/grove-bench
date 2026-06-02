@@ -85,6 +85,10 @@ interface ManagedSession {
   permRequestCounter: number;
   /** Guard against concurrent runQuery calls (e.g. rapid double-stop). */
   isStartingQuery: boolean;
+  /** Set when a stop/restart arrives while a query is still starting up. The
+   *  in-flight runQuery honours this once startup settles, so the restart isn't
+   *  silently dropped by the isStartingQuery guard. */
+  restartRequested: boolean;
   /** Resolves when the current runQuery() finishes initializing queryHandle.
    *  sendMessage() awaits this so messages sent right after stop aren't lost. */
   queryReady: Promise<void> | null;
@@ -236,6 +240,7 @@ class AgentSessionManager {
       emit: null,
       permRequestCounter: 0,
       isStartingQuery: false,
+      restartRequested: false,
       queryReady: null,
       resolveQueryReady: null,
       checkpoints: new CheckpointManager(),
@@ -279,18 +284,41 @@ class AgentSessionManager {
     };
   }
 
+  /** Relaunch a query loop after a stop/restart that arrived during startup.
+   *  Clears the startup guard first so the new run isn't itself deferred. */
+  private relaunchQuery(session: ManagedSession): void {
+    session.isStartingQuery = false;
+    session.restartRequested = false;
+    // The stop that triggered this relaunch is now being consumed by starting a
+    // fresh run, so clear the flag — otherwise it would suppress process_exit on
+    // the next natural completion of the new run.
+    session.stoppedByUser = false;
+    const emit = session.emit ?? this.createEmitter(session);
+    this.runQuery(session, emit).catch((err) => {
+      console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
+      const errMsg = String(err?.message || err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      session.status = 'error';
+    });
+  }
+
   private async runQuery(
     session: ManagedSession,
     emit: (event: AgentEvent) => void,
   ) {
     const { id, abortController } = session;
 
-    // Guard against concurrent runQuery calls (e.g. rapid double-stop)
+    // Guard against concurrent runQuery calls (e.g. rapid double-stop).
+    // A stop that arrives mid-startup must not be dropped: flag a restart so the
+    // in-flight run relaunches once it finishes starting up (see below).
     if (session.isStartingQuery) {
-      logger.warn(`[runQuery] session=${id} already starting — skipping duplicate`);
+      logger.warn(`[runQuery] session=${id} already starting — deferring restart`);
+      session.restartRequested = true;
       return;
     }
     session.isStartingQuery = true;
+    session.restartRequested = false;
 
     const pendingPermissions = session.pendingPermissions;
 
@@ -381,6 +409,13 @@ class AgentSessionManager {
 
     } catch (startErr) {
       session.isStartingQuery = false;
+      // A stop arrived mid-startup (which can be what made start() fail). Honour
+      // the restart instead of surfacing the error or resolving queryReady with
+      // no handle — stopQuery has already prepared a fresh abortController/queryReady.
+      if (session.restartRequested) {
+        this.relaunchQuery(session);
+        return;
+      }
       // Reject any pending sendMessage() waiters
       if (session.resolveQueryReady) {
         session.resolveQueryReady();
@@ -388,6 +423,16 @@ class AgentSessionManager {
         session.queryReady = null;
       }
       throw startErr;
+    }
+
+    // If a stop arrived while start() was in flight, discard this now-stale
+    // handle and relaunch cleanly rather than installing a handle on an already
+    // aborted run (which would leave the session wedged and queryReady resolved
+    // against a dead query).
+    if (session.restartRequested) {
+      try { handle.close(); } catch { /* may already be closed */ }
+      this.relaunchQuery(session);
+      return;
     }
 
     session.queryHandle = handle;

@@ -125,12 +125,16 @@ class MockAdapter implements AgentAdapter {
   control: MockQueryControl | null = null;
   startCallCount = 0;
   lastConfig: AdapterConfig | null = null;
+  /** One-shot gate: when set, the next start() blocks on it (used to simulate
+   *  a stop arriving while a query is still starting up). */
+  startGate: Promise<void> | null = null;
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }]; }
   async checkPrerequisites() { return { available: true }; }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
     this.startCallCount++;
+    if (this.startGate) { const gate = this.startGate; this.startGate = null; await gate; }
     this.lastConfig = config;
 
     let resolveIter: (() => void) | null = null;
@@ -1103,5 +1107,44 @@ describe('AgentSessionManager model handling', () => {
     expect(worktreeManager.saveModel).toHaveBeenCalledWith('test-model-switch', 'mock-model');
 
     await sessionManager.destroySession('test-model-switch');
+  });
+});
+
+describe('AgentSessionManager stop/restart race', () => {
+  it('relaunches the query when a stop arrives during startup (no hang, no dead handle)', async () => {
+    let release!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { release = r; });
+    const win = makeMockWindow();
+
+    await sessionManager.createSession({
+      id: 'test-race',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    // The first start() has been entered and is blocked on the gate
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+    expect(sessionManager.getSession('test-race')?.queryHandle).toBeNull();
+
+    // Stop while startup is still in flight — must not be dropped by the guard
+    await sessionManager.stopQuery('test-race');
+
+    // Release the blocked first start(); the in-flight run should relaunch
+    release();
+
+    // A fresh start() happens and installs a usable handle
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await vi.waitFor(() =>
+      expect(sessionManager.getSession('test-race')?.queryHandle).not.toBeNull(),
+    );
+
+    // queryReady was resolved by the relaunch (not left hanging), so sendMessage works
+    const ok = await sessionManager.sendMessage('test-race', 'hello');
+    expect(ok).toBe(true);
+
+    await sessionManager.destroySession('test-race');
   });
 });
