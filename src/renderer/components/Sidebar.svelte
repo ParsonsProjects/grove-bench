@@ -3,6 +3,8 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { checkpointStore } from '../stores/checkpoints.svelte.js';
+  import { terminalStore } from '../stores/terminal.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import AddRepoButton from './AddRepoButton.svelte';
@@ -79,6 +81,11 @@
       trackEvent('session_destroyed');
       store.removeSession(id);
       gitStatusStore.clear(id);
+      // Tear down all per-session renderer state so nothing leaks for the
+      // lifetime of the app (messages + IPC listener, checkpoints, terminal).
+      messageStore.destroySession(id);
+      checkpointStore.clear(id);
+      terminalStore.destroySession(id);
     } catch (e: any) {
       store.setError(e.message || String(e));
     } finally {

@@ -62,6 +62,13 @@ class TerminalStore {
     this.exitHandlers.delete(sessionId);
   }
 
+  /** Tear down all state for a permanently destroyed session. */
+  destroySession(sessionId: string) {
+    this.unsubscribe(sessionId);
+    const { [sessionId]: _drop, ...rest } = this.aliveBySession;
+    this.aliveBySession = rest;
+  }
+
   /** Spawn a PTY for the session. */
   async spawn(sessionId: string): Promise<boolean> {
     const ok = await window.groveBench.ptySpawn(sessionId);

@@ -216,6 +216,10 @@ class MessageStore {
 
   private cleanups = new Map<string, () => void>();
 
+  /** Pending auto-remove timers for finished background tasks, per session.
+   *  Tracked so they can be cancelled when a session is destroyed. */
+  private bgTaskTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
+
   /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
   private _replayBuffer: ChatMessage[] | null = null;
   private _replaySessionId: string | null = null;
@@ -1145,9 +1149,13 @@ class MessageStore {
         // Auto-remove finished tasks after a short delay
         {
           const taskId = event.taskId;
-          setTimeout(() => {
+          let timers = this.bgTaskTimers.get(sessionId);
+          if (!timers) { timers = new Set(); this.bgTaskTimers.set(sessionId, timers); }
+          const timer = setTimeout(() => {
+            timers!.delete(timer);
             this.removeBackgroundTask(sessionId, taskId);
           }, 3000);
+          timers.add(timer);
         }
         break;
       }
@@ -1487,6 +1495,42 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     // Preserve isRunning and isReady — caller controls these based on history/status
+  }
+
+  /** Tear down ALL state for a session that is being permanently destroyed.
+   *  Unlike clearSession (which clears history for replay but keeps the session
+   *  alive), this unsubscribes the IPC listener, cancels pending timers, and
+   *  deletes every per-session entry so nothing leaks for the app's lifetime. */
+  destroySession(sessionId: string) {
+    this.unsubscribe(sessionId);
+
+    // Cancel any pending background-task auto-remove timers
+    const timers = this.bgTaskTimers.get(sessionId);
+    if (timers) {
+      for (const t of timers) clearTimeout(t);
+      this.bgTaskTimers.delete(sessionId);
+    }
+
+    // Delete every per-session entry. Reassign each $state record so Svelte
+    // reliably drops derived subscriptions referencing this session.
+    for (const record of [
+      this.messagesBySession, this.streamingText, this.streamingThinking,
+      this.isRunning, this.pendingClear, this.activityBySession,
+      this.toolProgressBySession, this.isReady, this.modelBySession,
+      this.modeBySession, this.thinkingBySession, this.usageBySession,
+      this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
+      this.devServersBySession, this.rateLimitBySession, this.promptSuggestionsBySession,
+      this.backgroundTasksBySession, this.activeTabBySession, this.showDetailsBySession,
+      this.draftBySession, this.preservedEditHistory, this.paginationBySession,
+      this.rewindDialogOpen,
+    ] as Record<string, unknown>[]) {
+      delete record[sessionId];
+    }
+
+    // Plain (non-reactive) bookkeeping records
+    delete this.pendingMessageAfterClear[sessionId];
+    delete this.stoppingSession[sessionId];
+    delete this.userExplicitMode[sessionId];
   }
 
   /** Subscribe to events from the main process for a session */

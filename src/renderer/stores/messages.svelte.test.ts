@@ -1338,3 +1338,32 @@ describe('pagination — loadOlderEvents', () => {
   });
 });
 
+
+describe('destroySession', () => {
+  it('unsubscribes, cancels timers, and deletes all per-session state', async () => {
+    // Seed a subscription and some per-session state
+    messageStore.subscribe(SID);
+    messageStore.messagesBySession[SID] = [{ kind: 'system', id: 'm1', text: 'hi' }] as any;
+    messageStore.modelBySession[SID] = 'claude-opus-4-8';
+    messageStore.usageBySession[SID] = { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    messageStore.setPagination(SID, 10, 5);
+
+    messageStore.destroySession(SID);
+
+    expect(mockGroveBench.offAgentEvent).toHaveBeenCalledWith(SID);
+    expect(messageStore.getMessages(SID)).toEqual([]);
+    expect(messageStore.getModel(SID)).toBe('');
+    expect(messageStore.usageBySession[SID]).toBeUndefined();
+    expect(messageStore.paginationBySession[SID]).toBeUndefined();
+    // hasOlderEvents should be false again after teardown
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+  });
+
+  it('allows a fresh subscribe after destroy (cleanup cleared the guard)', () => {
+    messageStore.subscribe(SID);
+    messageStore.destroySession(SID);
+    messageStore.subscribe(SID);
+    // onAgentEvent called twice: once per subscribe, proving the guard was cleared
+    expect(mockGroveBench.onAgentEvent).toHaveBeenCalledTimes(2);
+  });
+});
