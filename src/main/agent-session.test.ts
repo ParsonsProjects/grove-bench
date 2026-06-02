@@ -30,7 +30,12 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), close: vi.fn() },
 }));
 vi.mock('./worktree-manager.js', () => ({
-  worktreeManager: { saveProviderSessionId: vi.fn().mockResolvedValue(undefined), updateLastActive: vi.fn().mockResolvedValue(undefined) },
+  worktreeManager: {
+    saveProviderSessionId: vi.fn().mockResolvedValue(undefined),
+    updateLastActive: vi.fn().mockResolvedValue(undefined),
+    saveModel: vi.fn().mockResolvedValue(undefined),
+    getModel: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 vi.mock('./port-killer.js', () => ({
   killProcessOnPort: vi.fn().mockResolvedValue(undefined),
@@ -980,5 +985,123 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(rewindEvent![1]).toMatchObject({ type: 'rewind', toMessageId: uuid });
 
     await sessionManager.destroySession('test-rewind-emit');
+  });
+});
+
+describe('AgentSessionManager model handling', () => {
+  it('starts a new session with the adapter default model', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-model-default',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    // No defaultModel configured → falls back to getModels()[0].id
+    expect(mockAdapter.lastConfig?.model).toBe('mock-model');
+
+    await sessionManager.destroySession('test-model-default');
+  });
+
+  it('honours an explicit model passed to createSession (resume path)', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-model-explicit',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      model: 'restored-model',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.model).toBe('restored-model');
+
+    await sessionManager.destroySession('test-model-explicit');
+  });
+
+  it('normalises a dated system_init model back to the picker id and persists it', async () => {
+    const { worktreeManager } = await import('./worktree-manager.js') as any;
+    const win = makeMockWindow();
+    // Start from a different model so the normalised system_init value is a change
+    await sessionManager.createSession({
+      id: 'test-model-normalize',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      model: 'restored-model',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    // SDK reports a dated alias of the known short id
+    mockAdapter.control!.emitEvent({
+      type: 'system_init',
+      sessionId: 'mock-session-id',
+      model: 'mock-model-20260101',
+      tools: [],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-model-normalize');
+    expect(session?.model).toBe('mock-model'); // normalised, not the dated string
+    expect(worktreeManager.saveModel).toHaveBeenCalledWith('test-model-normalize', 'mock-model');
+
+    await sessionManager.destroySession('test-model-normalize');
+  });
+
+  it('does not clobber session.model when system_init reports an unknown model', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-model-unknown',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      model: 'restored-model',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({
+      type: 'system_init',
+      sessionId: 'mock-session-id',
+      model: 'something-unrecognised',
+      tools: [],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-model-unknown');
+    expect(session?.model).toBe('restored-model'); // unchanged
+
+    await sessionManager.destroySession('test-model-unknown');
+  });
+
+  it('persists the model on a live setModel switch', async () => {
+    const { worktreeManager } = await import('./worktree-manager.js') as any;
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-model-switch',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.setModel('test-model-switch', 'mock-model');
+
+    const session = sessionManager.getSession('test-model-switch');
+    expect(session?.model).toBe('mock-model');
+    expect(worktreeManager.saveModel).toHaveBeenCalledWith('test-model-switch', 'mock-model');
+
+    await sessionManager.destroySession('test-model-switch');
   });
 });

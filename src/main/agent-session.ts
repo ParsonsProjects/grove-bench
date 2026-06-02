@@ -40,6 +40,11 @@ interface ManagedSession {
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
   providerSessionId: string | null;
+  /** Current model for this session — the source of truth across stop/restart,
+   *  in-app resume, and app-restart resume (persisted to the worktree manifest).
+   *  Initialised from the restored/default model, updated on model switches and
+   *  from the provider's system_init (normalised to a known picker id). */
+  model: string | null;
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
   eventHistory: AgentEvent[];
@@ -163,6 +168,8 @@ class AgentSessionManager {
     sandbox?: Record<string, unknown> | null;
     extraEnv?: Record<string, string> | null;
     adapterType?: string;
+    /** Model to run this session with. Falls back to the default when omitted. */
+    model?: string | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -208,6 +215,7 @@ class AgentSessionManager {
       pendingPermissions: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
+      model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
       window: win,
       eventHistory: this.loadEventHistory(id),
       detectedPorts: new Set(),
@@ -309,6 +317,10 @@ class AgentSessionManager {
     try {
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      // session.model is the source of truth — it survives stop/restart and
+      // resume cycles, so the user's selected model isn't lost when the query
+      // is torn down and recreated.
+      model: session.model,
       permissionMode: session.permissionMode,
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
@@ -404,6 +416,18 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          // Record the model the provider resolved, normalised back to a known
+          // picker id. The SDK reports a dated alias (e.g. "claude-opus-4-8-
+          // 20260101") which must not leak into session.model, or it would
+          // break picker highlighting and round-trip the wrong string on
+          // restart. Only overwrite when we recognise it.
+          const normalized = this.normalizeModelId(event.model, session.adapter);
+          if (normalized && normalized !== session.model) {
+            session.model = normalized;
+            worktreeManager.saveModel(session.id, normalized).catch((e) => {
+              logger.warn(`Failed to persist model for ${session.id}:`, e);
+            });
+          }
 
           // Persist provider session ID so we can resume after app restart
           if (session.providerSessionId) {
@@ -688,11 +712,41 @@ class AgentSessionManager {
     }
   }
 
+  /**
+   * Normalise a provider-reported model string back to a known picker id.
+   * The SDK reports resolved/dated aliases (e.g. "claude-opus-4-8-20260101");
+   * we map those back to the short id the picker and settings use. Returns
+   * null when unrecognised so callers can keep the existing value.
+   */
+  private normalizeModelId(raw: string | undefined, adapter: AgentAdapter): string | null {
+    if (!raw) return null;
+    const models = adapter.getModels();
+    const exact = models.find((m) => m.id === raw);
+    if (exact) return exact.id;
+    const prefixed = models.find((m) => raw.startsWith(m.id));
+    return prefixed?.id ?? null;
+  }
+
   async setModel(id: string, model?: string): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setModel) return;
+    if (!session || !model) return;
+    // No live query to update yet (idle/not started) — just record the choice
+    // so the next runQuery picks it up.
+    if (!session.queryHandle?.setModel) {
+      session.model = model;
+      worktreeManager.saveModel(id, model).catch((e) => {
+        logger.warn(`Failed to persist model for ${id}:`, e);
+      });
+      return;
+    }
     try {
-      await session.queryHandle.setModel(model as string);
+      await session.queryHandle.setModel(model);
+      // Persist only after the live switch succeeds so it survives
+      // stop/restart and resume cycles without diverging from the SDK.
+      session.model = model;
+      worktreeManager.saveModel(id, model).catch((e) => {
+        logger.warn(`Failed to persist model for ${id}:`, e);
+      });
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;

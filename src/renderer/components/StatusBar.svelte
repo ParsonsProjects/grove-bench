@@ -12,10 +12,14 @@
 
   async function switchModel(modelId: string) {
     modelPickerOpen = false;
+    // Reflect the choice immediately — don't wait for the live SDK switch,
+    // which is slow (or a no-op) while the session is idle between turns.
+    const prev = messageStore.getModel(sessionId);
+    messageStore.setModelOverride(sessionId, modelId);
     try {
       await window.groveBench.setModel(sessionId, modelId);
-      messageStore.setModelOverride(sessionId, modelId);
     } catch (e: any) {
+      messageStore.setModelOverride(sessionId, prev);
       console.error('Failed to switch model:', e);
     }
   }

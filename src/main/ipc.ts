@@ -228,7 +228,9 @@ export function registerHandlers() {
 
     // Look up saved provider session ID for conversation resumption
     const providerSessionId = await worktreeManager.getProviderSessionId(id);
-    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}`);
+    // Restore the model the session last ran with (falls back to default if unset)
+    const savedModel = await worktreeManager.getModel(id);
+    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
 
     const session = await sessionManager.createSession({
       id: worktree.id,
@@ -237,6 +239,7 @@ export function registerHandlers() {
       repoPath,
       window: win,
       resumeSessionId: providerSessionId,
+      model: savedModel,
     });
 
     logger.info(`Session resumed: id=${session.id}`);

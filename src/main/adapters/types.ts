@@ -84,6 +84,8 @@ export interface MemoryOperations {
 export interface AdapterConfig {
   cwd: string;
   permissionMode: PermissionMode;
+  /** Model to start the session with. When unset, the provider's own default is used. */
+  model?: string | null;
   appendSystemPrompt?: string | null;
   customSystemPrompt?: string | null;
   allowedTools?: Set<string> | null;

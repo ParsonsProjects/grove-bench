@@ -20,6 +20,8 @@ interface ManifestEntry {
   providerSessionId?: string;
   /** @deprecated Use providerSessionId — kept for migration from older manifests. */
   claudeSessionId?: string;
+  /** Last model the session ran with, so it can be restored after app restart. */
+  model?: string;
   direct?: boolean;
 }
 
@@ -239,6 +241,21 @@ export class WorktreeManager {
     const entry = manifest[worktreeId];
     // Fall back to old claudeSessionId field for migration
     return entry?.providerSessionId ?? entry?.claudeSessionId;
+  }
+
+  /** Persist the model a session is running with so it survives app restart. */
+  async saveModel(worktreeId: string, model: string): Promise<void> {
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].model = model;
+      }
+    });
+  }
+
+  /** Retrieve the last model recorded for a worktree. */
+  async getModel(worktreeId: string): Promise<string | undefined> {
+    const manifest = await this.loadManifest();
+    return manifest[worktreeId]?.model;
   }
 
 

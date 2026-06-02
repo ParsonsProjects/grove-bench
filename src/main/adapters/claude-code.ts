@@ -409,6 +409,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // TODO: Hardcoded model list — update when new models are released, or fetch dynamically from the SDK if it exposes a model list.
   getModels(): ModelInfo[] {
     return [
+      { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude' },
       { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude' },
       { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude' },
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude' },
@@ -582,6 +583,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         settingSources: ['user', 'project', 'local'],
         systemPrompt,
         permissionMode: config.permissionMode,
+        ...(config.model ? { model: config.model } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
