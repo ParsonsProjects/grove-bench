@@ -1,6 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { transformMessage } from './claude-code.js';
+import path from 'node:path';
+import { transformMessage, isPathInside } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
+
+// ─── isPathInside (sandbox allowWrite containment) ───
+
+describe('isPathInside()', () => {
+  const root = path.resolve('/repo/src');
+
+  it('accepts a nested child path', () => {
+    expect(isPathInside(root, path.join(root, 'a', 'b.ts'))).toBe(true);
+  });
+
+  it('accepts the directory itself', () => {
+    expect(isPathInside(root, root)).toBe(true);
+  });
+
+  it('rejects a sibling that shares a name prefix (the startsWith bug)', () => {
+    expect(isPathInside(root, path.resolve('/repo/src-secret/x.ts'))).toBe(false);
+  });
+
+  it('rejects a sibling directory', () => {
+    expect(isPathInside(root, path.resolve('/repo/other.ts'))).toBe(false);
+  });
+
+  it('rejects parent-directory traversal', () => {
+    expect(isPathInside(root, path.join(root, '..', '..', 'etc', 'passwd'))).toBe(false);
+  });
+});
 
 // ─── transformMessage ───
 

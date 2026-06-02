@@ -63,6 +63,26 @@ function categorizeToolName(toolName: string): ToolCategory {
   }
 }
 
+/** File-writing tools mapped to the input field that holds the target path. */
+const WRITE_TOOL_PATH_FIELD: Record<string, string> = {
+  Edit: 'file_path',
+  Write: 'file_path',
+  MultiEdit: 'file_path',
+  NotebookEdit: 'notebook_path',
+};
+
+/**
+ * True if `child` resolves to a location inside (or equal to) `parent`.
+ * Uses path.relative rather than string-prefix matching, so "/repo/src-secret"
+ * is correctly treated as OUTSIDE "/repo/src". path.relative on win32 compares
+ * case-insensitively and returns an absolute path across drives, both of which
+ * this handles.
+ */
+export function isPathInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
 // ─── SDKMessage → AgentEvent transform ───
 
 /**
@@ -529,14 +549,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return { behavior: 'allow' as const, updatedInput: input };
       }
 
-      // Sandbox: validate Edit/Write paths against allowWrite
-      if (config.sandbox && (toolName === 'Edit' || toolName === 'Write')) {
-        const filePath = (input as any).file_path;
+      // Sandbox: validate file-writing tool paths against allowWrite
+      if (config.sandbox) {
+        const pathField = WRITE_TOOL_PATH_FIELD[toolName];
+        const filePath = pathField ? (input as any)[pathField] : undefined;
         if (filePath && typeof filePath === 'string') {
           const allowWrite = (config.sandbox as any)?.filesystem?.allowWrite as string[] | undefined;
           if (allowWrite && allowWrite.length > 0) {
             const resolved = path.resolve(config.cwd, filePath);
-            const allowed = allowWrite.some((dir: string) => resolved.startsWith(path.resolve(config.cwd, dir)));
+            const allowed = allowWrite.some((dir: string) => isPathInside(path.resolve(config.cwd, dir), resolved));
             if (!allowed) {
               return { behavior: 'deny' as const, message: `Path "${filePath}" is outside the allowed write directories` };
             }
