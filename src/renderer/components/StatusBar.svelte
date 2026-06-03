@@ -3,6 +3,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { devServerStore } from '../stores/devServer.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+  import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
@@ -110,7 +111,7 @@
   let devServerStarting = $state(false);
   let devServerError = $state<string | null>(null);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
-  let rateLimit = $derived(messageStore.getRateLimit(sessionId));
+  let rateLimit = $derived(rateLimitStore.get(sessionId));
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
 

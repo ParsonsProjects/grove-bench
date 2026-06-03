@@ -5,6 +5,7 @@ import { messageStore } from './messages.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { devServerStore } from './devServer.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
+import { rateLimitStore } from './rateLimit.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'test-session';
@@ -24,7 +25,7 @@ beforeEach(() => {
   messageStore.usageBySession = {};
   messageStore.pendingClear = {};
   devServerStore.serversBySession = {};
-  messageStore.rateLimitBySession = {};
+  rateLimitStore.bySession = {};
   messageStore.promptSuggestionsBySession = {};
   backgroundTaskStore.tasksBySession = {};
   messageStore.contextWindowBySession = {};
@@ -388,7 +389,7 @@ describe('ingestEvent — error and status', () => {
   });
 });
 
-describe('ingestEvent — rate_limit', () => {
+describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
   it('stores rate limit state', () => {
     messageStore.ingestEvent(SID, {
       type: 'rate_limit',
@@ -396,7 +397,7 @@ describe('ingestEvent — rate_limit', () => {
       utilization: 0.85,
     } as AgentEvent);
 
-    const rl = messageStore.getRateLimit(SID);
+    const rl = rateLimitStore.get(SID);
     expect(rl!.status).toBe('allowed_warning');
     expect(rl!.utilization).toBe(0.85);
   });

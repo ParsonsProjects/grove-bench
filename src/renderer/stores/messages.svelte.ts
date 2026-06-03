@@ -3,6 +3,7 @@ import { gitStatusStore } from './gitStatus.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { devServerStore } from './devServer.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
+import { rateLimitStore } from './rateLimit.svelte.js';
 
 // ─── Chat message types ───
 
@@ -180,8 +181,6 @@ class MessageStore {
   turnsBySession = $state<Record<string, number>>({});
 
 
-  /** Rate limit state per session */
-  rateLimitBySession = $state<Record<string, { status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }>>({});
 
   /** Prompt suggestions per session (from SDK) */
   promptSuggestionsBySession = $state<Record<string, string[]>>({});
@@ -408,10 +407,6 @@ class MessageStore {
 
   setDraft(sessionId: string, text: string) {
     this.draftBySession[sessionId] = text;
-  }
-
-  getRateLimit(sessionId: string) {
-    return this.rateLimitBySession[sessionId] ?? null;
   }
 
   getPromptSuggestions(sessionId: string): string[] {
@@ -852,12 +847,12 @@ class MessageStore {
         break;
 
       case 'rate_limit':
-        this.rateLimitBySession[sessionId] = {
+        rateLimitStore.set(sessionId, {
           status: event.status,
           resetsAt: event.resetsAt,
           utilization: event.utilization,
           rateLimitType: event.rateLimitType,
-        };
+        });
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {
             kind: 'system',
@@ -1479,7 +1474,7 @@ class MessageStore {
       this.toolProgressBySession, this.isReady, this.modelBySession,
       this.modeBySession, this.thinkingBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
-      this.rateLimitBySession, this.promptSuggestionsBySession,
+      this.promptSuggestionsBySession,
       this.activeTabBySession, this.showDetailsBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen,
@@ -1490,6 +1485,7 @@ class MessageStore {
     // Extracted stores own their own per-session teardown.
     devServerStore.destroy(sessionId);
     backgroundTaskStore.destroy(sessionId);
+    rateLimitStore.destroy(sessionId);
 
     // Plain (non-reactive) bookkeeping records
     delete this.pendingMessageAfterClear[sessionId];
