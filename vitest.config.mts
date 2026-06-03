@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -31,6 +32,10 @@ export default defineConfig({
       },
       {
         extends: true,
+        // svelteTesting() adds the 'browser' resolve condition so .svelte
+        // components mount against the client build (not the SSR build) and
+        // registers automatic DOM cleanup between tests.
+        plugins: [svelteTesting()],
         test: {
           name: 'renderer',
           include: ['src/renderer/**/*.test.ts'],

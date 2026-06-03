@@ -37,9 +37,12 @@ const mockGroveBench = {
   resumeSession: vi.fn(() => Promise.resolve({ id: '' })),
   listRepos: vi.fn(() => Promise.resolve([] as string[])),
 };
-Object.defineProperty(globalThis, 'window', {
-  value: { groveBench: mockGroveBench },
-  writable: true,
-});
+// Attach the IPC bridge onto the existing (jsdom) window rather than replacing
+// it — replacing window wipes addEventListener/dispatchEvent and breaks any
+// component test that mounts a component using window event listeners.
+if (typeof globalThis.window === 'undefined') {
+  Object.defineProperty(globalThis, 'window', { value: {}, writable: true, configurable: true });
+}
+(globalThis.window as unknown as { groveBench: typeof mockGroveBench }).groveBench = mockGroveBench;
 
 export { localStorageMock, mockGroveBench };
