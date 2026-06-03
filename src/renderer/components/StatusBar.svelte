@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { devServerStore } from '../stores/devServer.svelte.js';
+  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
@@ -110,7 +111,7 @@
   let devServerError = $state<string | null>(null);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let rateLimit = $derived(messageStore.getRateLimit(sessionId));
-  let backgroundTasks = $derived(messageStore.getBackgroundTasks(sessionId));
+  let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
 
   function formatResetTime(epoch: number): string {
@@ -351,7 +352,7 @@
                   <span class="text-muted-foreground/60 shrink-0 capitalize">{task.status}</span>
                   {#if task.status !== 'running'}
                     <button
-                      onclick={() => messageStore.removeBackgroundTask(sessionId, task.taskId)}
+                      onclick={() => backgroundTaskStore.remove(sessionId, task.taskId)}
                       class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
                       title="Dismiss"
                     >

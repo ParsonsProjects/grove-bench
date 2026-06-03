@@ -2,6 +2,7 @@ import type { AgentEvent, PermissionDecision, PermissionMode } from '../../share
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { devServerStore } from './devServer.svelte.js';
+import { backgroundTaskStore } from './backgroundTask.svelte.js';
 
 // ─── Chat message types ───
 
@@ -185,8 +186,6 @@ class MessageStore {
   /** Prompt suggestions per session (from SDK) */
   promptSuggestionsBySession = $state<Record<string, string[]>>({});
 
-  /** Background task tracking per session */
-  backgroundTasksBySession = $state<Record<string, Record<string, { taskId: string; description: string; taskType?: string; summary?: string; lastToolName?: string; status: 'running' | 'completed' | 'failed' | 'stopped'; totalTokens: number; toolUses: number; durationMs: number }>>>({});
 
 
   /** Active tab per session (survives component remount) */
@@ -214,10 +213,6 @@ class MessageStore {
   private userExplicitMode: Record<string, boolean> = {};
 
   private cleanups = new Map<string, () => void>();
-
-  /** Pending auto-remove timers for finished background tasks, per session.
-   *  Tracked so they can be cancelled when a session is destroyed. */
-  private bgTaskTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
 
   /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
   private _replayBuffer: ChatMessage[] | null = null;
@@ -425,18 +420,6 @@ class MessageStore {
 
   clearPromptSuggestions(sessionId: string) {
     this.promptSuggestionsBySession[sessionId] = [];
-  }
-
-  getBackgroundTasks(sessionId: string) {
-    return Object.values(this.backgroundTasksBySession[sessionId] ?? {});
-  }
-
-  /** Remove a completed/failed/stopped background task from the list */
-  removeBackgroundTask(sessionId: string, taskId: string) {
-    const tasks = this.backgroundTasksBySession[sessionId];
-    if (!tasks?.[taskId]) return;
-    const { [taskId]: _, ...rest } = tasks;
-    this.backgroundTasksBySession[sessionId] = rest;
   }
 
   /** Get all currently pending tool calls with their progress info. */
@@ -864,7 +847,7 @@ class MessageStore {
           this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
-        this.resolveStaleBackgroundTasks(sessionId);
+        backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
         gitStatusStore.scheduleRefresh(sessionId, 100);
         break;
 
@@ -891,41 +874,18 @@ class MessageStore {
         }
         break;
 
-      case 'task_started': {
-        const tasks = this.backgroundTasksBySession[sessionId] ?? {};
-        tasks[event.taskId] = {
-          taskId: event.taskId,
-          description: event.description,
-          taskType: event.taskType,
-          status: 'running',
-          totalTokens: 0,
-          toolUses: 0,
-          durationMs: 0,
-        };
-        this.backgroundTasksBySession[sessionId] = { ...tasks };
+      case 'task_started':
+        backgroundTaskStore.start(sessionId, event);
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),
           text: `Background task started: ${event.description}${event.taskType ? ` (${event.taskType})` : ''}`,
         });
         break;
-      }
 
-      case 'task_progress': {
-        const tasks2 = this.backgroundTasksBySession[sessionId] ?? {};
-        const existing = tasks2[event.taskId];
-        tasks2[event.taskId] = {
-          ...(existing ?? { taskId: event.taskId, status: 'running' }),
-          description: event.description,
-          summary: event.summary,
-          lastToolName: event.lastToolName,
-          totalTokens: event.totalTokens,
-          toolUses: event.toolUses,
-          durationMs: event.durationMs,
-        };
-        this.backgroundTasksBySession[sessionId] = { ...tasks2 };
+      case 'task_progress':
+        backgroundTaskStore.progress(sessionId, event);
         break;
-      }
 
       case 'task_notification':
         this.onTaskNotification(sessionId, event);
@@ -1182,7 +1142,7 @@ class MessageStore {
       isError: event.isError,
       errors: event.errors,
     });
-    this.resolveStaleBackgroundTasks(sessionId);
+    backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
     gitStatusStore.scheduleRefresh(sessionId, 100);
   }
 
@@ -1220,34 +1180,12 @@ class MessageStore {
   }
 
   private onTaskNotification(sessionId: string, event: Extract<AgentEvent, { type: 'task_notification' }>) {
-    const tasks3 = this.backgroundTasksBySession[sessionId] ?? {};
-    const prev = tasks3[event.taskId];
-    tasks3[event.taskId] = {
-      ...(prev ?? { taskId: event.taskId, description: '' }),
-      status: event.taskStatus,
-      summary: event.summary,
-      totalTokens: event.totalTokens ?? prev?.totalTokens ?? 0,
-      toolUses: event.toolUses ?? prev?.toolUses ?? 0,
-      durationMs: event.durationMs ?? prev?.durationMs ?? 0,
-    };
-    this.backgroundTasksBySession[sessionId] = { ...tasks3 };
-    const label = event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped';
+    const { label, text } = backgroundTaskStore.notify(sessionId, event);
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
-      text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
+      text: `Background task ${label}: ${text}`,
     });
-    // Auto-remove finished tasks after a short delay
-    {
-      const taskId = event.taskId;
-      let timers = this.bgTaskTimers.get(sessionId);
-      if (!timers) { timers = new Set(); this.bgTaskTimers.set(sessionId, timers); }
-      const timer = setTimeout(() => {
-        timers!.delete(timer);
-        this.removeBackgroundTask(sessionId, taskId);
-      }, 3000);
-      timers.add(timer);
-    }
   }
 
   private onModeSync(sessionId: string, event: Extract<AgentEvent, { type: 'mode_sync' }>) {
@@ -1520,7 +1458,7 @@ class MessageStore {
     this.streamingThinking[sessionId] = '';
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
-    delete this.backgroundTasksBySession[sessionId];
+    backgroundTaskStore.clear(sessionId);
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     // Preserve isRunning and isReady — caller controls these based on history/status
@@ -1533,13 +1471,6 @@ class MessageStore {
   destroySession(sessionId: string) {
     this.unsubscribe(sessionId);
 
-    // Cancel any pending background-task auto-remove timers
-    const timers = this.bgTaskTimers.get(sessionId);
-    if (timers) {
-      for (const t of timers) clearTimeout(t);
-      this.bgTaskTimers.delete(sessionId);
-    }
-
     // Delete every per-session entry. Reassign each $state record so Svelte
     // reliably drops derived subscriptions referencing this session.
     for (const record of [
@@ -1549,7 +1480,7 @@ class MessageStore {
       this.modeBySession, this.thinkingBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.rateLimitBySession, this.promptSuggestionsBySession,
-      this.backgroundTasksBySession, this.activeTabBySession, this.showDetailsBySession,
+      this.activeTabBySession, this.showDetailsBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen,
     ] as Record<string, unknown>[]) {
@@ -1558,6 +1489,7 @@ class MessageStore {
 
     // Extracted stores own their own per-session teardown.
     devServerStore.destroy(sessionId);
+    backgroundTaskStore.destroy(sessionId);
 
     // Plain (non-reactive) bookkeeping records
     delete this.pendingMessageAfterClear[sessionId];
@@ -1610,26 +1542,6 @@ class MessageStore {
     }
   }
 
-  /** Remove background tasks that are still marked 'running' after the session
-   *  has gone idle. This handles cases where the agent exited without sending
-   *  a task_notification for in-flight background tasks. */
-  resolveStaleBackgroundTasks(sessionId: string) {
-    if (this.getIsRunning(sessionId)) return;
-    const tasks = this.backgroundTasksBySession[sessionId];
-    if (!tasks) return;
-    const remaining: Record<string, (typeof tasks)[string]> = {};
-    let changed = false;
-    for (const [id, task] of Object.entries(tasks)) {
-      if (task.status === 'running') {
-        changed = true; // drop stale running tasks
-      } else {
-        remaining[id] = task;
-      }
-    }
-    if (changed) {
-      this.backgroundTasksBySession[sessionId] = Object.keys(remaining).length > 0 ? remaining : {};
-    }
-  }
 
   /** After replaying event history, resolve any permission/question messages
    *  that were not resolved by a permission_resolved or tool_result event.

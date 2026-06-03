@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
@@ -117,7 +118,7 @@
       // After replay, resolve any permissions/tool_calls still unresolved
       // (denied permissions have no tool_result, stopped sessions cleared theirs)
       messageStore.resolveStaleToolCalls(sessionId);
-      messageStore.resolveStaleBackgroundTasks(sessionId);
+      backgroundTaskStore.resolveStale(sessionId, messageStore.getIsRunning(sessionId));
       messageStore.resolveReplayedPermissions(sessionId);
 
       // If the session is already running but system_init was missed during

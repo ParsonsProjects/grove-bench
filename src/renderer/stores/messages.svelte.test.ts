@@ -4,6 +4,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import { messageStore } from './messages.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { devServerStore } from './devServer.svelte.js';
+import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'test-session';
@@ -25,7 +26,7 @@ beforeEach(() => {
   devServerStore.serversBySession = {};
   messageStore.rateLimitBySession = {};
   messageStore.promptSuggestionsBySession = {};
-  messageStore.backgroundTasksBySession = {};
+  backgroundTaskStore.tasksBySession = {};
   messageStore.contextWindowBySession = {};
   messageStore.turnsBySession = {};
   messageStore.thinkingBySession = {};
@@ -497,7 +498,7 @@ describe('ingestEvent — background tasks', () => {
       taskType: 'explore',
     } as AgentEvent);
 
-    let tasks = messageStore.getBackgroundTasks(SID);
+    let tasks = backgroundTaskStore.get(SID);
     expect(tasks).toHaveLength(1);
     expect(tasks[0].status).toBe('running');
 
@@ -511,7 +512,7 @@ describe('ingestEvent — background tasks', () => {
       durationMs: 10000,
     } as AgentEvent);
 
-    tasks = messageStore.getBackgroundTasks(SID);
+    tasks = backgroundTaskStore.get(SID);
     expect(tasks[0].summary).toBe('Reading docs');
     expect(tasks[0].totalTokens).toBe(5000);
 
@@ -525,7 +526,7 @@ describe('ingestEvent — background tasks', () => {
       durationMs: 25000,
     } as AgentEvent);
 
-    tasks = messageStore.getBackgroundTasks(SID);
+    tasks = backgroundTaskStore.get(SID);
     expect(tasks[0].status).toBe('completed');
     expect(tasks[0].summary).toBe('Found 3 endpoints');
   });
@@ -982,41 +983,18 @@ describe('resolveStaleToolCalls', () => {
   });
 });
 
-describe('resolveStaleBackgroundTasks', () => {
-  it('removes running bg tasks when session is not running', () => {
-    messageStore.backgroundTasksBySession[SID] = {
-      't1': { taskId: 't1', description: 'task 1', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
-      't2': { taskId: 't2', description: 'task 2', status: 'completed', totalTokens: 10, toolUses: 1, durationMs: 500 },
-    } as any;
-    messageStore.setIsRunning(SID, false);
-
-    messageStore.resolveStaleBackgroundTasks(SID);
-
-    const tasks = messageStore.getBackgroundTasks(SID);
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0].taskId).toBe('t2');
-  });
-
-  it('does not touch bg tasks when session is running', () => {
-    messageStore.backgroundTasksBySession[SID] = {
-      't1': { taskId: 't1', description: 'task 1', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
-    } as any;
-    messageStore.setIsRunning(SID, true);
-
-    messageStore.resolveStaleBackgroundTasks(SID);
-
-    expect(messageStore.getBackgroundTasks(SID)).toHaveLength(1);
-  });
-
-  it('is called on result event to clean up orphaned bg tasks', () => {
-    messageStore.backgroundTasksBySession[SID] = {
+describe('background task cleanup (delegates to backgroundTaskStore)', () => {
+  // resolveStale's own logic is covered in backgroundTask.svelte.test.ts; this
+  // guards that a result event still triggers cleanup of orphaned running tasks.
+  it('result event cleans up orphaned running bg tasks', () => {
+    backgroundTaskStore.tasksBySession[SID] = {
       't1': { taskId: 't1', description: 'orphan', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
-    } as any;
+    };
     messageStore.setIsRunning(SID, true);
 
     messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 100 } as any);
 
-    expect(messageStore.getBackgroundTasks(SID)).toHaveLength(0);
+    expect(backgroundTaskStore.get(SID)).toHaveLength(0);
   });
 });
 
