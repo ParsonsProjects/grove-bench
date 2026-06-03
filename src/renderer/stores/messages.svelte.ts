@@ -552,30 +552,6 @@ class MessageStore {
     return merged;
   }
 
-  /** Revert a file via git checkout */
-  async revertFile(sessionId: string, filePath: string, staged?: boolean) {
-    await window.groveBench.revertFile(sessionId, filePath, staged);
-    gitStatusStore.scheduleRefresh(sessionId, 100);
-  }
-
-  /** Stage a file (git add) */
-  async stageFile(sessionId: string, filePath: string) {
-    await window.groveBench.stageFile(sessionId, filePath);
-    gitStatusStore.scheduleRefresh(sessionId, 100);
-  }
-
-  /** Unstage a file (git reset HEAD) */
-  async unstageFile(sessionId: string, filePath: string) {
-    await window.groveBench.unstageFile(sessionId, filePath);
-    gitStatusStore.scheduleRefresh(sessionId, 100);
-  }
-
-  /** Commit staged changes */
-  async commit(sessionId: string, message: string) {
-    await window.groveBench.commit(sessionId, message);
-    gitStatusStore.scheduleRefresh(sessionId, 100);
-  }
-
   removeDevServer(sessionId: string, port: number) {
     const servers = this.devServersBySession[sessionId] ?? [];
     this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);

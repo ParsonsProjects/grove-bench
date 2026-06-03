@@ -58,6 +58,32 @@ class GitStatusStore {
     );
   }
 
+  // ── Git write actions (proxy the CLI via IPC, then refresh status) ──
+
+  /** Revert a file via git checkout */
+  async revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void> {
+    await window.groveBench.revertFile(sessionId, filePath, staged);
+    this.scheduleRefresh(sessionId, 100);
+  }
+
+  /** Stage a file (git add) */
+  async stageFile(sessionId: string, filePath: string): Promise<void> {
+    await window.groveBench.stageFile(sessionId, filePath);
+    this.scheduleRefresh(sessionId, 100);
+  }
+
+  /** Unstage a file (git reset HEAD) */
+  async unstageFile(sessionId: string, filePath: string): Promise<void> {
+    await window.groveBench.unstageFile(sessionId, filePath);
+    this.scheduleRefresh(sessionId, 100);
+  }
+
+  /** Commit staged changes */
+  async commit(sessionId: string, message: string): Promise<void> {
+    await window.groveBench.commit(sessionId, message);
+    this.scheduleRefresh(sessionId, 100);
+  }
+
   clear(sessionId: string): void {
     const timeout = this.pendingTimeout.get(sessionId);
     if (timeout) clearTimeout(timeout);

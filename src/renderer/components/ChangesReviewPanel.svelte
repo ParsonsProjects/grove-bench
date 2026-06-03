@@ -193,24 +193,24 @@
   let commitError = $state('');
 
   function stageEntry(entry: GitStatusEntry) {
-    messageStore.stageFile(sessionId, entry.filePath).catch(e => console.error('Failed to stage:', e));
+    gitStatusStore.stageFile(sessionId, entry.filePath).catch(e => console.error('Failed to stage:', e));
   }
 
   function unstageEntry(entry: GitStatusEntry) {
-    messageStore.unstageFile(sessionId, entry.filePath).catch(e => console.error('Failed to unstage:', e));
+    gitStatusStore.unstageFile(sessionId, entry.filePath).catch(e => console.error('Failed to unstage:', e));
   }
 
   async function stageAll(entries: GitStatusEntry[]) {
     const paths = [...new Set(entries.map(e => e.filePath))];
     for (const p of paths) {
-      try { await messageStore.stageFile(sessionId, p); } catch (e) { console.error('Failed to stage:', e); }
+      try { await gitStatusStore.stageFile(sessionId, p); } catch (e) { console.error('Failed to stage:', e); }
     }
   }
 
   async function unstageAll(entries: GitStatusEntry[]) {
     const paths = [...new Set(entries.map(e => e.filePath))];
     for (const p of paths) {
-      try { await messageStore.unstageFile(sessionId, p); } catch (e) { console.error('Failed to unstage:', e); }
+      try { await gitStatusStore.unstageFile(sessionId, p); } catch (e) { console.error('Failed to unstage:', e); }
     }
   }
 
@@ -219,7 +219,7 @@
     committing = true;
     commitError = '';
     try {
-      await messageStore.commit(sessionId, commitMessage);
+      await gitStatusStore.commit(sessionId, commitMessage);
       commitMessage = '';
     } catch (e: any) {
       commitError = e?.message || 'Commit failed';
@@ -270,7 +270,7 @@
     const key = fileKey(entry);
     revertingFiles = new Set([...revertingFiles, key]);
     try {
-      await messageStore.revertFile(sessionId, entry.filePath, entry.staged);
+      await gitStatusStore.revertFile(sessionId, entry.filePath, entry.staged);
     } catch (e) {
       console.error('Failed to revert file:', e);
     } finally {
