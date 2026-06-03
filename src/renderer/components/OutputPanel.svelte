@@ -12,6 +12,7 @@
   import SystemBlock from './SystemBlock.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
+  import { isMessageVisible, filterVisibleMessages } from '$lib/message-view.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -26,16 +27,7 @@
 
   // Detail toggle — hide tool calls & thinking when off (defaults to summary mode)
   let showDetails = $derived(messageStore.getShowDetails(sessionId));
-  const summaryVisibleTools = new Set(['Edit', 'Write', 'Bash']);
-  let filteredMessages = $derived(
-    showDetails
-      ? allMessages.filter((m) => !(m.kind === 'tool_call' && m.awaitingPermission))
-      : allMessages.filter((m) => {
-          if (m.kind === 'thinking') return false;
-          if (m.kind === 'tool_call') return summaryVisibleTools.has(m.toolName) && !m.awaitingPermission;
-          return true;
-        })
-  );
+  let filteredMessages = $derived(filterVisibleMessages(allMessages, showDetails));
   let hiddenCount = $derived(allMessages.length - filteredMessages.length);
   let summaryMode = $derived(!showDetails);
 
@@ -100,6 +92,13 @@
     matchingIds = new Set(matchIds);
     currentMatchId = matchIds[currentIndex] ?? null;
     if (currentMatchId) {
+      // The match may live in a message hidden by summary mode (thinking, or a
+      // non-Edit/Write/Bash tool call). Reveal details so it can be scrolled to.
+      const matched = allMessages.find((m) => m.id === currentMatchId);
+      if (matched && !showDetails && !isMessageVisible(matched, showDetails)) {
+        messageStore.setShowDetails(sessionId, true);
+        await tick();
+      }
       // If the match is in older (not yet rendered) messages, expand to include it
       if (hasOlderMessages && !messages.some((m) => m.id === currentMatchId)) {
         const matchIdx = filteredMessages.findIndex((m) => m.id === currentMatchId);
@@ -122,6 +121,9 @@
   }
 
   function handleSearchKeydown(e: KeyboardEvent) {
+    // Inactive session panes stay mounted (hidden via CSS); only the active
+    // session should toggle its search bar on Ctrl/Cmd+F.
+    if (store.activeSessionId !== sessionId) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       if (searchOpen) {
@@ -158,6 +160,7 @@
   $effect(() => {
     const _len = messages.length;
     const _st = streamingText;
+    const _stk = streamingThinking; // follow the live thinking line as it grows
     if (shouldAutoScroll && scrollContainer) {
       requestAnimationFrame(() => {
         if (scrollContainer) {

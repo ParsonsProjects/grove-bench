@@ -912,7 +912,7 @@ class MessageStore {
             changed = true;
             return { ...m, resolved: true as const, decision: event.decision };
           }
-          if (m.kind === 'question' && 'requestId' in m && (m as any).requestId === event.requestId && !m.resolved) {
+          if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
             changed = true;
             return { ...m, resolved: true as const };
           }

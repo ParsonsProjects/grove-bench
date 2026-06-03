@@ -12,6 +12,7 @@
   import PromptEditor from './PromptEditor.svelte';
   import RewindDialog from './RewindDialog.svelte';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { parseTabShortcut } from '$lib/keyboard-shortcuts.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -38,10 +39,12 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.altKey && e.key === '1') { e.preventDefault(); switchTab('activity'); }
-    if (e.altKey && e.key === '2') { e.preventDefault(); switchTab('changes'); }
-    if (e.altKey && e.key === '3') { e.preventDefault(); switchTab('checkpoints'); }
-    if (e.altKey && e.key === '4') { e.preventDefault(); switchTab('terminal'); }
+    // Every session's WorkspacePane is mounted at once (inactive ones hidden via
+    // CSS), so this window listener must ignore events unless this pane is the
+    // active session — otherwise Alt+<n> switches tabs on every session.
+    if (store.activeSessionId !== sessionId) return;
+    const tab = parseTabShortcut(e);
+    if (tab) { e.preventDefault(); switchTab(tab); }
   }
 
   // Reactively unlock the input whenever the session reaches 'running' (or 'error')

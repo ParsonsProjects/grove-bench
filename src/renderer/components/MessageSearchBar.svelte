@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { findMatchIds } from '$lib/message-view.js';
 
   let {
     sessionId,
@@ -18,20 +19,7 @@
 
   let messages = $derived(messageStore.getMessages(sessionId));
 
-  /** Extract searchable text from a message */
-  function textOf(msg: (typeof messages)[number]): string {
-    if ('text' in msg && typeof msg.text === 'string') return msg.text;
-    if ('thinking' in msg && typeof msg.thinking === 'string') return msg.thinking;
-    return '';
-  }
-
-  let matchIds = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return messages
-      .filter((m) => textOf(m).toLowerCase().includes(q))
-      .map((m) => m.id);
-  });
+  let matchIds = $derived(findMatchIds(messages, query));
 
   // Reset match index when results change
   $effect(() => {
