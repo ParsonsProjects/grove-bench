@@ -729,50 +729,9 @@ class MessageStore {
   /** Ingest a raw AgentEvent from the main process */
   ingestEvent(sessionId: string, event: AgentEvent) {
     switch (event.type) {
-      case 'system_init': {
-        // If /clear was issued, wipe all messages for a fresh start
-        const wasCleared = !!this.pendingClear[sessionId];
-        if (wasCleared) {
-          this.setMessagesForMutation(sessionId, []);
-          this.streamingText[sessionId] = '';
-          delete this.usageBySession[sessionId];
-          delete this.turnsBySession[sessionId];
-          delete this.paginationBySession[sessionId];
-          delete this.pendingClear[sessionId];
-          // Reset checkpoint store so stale checkpoints don't linger in the UI
-          checkpointStore.clear(sessionId);
-          // Truncate event history on disk so old messages don't reappear on restart
-          window.groveBench.clearEventHistory(sessionId).catch(() => {});
-        }
-        this.setIsReady(sessionId, true);
-        this.setIsRunning(sessionId, false);
-        delete this.stoppingSession[sessionId];
-        delete this.userExplicitMode[sessionId];
-        this.modelBySession[sessionId] = event.model;
-        this.systemInfoBySession[sessionId] = {
-          tools: event.tools ?? [],
-          agents: event.agents ?? [],
-          skills: event.skills ?? [],
-          slashCommands: event.slashCommands ?? [],
-          mcpServers: event.mcpServers ?? [],
-        };
-        this.pushMessage(sessionId, {
-          kind: 'system',
-          id: nextId(),
-          text: wasCleared
-            ? `Conversation cleared — connected to ${event.model}`
-            : `Connected to ${event.model}`,
-        });
-
-        // If a message was queued to send after clear, fire it now
-        const pendingMsg = this.pendingMessageAfterClear[sessionId];
-        if (wasCleared && pendingMsg) {
-          delete this.pendingMessageAfterClear[sessionId];
-          this.addUserMessage(sessionId, pendingMsg);
-          window.groveBench.sendMessage(sessionId, pendingMsg);
-        }
+      case 'system_init':
+        this.onSystemInit(sessionId, event);
         break;
-      }
 
       case 'assistant_text':
         // assistant_text is the finalized version of what partial_text was streaming.
@@ -827,122 +786,17 @@ class MessageStore {
         });
         break;
 
-      case 'tool_result': {
-        // Build a single updated array that handles both the tool_call result
-        // and any matching permission/question resolution in one pass.
-        const msgs = this.getMessagesForMutation(sessionId);
-        let changed = false;
-        let matchedToolName: string | undefined;
-        const updated = msgs.map((m) => {
-          // Update the matching tool_call (also clear awaitingPermission)
-          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
-            changed = true;
-            matchedToolName = m.toolName;
-            return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
-          }
-          // Fallback: if a tool_result exists, the tool ran, so the permission
-          // was allowed. permission_resolved is the primary path but this catches
-          // cases where that event is lost or from pre-refactor history.
-          if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const, decision: 'allow' as const };
-          }
-          if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const };
-          }
-          return m;
-        });
-        if (changed) {
-          this.setMessagesForMutation(sessionId, updated);
-        }
-        // Clear tool progress for this tool
-        const prog = this.toolProgressBySession[sessionId];
-        if (prog?.[event.toolUseId]) {
-          delete prog[event.toolUseId];
-          this.toolProgressBySession[sessionId] = { ...prog };
-        }
-        // Refresh git status after file-modifying tool calls
-        if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(matchedToolName)) {
-          gitStatusStore.scheduleRefresh(sessionId, 300);
-        }
+      case 'tool_result':
+        this.onToolResult(sessionId, event);
         break;
-      }
 
-      case 'permission_request': {
-        // Drop stale permission requests from a dying query after the user
-        // clicked Stop. The new query will re-request if needed.
-        if (this.stoppingSession[sessionId]) break;
-
-        this.flushStreamingText(sessionId);
-        // Mark the matching tool_call as awaiting permission so it doesn't
-        // render before the user has approved/denied.
-        const permMsgs = this.getMessagesForMutation(sessionId);
-        const toolIdx = permMsgs.findIndex(
-          (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
-        );
-        if (toolIdx >= 0) {
-          const updated = { ...(permMsgs[toolIdx] as ChatToolCallMessage), awaitingPermission: true };
-          this.setMessagesForMutation(sessionId, [
-            ...permMsgs.slice(0, toolIdx),
-            updated,
-            ...permMsgs.slice(toolIdx + 1),
-          ]);
-        }
-        // Detect question tools — render as an interactive question, not a permission gate
-        if (event.toolCategory === 'question') {
-          const input = event.toolInput as Record<string, unknown>;
-          const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
-          this.pushMessage(sessionId, {
-            kind: 'question',
-            id: nextId(),
-            requestId: event.requestId,
-            toolUseId: event.toolUseId,
-            questions,
-            resolved: false,
-          });
-        } else {
-          this.pushMessage(sessionId, {
-            kind: 'permission',
-            id: nextId(),
-            requestId: event.requestId,
-            toolName: event.toolName,
-            toolInput: event.toolInput,
-            toolUseId: event.toolUseId,
-            resolved: false,
-            decisionReason: event.decisionReason,
-            suggestions: event.suggestions,
-            isPlanExecution: event.isPlanExecution,
-            toolCategory: event.toolCategory,
-            planText: event.planText,
-          });
-        }
+      case 'permission_request':
+        this.onPermissionRequest(sessionId, event);
         break;
-      }
 
-      case 'permission_resolved': {
-        const msgs = this.getMessagesForMutation(sessionId);
-        let changed = false;
-        const updated = msgs.map((m) => {
-          if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const, decision: event.decision };
-          }
-          if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
-            changed = true;
-            return { ...m, resolved: true as const };
-          }
-          if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
-            changed = true;
-            return { ...m, awaitingPermission: false };
-          }
-          return m;
-        });
-        if (changed) {
-          this.setMessagesForMutation(sessionId, updated);
-        }
+      case 'permission_resolved':
+        this.onPermissionResolved(sessionId, event);
         break;
-      }
 
       case 'thinking':
         this.setIsRunning(sessionId, true);
@@ -955,28 +809,7 @@ class MessageStore {
         break;
 
       case 'result':
-        this.flushStreamingText(sessionId);
-        this.setIsRunning(sessionId, false);
-        this.activityBySession[sessionId] = { activity: 'idle' };
-        this.toolProgressBySession[sessionId] = {};
-        if (event.contextWindow) {
-          this.contextWindowBySession[sessionId] = event.contextWindow;
-        }
-        if (event.numTurns) {
-          this.turnsBySession[sessionId] = event.numTurns;
-        }
-        this.pushMessage(sessionId, {
-          kind: 'result',
-          id: nextId(),
-          subtype: event.subtype,
-          result: event.result,
-          totalCostUsd: event.totalCostUsd,
-          durationMs: event.durationMs,
-          isError: event.isError,
-          errors: event.errors,
-        });
-        this.resolveStaleBackgroundTasks(sessionId);
-        gitStatusStore.scheduleRefresh(sessionId, 100);
+        this.onResult(sessionId, event);
         break;
 
       case 'error':
@@ -1048,39 +881,9 @@ class MessageStore {
         };
         break;
 
-      case 'user_message': {
-        // When replay-user-messages is enabled, the SDK replays user messages
-        // with UUIDs. We stamp the UUID onto the most recent user message
-        // that doesn't already have one. Text matching is unreliable because
-        // the SDK sees the full message (with @-ref file tags prepended) while
-        // the store has the display text. So we match by position: the most
-        // recent UUID-less user message is the one the SDK is replaying.
-        if (event.uuid) {
-          const msgs = this.getMessagesForMutation(sessionId);
-          const existingIdx = msgs.findLastIndex(
-            (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
-          );
-          if (existingIdx >= 0) {
-            const updated = [...msgs];
-            updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
-            this.setMessagesForMutation(sessionId, updated);
-            // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
-            checkpointStore.scheduleRefresh(sessionId);
-            break;
-          }
-        }
-        this.pushMessage(sessionId, {
-          kind: 'user',
-          id: nextId(),
-          text: event.text,
-          uuid: event.uuid,
-        });
-        // Schedule checkpoint list refresh so the Checkpoints tab updates
-        if (event.uuid) {
-          checkpointStore.scheduleRefresh(sessionId);
-        }
+      case 'user_message':
+        this.onUserMessage(sessionId, event);
         break;
-      }
 
       case 'devserver_detected': {
         const servers = this.devServersBySession[sessionId] ?? [];
@@ -1162,37 +965,9 @@ class MessageStore {
         break;
       }
 
-      case 'task_notification': {
-        const tasks3 = this.backgroundTasksBySession[sessionId] ?? {};
-        const prev = tasks3[event.taskId];
-        tasks3[event.taskId] = {
-          ...(prev ?? { taskId: event.taskId, description: '' }),
-          status: event.taskStatus,
-          summary: event.summary,
-          totalTokens: event.totalTokens ?? prev?.totalTokens ?? 0,
-          toolUses: event.toolUses ?? prev?.toolUses ?? 0,
-          durationMs: event.durationMs ?? prev?.durationMs ?? 0,
-        };
-        this.backgroundTasksBySession[sessionId] = { ...tasks3 };
-        const label = event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped';
-        this.pushMessage(sessionId, {
-          kind: 'system',
-          id: nextId(),
-          text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
-        });
-        // Auto-remove finished tasks after a short delay
-        {
-          const taskId = event.taskId;
-          let timers = this.bgTaskTimers.get(sessionId);
-          if (!timers) { timers = new Set(); this.bgTaskTimers.set(sessionId, timers); }
-          const timer = setTimeout(() => {
-            timers!.delete(timer);
-            this.removeBackgroundTask(sessionId, taskId);
-          }, 3000);
-          timers.add(timer);
-        }
+      case 'task_notification':
+        this.onTaskNotification(sessionId, event);
         break;
-      }
 
       case 'auth_status':
         if (event.authError) {
@@ -1253,60 +1028,318 @@ class MessageStore {
         break;
 
       case 'mode_sync':
-        // Session-sourced mode_sync (from stopQuery) is authoritative — always apply.
-        // SDK-sourced mode_sync may be stale (e.g. the SDK was in 'default' while
-        // the app showed 'acceptEdits', and emitted a stale 'default' after the
-        // user already cycled to 'plan').  Only apply SDK mode_sync when the user
-        // hasn't explicitly set a different mode since the last query start.
-        if (event.source === 'session') {
-          this.modeBySession[sessionId] = event.mode;
-          delete this.userExplicitMode[sessionId];
-        } else if (!this.userExplicitMode[sessionId]) {
-          this.modeBySession[sessionId] = event.mode;
-        }
-        // mode_sync is emitted by stopQuery after all old pending permissions
-        // have been resolved and before the new query loop starts.  Clear the
-        // stoppingSession flag here so permission_request events from the new
-        // query are not suppressed.  (system_init also clears it, but it
-        // arrives later — after the SDK initialises — leaving a window where
-        // early permission requests from the new query would be silently
-        // dropped, causing the agent to hang.)
-        if (this.stoppingSession[sessionId]) {
-          delete this.stoppingSession[sessionId];
-        }
+        this.onModeSync(sessionId, event);
         break;
 
-      case 'rewind': {
-        // Snapshot edit history before truncation if conversation-only rewind
-        if (event.conversationOnly) {
-          this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
-        } else {
-          // Full rewind restores files — clear any preserved history
-          delete this.preservedEditHistory[sessionId];
-        }
-
-        // Truncate messages after the rewind point.
-        // Use getMessagesForMutation/setMessagesForMutation so this works
-        // during replay (when messages are in _replayBuffer, not messagesBySession).
-        const msgs = this.getMessagesForMutation(sessionId);
-        const rewindIdx = msgs.findLastIndex(
-          (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
-        );
-        if (rewindIdx >= 0) {
-          // Remove the rewind target message and place its text into the input
-          const rewindMsg = msgs[rewindIdx] as ChatUserMessage;
-          this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
-          this.setDraft(sessionId, rewindMsg.text);
-          this.setActiveTab(sessionId, 'activity');
-        }
-        this.isRunning[sessionId] = false;
-        this.streamingText[sessionId] = '';
-        this.streamingThinking[sessionId] = '';
-        // Refresh git status since files may have changed on disk
-        gitStatusStore.refresh(sessionId);
+      case 'rewind':
+        this.onRewind(sessionId, event);
         break;
+    }
+  }
+
+  // ── Per-event handlers (dispatched from ingestEvent) ─────────────────────
+  // The trivial event cases stay inline in ingestEvent; the multi-branch ones
+  // live here as named methods so each is readable and testable in isolation.
+
+  private onSystemInit(sessionId: string, event: Extract<AgentEvent, { type: 'system_init' }>) {
+    // If /clear was issued, wipe all messages for a fresh start
+    const wasCleared = !!this.pendingClear[sessionId];
+    if (wasCleared) {
+      this.setMessagesForMutation(sessionId, []);
+      this.streamingText[sessionId] = '';
+      delete this.usageBySession[sessionId];
+      delete this.turnsBySession[sessionId];
+      delete this.paginationBySession[sessionId];
+      delete this.pendingClear[sessionId];
+      // Reset checkpoint store so stale checkpoints don't linger in the UI
+      checkpointStore.clear(sessionId);
+      // Truncate event history on disk so old messages don't reappear on restart
+      window.groveBench.clearEventHistory(sessionId).catch(() => {});
+    }
+    this.setIsReady(sessionId, true);
+    this.setIsRunning(sessionId, false);
+    delete this.stoppingSession[sessionId];
+    delete this.userExplicitMode[sessionId];
+    this.modelBySession[sessionId] = event.model;
+    this.systemInfoBySession[sessionId] = {
+      tools: event.tools ?? [],
+      agents: event.agents ?? [],
+      skills: event.skills ?? [],
+      slashCommands: event.slashCommands ?? [],
+      mcpServers: event.mcpServers ?? [],
+    };
+    this.pushMessage(sessionId, {
+      kind: 'system',
+      id: nextId(),
+      text: wasCleared
+        ? `Conversation cleared — connected to ${event.model}`
+        : `Connected to ${event.model}`,
+    });
+
+    // If a message was queued to send after clear, fire it now
+    const pendingMsg = this.pendingMessageAfterClear[sessionId];
+    if (wasCleared && pendingMsg) {
+      delete this.pendingMessageAfterClear[sessionId];
+      this.addUserMessage(sessionId, pendingMsg);
+      window.groveBench.sendMessage(sessionId, pendingMsg);
+    }
+  }
+
+  private onToolResult(sessionId: string, event: Extract<AgentEvent, { type: 'tool_result' }>) {
+    // Build a single updated array that handles both the tool_call result
+    // and any matching permission/question resolution in one pass.
+    const msgs = this.getMessagesForMutation(sessionId);
+    let changed = false;
+    let matchedToolName: string | undefined;
+    const updated = msgs.map((m) => {
+      // Update the matching tool_call (also clear awaitingPermission)
+      if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
+        changed = true;
+        matchedToolName = m.toolName;
+        return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
+      }
+      // Fallback: if a tool_result exists, the tool ran, so the permission
+      // was allowed. permission_resolved is the primary path but this catches
+      // cases where that event is lost or from pre-refactor history.
+      if (m.kind === 'permission' && m.toolUseId === event.toolUseId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, decision: 'allow' as const };
+      }
+      if (m.kind === 'question' && m.toolUseId === event.toolUseId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const };
+      }
+      return m;
+    });
+    if (changed) {
+      this.setMessagesForMutation(sessionId, updated);
+    }
+    // Clear tool progress for this tool
+    const prog = this.toolProgressBySession[sessionId];
+    if (prog?.[event.toolUseId]) {
+      delete prog[event.toolUseId];
+      this.toolProgressBySession[sessionId] = { ...prog };
+    }
+    // Refresh git status after file-modifying tool calls
+    if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(matchedToolName)) {
+      gitStatusStore.scheduleRefresh(sessionId, 300);
+    }
+  }
+
+  private onPermissionRequest(sessionId: string, event: Extract<AgentEvent, { type: 'permission_request' }>) {
+    // Drop stale permission requests from a dying query after the user
+    // clicked Stop. The new query will re-request if needed.
+    if (this.stoppingSession[sessionId]) return;
+
+    this.flushStreamingText(sessionId);
+    // Mark the matching tool_call as awaiting permission so it doesn't
+    // render before the user has approved/denied.
+    const permMsgs = this.getMessagesForMutation(sessionId);
+    const toolIdx = permMsgs.findIndex(
+      (m) => m.kind === 'tool_call' && m.toolUseId === event.toolUseId,
+    );
+    if (toolIdx >= 0) {
+      const updated = { ...(permMsgs[toolIdx] as ChatToolCallMessage), awaitingPermission: true };
+      this.setMessagesForMutation(sessionId, [
+        ...permMsgs.slice(0, toolIdx),
+        updated,
+        ...permMsgs.slice(toolIdx + 1),
+      ]);
+    }
+    // Detect question tools — render as an interactive question, not a permission gate
+    if (event.toolCategory === 'question') {
+      const input = event.toolInput as Record<string, unknown>;
+      const questions = (Array.isArray(input?.questions) ? input.questions : []) as QuestionItem[];
+      this.pushMessage(sessionId, {
+        kind: 'question',
+        id: nextId(),
+        requestId: event.requestId,
+        toolUseId: event.toolUseId,
+        questions,
+        resolved: false,
+      });
+    } else {
+      this.pushMessage(sessionId, {
+        kind: 'permission',
+        id: nextId(),
+        requestId: event.requestId,
+        toolName: event.toolName,
+        toolInput: event.toolInput,
+        toolUseId: event.toolUseId,
+        resolved: false,
+        decisionReason: event.decisionReason,
+        suggestions: event.suggestions,
+        isPlanExecution: event.isPlanExecution,
+        toolCategory: event.toolCategory,
+        planText: event.planText,
+      });
+    }
+  }
+
+  private onPermissionResolved(sessionId: string, event: Extract<AgentEvent, { type: 'permission_resolved' }>) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    let changed = false;
+    const updated = msgs.map((m) => {
+      if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, decision: event.decision };
+      }
+      if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const };
+      }
+      if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
+        changed = true;
+        return { ...m, awaitingPermission: false };
+      }
+      return m;
+    });
+    if (changed) {
+      this.setMessagesForMutation(sessionId, updated);
+    }
+  }
+
+  private onResult(sessionId: string, event: Extract<AgentEvent, { type: 'result' }>) {
+    this.flushStreamingText(sessionId);
+    this.setIsRunning(sessionId, false);
+    this.activityBySession[sessionId] = { activity: 'idle' };
+    this.toolProgressBySession[sessionId] = {};
+    if (event.contextWindow) {
+      this.contextWindowBySession[sessionId] = event.contextWindow;
+    }
+    if (event.numTurns) {
+      this.turnsBySession[sessionId] = event.numTurns;
+    }
+    this.pushMessage(sessionId, {
+      kind: 'result',
+      id: nextId(),
+      subtype: event.subtype,
+      result: event.result,
+      totalCostUsd: event.totalCostUsd,
+      durationMs: event.durationMs,
+      isError: event.isError,
+      errors: event.errors,
+    });
+    this.resolveStaleBackgroundTasks(sessionId);
+    gitStatusStore.scheduleRefresh(sessionId, 100);
+  }
+
+  private onUserMessage(sessionId: string, event: Extract<AgentEvent, { type: 'user_message' }>) {
+    // When replay-user-messages is enabled, the SDK replays user messages
+    // with UUIDs. We stamp the UUID onto the most recent user message
+    // that doesn't already have one. Text matching is unreliable because
+    // the SDK sees the full message (with @-ref file tags prepended) while
+    // the store has the display text. So we match by position: the most
+    // recent UUID-less user message is the one the SDK is replaying.
+    if (event.uuid) {
+      const msgs = this.getMessagesForMutation(sessionId);
+      const existingIdx = msgs.findLastIndex(
+        (m) => m.kind === 'user' && !(m as ChatUserMessage).uuid,
+      );
+      if (existingIdx >= 0) {
+        const updated = [...msgs];
+        updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
+        this.setMessagesForMutation(sessionId, updated);
+        // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
+        checkpointStore.scheduleRefresh(sessionId);
+        return;
       }
     }
+    this.pushMessage(sessionId, {
+      kind: 'user',
+      id: nextId(),
+      text: event.text,
+      uuid: event.uuid,
+    });
+    // Schedule checkpoint list refresh so the Checkpoints tab updates
+    if (event.uuid) {
+      checkpointStore.scheduleRefresh(sessionId);
+    }
+  }
+
+  private onTaskNotification(sessionId: string, event: Extract<AgentEvent, { type: 'task_notification' }>) {
+    const tasks3 = this.backgroundTasksBySession[sessionId] ?? {};
+    const prev = tasks3[event.taskId];
+    tasks3[event.taskId] = {
+      ...(prev ?? { taskId: event.taskId, description: '' }),
+      status: event.taskStatus,
+      summary: event.summary,
+      totalTokens: event.totalTokens ?? prev?.totalTokens ?? 0,
+      toolUses: event.toolUses ?? prev?.toolUses ?? 0,
+      durationMs: event.durationMs ?? prev?.durationMs ?? 0,
+    };
+    this.backgroundTasksBySession[sessionId] = { ...tasks3 };
+    const label = event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped';
+    this.pushMessage(sessionId, {
+      kind: 'system',
+      id: nextId(),
+      text: `Background task ${label}: ${event.summary || prev?.description || event.taskId}`,
+    });
+    // Auto-remove finished tasks after a short delay
+    {
+      const taskId = event.taskId;
+      let timers = this.bgTaskTimers.get(sessionId);
+      if (!timers) { timers = new Set(); this.bgTaskTimers.set(sessionId, timers); }
+      const timer = setTimeout(() => {
+        timers!.delete(timer);
+        this.removeBackgroundTask(sessionId, taskId);
+      }, 3000);
+      timers.add(timer);
+    }
+  }
+
+  private onModeSync(sessionId: string, event: Extract<AgentEvent, { type: 'mode_sync' }>) {
+    // Session-sourced mode_sync (from stopQuery) is authoritative — always apply.
+    // SDK-sourced mode_sync may be stale (e.g. the SDK was in 'default' while
+    // the app showed 'acceptEdits', and emitted a stale 'default' after the
+    // user already cycled to 'plan').  Only apply SDK mode_sync when the user
+    // hasn't explicitly set a different mode since the last query start.
+    if (event.source === 'session') {
+      this.modeBySession[sessionId] = event.mode;
+      delete this.userExplicitMode[sessionId];
+    } else if (!this.userExplicitMode[sessionId]) {
+      this.modeBySession[sessionId] = event.mode;
+    }
+    // mode_sync is emitted by stopQuery after all old pending permissions
+    // have been resolved and before the new query loop starts.  Clear the
+    // stoppingSession flag here so permission_request events from the new
+    // query are not suppressed.  (system_init also clears it, but it
+    // arrives later — after the SDK initialises — leaving a window where
+    // early permission requests from the new query would be silently
+    // dropped, causing the agent to hang.)
+    if (this.stoppingSession[sessionId]) {
+      delete this.stoppingSession[sessionId];
+    }
+  }
+
+  private onRewind(sessionId: string, event: Extract<AgentEvent, { type: 'rewind' }>) {
+    // Snapshot edit history before truncation if conversation-only rewind
+    if (event.conversationOnly) {
+      this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
+    } else {
+      // Full rewind restores files — clear any preserved history
+      delete this.preservedEditHistory[sessionId];
+    }
+
+    // Truncate messages after the rewind point.
+    // Use getMessagesForMutation/setMessagesForMutation so this works
+    // during replay (when messages are in _replayBuffer, not messagesBySession).
+    const msgs = this.getMessagesForMutation(sessionId);
+    const rewindIdx = msgs.findLastIndex(
+      (m) => m.kind === 'user' && (m as ChatUserMessage).uuid === event.toMessageId,
+    );
+    if (rewindIdx >= 0) {
+      // Remove the rewind target message and place its text into the input
+      const rewindMsg = msgs[rewindIdx] as ChatUserMessage;
+      this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
+      this.setDraft(sessionId, rewindMsg.text);
+      this.setActiveTab(sessionId, 'activity');
+    }
+    this.isRunning[sessionId] = false;
+    this.streamingText[sessionId] = '';
+    this.streamingThinking[sessionId] = '';
+    // Refresh git status since files may have changed on disk
+    gitStatusStore.refresh(sessionId);
   }
 
   /** Send a slash command (e.g. /compact, /clear, /rewind) */
