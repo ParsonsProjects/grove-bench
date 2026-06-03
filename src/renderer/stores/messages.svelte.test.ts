@@ -1277,6 +1277,58 @@ describe('pagination — hasOlderEvents / olderEventCount', () => {
   });
 });
 
+describe('pagination — loadAllOlderEvents', () => {
+  it('pages the entire remaining history into the store', async () => {
+    // 1 older event on disk, none loaded yet
+    messageStore.setPagination(SID, 1, 1);
+    expect(messageStore.hasOlderEvents(SID)).toBe(true);
+
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [{ type: 'user_message', text: 'old prompt about the parser', uuid: 'u-old' }],
+      totalCount: 1,
+      startIndex: 0,
+    });
+
+    await messageStore.loadAllOlderEvents(SID);
+
+    // Nothing left on disk, and the older event is now an in-store message
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs.some((m) => m.kind === 'user' && (m as any).text === 'old prompt about the parser')).toBe(true);
+  });
+
+  it('requests the full remaining range in one page', async () => {
+    messageStore.setPagination(SID, 500, 300);
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0 });
+
+    await messageStore.loadAllOlderEvents(SID);
+
+    // pageSize == remaining older count (300), beforeIndex == 300
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledWith(SID, 300, 300);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(1);
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+  });
+
+  it('is a no-op when there are no older events', async () => {
+    messageStore.setPagination(SID, 5, 0);
+    await messageStore.loadAllOlderEvents(SID);
+    expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+
+  it('keeps paging when the backend caps page size, and stops if no progress', async () => {
+    messageStore.setPagination(SID, 400, 400);
+    // Backend only returns down to index 200 on the first call (capped)...
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 400, startIndex: 200 });
+    // ...then the rest on the second call.
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 400, startIndex: 0 });
+
+    await messageStore.loadAllOlderEvents(SID);
+
+    expect(messageStore.hasOlderEvents(SID)).toBe(false);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('pagination — loadOlderEvents', () => {
   it('updates loadedFromIndex after loading older events', async () => {
     // Set pagination indicating 300 older events remain

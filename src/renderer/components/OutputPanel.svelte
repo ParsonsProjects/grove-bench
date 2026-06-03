@@ -130,6 +130,9 @@
         closeSearch();
       } else {
         searchOpen = true;
+        // Pull the full session history into the store so search covers older
+        // events still paged out on disk, not just the rendered window.
+        messageStore.loadAllOlderEvents(sessionId).catch(() => {});
       }
     }
   }

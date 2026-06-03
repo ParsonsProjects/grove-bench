@@ -21,6 +21,12 @@
 
   let matchIds = $derived(findMatchIds(messages, query));
 
+  // While older history is still being paged into the store, search results are
+  // incomplete — show that so a "no results" isn't mistaken for "definitely absent".
+  let loadingHistory = $derived(
+    messageStore.isLoadingOlder(sessionId) || messageStore.hasOlderEvents(sessionId),
+  );
+
   // Reset match index when results change
   $effect(() => {
     const len = matchIds.length;
@@ -71,10 +77,18 @@
     class="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground min-w-0"
   />
 
+  {#if loadingHistory}
+    <span class="text-muted-foreground/70 whitespace-nowrap animate-pulse" title="Loading older history — results may be incomplete">
+      loading history…
+    </span>
+  {/if}
+
   {#if query.trim()}
     <span class="text-muted-foreground whitespace-nowrap">
       {#if matchIds.length > 0}
         {matchIndex + 1} of {matchIds.length}
+      {:else if loadingHistory}
+        no results yet
       {:else}
         no results
       {/if}
