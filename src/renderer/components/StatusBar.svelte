@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { devServerStore } from '../stores/devServer.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
@@ -104,7 +105,7 @@
     prevRunning = isRunning;
   });
 
-  let devServers = $derived(messageStore.getDevServers(sessionId));
+  let devServers = $derived(devServerStore.get(sessionId));
   let devServerStarting = $state(false);
   let devServerError = $state<string | null>(null);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
@@ -467,7 +468,7 @@
               </button>
               <span class="text-muted-foreground/60 shrink-0">:{server.port}</span>
               <button
-                onclick={() => { window.groveBench.killPort(server.port); messageStore.removeDevServer(sessionId, server.port); }}
+                onclick={() => { window.groveBench.killPort(server.port); devServerStore.remove(sessionId, server.port); }}
                 class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
                 title="Kill server on port {server.port}"
               >
@@ -481,7 +482,7 @@
             onclick={() => {
               for (const server of devServers) {
                 window.groveBench.killPort(server.port);
-                messageStore.removeDevServer(sessionId, server.port);
+                devServerStore.remove(sessionId, server.port);
               }
               devServersExpanded = false;
             }}

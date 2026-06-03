@@ -3,6 +3,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
+import { devServerStore } from './devServer.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'test-session';
@@ -21,7 +22,7 @@ beforeEach(() => {
   messageStore.modelBySession = {};
   messageStore.usageBySession = {};
   messageStore.pendingClear = {};
-  messageStore.devServersBySession = {};
+  devServerStore.serversBySession = {};
   messageStore.rateLimitBySession = {};
   messageStore.promptSuggestionsBySession = {};
   messageStore.backgroundTasksBySession = {};
@@ -413,7 +414,7 @@ describe('ingestEvent — rate_limit', () => {
   });
 });
 
-describe('ingestEvent — devserver_detected', () => {
+describe('ingestEvent — devserver_detected (delegates to devServerStore)', () => {
   it('adds dev server', () => {
     messageStore.ingestEvent(SID, {
       type: 'devserver_detected',
@@ -421,14 +422,14 @@ describe('ingestEvent — devserver_detected', () => {
       url: 'http://localhost:3000',
     } as AgentEvent);
 
-    expect(messageStore.getDevServers(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000', status: 'ok' }]);
+    expect(devServerStore.get(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000', status: 'ok' }]);
   });
 
   it('does not duplicate same port', () => {
     messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
     messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
 
-    expect(messageStore.getDevServers(SID)).toHaveLength(1);
+    expect(devServerStore.get(SID)).toHaveLength(1);
   });
 });
 

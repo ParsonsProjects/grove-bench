@@ -1,6 +1,7 @@
 import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
+import { devServerStore } from './devServer.svelte.js';
 
 // ─── Chat message types ───
 
@@ -177,8 +178,6 @@ class MessageStore {
   /** Number of turns per session */
   turnsBySession = $state<Record<string, number>>({});
 
-  /** Detected dev server ports per session */
-  devServersBySession = $state<Record<string, { port: number; url: string; status?: 'ok' | 'error' }[]>>({});
 
   /** Rate limit state per session */
   rateLimitBySession = $state<Record<string, { status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }>>({});
@@ -416,10 +415,6 @@ class MessageStore {
     this.draftBySession[sessionId] = text;
   }
 
-  getDevServers(sessionId: string): { port: number; url: string; status?: 'ok' | 'error' }[] {
-    return this.devServersBySession[sessionId] ?? [];
-  }
-
   getRateLimit(sessionId: string) {
     return this.rateLimitBySession[sessionId] ?? null;
   }
@@ -550,11 +545,6 @@ class MessageStore {
       }
     }
     return merged;
-  }
-
-  removeDevServer(sessionId: string, port: number) {
-    const servers = this.devServersBySession[sessionId] ?? [];
-    this.devServersBySession[sessionId] = servers.filter((s) => s.port !== port);
   }
 
   async setMode(sessionId: string, mode: PermissionMode) {
@@ -861,13 +851,9 @@ class MessageStore {
         this.onUserMessage(sessionId, event);
         break;
 
-      case 'devserver_detected': {
-        const servers = this.devServersBySession[sessionId] ?? [];
-        if (!servers.some((s) => s.port === event.port)) {
-          this.devServersBySession[sessionId] = [...servers, { port: event.port, url: event.url, status: 'ok' }];
-        }
+      case 'devserver_detected':
+        devServerStore.add(sessionId, event.port, event.url);
         break;
-      }
 
       case 'process_exit':
         this.flushStreamingText(sessionId);
@@ -1562,13 +1548,16 @@ class MessageStore {
       this.toolProgressBySession, this.isReady, this.modelBySession,
       this.modeBySession, this.thinkingBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
-      this.devServersBySession, this.rateLimitBySession, this.promptSuggestionsBySession,
+      this.rateLimitBySession, this.promptSuggestionsBySession,
       this.backgroundTasksBySession, this.activeTabBySession, this.showDetailsBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen,
     ] as Record<string, unknown>[]) {
       delete record[sessionId];
     }
+
+    // Extracted stores own their own per-session teardown.
+    devServerStore.destroy(sessionId);
 
     // Plain (non-reactive) bookkeeping records
     delete this.pendingMessageAfterClear[sessionId];
