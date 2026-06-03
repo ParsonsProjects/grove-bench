@@ -4,8 +4,12 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
   import type { DiffLine } from './DiffView.svelte';
-  import type { GitStatusEntry } from '../../shared/types.js';
+  import { hunkLineIndices } from '../lib/diff-highlight.js';
+  import type { GitStatusEntry, FileDiffResult } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
+  import ImageDiffView from './ImageDiffView.svelte';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import { settingsStore } from '../stores/settings.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -30,7 +34,7 @@
   let sideBySide = $state(settingsStore.current.diffViewMode === 'side-by-side');
   let editHistoryExpanded = $state<Set<string>>(new Set());
   let revertingFiles = $state<Set<string>>(new Set());
-  let fileDiffs = $state<Record<string, string>>({});
+  let fileDiffs = $state<Record<string, FileDiffResult>>({});
 
   // Search filter
   let searchQuery = $state('');
@@ -65,7 +69,7 @@
   function selectDropdownEntry(entry: GitStatusEntry) {
     const key = fileKey(entry);
     selectedFileKey = key;
-    loadDiff(entry.filePath);
+    loadDiff(entry);
     searchQuery = '';
     searchFocused = false;
     searchInputEl?.blur();
@@ -111,16 +115,15 @@
     ...(collapsedSections.has('untracked') ? [] : filteredUntrackedEntries),
   ]);
 
-  // Track entries and auto-select
+  // On status change: invalidate cached diffs (they may be stale) and fix the selection.
+  // Diffs are then loaded lazily for the selected file only (see the effect below) instead
+  // of eagerly fetching every changed file's diff up front.
   $effect(() => {
     const entries = gitStatus.entries;
     const currentKeys = new Set(entries.map(e => fileKey(e)));
 
     untrack(() => {
-      // Load diffs for all entries (force-reload so diffs stay fresh)
-      for (const entry of entries) {
-        loadDiff(entry.filePath, true);
-      }
+      fileDiffs = {};
 
       // Auto-select first file if no selection or selection no longer exists
       if (entries.length > 0 && (selectedFileKey === null || !currentKeys.has(selectedFileKey))) {
@@ -131,23 +134,43 @@
     });
   });
 
+  // Lazily load the selected file's diff (plus its immediate neighbors, so arrow-key
+  // navigation feels instant) whenever the selection or the file list changes.
+  $effect(() => {
+    const entry = selectedEntry;
+    const ordered = visibleEntries;
+    untrack(() => {
+      hunkIdx = 0;
+      if (!entry) return;
+      loadDiff(entry);
+      const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
+      if (idx >= 0) {
+        if (ordered[idx + 1]) loadDiff(ordered[idx + 1]);
+        if (ordered[idx - 1]) loadDiff(ordered[idx - 1]);
+      }
+    });
+  });
+
   function fileKey(entry: GitStatusEntry): string {
     return `${entry.filePath}:${entry.staged}`;
   }
 
-  async function loadDiff(filePath: string, forceReload = false) {
-    if (!forceReload && fileDiffs[filePath] !== undefined) return;
+  async function loadDiff(entry: GitStatusEntry, forceReload = false) {
+    const key = fileKey(entry);
+    if (!forceReload && fileDiffs[key] !== undefined) return;
     try {
-      const diff = await window.groveBench.getFileDiff(sessionId, filePath);
-      fileDiffs = { ...fileDiffs, [filePath]: diff };
+      // Pass `staged` so the index-vs-HEAD and working-tree-vs-index diffs differ
+      // for a path that appears in both the Staged and Changes sections.
+      const diff = await window.groveBench.getFileDiff(sessionId, entry.filePath, entry.staged);
+      fileDiffs = { ...fileDiffs, [key]: diff };
     } catch {
-      fileDiffs = { ...fileDiffs, [filePath]: '' };
+      fileDiffs = { ...fileDiffs, [key]: { kind: 'text', patch: '' } };
     }
   }
 
   function selectFile(entry: GitStatusEntry) {
     selectedFileKey = fileKey(entry);
-    loadDiff(entry.filePath);
+    loadDiff(entry);
   }
 
   function toggleEditHistory(key: string) {
@@ -164,6 +187,85 @@
     collapsedSections = next;
   }
 
+  // Staging + commit
+  let commitMessage = $state('');
+  let committing = $state(false);
+  let commitError = $state('');
+
+  function stageEntry(entry: GitStatusEntry) {
+    messageStore.stageFile(sessionId, entry.filePath).catch(e => console.error('Failed to stage:', e));
+  }
+
+  function unstageEntry(entry: GitStatusEntry) {
+    messageStore.unstageFile(sessionId, entry.filePath).catch(e => console.error('Failed to unstage:', e));
+  }
+
+  async function stageAll(entries: GitStatusEntry[]) {
+    const paths = [...new Set(entries.map(e => e.filePath))];
+    for (const p of paths) {
+      try { await messageStore.stageFile(sessionId, p); } catch (e) { console.error('Failed to stage:', e); }
+    }
+  }
+
+  async function unstageAll(entries: GitStatusEntry[]) {
+    const paths = [...new Set(entries.map(e => e.filePath))];
+    for (const p of paths) {
+      try { await messageStore.unstageFile(sessionId, p); } catch (e) { console.error('Failed to unstage:', e); }
+    }
+  }
+
+  async function doCommit() {
+    if (!commitMessage.trim() || stagedEntries.length === 0 || committing) return;
+    committing = true;
+    commitError = '';
+    try {
+      await messageStore.commit(sessionId, commitMessage);
+      commitMessage = '';
+    } catch (e: any) {
+      commitError = e?.message || 'Commit failed';
+    } finally {
+      committing = false;
+    }
+  }
+
+  // Hunk navigation
+  let diffContainer = $state<HTMLDivElement | null>(null);
+  let hunkIdx = $state(0);
+
+  function gotoHunk(dir: 1 | -1) {
+    if (!diffContainer) return;
+    const hunks = diffContainer.querySelectorAll('[data-hunk]');
+    if (hunks.length === 0) return;
+    hunkIdx = Math.max(0, Math.min(hunks.length - 1, hunkIdx + dir));
+    (hunks[hunkIdx] as HTMLElement)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Diff-pane keyboard shortcuts. Only act when this pane is actually visible
+  // (offsetParent is null while the tab is hidden via `display:none`) and the user
+  // isn't typing into an input/textarea.
+  function handleShortcuts(e: KeyboardEvent) {
+    if (!diffContainer || diffContainer.offsetParent === null) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (!selectedEntry) return;
+    switch (e.key) {
+      case 'n': e.preventDefault(); gotoHunk(1); break;
+      case 'p': e.preventDefault(); gotoHunk(-1); break;
+      case 'v': e.preventDefault(); sideBySide = !sideBySide; break;
+      case 's': e.preventDefault(); selectedEntry.staged ? unstageEntry(selectedEntry) : stageEntry(selectedEntry); break;
+    }
+  }
+
+  // Entry pending a destructive revert/discard, awaiting confirmation (null = dialog closed).
+  let confirmEntry = $state<GitStatusEntry | null>(null);
+
+  function confirmRevert() {
+    const entry = confirmEntry;
+    confirmEntry = null;
+    if (entry) revertFile(entry);
+  }
+
   async function revertFile(entry: GitStatusEntry) {
     const key = fileKey(entry);
     revertingFiles = new Set([...revertingFiles, key]);
@@ -178,9 +280,9 @@
     }
   }
 
-  function getDiffLines(filePath: string): DiffLine[] {
-    const gitDiff = fileDiffs[filePath];
-    if (gitDiff) return parseDiffLines(gitDiff);
+  function getDiffLines(entry: GitStatusEntry): DiffLine[] {
+    const result = fileDiffs[fileKey(entry)];
+    if (result && result.kind === 'text' && result.patch) return parseDiffLines(result.patch);
     return [];
   }
 
@@ -240,6 +342,15 @@
   }
 </script>
 
+{#snippet diffStat(entry: GitStatusEntry)}
+  {#if entry.additions !== undefined || entry.deletions !== undefined}
+    <span class="shrink-0 text-[10px] tabular-nums flex items-center gap-1">
+      {#if entry.additions}<span class="text-green-400">+{entry.additions}</span>{/if}
+      {#if entry.deletions}<span class="text-red-400">−{entry.deletions}</span>{/if}
+    </span>
+  {/if}
+{/snippet}
+
 {#snippet sidebarFileItem(entry: GitStatusEntry)}
   {@const key = fileKey(entry)}
   {@const badge = statusBadge(entry.status)}
@@ -257,26 +368,36 @@
         <div class="truncate text-[10px] text-muted-foreground/60">{dirPath(entry.filePath)}</div>
       {/if}
     </div>
+    {@render diffStat(entry)}
     {#if entry.staged}
       <span class="text-[10px] text-green-400 shrink-0">S</span>
     {/if}
   </button>
 {/snippet}
 
-{#snippet sidebarSectionHeader(title: string, sectionKey: string, count: number, colorClass: string)}
+{#snippet sidebarSectionHeader(title: string, sectionKey: string, count: number, colorClass: string, entries: GitStatusEntry[], mode: 'stage' | 'unstage' | 'none')}
   {#if count > 0}
-    <button
-      onclick={() => toggleSection(sectionKey)}
-      class="flex items-center gap-2 px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground w-full text-left bg-card/30"
-    >
-      <svg class="w-2.5 h-2.5 transition-transform {collapsedSections.has(sectionKey) ? '' : 'rotate-90'}" fill="currentColor" viewBox="0 0 20 20">
-        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
-      </svg>
-      <span class={colorClass}>{title}</span>
-      <span class="text-muted-foreground/60">{count}</span>
-    </button>
+    <div class="flex items-center w-full bg-card/30 group/sec">
+      <button
+        onclick={() => toggleSection(sectionKey)}
+        class="flex items-center gap-2 px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground flex-1 min-w-0 text-left"
+      >
+        <svg class="w-2.5 h-2.5 transition-transform {collapsedSections.has(sectionKey) ? '' : 'rotate-90'}" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+        </svg>
+        <span class={colorClass}>{title}</span>
+        <span class="text-muted-foreground/60">{count}</span>
+      </button>
+      {#if mode === 'stage'}
+        <button onclick={() => stageAll(entries)} class="px-2 py-1 text-[10px] text-muted-foreground hover:text-green-400 shrink-0 opacity-0 group-hover/sec:opacity-100">stage all</button>
+      {:else if mode === 'unstage'}
+        <button onclick={() => unstageAll(entries)} class="px-2 py-1 text-[10px] text-muted-foreground hover:text-yellow-400 shrink-0 opacity-0 group-hover/sec:opacity-100">unstage all</button>
+      {/if}
+    </div>
   {/if}
 {/snippet}
+
+<svelte:window onkeydown={handleShortcuts} />
 
 {#if isRunning && gitStatus.entries.length === 0}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
@@ -391,7 +512,7 @@
       <div class="flex-1 overflow-y-auto">
         <!-- Staged -->
         {#if filteredStagedEntries.length > 0}
-          {@render sidebarSectionHeader('Staged', 'staged', filteredStagedEntries.length, 'text-green-400')}
+          {@render sidebarSectionHeader('Staged', 'staged', filteredStagedEntries.length, 'text-green-400', filteredStagedEntries, 'unstage')}
           {#if !collapsedSections.has('staged')}
             {#each filteredStagedEntries as entry (entry.filePath + ':staged')}
               {@render sidebarFileItem(entry)}
@@ -401,7 +522,7 @@
 
         <!-- Unstaged -->
         {#if filteredUnstagedEntries.length > 0}
-          {@render sidebarSectionHeader('Changes', 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400')}
+          {@render sidebarSectionHeader('Changes', 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400', filteredUnstagedEntries, 'stage')}
           {#if !collapsedSections.has('unstaged')}
             {#each filteredUnstagedEntries as entry (entry.filePath + ':unstaged')}
               {@render sidebarFileItem(entry)}
@@ -411,7 +532,7 @@
 
         <!-- Untracked -->
         {#if filteredUntrackedEntries.length > 0}
-          {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground')}
+          {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground', filteredUntrackedEntries, 'stage')}
           {#if !collapsedSections.has('untracked')}
             {#each filteredUntrackedEntries as entry (entry.filePath + ':untracked')}
               {@render sidebarFileItem(entry)}
@@ -419,6 +540,29 @@
           {/if}
         {/if}
       </div>
+
+      <!-- Commit box (shown when there are staged changes) -->
+      {#if stagedEntries.length > 0}
+        <div class="border-t border-border p-2 shrink-0 space-y-1.5">
+          <textarea
+            bind:value={commitMessage}
+            placeholder="Commit message…"
+            rows="2"
+            onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
+            class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-none"
+          ></textarea>
+          {#if commitError}
+            <div class="text-[10px] text-destructive">{commitError}</div>
+          {/if}
+          <button
+            onclick={doCommit}
+            disabled={!commitMessage.trim() || committing}
+            class="w-full text-xs px-2 py-1 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {committing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      {/if}
     </div>
 
     <!-- Right: Diff viewer -->
@@ -426,7 +570,8 @@
       {#if selectedEntry}
         {@const key = fileKey(selectedEntry)}
         {@const reverting = revertingFiles.has(key)}
-        {@const diffLines = getDiffLines(selectedEntry.filePath)}
+        {@const diffResult = fileDiffs[key]}
+        {@const diffLines = getDiffLines(selectedEntry)}
         {@const badge = statusBadge(selectedEntry.status)}
         {@const history = editHistoryByFile.get(selectedEntry.filePath)}
         {@const historyExpanded = editHistoryExpanded.has(key)}
@@ -443,6 +588,8 @@
           >
             <span class="text-muted-foreground">{dirPath(selectedEntry.filePath)}</span>{fileName(selectedEntry.filePath)}
           </button>
+
+          {@render diffStat(selectedEntry)}
 
           {#if selectedEntry.origPath}
             <span class="text-xs text-muted-foreground truncate">← {selectedEntry.origPath}</span>
@@ -461,6 +608,33 @@
           {/if}
 
           <div class="ml-auto flex items-center gap-2">
+            {#if hunkLineIndices(diffLines).length > 1}
+              <div class="flex items-center text-muted-foreground" title="Jump between hunks">
+                <button onclick={() => gotoHunk(-1)} class="hover:text-foreground px-0.5" aria-label="Previous hunk">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
+                </button>
+                <button onclick={() => gotoHunk(1)} class="hover:text-foreground px-0.5" aria-label="Next hunk">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                </button>
+              </div>
+            {/if}
+            {#if selectedEntry.staged}
+              <button
+                onclick={() => unstageEntry(selectedEntry)}
+                class="text-xs px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
+                title="Unstage this file"
+              >
+                Unstage
+              </button>
+            {:else}
+              <button
+                onclick={() => stageEntry(selectedEntry)}
+                class="text-xs px-2 py-0.5 border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors"
+                title="Stage this file"
+              >
+                Stage
+              </button>
+            {/if}
             <button
               onclick={() => sideBySide = !sideBySide}
               class="text-xs text-muted-foreground hover:text-foreground select-none"
@@ -478,7 +652,7 @@
               </svg>
             </button>
             <button
-              onclick={() => revertFile(selectedEntry)}
+              onclick={() => confirmEntry = selectedEntry}
               disabled={reverting}
               class="text-xs px-2 py-0.5 border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
               title={isUntracked ? 'Delete this untracked file' : 'Revert this file to its state before changes'}
@@ -493,9 +667,18 @@
         </div>
 
         <!-- Diff content -->
-        <div class="flex-1 overflow-y-auto px-4 py-2">
-          {#if diffLines.length > 0}
-            <DiffView lines={diffLines} {sideBySide} maxHeight="none" />
+        <div class="flex-1 overflow-y-auto px-4 py-2" bind:this={diffContainer}>
+          {#if diffResult?.kind === 'image'}
+            <ImageDiffView {sessionId} filePath={selectedEntry.filePath} />
+          {:else if diffResult?.kind === 'binary'}
+            <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              Binary file — no text diff to display.
+            </div>
+          {:else if diffLines.length > 0}
+            <DiffView lines={diffLines} {sideBySide} maxHeight="none" filePath={selectedEntry.filePath} />
           {:else}
             <div class="text-xs text-muted-foreground py-2">No diff available</div>
           {/if}
@@ -512,7 +695,7 @@
                     <div class="text-[10px] text-muted-foreground/60 mb-1">
                       {edit.toolName} #{idx + 1}
                     </div>
-                    <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" />
+                    <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} />
                   </div>
                 {/if}
               {/each}
@@ -528,3 +711,26 @@
     </div>
   </div>
 {/if}
+
+<!-- Confirmation for destructive revert/discard -->
+<Dialog.Root open={confirmEntry !== null} onOpenChange={(v) => { if (!v) confirmEntry = null; }}>
+  <Dialog.Content class="max-w-md">
+    {#if confirmEntry}
+      {@const isUntracked = confirmEntry.status === 'untracked'}
+      <Dialog.Header>
+        <Dialog.Title>{isUntracked ? 'Discard file?' : 'Revert file?'}</Dialog.Title>
+        <Dialog.Description>
+          {#if isUntracked}
+            <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be permanently deleted from disk. This cannot be undone.
+          {:else}
+            <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be reset to its last committed state, discarding the changes shown here.
+          {/if}
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="outline" onclick={() => confirmEntry = null}>Cancel</Button>
+        <Button variant="destructive" onclick={confirmRevert}>{isUntracked ? 'Discard' : 'Revert'}</Button>
+      </Dialog.Footer>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>

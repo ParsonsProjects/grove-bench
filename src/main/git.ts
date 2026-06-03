@@ -166,6 +166,86 @@ export async function renameBranch(cwd: string, oldName: string, newName: string
   await git(['branch', '-m', oldName, newName], cwd);
 }
 
+/**
+ * Diff a single file. `staged` selects the index-vs-HEAD diff (`--cached`);
+ * otherwise the working-tree-vs-index diff is returned. Returns the raw unified
+ * patch (possibly empty, e.g. for an untracked file — see synthesizeUntrackedDiff).
+ */
+export async function fileDiff(
+  cwd: string,
+  relPath: string,
+  opts: { staged?: boolean } = {},
+): Promise<string> {
+  const args = opts.staged
+    ? ['diff', '--cached', '--', relPath]
+    : ['diff', '--', relPath];
+  return git(args, cwd);
+}
+
+/** True when a git diff describes a binary change rather than a text patch. */
+export function detectBinaryDiff(diffOutput: string): boolean {
+  return /^Binary files .* differ$/m.test(diffOutput) || diffOutput.includes('GIT binary patch');
+}
+
+/** Image extensions previewed as before/after thumbnails. SVG is excluded — it diffs as XML text. */
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+
+/** Returns the lowercased image extension for a path, or null if it isn't a previewable image. */
+export function imageExtFor(relPath: string): string | null {
+  const m = relPath.match(/\.([A-Za-z0-9]+)$/);
+  if (!m) return null;
+  const ext = m[1].toLowerCase();
+  return IMAGE_EXTS.has(ext) ? ext : null;
+}
+
+/** Stage a single path (git add). */
+export async function stageFile(cwd: string, relPath: string): Promise<void> {
+  await git(['add', '--', relPath], cwd);
+}
+
+/** Unstage a single path, leaving working-tree changes intact (git reset HEAD). */
+export async function unstageFile(cwd: string, relPath: string): Promise<void> {
+  await git(['reset', '-q', 'HEAD', '--', relPath], cwd);
+}
+
+/** Commit the staged changes with the given message. Rejects an empty message. */
+export async function commit(cwd: string, message: string): Promise<void> {
+  if (!message.trim()) throw new Error('Commit message cannot be empty');
+  await git(['commit', '-m', message], cwd);
+}
+
+/** MIME type for an image extension (for building data URLs); octet-stream when unknown. */
+export function mimeForImageExt(ext: string): string {
+  switch (ext.toLowerCase()) {
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'gif': return 'image/gif';
+    case 'webp': return 'image/webp';
+    case 'bmp': return 'image/bmp';
+    case 'ico': return 'image/x-icon';
+    case 'avif': return 'image/avif';
+    default: return 'application/octet-stream';
+  }
+}
+
+/** Heuristic: a file is binary if a NUL byte appears in its leading bytes. */
+export function looksBinary(buf: Buffer): boolean {
+  const limit = Math.min(buf.length, 8000);
+  for (let i = 0; i < limit; i++) {
+    if (buf[i] === 0) return true;
+  }
+  return false;
+}
+
+/** Build an all-add unified diff for an untracked file from its content. */
+export function synthesizeUntrackedDiff(relPath: string, content: string): string {
+  const lines = content.split('\n');
+  const posix = relPath.replace(/\\/g, '/');
+  const header = `--- /dev/null\n+++ b/${posix}\n@@ -0,0 +1,${lines.length} @@\n`;
+  return header + lines.map(l => `+${l}`).join('\n');
+}
+
 /** Read the user's git identity from the repo (or global) config, with fallbacks. */
 export async function getGitIdentity(cwd: string): Promise<{ name: string; email: string }> {
   let name = 'Grove Orchestrator';

@@ -165,10 +165,26 @@ export interface GitStatusEntry {
   status: GitFileStatus;
   staged: boolean;
   origPath?: string;
+  /** Line counts from `git diff --numstat` (combined vs HEAD); absent for untracked files. */
+  additions?: number;
+  deletions?: number;
 }
 
 export interface GitStatusResult {
   entries: GitStatusEntry[];
+}
+
+/** Result of a single-file diff request. Text files carry a unified patch; binary
+ *  and image files are flagged so the UI can show a card / thumbnails instead of garbled text. */
+export type FileDiffResult =
+  | { kind: 'text'; patch: string }
+  | { kind: 'binary' }
+  | { kind: 'image'; ext: string };
+
+/** Base64 data URLs for an image file's working-tree and HEAD versions (either may be null). */
+export interface ImageDiffContent {
+  working: string | null;
+  head: string | null;
 }
 
 export interface CheckpointListItem {
@@ -296,7 +312,11 @@ export interface GroveBenchAPI {
 
   // File revert (for changes review)
   revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void>;
-  getFileDiff(sessionId: string, filePath: string): Promise<string>;
+  getFileDiff(sessionId: string, filePath: string, staged?: boolean): Promise<FileDiffResult>;
+  getImageDiffContent(sessionId: string, filePath: string): Promise<ImageDiffContent>;
+  stageFile(sessionId: string, filePath: string): Promise<void>;
+  unstageFile(sessionId: string, filePath: string): Promise<void>;
+  commit(sessionId: string, message: string): Promise<void>;
 
   // Checkpoint rewind
   rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
@@ -505,7 +525,11 @@ export const IPC = {
   KILL_PORT: 'process:killPort',
   FILE_REVERT: 'file:revert',
   FILE_DIFF: 'file:diff',
+  FILE_CONTENT_DATA_URL: 'file:contentDataUrl',
+  FILE_STAGE: 'file:stage',
+  FILE_UNSTAGE: 'file:unstage',
   GIT_STATUS: 'git:status',
+  GIT_COMMIT: 'git:commit',
   PR_INFO: 'pr:info',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_THINKING: 'agent:setThinking',

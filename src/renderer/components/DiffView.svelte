@@ -99,17 +99,23 @@
 </script>
 
 <script lang="ts">
+  import { languageForPath, highlightLine } from '../lib/diff-highlight.js';
+
   let {
     lines,
     sideBySide = false,
     maxHeight = '400px',
+    filePath = '',
   }: {
     lines: DiffLine[];
     sideBySide?: boolean;
     maxHeight?: string;
+    filePath?: string;
   } = $props();
 
   let rows = $derived(sideBySide ? buildSideBySideRows(lines) : []);
+  let lang = $derived(filePath ? languageForPath(filePath) : null);
+  const hl = (text: string) => highlightLine(text, lang);
 </script>
 
 {#if lines.length > 0}
@@ -131,16 +137,16 @@
             {:else if row.type === 'context'}
               <tr>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.left?.lineNum ?? ''}</td>
-                <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre">{row.left?.text ?? ''}</td>
+                <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre">{#if row.left}{@html hl(row.left.text)}{/if}</td>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
-                <td class="text-muted-foreground px-2 whitespace-pre">{row.right?.text ?? ''}</td>
+                <td class="text-muted-foreground px-2 whitespace-pre">{#if row.right}{@html hl(row.right.text)}{/if}</td>
               </tr>
             {:else}
               <tr>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.left ? 'bg-red-950/30' : ''}">{row.left?.lineNum ?? ''}</td>
-                <td class="px-2 border-r border-border/30 whitespace-pre {row.left ? 'bg-red-950/30 text-red-300' : ''}">{row.left?.text ?? ''}</td>
+                <td class="px-2 border-r border-border/30 whitespace-pre {row.left ? 'bg-red-950/30 text-red-300' : ''}">{#if row.left}{@html hl(row.left.text)}{/if}</td>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
-                <td class="px-2 whitespace-pre {row.right ? 'bg-green-950/30 text-green-300' : ''}">{row.right?.text ?? ''}</td>
+                <td class="px-2 whitespace-pre {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text)}{/if}</td>
               </tr>
             {/if}
           {/each}
@@ -151,21 +157,21 @@
     <div class="overflow-x-auto overflow-y-auto text-xs font-mono" style:max-height={maxHeight}>
       {#each lines as line}
         {#if line.type === 'hunk'}
-          <div class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>
+          <div data-hunk="true" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>
         {:else if line.type === 'add'}
           <div class="bg-green-950/30 text-green-300 px-2 whitespace-pre">
             <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
-            <span class="text-green-500 select-none">+</span> {line.text}
+            <span class="text-green-500 select-none">+</span> {@html hl(line.text)}
           </div>
         {:else if line.type === 'del'}
           <div class="bg-red-950/30 text-red-300 px-2 whitespace-pre">
             <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
-            <span class="text-red-500 select-none">-</span> {line.text}
+            <span class="text-red-500 select-none">-</span> {@html hl(line.text)}
           </div>
         {:else}
           <div class="text-muted-foreground px-2 whitespace-pre">
             <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
-            <span class="select-none">&nbsp;</span> {line.text}
+            <span class="select-none">&nbsp;</span> {@html hl(line.text)}
           </div>
         {/if}
       {/each}

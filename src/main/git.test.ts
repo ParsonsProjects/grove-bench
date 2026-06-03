@@ -18,6 +18,15 @@ import {
   abortMerge,
   branchHasRemote,
   renameBranch,
+  fileDiff,
+  synthesizeUntrackedDiff,
+  detectBinaryDiff,
+  imageExtFor,
+  looksBinary,
+  mimeForImageExt,
+  stageFile,
+  unstageFile,
+  commit,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -282,5 +291,136 @@ describe('renameBranch()', () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     await renameBranch('/repo', 'old', 'new');
     expect(mockExeca).toHaveBeenCalledWith('git', ['branch', '-m', 'old', 'new'], { cwd: '/repo' });
+  });
+});
+
+describe('stageFile()', () => {
+  it('calls git add for the given path', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await stageFile('/repo', 'src/a.ts');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['add', '--', 'src/a.ts'], { cwd: '/repo' });
+  });
+});
+
+describe('unstageFile()', () => {
+  it('calls git reset HEAD for the given path', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await unstageFile('/repo', 'src/a.ts');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['reset', '-q', 'HEAD', '--', 'src/a.ts'], { cwd: '/repo' });
+  });
+});
+
+describe('commit()', () => {
+  it('calls git commit with the message', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await commit('/repo', 'my message');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['commit', '-m', 'my message'], { cwd: '/repo' });
+  });
+
+  it('rejects an empty or whitespace-only message without calling git', async () => {
+    await expect(commit('/repo', '   ')).rejects.toThrow();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('fileDiff()', () => {
+  it('diffs the working tree against the index for unstaged changes', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'unstaged patch' } as any);
+    const out = await fileDiff('/repo', 'src/a.ts', { staged: false });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(out).toBe('unstaged patch');
+  });
+
+  it('diffs the index against HEAD for staged changes (--cached)', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'staged patch' } as any);
+    const out = await fileDiff('/repo', 'src/a.ts', { staged: true });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--cached', '--', 'src/a.ts'], { cwd: '/repo' });
+    expect(out).toBe('staged patch');
+  });
+
+  it('defaults to the unstaged (working-tree) diff', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await fileDiff('/repo', 'src/a.ts');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['diff', '--', 'src/a.ts'], { cwd: '/repo' });
+  });
+});
+
+describe('detectBinaryDiff()', () => {
+  it('detects git "Binary files ... differ" output', () => {
+    const out = 'diff --git a/logo.png b/logo.png\nindex e69..f00 100644\nBinary files a/logo.png and b/logo.png differ\n';
+    expect(detectBinaryDiff(out)).toBe(true);
+  });
+
+  it('detects a GIT binary patch block', () => {
+    expect(detectBinaryDiff('diff --git a/x b/x\nGIT binary patch\n...')).toBe(true);
+  });
+
+  it('returns false for a normal text patch', () => {
+    const out = '@@ -1,2 +1,2 @@\n-old\n+new\n context\n';
+    expect(detectBinaryDiff(out)).toBe(false);
+  });
+
+  it('returns false for empty input', () => {
+    expect(detectBinaryDiff('')).toBe(false);
+  });
+});
+
+describe('imageExtFor()', () => {
+  it('returns the lowercased extension for known image types', () => {
+    expect(imageExtFor('assets/logo.PNG')).toBe('png');
+    expect(imageExtFor('a/b/photo.jpeg')).toBe('jpeg');
+    expect(imageExtFor('icon.webp')).toBe('webp');
+  });
+
+  it('returns null for non-image extensions', () => {
+    expect(imageExtFor('src/index.ts')).toBeNull();
+    expect(imageExtFor('README.md')).toBeNull();
+  });
+
+  it('treats SVG as text (returns null) since it diffs as XML', () => {
+    expect(imageExtFor('icon.svg')).toBeNull();
+  });
+});
+
+describe('looksBinary()', () => {
+  it('returns true when a NUL byte is present', () => {
+    expect(looksBinary(Buffer.from([0x68, 0x00, 0x69]))).toBe(true);
+  });
+
+  it('returns false for plain text', () => {
+    expect(looksBinary(Buffer.from('hello\nworld', 'utf-8'))).toBe(false);
+  });
+
+  it('returns false for empty buffer', () => {
+    expect(looksBinary(Buffer.alloc(0))).toBe(false);
+  });
+});
+
+describe('mimeForImageExt()', () => {
+  it('maps known image extensions to MIME types', () => {
+    expect(mimeForImageExt('png')).toBe('image/png');
+    expect(mimeForImageExt('jpg')).toBe('image/jpeg');
+    expect(mimeForImageExt('jpeg')).toBe('image/jpeg');
+    expect(mimeForImageExt('ico')).toBe('image/x-icon');
+  });
+
+  it('falls back to octet-stream for unknown extensions', () => {
+    expect(mimeForImageExt('xyz')).toBe('application/octet-stream');
+  });
+});
+
+describe('synthesizeUntrackedDiff()', () => {
+  it('builds an all-add unified diff from file content', () => {
+    const patch = synthesizeUntrackedDiff('src/new.ts', 'line1\nline2');
+    expect(patch).toContain('--- /dev/null');
+    expect(patch).toContain('+++ b/src/new.ts');
+    expect(patch).toContain('@@ -0,0 +1,2 @@');
+    expect(patch).toContain('+line1');
+    expect(patch).toContain('+line2');
+  });
+
+  it('normalizes Windows path separators to forward slashes', () => {
+    const patch = synthesizeUntrackedDiff('src\\nested\\new.ts', 'x');
+    expect(patch).toContain('+++ b/src/nested/new.ts');
   });
 });

@@ -6,8 +6,9 @@ import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git } from './git.js';
-import { parseGitStatusPorcelain } from './git-status-parser.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit } from './git.js';
+import type { FileDiffResult, ImageDiffContent } from '../shared/types.js';
+import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { killProcessOnPort } from './port-killer.js';
 import { terminalManager } from './terminal.js';
@@ -24,6 +25,24 @@ import { execFile } from 'node:child_process';
  *  These are sent live via IPC but not persisted — the AGENT_HISTORY handler
  *  prepends them so the renderer's history replay can show them. */
 const prelaunchEvents = new Map<string, import('../shared/types.js').AgentEvent[]>();
+
+/**
+ * Resolve a user/agent-supplied file path to a worktree-relative path, stripping Docker
+ * container prefixes and absolute host prefixes, and rejecting path traversal outside the worktree.
+ */
+function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relPath: string; resolved: string } {
+  // Strip Docker container paths (/workspace/...) and make relative
+  let relPath = filePath.replace(/^\/workspace\//, '');
+  const normalWt = path.normalize(worktreePath) + path.sep;
+  if (path.normalize(relPath).startsWith(normalWt)) {
+    relPath = path.relative(worktreePath, relPath);
+  }
+  const resolved = path.resolve(worktreePath, relPath);
+  if (!path.normalize(resolved).startsWith(normalWt)) {
+    throw new Error('Path traversal not allowed');
+  }
+  return { relPath, resolved };
+}
 
 export function registerHandlers() {
   // ─── Repo ───
@@ -482,16 +501,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    // Sanitize: strip Docker container paths (/workspace/...) and make relative
-    let relPath = filePath.replace(/^\/workspace\//, '');
-    const normalWt = path.normalize(worktree.path) + path.sep;
-    if (path.normalize(relPath).startsWith(normalWt)) {
-      relPath = path.relative(worktree.path, relPath);
-    }
-    const resolved = path.resolve(worktree.path, relPath);
-    if (!path.normalize(resolved).startsWith(normalWt)) {
-      throw new Error('Path traversal not allowed');
-    }
+    const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
     // Check if the file is untracked (git checkout won't work for untracked files)
     const statusRaw = await git(['status', '--porcelain', '--', relPath], worktree.path);
     const isUntracked = statusRaw.trimStart().startsWith('??');
@@ -507,43 +517,79 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string) => {
+  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean): Promise<FileDiffResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    // Sanitize: strip Docker container paths (/workspace/...) and make relative
-    let relPath = filePath.replace(/^\/workspace\//, '');
-    // Also strip the host worktree prefix if it's an absolute path
-    const normalWt = path.normalize(worktree.path) + path.sep;
-    if (path.normalize(relPath).startsWith(normalWt)) {
-      relPath = path.relative(worktree.path, relPath);
-    }
-    const resolved = path.resolve(worktree.path, relPath);
-    if (!path.normalize(resolved).startsWith(normalWt)) {
-      throw new Error('Path traversal not allowed');
-    }
-    // Get unified diff of this file vs HEAD
+    const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
+
+    // Images get a before/after thumbnail view rather than a text diff.
+    const imgExt = imageExtFor(relPath);
+    if (imgExt) return { kind: 'image', ext: imgExt };
+
+    // Staged diff = index vs HEAD; unstaged diff = working tree vs index.
     try {
-      const diff = await git(['diff', 'HEAD', '--', relPath], worktree.path);
-      if (diff) return diff;
-      // If empty diff, file may be untracked — synthesize an all-add diff
-      const content = await fs.readFile(resolved, 'utf-8');
-      if (content) {
-        const lines = content.split('\n');
-        const header = `--- /dev/null\n+++ b/${relPath.replace(/\\/g, '/')}\n@@ -0,0 +1,${lines.length} @@\n`;
-        return header + lines.map(l => `+${l}`).join('\n');
-      }
-      return '';
+      const diff = await fileDiff(worktree.path, relPath, { staged });
+      if (detectBinaryDiff(diff)) return { kind: 'binary' };
+      if (diff) return { kind: 'text', patch: diff };
+      // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
+      if (staged) return { kind: 'text', patch: '' };
+      // Empty unstaged diff often means an untracked file — read it (guarding binaries).
+      const buf = await fs.readFile(resolved);
+      if (looksBinary(buf)) return { kind: 'binary' };
+      const content = buf.toString('utf-8');
+      return { kind: 'text', patch: content ? synthesizeUntrackedDiff(relPath, content) : '' };
     } catch {
       // File may be untracked (new file) — try to read and synthesize diff
       try {
-        const content = await fs.readFile(resolved, 'utf-8');
-        const lines = content.split('\n');
-        const header = `--- /dev/null\n+++ b/${relPath.replace(/\\/g, '/')}\n@@ -0,0 +1,${lines.length} @@\n`;
-        return header + lines.map(l => `+${l}`).join('\n');
+        const buf = await fs.readFile(resolved);
+        if (looksBinary(buf)) return { kind: 'binary' };
+        return { kind: 'text', patch: synthesizeUntrackedDiff(relPath, buf.toString('utf-8')) };
       } catch {
-        return '';
+        return { kind: 'text', patch: '' };
       }
     }
+  });
+
+  ipcMain.handle(IPC.FILE_CONTENT_DATA_URL, async (_event, sessionId: string, filePath: string): Promise<ImageDiffContent> => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    const mime = mimeForImageExt(imageExtFor(relPath) ?? '');
+
+    let working: string | null = null;
+    try {
+      const buf = await fs.readFile(resolved);
+      working = `data:${mime};base64,${buf.toString('base64')}`;
+    } catch { /* file may have been deleted */ }
+
+    let head: string | null = null;
+    try {
+      const posix = relPath.replace(/\\/g, '/');
+      const { stdout } = await execa('git', ['show', `HEAD:${posix}`], { cwd: worktree.path, encoding: 'buffer' });
+      head = `data:${mime};base64,${Buffer.from(stdout).toString('base64')}`;
+    } catch { /* not present in HEAD (newly added) */ }
+
+    return { working, head };
+  });
+
+  ipcMain.handle(IPC.FILE_STAGE, async (_event, sessionId: string, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    await stageFile(worktree.path, relPath);
+  });
+
+  ipcMain.handle(IPC.FILE_UNSTAGE, async (_event, sessionId: string, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    await unstageFile(worktree.path, relPath);
+  });
+
+  ipcMain.handle(IPC.GIT_COMMIT, async (_event, sessionId: string, message: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    await commit(worktree.path, message);
   });
 
   // ─── Checkpoint rewind ───
@@ -568,7 +614,20 @@ export function registerHandlers() {
 
     try {
       const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], worktree.path);
-      return parseGitStatusPorcelain(raw);
+      const result = parseGitStatusPorcelain(raw);
+      // Attach per-file line counts (combined working-tree-vs-HEAD) as a sidebar hint.
+      try {
+        const numstatRaw = await git(['diff', 'HEAD', '--numstat'], worktree.path);
+        const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
+        for (const entry of result.entries) {
+          const stat = stats.get(entry.filePath);
+          if (stat && !stat.binary) {
+            entry.additions = stat.additions;
+            entry.deletions = stat.deletions;
+          }
+        }
+      } catch { /* numstat is best-effort (e.g. no HEAD yet) */ }
+      return result;
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
       return { entries: [] };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseGitStatusPorcelain } from './git-status-parser.js';
+import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 
 describe('parseGitStatusPorcelain', () => {
   it('returns empty entries for empty input', () => {
@@ -112,5 +112,40 @@ describe('parseGitStatusPorcelain', () => {
     expect(result.entries).toHaveLength(2);
     expect(result.entries[0]).toEqual({ filePath: 'new.ts', status: 'renamed', staged: true, origPath: 'old.ts' });
     expect(result.entries[1]).toEqual({ filePath: 'other.ts', status: 'modified', staged: true });
+  });
+});
+
+describe('parseNumstat', () => {
+  it('returns empty for empty input', () => {
+    expect(parseNumstat('')).toEqual([]);
+  });
+
+  it('parses additions and deletions per file', () => {
+    const raw = '12\t3\tsrc/a.ts\n0\t5\tsrc/b.ts\n';
+    expect(parseNumstat(raw)).toEqual([
+      { path: 'src/a.ts', additions: 12, deletions: 3, binary: false },
+      { path: 'src/b.ts', additions: 0, deletions: 5, binary: false },
+    ]);
+  });
+
+  it('marks binary changes (- / -) with zero counts', () => {
+    const raw = '-\t-\tassets/logo.png\n';
+    expect(parseNumstat(raw)).toEqual([
+      { path: 'assets/logo.png', additions: 0, deletions: 0, binary: true },
+    ]);
+  });
+
+  it('preserves paths containing tabs', () => {
+    const raw = '1\t1\tweird\tname.ts\n';
+    expect(parseNumstat(raw)).toEqual([
+      { path: 'weird\tname.ts', additions: 1, deletions: 1, binary: false },
+    ]);
+  });
+
+  it('skips malformed lines', () => {
+    const raw = 'garbage\n3\t4\tok.ts\n';
+    expect(parseNumstat(raw)).toEqual([
+      { path: 'ok.ts', additions: 3, deletions: 4, binary: false },
+    ]);
   });
 });

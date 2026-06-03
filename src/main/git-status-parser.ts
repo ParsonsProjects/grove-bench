@@ -60,3 +60,35 @@ export function parseGitStatusPorcelain(raw: string): GitStatusResult {
 
   return { entries };
 }
+
+export interface DiffStat {
+  path: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/**
+ * Parse the output of `git diff --numstat`. Each line is "additions\tdeletions\tpath";
+ * binary changes use "-" for both counts. Paths may themselves contain tabs.
+ */
+export function parseNumstat(raw: string): DiffStat[] {
+  if (!raw) return [];
+  const out: DiffStat[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const addStr = parts[0];
+    const delStr = parts[1];
+    const path = parts.slice(2).join('\t');
+    const binary = addStr === '-' || delStr === '-';
+    out.push({
+      path,
+      additions: binary ? 0 : (parseInt(addStr, 10) || 0),
+      deletions: binary ? 0 : (parseInt(delStr, 10) || 0),
+      binary,
+    });
+  }
+  return out;
+}

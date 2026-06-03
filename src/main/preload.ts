@@ -77,8 +77,16 @@ const api: GroveBenchAPI = {
   // File revert & diff (for changes review)
   revertFile: (sessionId: string, filePath: string, staged?: boolean) =>
     ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged),
-  getFileDiff: (sessionId: string, filePath: string) =>
-    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath),
+  getFileDiff: (sessionId: string, filePath: string, staged?: boolean) =>
+    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged),
+  getImageDiffContent: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath),
+  stageFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_STAGE, sessionId, filePath),
+  unstageFile: (sessionId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
+  commit: (sessionId: string, message: string) =>
+    ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
 
   // Checkpoint rewind
   rewindSession: (sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) =>
