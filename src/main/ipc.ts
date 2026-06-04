@@ -289,6 +289,8 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_RENAME, async (_event, sessionId: string, displayName: string) => {
     sessionManager.renameSession(sessionId, displayName);
+    // Persist so the name survives app restart (displayName was in-memory only).
+    await worktreeManager.saveDisplayName(sessionId, displayName);
   });
 
   // ─── Branches ───

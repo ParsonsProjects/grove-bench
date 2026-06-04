@@ -28,6 +28,7 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     return [
+      { label: 'New Session', icon: 'add' as const, action: () => store.createDirectSession(session.repoPath) },
       { label: 'Rename', icon: 'rename' as const, action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder' as const, action: () => window.groveBench.openSessionFolder(sessionId) },
       { label: 'Destroy Agent', icon: 'destroy' as const, action: () => requestDestroy(sessionId), variant: 'destructive' as const },

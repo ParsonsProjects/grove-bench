@@ -23,6 +23,8 @@ interface ManifestEntry {
   /** Last model the session ran with, so it can be restored after app restart. */
   model?: string;
   direct?: boolean;
+  /** User-assigned or auto-generated display name, persisted across restart. */
+  displayName?: string;
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -258,6 +260,16 @@ export class WorktreeManager {
     return manifest[worktreeId]?.model;
   }
 
+  /** Persist a session's display name so it survives app restart. Passing an
+   *  empty name clears it (reverting the label back to the branch name). */
+  async saveDisplayName(worktreeId: string, displayName: string): Promise<void> {
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].displayName = displayName || undefined;
+      }
+    });
+  }
+
 
   async remove(id: string, deleteBranch = false): Promise<void> {
     let info = this.worktrees.get(id);
@@ -370,6 +382,7 @@ export class WorktreeManager {
             createdAt: entry.createdAt,
             lastActiveAt: entry.lastActiveAt,
             direct: true,
+            displayName: entry.displayName ?? null,
           });
           continue;
         }
@@ -392,6 +405,7 @@ export class WorktreeManager {
           repoPath,
           createdAt: entry.createdAt,
           lastActiveAt: entry.lastActiveAt,
+          displayName: entry.displayName ?? null,
         });
       }
 
@@ -510,6 +524,7 @@ export class WorktreeManager {
       createdAt: entry.createdAt,
       lastActiveAt: entry.lastActiveAt,
       direct: entry.direct,
+      displayName: entry.displayName ?? null,
     };
 
     // Cache in memory for subsequent lookups

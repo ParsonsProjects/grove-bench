@@ -7,6 +7,7 @@
   import { getRepoColor, getTabPendingClass } from './lib/repo-colors.js';
   import { canScrollLeft, canScrollRight, scrollToTab, scrollByAmount } from './lib/tab-scroll.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
+  import { deriveSessionName } from './lib/session-name.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -39,14 +40,9 @@
     ];
   }
 
-  async function newSessionForRepo(repoPath: string, branch: string) {
-    try {
-      const result = await window.groveBench.createSession({ repoPath, branchName: branch, direct: true });
-      store.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, createdAt: Date.now() });
-      store.activeSessionId = result.id;
-    } catch (e: any) {
-      store.setError(e.message || String(e));
-    }
+  async function newSessionForRepo(repoPath: string, _branch?: string) {
+    // Direct session on the repo's current checkout (HEAD resolved in main).
+    await store.createDirectSession(repoPath);
   }
 
   let tabRenamingId = $state<string | null>(null);
@@ -144,17 +140,37 @@
   let sessionCompletedWhileInactive = $state<Record<string, boolean>>({});
   let prevRunningState = $state<Record<string, boolean>>({});
 
-  // Detect when a non-active session transitions from running → idle
+  // Detect when a session transitions from running → idle (a turn completed)
   $effect(() => {
     for (const session of store.sessions) {
       const running = messageStore.getIsRunning(session.id);
       const wasRunning = prevRunningState[session.id] ?? false;
-      if (wasRunning && !running && store.activeSessionId !== session.id) {
-        sessionCompletedWhileInactive[session.id] = true;
+      if (wasRunning && !running) {
+        if (store.activeSessionId !== session.id) {
+          sessionCompletedWhileInactive[session.id] = true;
+        }
+        maybeAutoNameSession(session);
       }
       prevRunningState[session.id] = running;
     }
   });
+
+  /** After a turn completes, give an unnamed session a heuristic name derived
+   *  from its first (non-command) user message. The displayName guard makes
+   *  this fire once and never overwrites a manually-set name. */
+  function maybeAutoNameSession(session: { id: string; displayName?: string | null }) {
+    if (session.displayName) return;
+    const firstUser = messageStore
+      .getMessages(session.id)
+      .find((m) => m.kind === 'user' && !m.text.startsWith('/'));
+    if (!firstUser || firstUser.kind !== 'user') return;
+    const name = deriveSessionName(firstUser.text);
+    if (!name) return;
+    window.groveBench
+      .renameSession(session.id, name)
+      .then(() => store.updateDisplayName(session.id, name))
+      .catch(() => { /* non-fatal — naming is best-effort */ });
+  }
 
   // Clear flash when switching to a session
   $effect(() => {
