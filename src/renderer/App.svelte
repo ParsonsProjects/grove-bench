@@ -221,15 +221,30 @@
     }
   }
 
-  let resumingId: string | null = null;
+  // Sessions with a resume in flight (Set, not a single id, so resumes of
+  // different sessions don't clobber each other's tracking).
+  let resumingIds = new Set<string>();
+  // Sessions whose last auto-resume failed. A failure here used to block the
+  // tab's auto-resume permanently; instead we clear it when the user navigates
+  // (back) to the tab, so a transient failure retries on explicit re-selection.
   let failedResumeIds = new Set<string>();
+  let prevActiveResumeId: string | null = null;
 
   $effect(() => {
     const session = store.activeSession;
-    if (!session || session.status !== 'stopped' || resumingId === session.id || failedResumeIds.has(session.id)) return;
+    const activeId = session?.id ?? null;
 
-    resumingId = session.id;
+    // Treat navigating to a (different) session as explicit retry intent:
+    // drop any prior failure so the resume below can be attempted again.
+    if (activeId !== prevActiveResumeId) {
+      prevActiveResumeId = activeId;
+      if (activeId) failedResumeIds.delete(activeId);
+    }
+
+    if (!session || session.status !== 'stopped' || resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
+
     const sessionId = session.id;
+    resumingIds.add(sessionId);
     window.groveBench.resumeSession(session.id, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       // Don't subscribe here — WorkspacePane handles history replay + subscription
@@ -240,7 +255,7 @@
       store.setError(e.message || String(e));
       failedResumeIds.add(sessionId);
     }).finally(() => {
-      resumingId = null;
+      resumingIds.delete(sessionId);
     });
   });
 

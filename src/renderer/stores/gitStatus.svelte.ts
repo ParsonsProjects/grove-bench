@@ -5,11 +5,24 @@ const THROTTLE_MS = 500;
 class GitStatusStore {
   statusBySession = $state<Record<string, GitStatusResult>>({});
   loadingBySession = $state<Record<string, boolean>>({});
-  /** Set true during history replay to suppress refresh triggers */
-  suppressRefresh = false;
+
+  /** Sessions whose refreshes are currently suppressed (e.g. during history
+   *  replay). Per-session rather than a single flag so concurrently-mounting
+   *  panes can't clear each other's suppression. */
+  private suppressedSessions = new Set<string>();
 
   private lastFetch = new Map<string, number>();
   private pendingTimeout = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Suppress refresh triggers for a session (call before replaying its history). */
+  suppressRefresh(sessionId: string): void {
+    this.suppressedSessions.add(sessionId);
+  }
+
+  /** Re-enable refresh triggers for a session (call after replay completes). */
+  unsuppressRefresh(sessionId: string): void {
+    this.suppressedSessions.delete(sessionId);
+  }
 
   getStatus(sessionId: string): GitStatusResult {
     return this.statusBySession[sessionId] ?? { entries: [] };
@@ -20,7 +33,7 @@ class GitStatusStore {
   }
 
   async refresh(sessionId: string): Promise<void> {
-    if (this.suppressRefresh) return;
+    if (this.suppressedSessions.has(sessionId)) return;
 
     // Throttle: skip if called too recently
     const now = Date.now();
@@ -41,7 +54,7 @@ class GitStatusStore {
   }
 
   scheduleRefresh(sessionId: string, delayMs = 300): void {
-    if (this.suppressRefresh) return;
+    if (this.suppressedSessions.has(sessionId)) return;
 
     // Debounce: cancel any pending refresh and schedule a new one
     const existing = this.pendingTimeout.get(sessionId);
@@ -89,6 +102,7 @@ class GitStatusStore {
     if (timeout) clearTimeout(timeout);
     this.pendingTimeout.delete(sessionId);
     this.lastFetch.delete(sessionId);
+    this.suppressedSessions.delete(sessionId);
     const { [sessionId]: _s, ...restStatus } = this.statusBySession;
     this.statusBySession = restStatus;
     const { [sessionId]: _l, ...restLoading } = this.loadingBySession;

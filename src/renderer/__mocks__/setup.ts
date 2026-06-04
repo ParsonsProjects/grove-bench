@@ -29,6 +29,7 @@ const mockGroveBench = {
   clearEventHistory: vi.fn(() => Promise.resolve()),
   getEventHistoryPage: vi.fn(() => Promise.resolve({ events: [], totalCount: 0, startIndex: 0 })),
   searchEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').EventSearchHit[])),
+  getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
   sendMessage: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),

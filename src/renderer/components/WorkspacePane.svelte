@@ -83,14 +83,17 @@
         messageStore.setIsReady(sessionId, false);
       }
 
-      // Subscribe to live events BEFORE replaying history so no events are
-      // missed for sessions that are still being set up (worktree creation,
-      // npm install). History replay below will fill in any prior events, and
-      // ingestEvent is idempotent for duplicate status messages.
+      // Subscribe to live events BEFORE replaying history so events for a
+      // session still being set up (worktree creation, npm install) aren't
+      // missed; replay then fills in prior events. Caveat: a live event that
+      // arrives during the awaited history fetch below is appended ahead of the
+      // replayed history. In practice the window is tiny (system_init arrives
+      // after mount) and the worst case is a single duplicated status line.
       messageStore.subscribe(sessionId);
 
-      // Suppress git status refreshes during replay to avoid N IPC calls
-      gitStatusStore.suppressRefresh = true;
+      // Suppress this session's git refreshes during replay to avoid N IPC
+      // calls (per-session so concurrent pane mounts don't clear each other's).
+      gitStatusStore.suppressRefresh(sessionId);
 
       // Load only the most recent events to avoid stalling on large histories.
       // Older events are loaded on demand when the user scrolls up.
@@ -130,9 +133,13 @@
         messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
-      messageStore.ingestEvent(sessionId, { type: 'status', message: `[debug] history replay failed: ${e?.message || e}` } as any);
+      console.error(`[WorkspacePane] history replay failed for ${sessionId}:`, e);
+      messageStore.ingestEvent(sessionId, {
+        type: 'error',
+        message: `Failed to load conversation history: ${e?.message || e}`,
+      });
     } finally {
-      gitStatusStore.suppressRefresh = false;
+      gitStatusStore.unsuppressRefresh(sessionId);
     }
 
     // Single git status refresh after replay
