@@ -4,6 +4,7 @@ import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents } from './event-search.js';
+import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
@@ -431,37 +432,27 @@ export function registerHandlers() {
       throw new Error('Path traversal not allowed');
     }
 
-    // Try VS Code first, then fall back to system default
-    const gotoArg = line ? `${resolved}:${line}` : resolved;
-
-    return new Promise<void>((resolve, reject) => {
-      // VS Code supports file:line syntax via -g flag
-      const codeArgs = line ? ['-g', gotoArg] : [resolved];
-      execFile('code', codeArgs, (err) => {
-        if (!err) {
-          resolve();
-          return;
-        }
-        // Fallback: try cursor, then system open
-        const cursorArgs = line ? ['-g', gotoArg] : [resolved];
-        execFile('cursor', cursorArgs, (err2) => {
-          if (!err2) {
-            resolve();
-            return;
-          }
-          // Final fallback: system default
-          if (process.platform === 'win32') {
-            execFile('cmd', ['/c', 'start', '""', resolved], (err3) => {
-              err3 ? reject(new Error('Could not open file. Install VS Code or Cursor CLI.')) : resolve();
-            });
-          } else {
-            const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-            execFile(opener, [resolved], (err3) => {
-              err3 ? reject(new Error('Could not open file. Install VS Code or Cursor CLI.')) : resolve();
-            });
-          }
-        });
+    // Try VS Code, then Cursor (editorLaunchCommand handles Windows .cmd shims),
+    // then fall back to the OS default opener.
+    const tryEditor = (editor: string): Promise<boolean> =>
+      new Promise((resolve) => {
+        const { cmd, args } = editorLaunchCommand(editor, resolved, line);
+        execFile(cmd, args, (err) => resolve(!err));
       });
+
+    if (await tryEditor('code')) return;
+    if (await tryEditor('cursor')) return;
+
+    // Final fallback: system default opener.
+    await new Promise<void>((resolve, reject) => {
+      const onDone = (err: unknown) =>
+        err ? reject(new Error('Could not open file. Install the VS Code or Cursor CLI.')) : resolve();
+      if (process.platform === 'win32') {
+        execFile('cmd', ['/c', 'start', '""', resolved], onDone);
+      } else {
+        const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+        execFile(opener, [resolved], onDone);
+      }
     });
   });
 
