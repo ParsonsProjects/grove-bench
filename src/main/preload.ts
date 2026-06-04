@@ -53,6 +53,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_HISTORY_PAGE, sessionId, limit, beforeIndex),
   getEventHistoryCount: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY_COUNT, sessionId),
+  searchEventHistory: (sessionId: string, query: string, limit?: number) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH, sessionId, query, limit),
   clearEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
 

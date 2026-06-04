@@ -138,6 +138,16 @@ export type AgentEvent =
   // Rewind checkpoint
   | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean };
 
+/** A single full-history search match (main-process search over event history). */
+export interface EventSearchHit {
+  /** Index of the matching event in the session's (prelaunch-prefixed) history. */
+  eventIndex: number;
+  /** Display category for the dropdown (user / assistant / thinking / tool / …). */
+  kind: string;
+  /** Whitespace-collapsed text window around the match, ellipsised when truncated. */
+  snippet: string;
+}
+
 // ─── PTY / Terminal ───
 
 /** @deprecated Legacy shell output event — replaced by PTY data stream. */
@@ -288,6 +298,8 @@ export interface GroveBenchAPI {
   getEventHistoryPage(sessionId: string, limit: number, beforeIndex?: number): Promise<{ events: AgentEvent[]; totalCount: number; startIndex: number }>;
   /** Get the total number of persisted events for a session. */
   getEventHistoryCount(sessionId: string): Promise<number>;
+  /** Search the full event history (main-process), newest match first. */
+  searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
   clearEventHistory(sessionId: string): Promise<void>;
 
   // Prerequisites
@@ -514,6 +526,7 @@ export const IPC = {
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',
   AGENT_HISTORY_COUNT: 'agent:history-count',
+  AGENT_HISTORY_SEARCH: 'agent:history-search',
   AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',

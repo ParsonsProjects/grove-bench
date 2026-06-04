@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
+import { searchEvents } from './event-search.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
@@ -383,6 +384,15 @@ export function registerHandlers() {
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     return sessionManager.getEventHistoryCount(sessionId) + prelaunch.length;
+  });
+
+  ipcMain.handle(IPC.AGENT_HISTORY_SEARCH, (_event, sessionId: string, query: string, limit?: number) => {
+    // Search the same prelaunch-prefixed event array the renderer pages over, so
+    // returned eventIndex values line up with getEventHistoryPage's index space.
+    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
+    const history = sessionManager.getEventHistory(sessionId);
+    const events = prelaunch.length > 0 ? [...prelaunch, ...history] : history;
+    return searchEvents(events, query, limit ?? 100);
   });
 
   ipcMain.handle(IPC.AGENT_CLEAR_HISTORY, (_event, sessionId: string) => {

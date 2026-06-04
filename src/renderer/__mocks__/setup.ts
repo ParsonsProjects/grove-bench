@@ -28,6 +28,7 @@ const mockGroveBench = {
   listCheckpoints: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CheckpointListItem[])),
   clearEventHistory: vi.fn(() => Promise.resolve()),
   getEventHistoryPage: vi.fn(() => Promise.resolve({ events: [], totalCount: 0, startIndex: 0 })),
+  searchEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').EventSearchHit[])),
   sendMessage: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
