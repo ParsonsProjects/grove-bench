@@ -436,6 +436,26 @@ describe('AgentSessionManager event processing', () => {
 
     await sessionManager.destroySession('test-history');
   });
+
+  it('clearEventHistory also cleans up checkpoint refs (so /clear does not leak stale checkpoints)', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-clear-cp',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    const session = sessionManager.getSession('test-clear-cp')!;
+    sessionManager.clearEventHistory('test-clear-cp');
+
+    expect(session.checkpoints.cleanup).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
+
+    await sessionManager.destroySession('test-clear-cp');
+  });
 });
 
 describe('AgentSessionManager.respondToPermission()', () => {

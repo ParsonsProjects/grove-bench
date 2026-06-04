@@ -147,19 +147,37 @@ describe('CheckpointManager', () => {
   });
 
   describe('diff()', () => {
-    it('returns git diff output', async () => {
+    it('diffs the checkpoint against a tree of the current working tree (so new/untracked files show)', async () => {
       mockGitEnv.mockResolvedValue('');
       mockGit.mockResolvedValue('oid');
       const mgr = new CheckpointManager();
       await mgr.capture('sess1', '/repo', 'uuid-1');
 
       mockGit.mockClear();
-      mockGit.mockResolvedValueOnce('diff --git a/file.ts b/file.ts\n+added line');
+      mockGitEnv.mockClear();
+      // diff() builds the current working tree in a temp index, then tree-vs-tree diffs.
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree HEAD
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('currentTreeOid'); // write-tree
+      mockGit.mockResolvedValueOnce('diff --git a/new.ts b/new.ts\n+added line'); // git diff
 
       const result = await mgr.diff('sess1', '/repo', 'uuid-1');
       expect(result).toContain('+added line');
+
+      // Stages the current working tree (incl. untracked) into a temp index.
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['read-tree', 'HEAD'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
+      );
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['add', '-A'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
+      );
+      expect(mockGitEnv).toHaveBeenCalledWith(
+        ['write-tree'], '/repo', expect.objectContaining({ GIT_INDEX_FILE: expect.any(String) })
+      );
+      // Diffs the checkpoint ref against that current tree (not bare `git diff <ref>`,
+      // which omits untracked files).
       expect(mockGit).toHaveBeenCalledWith(
-        ['diff', expect.stringContaining('refs/grove/checkpoints/sess1/'), '--', '.'], '/repo'
+        ['diff', expect.stringContaining('refs/grove/checkpoints/sess1/'), 'currentTreeOid', '--', '.'], '/repo'
       );
     });
 
@@ -176,7 +194,11 @@ describe('CheckpointManager', () => {
       await mgr.capture('sess1', '/repo', 'uuid-1');
 
       mockGit.mockClear();
-      mockGit.mockResolvedValueOnce('');
+      mockGitEnv.mockClear();
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce('currentTreeOid'); // write-tree
+      mockGit.mockResolvedValueOnce(''); // empty diff
 
       const result = await mgr.diff('sess1', '/repo', 'uuid-1');
       expect(result).toBe('(no changes)');

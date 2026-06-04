@@ -157,13 +157,29 @@ export class CheckpointManager {
 
   /**
    * Get a unified diff between a checkpoint and the current working tree.
+   *
+   * Builds a tree object from the current working tree (incl. untracked files,
+   * excl. ignored) in a temp index, then diffs the checkpoint ref against it.
+   * A bare `git diff <ref> -- .` omits untracked files, so files the agent
+   * created since the checkpoint wouldn't appear — even though rewind deletes
+   * them — making the preview understate what a rewind removes.
    */
   async diff(sessionId: string, cwd: string, uuid: string): Promise<string> {
     const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) return 'No checkpoint found for this message';
 
-    const output = await git(['diff', ref, '--', '.'], cwd);
-    return output || '(no changes)';
+    const tmpIndex = path.join(os.tmpdir(), `grove-diff-${sessionId}-${Date.now()}`);
+    try {
+      const env = { GIT_INDEX_FILE: tmpIndex };
+      await gitEnv(['read-tree', 'HEAD'], cwd, env);
+      await gitEnv(['add', '-A'], cwd, env);
+      const currentTree = (await gitEnv(['write-tree'], cwd, env)).trim();
+
+      const output = await git(['diff', ref, currentTree, '--', '.'], cwd);
+      return output || '(no changes)';
+    } finally {
+      try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+    }
   }
 
   /**

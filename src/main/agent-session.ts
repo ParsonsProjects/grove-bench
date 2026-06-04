@@ -1205,6 +1205,12 @@ class AgentSessionManager {
       try {
         fs.writeFileSync(session.eventLogPath, '');
       } catch { /* non-fatal */ }
+      // Clear checkpoint refs + manager state too, otherwise the post-/clear
+      // system_init's resume() re-reads the old refs and the Checkpoints tab
+      // repopulates with checkpoints from the conversation that was just cleared.
+      session.checkpoints.cleanup(id, session.worktreePath).catch((err) => {
+        logger.warn(`[clearEventHistory] checkpoint cleanup failed for ${id}:`, err);
+      });
     } else {
       // Session not running — clear disk log directly
       const logPath = path.join(getEventsDir(), `${id}.jsonl`);
