@@ -13,6 +13,7 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import { isMessageVisible, filterVisibleMessages } from '$lib/message-view.js';
+  import type { EventSearchHit } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -83,40 +84,41 @@
     }
   }
 
-  // Message search state
+  // Message search state — results come from the main-process full-history
+  // search (dropdown in MessageSearchBar); currentMatchId rings the jumped-to row.
   let searchOpen = $state(false);
-  let matchingIds = $state<Set<string>>(new Set());
   let currentMatchId = $state<string | null>(null);
 
-  async function handleSearchMatch(matchIds: string[], currentIndex: number) {
-    matchingIds = new Set(matchIds);
-    currentMatchId = matchIds[currentIndex] ?? null;
-    if (currentMatchId) {
-      // The match may live in a message hidden by summary mode (thinking, or a
-      // non-Edit/Write/Bash tool call). Reveal details so it can be scrolled to.
-      const matched = allMessages.find((m) => m.id === currentMatchId);
-      if (matched && !showDetails && !isMessageVisible(matched, showDetails)) {
-        messageStore.setShowDetails(sessionId, true);
-        await tick();
-      }
-      // If the match is in older (not yet rendered) messages, expand to include it
-      if (hasOlderMessages && !messages.some((m) => m.id === currentMatchId)) {
-        const matchIdx = filteredMessages.findIndex((m) => m.id === currentMatchId);
-        if (matchIdx >= 0) {
-          visibleCount = Math.max(visibleCount, filteredMessages.length - matchIdx);
-        }
-        await tick();
-      }
-      requestAnimationFrame(() => {
-        const el = scrollContainer?.querySelector(`[data-msg-id="${currentMatchId}"]`);
-        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
+  /** Jump to a search result: page in only as deep as the match, reveal it, scroll. */
+  async function handleJump(hit: EventSearchHit) {
+    await messageStore.loadOlderUntil(sessionId, hit.eventIndex);
+    const id = messageStore.findMessageIdForEventIndex(sessionId, hit.eventIndex);
+    if (!id) return;
+
+    // The target may be hidden by summary mode (thinking, or a non-Edit/Write/Bash
+    // tool call). Reveal details so it can be scrolled to.
+    const matched = allMessages.find((m) => m.id === id);
+    if (matched && !showDetails && !isMessageVisible(matched, showDetails)) {
+      messageStore.setShowDetails(sessionId, true);
+      await tick();
     }
+    // If the target is older than the rendered window, expand to include it.
+    if (hasOlderMessages && !messages.some((m) => m.id === id)) {
+      const matchIdx = filteredMessages.findIndex((m) => m.id === id);
+      if (matchIdx >= 0) {
+        visibleCount = Math.max(visibleCount, filteredMessages.length - matchIdx);
+      }
+      await tick();
+    }
+    currentMatchId = id;
+    requestAnimationFrame(() => {
+      const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   }
 
   function closeSearch() {
     searchOpen = false;
-    matchingIds = new Set();
     currentMatchId = null;
   }
 
@@ -126,14 +128,8 @@
     if (store.activeSessionId !== sessionId) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
-      if (searchOpen) {
-        closeSearch();
-      } else {
-        searchOpen = true;
-        // Pull the full session history into the store so search covers older
-        // events still paged out on disk, not just the rendered window.
-        messageStore.loadAllOlderEvents(sessionId).catch(() => {});
-      }
+      searchOpen = !searchOpen;
+      if (!searchOpen) currentMatchId = null;
     }
   }
 
@@ -188,7 +184,7 @@
 </script>
 
 {#if searchOpen}
-  <MessageSearchBar {sessionId} onclose={closeSearch} onmatchchange={handleSearchMatch} />
+  <MessageSearchBar {sessionId} onclose={closeSearch} onjump={handleJump} />
 {/if}
 
 <div class="flex-1 relative overflow-hidden">
@@ -268,15 +264,10 @@
   {/if}
 
   {#each messages as msg (msg.id)}
-    {@const isMatch = matchingIds.has(msg.id)}
     {@const isCurrent = currentMatchId === msg.id}
     <div
       data-msg-id={msg.id}
-      class={isMatch
-        ? isCurrent
-          ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10'
-          : 'ring-1 ring-yellow-500/30 bg-yellow-500/5'
-        : ''}
+      class={isCurrent ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
     >
       {#if msg.kind === 'user'}
         <UserPromptBlock text={msg.text} />

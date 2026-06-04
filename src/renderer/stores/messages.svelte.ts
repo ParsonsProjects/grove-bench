@@ -301,22 +301,6 @@ class MessageStore {
     }
   }
 
-  /** Page the entire remaining on-disk history into the store.
-   *  Used when the user searches so matches in events that were paged out
-   *  (not just the rendered window) can be found and scrolled to. Loops in
-   *  case the backend caps the page size, and bails if a page makes no
-   *  progress so a misbehaving backend can't spin forever. */
-  async loadAllOlderEvents(sessionId: string) {
-    let guard = 0;
-    while (this.hasOlderEvents(sessionId) && guard < 1000) {
-      const before = this.olderEventCount(sessionId);
-      // Request the full remaining range; one page suffices when honored.
-      await this.loadOlderEvents(sessionId, before);
-      if (this.olderEventCount(sessionId) >= before) break; // no progress — stop
-      guard++;
-    }
-  }
-
   /** Page older events until the given absolute event index is loaded into the
    *  store. Used by click-to-jump from a search result — loads only as deep as
    *  the chosen match, not the whole history. */

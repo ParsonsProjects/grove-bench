@@ -34,9 +34,9 @@ describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
     store.activeSessionId = SID;
     const { queryByPlaceholderText } = render(OutputPanel, { sessionId: SID });
 
-    expect(queryByPlaceholderText('Search messages...')).toBeNull();
+    expect(queryByPlaceholderText('Search full history...')).toBeNull();
     await pressCtrlF();
-    expect(queryByPlaceholderText('Search messages...')).toBeInTheDocument();
+    expect(queryByPlaceholderText('Search full history...')).toBeInTheDocument();
   });
 
   it('ignores Ctrl+F when a different session is active', async () => {
@@ -45,6 +45,6 @@ describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
     const { queryByPlaceholderText } = render(OutputPanel, { sessionId: SID });
 
     await pressCtrlF();
-    expect(queryByPlaceholderText('Search messages...')).toBeNull();
+    expect(queryByPlaceholderText('Search full history...')).toBeNull();
   });
 });

@@ -1,94 +1,107 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import MessageSearchBar from './MessageSearchBar.svelte';
-import { messageStore } from '../stores/messages.svelte.js';
-import type { ChatMessage } from '../stores/messages.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
+import type { EventSearchHit } from '../../shared/types.js';
 
 const SID = 'search-bar-session';
 
-const MESSAGES: ChatMessage[] = [
-  { kind: 'user', id: 'u1', text: 'investigate the parser' },
-  { kind: 'text', id: 't1', text: 'the parser is recursive', uuid: '' },
-  { kind: 'system', id: 's1', text: 'unrelated note' },
+const HITS: EventSearchHit[] = [
+  { eventIndex: 12, kind: 'thinking', snippet: 'the parser is recursive' },
+  { eventIndex: 5, kind: 'user', snippet: 'investigate the parser' },
 ];
 
 beforeEach(() => {
-  messageStore.messagesBySession = { [SID]: MESSAGES };
-  // Ensure no "older history loading" indicator interferes.
-  messageStore.paginationBySession = {};
+  vi.useFakeTimers();
+  mockGroveBench.searchEventHistory.mockResolvedValue(HITS);
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  mockGroveBench.searchEventHistory.mockReset();
+});
 
 function renderBar() {
   const onclose = vi.fn();
-  const onmatchchange = vi.fn();
-  const result = render(MessageSearchBar, { sessionId: SID, onclose, onmatchchange });
-  const input = result.getByPlaceholderText('Search messages...') as HTMLInputElement;
-  return { ...result, onclose, onmatchchange, input };
+  const onjump = vi.fn();
+  const result = render(MessageSearchBar, { sessionId: SID, onclose, onjump });
+  const input = result.getByPlaceholderText('Search full history...') as HTMLInputElement;
+  return { ...result, onclose, onjump, input };
 }
 
-describe('MessageSearchBar', () => {
-  it('renders a focused search input', async () => {
+/** Type a query and let the 150ms debounce + async search resolve. */
+async function typeQuery(input: HTMLInputElement, value: string) {
+  await fireEvent.input(input, { target: { value } });
+  await vi.advanceTimersByTimeAsync(150);
+  await tick();
+}
+
+function resultButtons() {
+  // Result rows are buttons that aren't the close (✕) button.
+  return screen.getAllByRole('button').filter((b) => b.textContent !== '✕');
+}
+
+describe('MessageSearchBar (dropdown)', () => {
+  it('debounces, queries the main-process search, and lists results', async () => {
+    const { input, container } = renderBar();
+    await typeQuery(input, 'parser');
+
+    expect(mockGroveBench.searchEventHistory).toHaveBeenCalledWith(SID, 'parser');
+    const rows = resultButtons();
+    expect(rows).toHaveLength(2);
+    expect(container.textContent).toContain('recursive');
+    expect(container.textContent).toContain('investigate');
+  });
+
+  it('does not query until the debounce elapses', async () => {
     const { input } = renderBar();
-    await tick();
-    expect(input).toBeInTheDocument();
-    expect(document.activeElement).toBe(input);
-  });
-
-  it('reports matches across message kinds and shows the count', async () => {
-    const { input, onmatchchange, getByText } = renderBar();
     await fireEvent.input(input, { target: { value: 'parser' } });
-    await tick();
-
-    const lastCall = onmatchchange.mock.calls.at(-1)!;
-    expect(lastCall[0]).toEqual(['u1', 't1']); // matching message ids, in order
-    expect(getByText('1 of 2')).toBeInTheDocument();
+    // Before the debounce window, no IPC call yet.
+    expect(mockGroveBench.searchEventHistory).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mockGroveBench.searchEventHistory).toHaveBeenCalledOnce();
   });
 
-  it('shows "no results" when nothing matches', async () => {
-    const { input, getByText } = renderBar();
-    await fireEvent.input(input, { target: { value: 'zzz-nope' } });
-    await tick();
-    expect(getByText('no results')).toBeInTheDocument();
+  it('clicking a result jumps to that hit', async () => {
+    const { input, onjump } = renderBar();
+    await typeQuery(input, 'parser');
+
+    const row = resultButtons().find((b) => b.textContent?.includes('investigate'))!;
+    await fireEvent.click(row);
+    expect(onjump).toHaveBeenCalledWith(HITS[1]);
   });
 
-  it('Enter advances to the next match', async () => {
-    const { input, onmatchchange, getByText } = renderBar();
-    await fireEvent.input(input, { target: { value: 'parser' } });
-    await tick();
+  it('ArrowDown + Enter jumps to the selected hit', async () => {
+    const { input, onjump } = renderBar();
+    await typeQuery(input, 'parser');
+
+    await fireEvent.keyDown(input, { key: 'ArrowDown' }); // move from hit 0 → hit 1
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onjump).toHaveBeenCalledWith(HITS[1]);
+  });
+
+  it('Enter on the default selection jumps to the first hit', async () => {
+    const { input, onjump } = renderBar();
+    await typeQuery(input, 'parser');
 
     await fireEvent.keyDown(input, { key: 'Enter' });
-    await tick();
-
-    expect(getByText('2 of 2')).toBeInTheDocument();
-    const lastCall = onmatchchange.mock.calls.at(-1)!;
-    expect(lastCall[1]).toBe(1); // currentIndex advanced
+    expect(onjump).toHaveBeenCalledWith(HITS[0]);
   });
 
-  it('Shift+Enter wraps to the previous match', async () => {
+  it('shows "no results" when the search returns nothing', async () => {
+    mockGroveBench.searchEventHistory.mockResolvedValue([]);
     const { input, getByText } = renderBar();
-    await fireEvent.input(input, { target: { value: 'parser' } });
-    await tick();
-
-    // From match 1 of 2, Shift+Enter wraps backwards to 2 of 2.
-    await fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
-    await tick();
-    expect(getByText('2 of 2')).toBeInTheDocument();
+    await typeQuery(input, 'zzz-nope');
+    expect(getByText('no results')).toBeInTheDocument();
   });
 
   it('Escape closes the search', async () => {
     const { input, onclose } = renderBar();
     await fireEvent.keyDown(input, { key: 'Escape' });
-    expect(onclose).toHaveBeenCalledOnce();
-  });
-
-  it('the close button closes the search', async () => {
-    const { onclose, getByTitle } = renderBar();
-    await fireEvent.click(getByTitle('Close (Esc)'));
     expect(onclose).toHaveBeenCalledOnce();
   });
 });
