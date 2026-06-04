@@ -108,7 +108,7 @@
       // Batch-replay events. replayEvents accumulates messages in a plain
       // array and flushes to the reactive store in one assignment at the end,
       // avoiding O(n²) array copies and hundreds of intermediate re-renders.
-      messageStore.replayEvents(sessionId, page.events, skipDuringReplay);
+      messageStore.replayEvents(sessionId, page.events, skipDuringReplay, page.startIndex);
       if (page.events.length > 0) {
         const last = page.events[page.events.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {

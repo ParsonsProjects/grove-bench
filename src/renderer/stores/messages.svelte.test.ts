@@ -1257,6 +1257,66 @@ describe('pagination — hasOlderEvents / olderEventCount', () => {
   });
 });
 
+describe('source-event-index mapping (findMessageIdForEventIndex)', () => {
+  it('maps an event index to the message it produced, handling merges', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'first', uuid: 'u1' },                                            // index 10
+      { type: 'assistant_text', text: 'answer one', uuid: 'a1' },                                      // index 11
+      { type: 'assistant_tool_use', toolName: 'Edit', toolInput: { file_path: '/a.ts' }, toolUseId: 't1', uuid: 'tu1' }, // 12
+      { type: 'tool_result', toolUseId: 't1', content: 'done' },                                       // 13 (merges into tool_call)
+    ] as AgentEvent[];
+    messageStore.replayEvents(SID, events, undefined, 10);
+
+    const msgs = messageStore.getMessages(SID);
+    const userId = msgs.find((m) => m.kind === 'user')!.id;
+    const textId = msgs.find((m) => m.kind === 'text')!.id;
+    const toolId = msgs.find((m) => m.kind === 'tool_call')!.id;
+
+    expect(messageStore.findMessageIdForEventIndex(SID, 10)).toBe(userId);
+    expect(messageStore.findMessageIdForEventIndex(SID, 11)).toBe(textId);
+    expect(messageStore.findMessageIdForEventIndex(SID, 12)).toBe(toolId);
+    // tool_result (13) created no message — maps back to the tool_call (largest <= 13)
+    expect(messageStore.findMessageIdForEventIndex(SID, 13)).toBe(toolId);
+    // Nothing at/below 9
+    expect(messageStore.findMessageIdForEventIndex(SID, 9)).toBeNull();
+  });
+
+  it('returns null for sessions with no stamped messages', () => {
+    expect(messageStore.findMessageIdForEventIndex('unknown', 5)).toBeNull();
+  });
+});
+
+describe('pagination — loadOlderUntil', () => {
+  it('loads older pages until the target index is covered', async () => {
+    messageStore.setPagination(SID, 500, 300);
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 100 });
+
+    await messageStore.loadOlderUntil(SID, 150);
+
+    // 300 > 150 → one load → loadedFromIndex 100 (<= 150) → stop
+    expect(messageStore.olderEventCount(SID)).toBe(100);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads multiple pages when needed', async () => {
+    messageStore.setPagination(SID, 500, 400);
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 200 })
+      .mockResolvedValueOnce({ events: [], totalCount: 500, startIndex: 0 });
+
+    await messageStore.loadOlderUntil(SID, 50);
+
+    expect(messageStore.olderEventCount(SID)).toBe(0);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('does nothing when the target is already loaded', async () => {
+    messageStore.setPagination(SID, 500, 100);
+    await messageStore.loadOlderUntil(SID, 100);
+    expect(mockGroveBench.getEventHistoryPage).not.toHaveBeenCalled();
+  });
+});
+
 describe('pagination — loadAllOlderEvents', () => {
   it('pages the entire remaining history into the store', async () => {
     // 1 older event on disk, none loaded yet

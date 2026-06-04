@@ -217,6 +217,17 @@ class MessageStore {
   private _replayBuffer: ChatMessage[] | null = null;
   private _replaySessionId: string | null = null;
 
+  /** Absolute (prelaunch-prefixed) index of the event currently being replayed,
+   *  or null for live events. Used to stamp messages so full-history search hits
+   *  can be mapped back to the message they produced. */
+  private _currentEventIndex: number | null = null;
+
+  /** Per-session map of messageId → source event index, populated during replay.
+   *  Lets click-to-jump locate the message for a search hit's eventIndex. Stale
+   *  entries (after rewind/clear) are harmless since ids are unique and we only
+   *  ever look up ids of currently-present messages. */
+  private sourceIndexBySession = new Map<string, Map<string, number>>();
+
   /** Pagination state per session — tracks how far back we've loaded from the event log. */
   paginationBySession = $state<Record<string, { totalCount: number; loadedFromIndex: number; loading: boolean }>>({});
 
@@ -258,11 +269,14 @@ class MessageStore {
       this._replayBuffer = [];
       this._replaySessionId = sessionId;
       try {
-        for (const event of page.events) {
+        for (let i = 0; i < page.events.length; i++) {
+          const event = page.events[i];
           if (skipDuringReplay.has(event.type)) continue;
+          this._currentEventIndex = page.startIndex + i;
           this.ingestEvent(sessionId, event);
         }
       } finally {
+        this._currentEventIndex = null;
         const buffer = this._replayBuffer;
         this._replayBuffer = null;
         this._replaySessionId = null;
@@ -298,6 +312,20 @@ class MessageStore {
       const before = this.olderEventCount(sessionId);
       // Request the full remaining range; one page suffices when honored.
       await this.loadOlderEvents(sessionId, before);
+      if (this.olderEventCount(sessionId) >= before) break; // no progress — stop
+      guard++;
+    }
+  }
+
+  /** Page older events until the given absolute event index is loaded into the
+   *  store. Used by click-to-jump from a search result — loads only as deep as
+   *  the chosen match, not the whole history. */
+  async loadOlderUntil(sessionId: string, eventIndex: number) {
+    let guard = 0;
+    // olderEventCount() === loadedFromIndex; load until it's at/below the target.
+    while (this.olderEventCount(sessionId) > eventIndex && guard < 1000) {
+      const before = this.olderEventCount(sessionId);
+      await this.loadOlderEvents(sessionId);
       if (this.olderEventCount(sessionId) >= before) break; // no progress — stop
       guard++;
     }
@@ -549,6 +577,12 @@ class MessageStore {
   }
 
   private pushMessage(sessionId: string, msg: ChatMessage) {
+    // Stamp the source event index (replay only) so search hits map to messages.
+    if (this._currentEventIndex != null) {
+      let idx = this.sourceIndexBySession.get(sessionId);
+      if (!idx) { idx = new Map(); this.sourceIndexBySession.set(sessionId, idx); }
+      idx.set(msg.id, this._currentEventIndex);
+    }
     // During batch replay, append to the buffer without triggering reactivity
     if (this._replayBuffer && this._replaySessionId === sessionId) {
       this._replayBuffer.push(msg);
@@ -556,6 +590,25 @@ class MessageStore {
     }
     const current = this.messagesBySession[sessionId] ?? [];
     this.messagesBySession[sessionId] = [...current, msg];
+  }
+
+  /** Find the message a search hit's event index maps to: the message with the
+   *  largest stamped source index ≤ eventIndex (handles events that update an
+   *  existing message rather than creating one, e.g. tool_result → tool_call). */
+  findMessageIdForEventIndex(sessionId: string, eventIndex: number): string | null {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    if (!idx) return null;
+    const msgs = this.messagesBySession[sessionId] ?? [];
+    let bestId: string | null = null;
+    let bestIdx = -1;
+    for (const m of msgs) {
+      const ei = idx.get(m.id);
+      if (ei != null && ei <= eventIndex && ei > bestIdx) {
+        bestIdx = ei;
+        bestId = m.id;
+      }
+    }
+    return bestId;
   }
 
   private flushStreamingText(sessionId: string) {
@@ -603,17 +656,22 @@ class MessageStore {
    * This turns the O(n²) replay (pushMessage spreads on every event) into
    * O(n) and avoids hundreds of intermediate Svelte re-renders.
    */
-  replayEvents(sessionId: string, events: AgentEvent[], skipSet?: Set<string>) {
+  replayEvents(sessionId: string, events: AgentEvent[], skipSet?: Set<string>, baseIndex = 0) {
     // Start batch mode
     this._replayBuffer = [];
     this._replaySessionId = sessionId;
 
     try {
-      for (const event of events) {
+      for (let i = 0; i < events.length; i++) {
+        const event = events[i];
         if (skipSet && skipSet.has(event.type)) continue;
+        // Absolute event index = page base + position (every event counts,
+        // including skipped ones, so indices stay aligned with the backend).
+        this._currentEventIndex = baseIndex + i;
         this.ingestEvent(sessionId, event);
       }
     } finally {
+      this._currentEventIndex = null;
       // Flush the accumulated messages in one reactive assignment
       const buffer = this._replayBuffer;
       this._replayBuffer = null;
@@ -1454,6 +1512,7 @@ class MessageStore {
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
     backgroundTaskStore.clear(sessionId);
+    this.sourceIndexBySession.delete(sessionId);
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     // Preserve isRunning and isReady — caller controls these based on history/status
@@ -1481,6 +1540,8 @@ class MessageStore {
     ] as Record<string, unknown>[]) {
       delete record[sessionId];
     }
+
+    this.sourceIndexBySession.delete(sessionId);
 
     // Extracted stores own their own per-session teardown.
     devServerStore.destroy(sessionId);
