@@ -137,9 +137,9 @@
             {:else if row.type === 'context'}
               <tr>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.left?.lineNum ?? ''}</td>
-                <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre">{#if row.left}{@html hl(row.left.text)}{/if}</td>
+                <td class="text-muted-foreground px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top">{#if row.left}{@html hl(row.left.text)}{/if}</td>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top">{row.right?.lineNum ?? ''}</td>
-                <td class="text-muted-foreground px-2 whitespace-pre">{#if row.right}{@html hl(row.right.text)}{/if}</td>
+                <td class="text-muted-foreground px-2 whitespace-pre-wrap break-all align-top">{#if row.right}{@html hl(row.right.text)}{/if}</td>
               </tr>
             {:else}
               <tr>
@@ -159,19 +159,22 @@
         {#if line.type === 'hunk'}
           <div data-hunk="true" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{line.text}</div>
         {:else if line.type === 'add'}
-          <div class="bg-green-950/30 text-green-300 px-2 whitespace-pre">
-            <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
-            <span class="text-green-500 select-none">+</span> {@html hl(line.text)}
+          <div class="flex bg-green-950/30 text-green-300 px-2">
+            <span class="shrink-0 w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
+            <span class="shrink-0 text-green-500 select-none mr-1">+</span>
+            <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text)}</span>
           </div>
         {:else if line.type === 'del'}
-          <div class="bg-red-950/30 text-red-300 px-2 whitespace-pre">
-            <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
-            <span class="text-red-500 select-none">-</span> {@html hl(line.text)}
+          <div class="flex bg-red-950/30 text-red-300 px-2">
+            <span class="shrink-0 w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
+            <span class="shrink-0 text-red-500 select-none mr-1">-</span>
+            <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text)}</span>
           </div>
         {:else}
-          <div class="text-muted-foreground px-2 whitespace-pre">
-            <span class="inline-block w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
-            <span class="select-none">&nbsp;</span> {@html hl(line.text)}
+          <div class="flex text-muted-foreground px-2">
+            <span class="shrink-0 w-8 text-right text-muted-foreground/40 mr-2 select-none">{line.lineNum ?? ''}</span>
+            <span class="shrink-0 select-none mr-1">&nbsp;</span>
+            <span class="flex-1 min-w-0 whitespace-pre-wrap break-all">{@html hl(line.text)}</span>
           </div>
         {/if}
       {/each}
