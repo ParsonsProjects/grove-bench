@@ -26,6 +26,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Worktree
   autoInstallDeps: false,
 
+  // Sessions
+  idleAutoStopMinutes: 30,
+
   // General
   defaultBaseBranch: 'main',
   theme: 'system',

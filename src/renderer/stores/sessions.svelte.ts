@@ -22,6 +22,10 @@ class SessionStore {
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
 
+  /** Sessions that completed a turn while not focused — drives the "needs you"
+   *  flash on their sidebar row until the user focuses them. */
+  needsAttention = $state<Record<string, boolean>>({});
+
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
@@ -99,40 +103,13 @@ class SessionStore {
 
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
+    this.clearNeedsAttention(id);
     if (this.activeSessionId === id) {
       // Prefer a running session, fall back to any session
       const next = this.sessions.find((s) => s.status === 'running')
         ?? this.sessions[0];
       this.activeSessionId = next?.id ?? null;
     }
-  }
-
-  /** Reorder sessions to match the given ID order.
-   *  Sessions whose IDs appear in `orderedIds` are placed first (in that order),
-   *  followed by any remaining sessions in their original order. */
-  reorderByIds(orderedIds: string[]) {
-    const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
-    const ordered: SessionEntry[] = [];
-    const rest: SessionEntry[] = [];
-    for (const s of this.sessions) {
-      if (orderMap.has(s.id)) {
-        ordered.push(s);
-      } else {
-        rest.push(s);
-      }
-    }
-    ordered.sort((a, b) => orderMap.get(a.id)! - orderMap.get(b.id)!);
-    this.sessions = [...ordered, ...rest];
-  }
-
-  reorderSession(fromId: string, toId: string) {
-    const sessions = [...this.sessions];
-    const fromIdx = sessions.findIndex((s) => s.id === fromId);
-    const toIdx = sessions.findIndex((s) => s.id === toId);
-    if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
-    const [moved] = sessions.splice(fromIdx, 1);
-    sessions.splice(toIdx, 0, moved);
-    this.sessions = sessions;
   }
 
   updateStatus(id: string, status: SessionStatus) {
@@ -164,6 +141,22 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, displayName } : s
     );
+  }
+
+  /** Mark a session as needing attention (turn completed while not focused). */
+  markNeedsAttention(id: string) {
+    if (!this.needsAttention[id]) {
+      this.needsAttention = { ...this.needsAttention, [id]: true };
+    }
+  }
+
+  /** Clear the needs-attention flag (e.g. when the session is focused). */
+  clearNeedsAttention(id: string) {
+    if (this.needsAttention[id]) {
+      const next = { ...this.needsAttention };
+      delete next[id];
+      this.needsAttention = next;
+    }
   }
 
   pushRecentlyClosed(id: string) {

@@ -464,6 +464,23 @@
 
           <Separator />
 
+          <!-- Idle Auto-Stop -->
+          <div>
+            <Label class="mb-1 block">Auto-stop idle sessions</Label>
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                min="0"
+                bind:value={settingsStore.draft.idleAutoStopMinutes}
+                class="w-20 text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
+              />
+              <span class="text-sm text-muted-foreground">minutes</span>
+            </div>
+            <p class="text-xs text-muted-foreground mt-1">Disconnect a session after it's been idle this long (it auto-resumes when you click it). Set to 0 to disable. Default 30.</p>
+          </div>
+
+          <Separator />
+
           <!-- Analytics -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.analyticsEnabled} />
