@@ -1,7 +1,7 @@
 import hljs from 'highlight.js';
 import DOMPurify from 'dompurify';
 import { diffWordsWithSpace } from 'diff';
-import type { DiffLine } from '../components/DiffView.svelte';
+import type { DiffLine } from './diff-types.js';
 
 /** Map of file extensions to highlight.js language ids. */
 const EXT_TO_LANG: Record<string, string> = {

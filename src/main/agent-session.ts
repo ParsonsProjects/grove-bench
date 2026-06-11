@@ -107,17 +107,38 @@ export interface SessionCompletionResult {
 
 const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
 
-// Suppress "Operation aborted" unhandled rejections from agent SDKs.
-// When we abort a running query, internal async operations may reject after
-// the abort signal fires.  These are expected and safe to ignore.
+// Suppress unhandled rejections that the agent SDK throws while a query is
+// being torn down.  When we stop/destroy a session we close the SDK transport
+// and abort its controller; any control responses still in flight (e.g. the
+// SDK writing back a permission decision after we've resolved pending
+// permissions as denied) then fail to write to the now-closed transport.
+// The SDK's control-request handler retries the write in its catch block
+// without guarding it, so the second failure escapes as an unhandled
+// rejection.  These are all expected and safe to ignore.
+const SDK_TEARDOWN_REJECTIONS = [
+  'Operation aborted',
+  'ProcessTransport is not ready for writing',
+  'Cannot write to terminated process',
+  'Cannot write to process that exited', // followed by a variable code/signal
+  'Claude Code process aborted by user',
+];
 process.on('unhandledRejection', (reason: unknown) => {
-  if (reason instanceof Error && reason.message === 'Operation aborted') {
-    logger.debug('[unhandledRejection] Suppressed expected SDK abort error');
+  const message = reason instanceof Error ? reason.message : String(reason);
+  if (SDK_TEARDOWN_REJECTIONS.some((m) => message.startsWith(m))) {
+    logger.debug(`[unhandledRejection] Suppressed expected SDK teardown error: ${message}`);
     return;
   }
   // Re-throw anything else so it surfaces normally
   console.error('Unhandled promise rejection:', reason);
 });
+
+// The agent SDK registers a global process 'exit' handler per query() to
+// SIGTERM its child process on shutdown, but never removes it when the query
+// closes — so each session/restart leaks one listener.  They are harmless
+// (the child is already dead by then), but accumulate past Node's default
+// limit of 10 and trigger a MaxListenersExceededWarning.  Raise the cap so the
+// warning doesn't fire under normal multi-session use.
+process.setMaxListeners(50);
 
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
@@ -871,6 +892,58 @@ class AgentSessionManager {
     await Promise.all(
       ports.map((port) => killProcessOnPort(port).catch(() => {}))
     );
+  }
+
+  /**
+   * Stop the current turn the user-facing way: interrupt it in place while
+   * keeping the agent process alive, so the next message is instant (no cold
+   * respawn + resume).  Falls back to the heavier stopQuery() teardown when the
+   * adapter can't interrupt or there's no live query to interrupt (e.g. a stop
+   * that lands mid-startup).
+   */
+  async interruptQuery(id: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) return;
+
+    const handle = session.queryHandle;
+
+    // No live handle (still starting up, already torn down) or an adapter that
+    // doesn't support in-place interrupt → fall back to the teardown+respawn
+    // path, which already handles the startup race via restartRequested.
+    if (!handle || typeof handle.interrupt !== 'function') {
+      return this.stopQuery(id);
+    }
+
+    const emit = session.emit ?? this.createEmitter(session);
+
+    // Resolve any pending permissions as denied first so the SDK isn't left
+    // awaiting a tool decision.  The process is still alive, so these control
+    // responses write cleanly (unlike stopQuery, which closes the transport
+    // before resolving and trips "ProcessTransport is not ready for writing").
+    for (const [, pending] of session.pendingPermissions) {
+      pending.resolve({ behavior: 'deny', message: 'Query stopped by user' });
+      emit({
+        type: 'permission_resolved',
+        requestId: pending.requestId,
+        toolUseId: pending.toolUseId,
+        decision: 'deny',
+      });
+    }
+    session.pendingPermissions.clear();
+
+    // Interrupt the current turn.  The event loop in runQuery stays parked on
+    // handle.events and simply waits for the next user message — no respawn.
+    try {
+      await handle.interrupt();
+    } catch (err) {
+      logger.warn(`[interruptQuery] session=${id} interrupt failed, falling back to teardown:`, err);
+      return this.stopQuery(id);
+    }
+
+    // Re-sync the renderer with the current permission mode (parity with
+    // stopQuery) — this also clears the renderer's stoppingSession guard so
+    // permission requests from the continuing query aren't suppressed.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
   }
 
   /**

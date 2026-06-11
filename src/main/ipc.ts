@@ -268,9 +268,9 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.SESSION_STOP, async (_event, id: string) => {
-    logger.info(`Stopping session query (keeping session alive): id=${id}`);
-    await sessionManager.stopQuery(id);
-    logger.info(`Session query stopped, ready for follow-up: id=${id}`);
+    logger.info(`Interrupting session query (keeping process alive): id=${id}`);
+    await sessionManager.interruptQuery(id);
+    logger.info(`Session query interrupted, ready for follow-up: id=${id}`);
   });
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
@@ -289,6 +289,8 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_RENAME, async (_event, sessionId: string, displayName: string) => {
     sessionManager.renameSession(sessionId, displayName);
+    // Persist so the name survives app restart (displayName was in-memory only).
+    await worktreeManager.saveDisplayName(sessionId, displayName);
   });
 
   // ─── Branches ───

@@ -114,6 +114,11 @@ export interface AgentQueryHandle {
   abort(): void;
   /** Close the query gracefully */
   close(): void;
+  /** Interrupt the current turn *without* killing the process, so the session
+   *  stays alive and the next message can be sent immediately (no cold respawn
+   *  or resume). Optional — adapters that can't interrupt in place are stopped
+   *  via close()/abort() and a fresh query instead. */
+  interrupt?(): Promise<void>;
   /** The provider-specific session ID (for resumption), available after system_init */
   getSessionId(): string | null;
   /** Signal no more messages — for single-shot sessions */

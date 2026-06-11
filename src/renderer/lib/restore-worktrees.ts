@@ -31,7 +31,9 @@ export async function restoreWorktrees() {
           repoPath: repo,
           status: isRunning ? 'running' : 'stopped',
           direct: wt.direct,
-          displayName: runningSession?.displayName ?? null,
+          // Prefer the running session's name; fall back to the persisted manifest
+          // name so stopped sessions also restore their label after restart.
+          displayName: runningSession?.displayName ?? wt.displayName ?? null,
           createdAt: wt.createdAt,
           lastActiveAt: wt.lastActiveAt,
         }, false);

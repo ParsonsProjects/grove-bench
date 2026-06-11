@@ -206,6 +206,13 @@ class MessageStore {
    *  from the dying query until the next system_init re-initializes the session. */
   private stoppingSession: Record<string, boolean> = {};
 
+  /** Set when a user message has been submitted but the agent hasn't responded
+   *  yet. Lets onSystemInit know not to clear isRunning — otherwise a query that
+   *  (re)initializes *after* the user sent a message (e.g. the respawn following
+   *  a Stop) would flip the optimistic "working" indicator back off until the
+   *  first token streams. Cleared on result / process_exit / error / stop. */
+  private awaitingResponse: Record<string, boolean> = {};
+
   /** Set when the user explicitly changes mode via UI (cycleMode / setMode).
    *  Prevents stale SDK mode_sync events from overwriting the user's choice.
    *  Cleared on system_init (new query) or authoritative session mode_sync. */
@@ -674,6 +681,7 @@ class MessageStore {
     this.flushStreamingText(sessionId);
     this.streamingThinking[sessionId] = '';
     this.setIsRunning(sessionId, false);
+    delete this.awaitingResponse[sessionId];
     this.activityBySession[sessionId] = { activity: 'idle' };
 
     // Suppress late permission_request events from the dying query.
@@ -707,6 +715,7 @@ class MessageStore {
       text,
     });
     this.setIsRunning(sessionId, true);
+    this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
     // Clear stale suggestions when user sends a new message
     this.promptSuggestionsBySession[sessionId] = [];
@@ -810,6 +819,7 @@ class MessageStore {
         if (!this.getIsReady(sessionId)) {
           this.setIsReady(sessionId, true);
           this.setIsRunning(sessionId, false);
+          delete this.awaitingResponse[sessionId];
         }
         break;
 
@@ -879,6 +889,7 @@ class MessageStore {
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
         this.setIsRunning(sessionId, false);
+        delete this.awaitingResponse[sessionId];
         // If the agent exited before system_init, unlock the input
         if (!this.getIsReady(sessionId)) {
           this.setIsReady(sessionId, true);
@@ -1016,7 +1027,12 @@ class MessageStore {
       window.groveBench.clearEventHistory(sessionId).catch(() => {});
     }
     this.setIsReady(sessionId, true);
-    this.setIsRunning(sessionId, false);
+    // Don't clear isRunning if the user already submitted a message that this
+    // (re)initialized query is about to process — otherwise the "working"
+    // indicator flickers off between system_init and the first streamed token.
+    if (!this.awaitingResponse[sessionId]) {
+      this.setIsRunning(sessionId, false);
+    }
     delete this.stoppingSession[sessionId];
     delete this.userExplicitMode[sessionId];
     this.modelBySession[sessionId] = event.model;
@@ -1161,6 +1177,7 @@ class MessageStore {
   private onResult(sessionId: string, event: Extract<AgentEvent, { type: 'result' }>) {
     this.flushStreamingText(sessionId);
     this.setIsRunning(sessionId, false);
+    delete this.awaitingResponse[sessionId];
     this.activityBySession[sessionId] = { activity: 'idle' };
     this.toolProgressBySession[sessionId] = {};
     if (event.contextWindow) {
@@ -1302,6 +1319,7 @@ class MessageStore {
       text: command,
     });
     this.setIsRunning(sessionId, true);
+    this.awaitingResponse[sessionId] = true;
     window.groveBench.sendMessage(sessionId, command);
   }
 
@@ -1498,6 +1516,7 @@ class MessageStore {
     backgroundTaskStore.clear(sessionId);
     this.sourceIndexBySession.delete(sessionId);
     delete this.stoppingSession[sessionId];
+    delete this.awaitingResponse[sessionId];
     delete this.userExplicitMode[sessionId];
     // Preserve isRunning and isReady — caller controls these based on history/status
   }
@@ -1535,6 +1554,7 @@ class MessageStore {
     // Plain (non-reactive) bookkeeping records
     delete this.pendingMessageAfterClear[sessionId];
     delete this.stoppingSession[sessionId];
+    delete this.awaitingResponse[sessionId];
     delete this.userExplicitMode[sessionId];
   }
 

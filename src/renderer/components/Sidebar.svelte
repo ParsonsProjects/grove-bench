@@ -26,7 +26,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'stop' | 'destroy';
+    icon: 'add' | 'rename' | 'folder' | 'stop' | 'destroy';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -36,6 +36,7 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     const items: MenuItem[] = [
+      { label: 'New Session', icon: 'add', action: () => store.createDirectSession(session.repoPath) },
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
     ];

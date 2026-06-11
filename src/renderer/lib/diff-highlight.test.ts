@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { languageForPath, highlightLine, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
-import type { DiffLine } from '../components/DiffView.svelte';
+import type { DiffLine } from './diff-types.js';
 
 describe('languageForPath', () => {
   it('maps known extensions to highlight.js languages', () => {

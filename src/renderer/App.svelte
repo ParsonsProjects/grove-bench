@@ -6,6 +6,7 @@
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
+  import { deriveSessionName } from './lib/session-name.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -70,17 +71,37 @@
   // itself lives in the store so the sidebar can read it.
   let prevRunningState = $state<Record<string, boolean>>({});
 
-  // Detect when a non-active session transitions from running → idle
+  // Detect when a session transitions from running → idle (a turn completed)
   $effect(() => {
     for (const session of store.sessions) {
       const running = messageStore.getIsRunning(session.id);
       const wasRunning = prevRunningState[session.id] ?? false;
-      if (wasRunning && !running && store.activeSessionId !== session.id) {
-        store.markNeedsAttention(session.id);
+      if (wasRunning && !running) {
+        if (store.activeSessionId !== session.id) {
+          store.markNeedsAttention(session.id);
+        }
+        maybeAutoNameSession(session);
       }
       prevRunningState[session.id] = running;
     }
   });
+
+  /** After a turn completes, give an unnamed session a heuristic name derived
+   *  from its first (non-command) user message. The displayName guard makes
+   *  this fire once and never overwrites a manually-set name. */
+  function maybeAutoNameSession(session: { id: string; displayName?: string | null }) {
+    if (session.displayName) return;
+    const firstUser = messageStore
+      .getMessages(session.id)
+      .find((m) => m.kind === 'user' && !m.text.startsWith('/'));
+    if (!firstUser || firstUser.kind !== 'user') return;
+    const name = deriveSessionName(firstUser.text);
+    if (!name) return;
+    window.groveBench
+      .renameSession(session.id, name)
+      .then(() => store.updateDisplayName(session.id, name))
+      .catch(() => { /* non-fatal — naming is best-effort */ });
+  }
 
   // Clear flash when switching to a session
   $effect(() => {

@@ -101,6 +101,18 @@ class SessionStore {
     this.addRepo(entry.repoPath);
   }
 
+  /** Quick-create a direct session on a repo (no worktree, no dialog) and focus
+   *  it. Mirrors the tab "New Session" action; the main process resolves the
+   *  repo's current branch from HEAD when branchName is empty. */
+  async createDirectSession(repoPath: string): Promise<void> {
+    try {
+      const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true });
+      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, createdAt: Date.now() });
+    } catch (e: any) {
+      this.setError(e?.message || String(e));
+    }
+  }
+
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
     this.clearNeedsAttention(id);

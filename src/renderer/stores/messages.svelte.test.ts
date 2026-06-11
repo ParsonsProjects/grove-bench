@@ -49,6 +49,29 @@ describe('ingestEvent — system_init', () => {
     expect(messageStore.getModel(SID)).toBe('test-model-v1');
   });
 
+  it('keeps isRunning when a user message is already in flight (stop → resend → respawn)', () => {
+    // User pressed Stop (process killed), then submitted a follow-up before the
+    // respawned query connected. addUserMessage sets the optimistic working
+    // state; the respawn's system_init must NOT clear it, or the indicator
+    // flickers off until the first token streams.
+    messageStore.addUserMessage(SID, 'follow-up after stop');
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'opus',
+      tools: [],
+    } as AgentEvent);
+
+    expect(messageStore.getIsReady(SID)).toBe(true);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    // Once the turn completes, the working state clears as normal.
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success' } as AgentEvent);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+
   it('pushes a system message with model name', () => {
     messageStore.ingestEvent(SID, {
       type: 'system_init',

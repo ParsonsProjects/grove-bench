@@ -134,6 +134,38 @@ describe('saveProviderSessionId / getProviderSessionId', () => {
   });
 });
 
+describe('saveDisplayName', () => {
+  it('persists display name to manifest for existing entry', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    await manager.saveDisplayName('wt-123', 'My Session');
+
+    expect((savedManifest as any)['wt-123'].displayName).toBe('My Session');
+  });
+
+  it('clears the name when passed an empty string', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, displayName: 'Old' },
+    }));
+
+    await manager.saveDisplayName('wt-123', '');
+
+    expect((savedManifest as any)['wt-123'].displayName).toBeUndefined();
+  });
+
+  it('does not create entry for unknown worktree ID', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    await manager.saveDisplayName('wt-unknown', 'X');
+
+    expect(savedManifest['wt-unknown']).toBeUndefined();
+  });
+});
+
 describe('migration from claudeSessionId', () => {
   it('getProviderSessionId falls back to claudeSessionId for old manifests', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

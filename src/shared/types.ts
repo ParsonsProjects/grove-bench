@@ -21,6 +21,8 @@ export interface WorktreeInfo {
   lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
+  /** User-assigned or auto-generated display name, persisted across restart. */
+  displayName?: string | null;
 }
 
 export interface WorktreeRepoConfig {
