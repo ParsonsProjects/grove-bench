@@ -186,6 +186,10 @@ class MockAdapter implements AgentAdapter {
         done = true;
         resolveIter?.();
       }),
+      interrupt: vi.fn(async () => {
+        // Interrupt keeps the process alive — the event stream stays open and
+        // the handle remains valid for follow-up messages.
+      }),
       close: vi.fn(() => {
         done = true;
         resolveIter?.();
@@ -724,6 +728,114 @@ describe('AgentSessionManager.stopQuery()', () => {
     expect(mockAdapter.startCallCount).toBe(2);
 
     await sessionManager.destroySession('test-restart');
+  });
+});
+
+describe('AgentSessionManager.interruptQuery()', () => {
+  it('interrupts in place without respawning the query', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-interrupt',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    expect(mockAdapter.startCallCount).toBe(1);
+    const handle = sessionManager.getSession('test-interrupt')?.queryHandle;
+
+    await sessionManager.interruptQuery('test-interrupt');
+    await new Promise((r) => setTimeout(r, 50));
+
+    // No respawn: adapter.start() not called again, same handle kept alive.
+    expect(mockAdapter.startCallCount).toBe(1);
+    expect((handle as any).interrupt).toHaveBeenCalledTimes(1);
+    expect(sessionManager.getSession('test-interrupt')?.queryHandle).toBe(handle);
+
+    // mode_sync emitted for parity with stopQuery (clears renderer guard).
+    const history = sessionManager.getEventHistory('test-interrupt');
+    expect(history.some((e) => e.type === 'mode_sync')).toBe(true);
+
+    await sessionManager.destroySession('test-interrupt');
+  });
+
+  it('resolves pending permissions as denied on interrupt', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-interrupt-perm',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    let permResolved: PermissionResponse | null = null;
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    }).then((r) => { permResolved = r; });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.interruptQuery('test-interrupt-perm');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(permResolved).toMatchObject({ behavior: 'deny' });
+    expect(mockAdapter.startCallCount).toBe(1); // no respawn
+
+    await sessionManager.destroySession('test-interrupt-perm');
+  });
+
+  it('falls back to stopQuery (respawn) when interrupt throws', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-interrupt-fail',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const handle = sessionManager.getSession('test-interrupt-fail')?.queryHandle;
+    (handle as any).interrupt.mockRejectedValueOnce(new Error('no active turn'));
+
+    await sessionManager.interruptQuery('test-interrupt-fail');
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Fallback teardown respawns the query.
+    expect(mockAdapter.startCallCount).toBe(2);
+
+    await sessionManager.destroySession('test-interrupt-fail');
+  });
+
+  it('falls back to stopQuery when there is no live query handle', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-interrupt-nohandle',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('test-interrupt-nohandle');
+    (session as any).queryHandle = null;
+
+    await sessionManager.interruptQuery('test-interrupt-nohandle');
+    await new Promise((r) => setTimeout(r, 100));
+
+    // With no handle to interrupt, the teardown path respawns.
+    expect(mockAdapter.startCallCount).toBe(2);
+
+    await sessionManager.destroySession('test-interrupt-nohandle');
   });
 });
 

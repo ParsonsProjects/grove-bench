@@ -678,6 +678,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         abortController.abort();
       },
 
+      async interrupt() {
+        // Cancels the in-flight turn via a control request but leaves the
+        // process running, so a follow-up message resumes instantly.
+        await q.interrupt();
+      },
+
       close() {
         try { inputController?.close(); } catch { /* may already be closed */ }
         try { q.close(); } catch { /* may already be closed */ }
