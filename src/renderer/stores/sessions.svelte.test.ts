@@ -127,85 +127,26 @@ describe('SessionStore', () => {
     });
   });
 
-  describe('reorderByIds', () => {
-    it('reorders sessions to match the given ID order', () => {
+  describe('needsAttention', () => {
+    it('marks and clears the attention flag', () => {
       const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      const s3 = makeSession({ id: 's3' });
       store.addSession(s1, false);
-      store.addSession(s2, false);
-      store.addSession(s3, false);
 
-      store.reorderByIds(['s3', 's1', 's2']);
+      store.markNeedsAttention('s1');
+      expect(store.needsAttention['s1']).toBe(true);
 
-      expect(store.sessions.map(s => s.id)).toEqual(['s3', 's1', 's2']);
+      store.clearNeedsAttention('s1');
+      expect(store.needsAttention['s1']).toBeUndefined();
     });
 
-    it('places sessions not in orderedIds at the end in original order', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      const s3 = makeSession({ id: 's3' });
-      const s4 = makeSession({ id: 's4' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-      store.addSession(s3, false);
-      store.addSession(s4, false);
-
-      // Only specify order for s3 and s1; s2 and s4 should keep original order at end
-      store.reorderByIds(['s3', 's1']);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s3', 's1', 's2', 's4']);
-    });
-
-    it('ignores IDs not present in sessions', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-
-      store.reorderByIds(['missing', 's2', 's1']);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s2', 's1']);
-    });
-
-    it('no-ops with empty orderedIds', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-
-      store.reorderByIds([]);
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s1', 's2']);
-    });
-  });
-
-  describe('reorderSession', () => {
-    it('moves a session to a new position', () => {
-      const s1 = makeSession({ id: 's1' });
-      const s2 = makeSession({ id: 's2' });
-      const s3 = makeSession({ id: 's3' });
-      store.addSession(s1, false);
-      store.addSession(s2, false);
-      store.addSession(s3, false);
-
-      store.reorderSession('s3', 's1');
-
-      expect(store.sessions.map(s => s.id)).toEqual(['s3', 's1', 's2']);
-    });
-
-    it('no-ops when fromId equals toId', () => {
+    it('clears the attention flag when a session is removed', () => {
       const s1 = makeSession({ id: 's1' });
       store.addSession(s1, false);
-      store.reorderSession('s1', 's1');
-      expect(store.sessions.map(s => s.id)).toEqual(['s1']);
-    });
+      store.markNeedsAttention('s1');
 
-    it('no-ops when id not found', () => {
-      const s1 = makeSession({ id: 's1' });
-      store.addSession(s1, false);
-      store.reorderSession('missing', 's1');
-      expect(store.sessions.map(s => s.id)).toEqual(['s1']);
+      store.removeSession('s1');
+
+      expect(store.needsAttention['s1']).toBeUndefined();
     });
   });
 

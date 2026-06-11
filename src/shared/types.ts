@@ -454,6 +454,11 @@ export interface GroveBenchSettings {
   /** Automatically run npm install in new worktrees. Default false. */
   autoInstallDeps: boolean;
 
+  // Sessions
+  /** Auto-stop a session after this many minutes idle (not focused, not running
+   *  a turn, no pending permission) to reclaim its processes. 0 disables. Default 30. */
+  idleAutoStopMinutes: number;
+
   // General
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';

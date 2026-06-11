@@ -1,16 +1,7 @@
 <script lang="ts" module>
-  export interface DiffLine {
-    type: 'add' | 'del' | 'context' | 'hunk' | 'header';
-    text: string;
-    lineNum?: number;
-  }
-
-  export interface SideBySideRow {
-    type: 'context' | 'change' | 'hunk';
-    left?: { lineNum?: number; text: string };
-    right?: { lineNum?: number; text: string };
-    hunkText?: string;
-  }
+  import type { DiffLine, SideBySideRow } from '../lib/diff-types.js';
+  // Re-export so existing component consumers can keep importing from here.
+  export type { DiffLine, SideBySideRow };
 
   export function buildSideBySideRows(diffLines: DiffLine[]): SideBySideRow[] {
     const rows: SideBySideRow[] = [];

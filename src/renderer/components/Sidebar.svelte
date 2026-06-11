@@ -24,15 +24,28 @@
     contextMenu = { x: e.clientX, y: e.clientY, sessionId };
   }
 
-  function getContextMenuItems(sessionId: string) {
+  interface MenuItem {
+    label: string;
+    icon: 'add' | 'rename' | 'folder' | 'stop' | 'destroy';
+    action: () => void;
+    variant?: 'destructive';
+    separator?: boolean;
+  }
+
+  function getContextMenuItems(sessionId: string): MenuItem[] {
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
-    return [
-      { label: 'New Session', icon: 'add' as const, action: () => store.createDirectSession(session.repoPath) },
-      { label: 'Rename', icon: 'rename' as const, action: () => startRename(sessionId, sessionLabel(session)) },
-      { label: 'Open Folder', icon: 'folder' as const, action: () => window.groveBench.openSessionFolder(sessionId) },
-      { label: 'Destroy Agent', icon: 'destroy' as const, action: () => requestDestroy(sessionId), variant: 'destructive' as const },
+    const items: MenuItem[] = [
+      { label: 'New Session', icon: 'add', action: () => store.createDirectSession(session.repoPath) },
+      { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
+      { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
     ];
+    // Stop disconnects a live session (keeps it resumable); not shown for already-stopped ones.
+    if (session.status !== 'stopped') {
+      items.push({ label: 'Stop', icon: 'stop', action: () => stopSession(sessionId) });
+    }
+    items.push({ label: 'Destroy Agent', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    return items;
   }
 
   let showNewAgent = $state(false);
@@ -49,6 +62,21 @@
 
   function focusSession(id: string) {
     store.activeSessionId = id;
+    store.clearNeedsAttention(id);
+  }
+
+  /** Stop a session non-destructively: tears down the connection but keeps the
+   *  worktree so it can be resumed by clicking it (auto-resume in App.svelte). */
+  async function stopSession(id: string) {
+    store.pushRecentlyClosed(id);
+    if (store.activeSessionId === id) {
+      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
+      store.activeSessionId = next?.id ?? null;
+    }
+    store.updateStatus(id, 'stopped');
+    try {
+      await window.groveBench.stopSession(id);
+    } catch { /* session may already be dead */ }
   }
 
   function openNewAgent(defaultRepo = '') {
@@ -138,21 +166,37 @@
     if (e.key === 'Enter') { e.preventDefault(); confirmRename(); }
   }
 
-  const statusColor: Record<string, string> = {
-    running: 'bg-primary',
-    starting: 'bg-yellow-500',
-    installing: 'bg-yellow-500',
-    stopped: 'bg-neutral-500',
-    error: 'bg-red-500',
-  };
-
   function getSessionHasPending(sessionId: string): boolean {
     return messageStore.hasPendingPermission(sessionId);
   }
 
-  function getBranchGroups(repo: string): [string, typeof store.sessions][] {
+  /** Live sessions (anything not stopped), most-recently-active first.
+   *  This is the always-visible "working set" that replaces the old tab bar. */
+  let activeSessions = $derived(
+    [...store.sessions]
+      .filter((s) => s.status !== 'stopped')
+      .sort((a, b) => (b.lastActiveAt ?? b.createdAt ?? 0) - (a.lastActiveAt ?? a.createdAt ?? 0)),
+  );
+
+  /** Aggregate counts for the ACTIVE header. A waiting session takes priority
+   *  over working so the categories are mutually exclusive (no double-count). */
+  let activeStats = $derived.by(() => {
+    let working = 0, idle = 0, waiting = 0;
+    for (const s of activeSessions) {
+      if (messageStore.hasPendingPermission(s.id)) waiting++;
+      else if (messageStore.getIsRunning(s.id)) working++;
+      else idle++;
+    }
+    return { working, idle, waiting };
+  });
+
+  let stoppedCount = $derived(store.sessions.filter((s) => s.status === 'stopped').length);
+
+  /** Stopped sessions for a repo, grouped by branch (for the INACTIVE tree). */
+  function getInactiveBranchGroups(repo: string): [string, typeof store.sessions][] {
     const groups: Record<string, typeof store.sessions> = {};
     for (const s of store.sessionsForRepo(repo)) {
+      if (s.status !== 'stopped') continue;
       const key = s.branch || 'main';
       (groups[key] ??= []).push(s);
     }
@@ -161,17 +205,101 @@
 </script>
 
 <aside class="w-60 border-r border-sidebar-border flex flex-col bg-sidebar shrink-0">
-  <!-- Repo-grouped sessions -->
+  <!-- Reusable session row, shared by the Active list and the Inactive tree -->
+  {#snippet sessionRow(session: (typeof store.sessions)[number], showRepoPrefix: boolean, labelOverride: string | null)}
+    {@const isDestroying = destroying.has(session.id)}
+    {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
+    {@const ts = session.lastActiveAt ?? session.createdAt}
+    <button
+      onclick={() => !isDestroying && focusSession(session.id)}
+      oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
+      disabled={isDestroying}
+      title={sessionLabel(session)}
+      class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
+        {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+    >
+      <div class="flex items-center gap-2 min-w-0">
+        {#if isDestroying}
+          <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
+        {:else if session.status === 'error'}
+          <span class="w-2 h-2 bg-red-500 shrink-0"></span>
+        {:else if session.status === 'starting' || session.status === 'installing'}
+          <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
+        {:else if messageStore.getIsRunning(session.id)}
+          <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
+        {:else if getSessionHasPending(session.id)}
+          <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
+        {:else if store.needsAttention[session.id]}
+          <span class="w-2 h-2 bg-green-400 shrink-0 needs-attention-flash"></span>
+        {:else if session.status === 'stopped'}
+          <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
+        {:else}
+          <span class="w-2 h-2 bg-green-500 shrink-0"></span>
+        {/if}
+        {#if session.direct}
+          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
+        {:else}
+          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
+        {/if}
+        <span class="text-sm truncate min-w-0">
+          {#if showRepoPrefix}{#if repoColor}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionLabel(session)}
+        </span>
+      </div>
+      <div class="flex items-center gap-1 shrink-0">
+        {#if ts}
+          <span class="text-[10px] text-muted-foreground/50 group-hover/session:hidden" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
+        {/if}
+        <span
+          role="button"
+          tabindex="-1"
+          title="Destroy agent"
+          onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
+          onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
+          class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
+            {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </span>
+      </div>
+    </button>
+  {/snippet}
+
   <div class="flex-1 overflow-auto px-3 py-3">
-    <div class="flex items-center justify-between mb-2">
-      <span class="text-xs text-muted-foreground uppercase tracking-wide">Repositories</span>
-      <span class="text-xs text-muted-foreground/60">{store.sessions.filter(s => s.status === 'running').length}/{store.count} running</span>
+    <!-- ACTIVE: the live working set, always visible at the top -->
+    <div class="flex items-center justify-between mb-1 px-1">
+      <span class="text-xs text-muted-foreground uppercase tracking-wide">Active</span>
+      <div class="flex items-center gap-2 text-[10px] text-muted-foreground/60">
+        {#if activeStats.working}
+          <span class="flex items-center gap-0.5" title="{activeStats.working} working"><span class="w-1.5 h-1.5 bg-primary"></span>{activeStats.working}</span>
+        {/if}
+        {#if activeStats.idle}
+          <span class="flex items-center gap-0.5" title="{activeStats.idle} idle"><span class="w-1.5 h-1.5 bg-green-500"></span>{activeStats.idle}</span>
+        {/if}
+        {#if activeStats.waiting}
+          <span class="flex items-center gap-0.5" title="{activeStats.waiting} waiting for input"><span class="w-1.5 h-1.5 bg-amber-500"></span>{activeStats.waiting}</span>
+        {/if}
+      </div>
+    </div>
+
+    {#each activeSessions as session (session.id)}
+      {@render sessionRow(session, true, null)}
+    {/each}
+    {#if activeSessions.length === 0}
+      <p class="text-xs text-muted-foreground/50 pl-4 py-1">No active agents</p>
+    {/if}
+
+    <!-- INACTIVE: stopped sessions grouped by repo; hosts repo management -->
+    <div class="flex items-center justify-between mt-5 mb-2 px-1">
+      <span class="text-xs text-muted-foreground uppercase tracking-wide">Inactive</span>
+      {#if stoppedCount}
+        <span class="text-[10px] text-muted-foreground/50">{stoppedCount} stopped</span>
+      {/if}
     </div>
 
     {#each store.repos as repo (repo)}
-      {@const repoSessions = store.sessionsForRepo(repo)}
       {@const canRemove = store.canRemoveRepo(repo)}
       {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
+      {@const inactiveGroups = getInactiveBranchGroups(repo)}
       <div class="mb-3">
         <!-- Repo header -->
         <div class="flex items-center justify-between group px-1 py-1">
@@ -204,63 +332,11 @@
           </div>
         </div>
 
-        <!-- Sessions grouped by branch -->
-        {#each getBranchGroups(repo) as [branch, sessions] (branch)}
+        <!-- Stopped sessions grouped by branch -->
+        {#each inactiveGroups as [branch, sessions] (branch)}
           {#if sessions.length === 1}
-            <!-- Single session — render flat (no branch header) -->
-            {@const session = sessions[0]}
-            {@const isDestroying = destroying.has(session.id)}
-            <button
-              onclick={() => !isDestroying && focusSession(session.id)}
-              onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
-              oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
-              disabled={isDestroying}
-              title={sessionLabel(session)}
-              class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
-                {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-            >
-              <div class="flex items-center gap-2 min-w-0">
-                {#if destroying.has(session.id)}
-                  <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
-                {:else if session.status === 'error'}
-                  <span class="w-2 h-2 bg-red-500 shrink-0"></span>
-                {:else if session.status === 'starting' || session.status === 'installing'}
-                  <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
-                {:else if messageStore.getIsRunning(session.id)}
-                  <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
-                {:else if getSessionHasPending(session.id)}
-                  <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
-                {:else if session.status === 'stopped'}
-                  <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
-                {:else}
-                  <span class="w-2 h-2 bg-green-500 shrink-0"></span>
-                {/if}
-                {#if session.direct}
-                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
-                {:else}
-                  <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
-                {/if}
-                <span class="text-sm truncate">{sessionLabel(session)}</span>
-              </div>
-              <div class="flex items-center gap-1 shrink-0">
-                {#if session.lastActiveAt || session.createdAt}
-                  {@const ts = session.lastActiveAt ?? session.createdAt}
-                  <span class="text-[10px] text-muted-foreground/50 group-hover/session:hidden" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
-                {/if}
-                <span
-                  role="button"
-                  tabindex="-1"
-                  onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
-                  onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
-                  class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
-                    {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                </span>
-              </div>
-            </button>
+            {@render sessionRow(sessions[0], false, null)}
           {:else}
-            <!-- Multiple sessions on same branch — show branch header with nested sessions -->
             <div class="pl-3 mt-0.5">
               <div class="flex items-center gap-1.5 px-1 py-0.5 text-xs text-muted-foreground/70">
                 <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
@@ -268,58 +344,14 @@
                 <span class="text-muted-foreground/40">({sessions.length})</span>
               </div>
               {#each sessions as session, i (session.id)}
-                {@const isDestroying = destroying.has(session.id)}
-                <button
-                  onclick={() => !isDestroying && focusSession(session.id)}
-                  onauxclick={(e) => { if (e.button === 1) { e.preventDefault(); if (!isDestroying) requestDestroy(session.id); } }}
-                  oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
-                  disabled={isDestroying}
-                  title={sessionLabel(session)}
-                  class="w-full flex items-center justify-between pl-4 pr-2 py-1 text-left group/session transition-colors
-                    {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-                >
-                  <div class="flex items-center gap-2 min-w-0">
-                    {#if destroying.has(session.id)}
-                      <span class="w-1.5 h-1.5 bg-muted-foreground animate-pulse shrink-0"></span>
-                    {:else if session.status === 'error'}
-                      <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>
-                    {:else if session.status === 'starting' || session.status === 'installing'}
-                      <span class="w-1.5 h-1.5 bg-yellow-500 animate-pulse shrink-0"></span>
-                    {:else if messageStore.getIsRunning(session.id)}
-                      <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
-                    {:else if getSessionHasPending(session.id)}
-                      <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse shrink-0"></span>
-                    {:else if session.status === 'stopped'}
-                      <span class="w-1.5 h-1.5 bg-neutral-500 shrink-0"></span>
-                    {:else}
-                      <span class="w-1.5 h-1.5 bg-green-500 shrink-0"></span>
-                    {/if}
-                    <span class="text-xs truncate">{session.displayName || `session ${i + 1}`}</span>
-                  </div>
-                  <div class="flex items-center gap-1 shrink-0">
-                    {#if session.lastActiveAt || session.createdAt}
-                      {@const ts = session.lastActiveAt ?? session.createdAt}
-                      <span class="text-[10px] text-muted-foreground/50 group-hover/session:hidden" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
-                    {/if}
-                    <span
-                      role="button"
-                      tabindex="-1"
-                      onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
-                      onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
-                      class="w-4 h-4 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
-                        {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                    </span>
-                  </div>
-                </button>
+                {@render sessionRow(session, false, session.displayName || `session ${i + 1}`)}
               {/each}
             </div>
           {/if}
         {/each}
 
-        {#if store.sessionsForRepo(repo).length === 0}
-          <p class="text-xs text-muted-foreground/50 pl-4 py-1">No agents</p>
+        {#if inactiveGroups.length === 0}
+          <p class="text-xs text-muted-foreground/40 pl-4 py-1">No inactive agents</p>
         {/if}
       </div>
     {/each}
@@ -463,3 +495,14 @@
     </Dialog.Content>
   </Dialog.Root>
 {/if}
+
+<style>
+  /* Green flash on a session row when its agent finished a turn while not focused */
+  .needs-attention-flash {
+    animation: needs-attention-flash 0.8s ease-in-out infinite;
+  }
+  @keyframes needs-attention-flash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+</style>

@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   devCommand: '',
   memoryAutoSave: true,
   autoInstallDeps: false,
+  idleAutoStopMinutes: 30,
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
