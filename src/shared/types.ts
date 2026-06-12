@@ -266,6 +266,12 @@ export interface DevServerFailure {
 
 export type DevServerResult = DevServerSuccess | DevServerFailure;
 
+/** Sidebar session ordering: key + direction (persisted via app-state). */
+export interface SessionSortState {
+  key: 'name' | 'age';
+  dir: 'asc' | 'desc';
+}
+
 // ─── IPC API (exposed via contextBridge) ───
 
 export interface GroveBenchAPI {
@@ -393,6 +399,10 @@ export interface GroveBenchAPI {
   setActiveTab(id: string | null): void;
   getOpenTabs(): Promise<string[]>;
   setOpenTabs(ids: string[]): void;
+  getCollapsedRepos(): Promise<Record<string, boolean>>;
+  setCollapsedRepos(map: Record<string, boolean>): void;
+  getSessionSort(): Promise<SessionSortState>;
+  setSessionSort(sort: SessionSortState): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -570,6 +580,10 @@ export const IPC = {
   APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
   APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',
+  APP_STATE_GET_COLLAPSED_REPOS: 'appState:getCollapsedRepos',
+  APP_STATE_SET_COLLAPSED_REPOS: 'appState:setCollapsedRepos',
+  APP_STATE_GET_SESSION_SORT: 'appState:getSessionSort',
+  APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   MEMORY_LIST: 'memory:list',
   MEMORY_READ: 'memory:read',

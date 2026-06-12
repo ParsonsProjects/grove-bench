@@ -2,12 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 
+import type { SessionSortState } from '../shared/types.js';
+
 interface AppState {
   activeTabId: string | null;
   openTabIds: string[];
+  collapsedRepos: Record<string, boolean>;
+  sessionSort: SessionSortState;
 }
 
-const DEFAULT_STATE: AppState = { activeTabId: null, openTabIds: [] };
+const DEFAULT_STATE: AppState = {
+  activeTabId: null,
+  openTabIds: [],
+  collapsedRepos: {},
+  sessionSort: { key: 'name', dir: 'asc' },
+};
 
 function getStatePath(): string {
   return path.join(app.getPath('userData'), 'app-state.json');
@@ -67,6 +76,50 @@ function writePendingOpenTabs(): void {
   openTabsTimer = null;
 }
 
+let collapsedReposTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingCollapsedRepos: { value: Record<string, boolean> } | null = null;
+
+export function saveCollapsedRepos(map: Record<string, boolean>): void {
+  pendingCollapsedRepos = { value: map };
+  if (collapsedReposTimer) clearTimeout(collapsedReposTimer);
+  collapsedReposTimer = setTimeout(() => {
+    writePendingCollapsedRepos();
+  }, 500);
+}
+
+function writePendingCollapsedRepos(): void {
+  if (!pendingCollapsedRepos) return;
+  try {
+    const state = loadAppState();
+    state.collapsedRepos = pendingCollapsedRepos.value;
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+  pendingCollapsedRepos = null;
+  collapsedReposTimer = null;
+}
+
+let sessionSortTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSessionSort: { value: SessionSortState } | null = null;
+
+export function saveSessionSort(sort: SessionSortState): void {
+  pendingSessionSort = { value: sort };
+  if (sessionSortTimer) clearTimeout(sessionSortTimer);
+  sessionSortTimer = setTimeout(() => {
+    writePendingSessionSort();
+  }, 500);
+}
+
+function writePendingSessionSort(): void {
+  if (!pendingSessionSort) return;
+  try {
+    const state = loadAppState();
+    state.sessionSort = pendingSessionSort.value;
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+  pendingSessionSort = null;
+  sessionSortTimer = null;
+}
+
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */
 export function flushPendingSaves(): void {
   if (saveTimer) {
@@ -77,6 +130,16 @@ export function flushPendingSaves(): void {
     clearTimeout(openTabsTimer);
     openTabsTimer = null;
   }
+  if (collapsedReposTimer) {
+    clearTimeout(collapsedReposTimer);
+    collapsedReposTimer = null;
+  }
+  if (sessionSortTimer) {
+    clearTimeout(sessionSortTimer);
+    sessionSortTimer = null;
+  }
   writePendingActiveTab();
   writePendingOpenTabs();
+  writePendingCollapsedRepos();
+  writePendingSessionSort();
 }

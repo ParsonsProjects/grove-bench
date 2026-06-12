@@ -207,6 +207,14 @@ const api: GroveBenchAPI = {
   setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
   getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
   setOpenTabs: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_OPEN_TABS, ids),
+  getCollapsedRepos: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_REPOS) as Promise<Record<string, boolean>>,
+  setCollapsedRepos: (map: Record<string, boolean>) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_REPOS, map),
+  getSessionSort: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
+  setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();

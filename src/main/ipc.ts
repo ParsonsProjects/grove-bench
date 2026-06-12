@@ -17,7 +17,7 @@ import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, flushPendingSaves } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -813,6 +813,24 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_OPEN_TABS, (_event, ids: string[]) => {
     saveOpenTabs(ids);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_REPOS, () => {
+    flushPendingSaves();
+    return loadAppState().collapsedRepos ?? {};
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_REPOS, (_event, map: Record<string, boolean>) => {
+    saveCollapsedRepos(map);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_SESSION_SORT, () => {
+    flushPendingSaves();
+    return loadAppState().sessionSort ?? { key: 'name', dir: 'asc' };
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_SESSION_SORT, (_event, sort: import('../shared/types.js').SessionSortState) => {
+    saveSessionSort(sort);
   });
 
   // ─── Window controls ───

@@ -38,6 +38,10 @@ const mockGroveBench = {
   listWorktrees: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').WorktreeInfo[])),
   resumeSession: vi.fn(() => Promise.resolve({ id: '' })),
   listRepos: vi.fn(() => Promise.resolve([] as string[])),
+  getCollapsedRepos: vi.fn(() => Promise.resolve({} as Record<string, boolean>)),
+  setCollapsedRepos: vi.fn(),
+  getSessionSort: vi.fn(() => Promise.resolve({ key: 'age', dir: 'desc' } as import('../../shared/types.js').SessionSortState)),
+  setSessionSort: vi.fn(),
 };
 // Attach the IPC bridge onto the existing (jsdom) window rather than replacing
 // it — replacing window wipes addEventListener/dispatchEvent and breaks any
