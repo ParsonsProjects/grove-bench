@@ -431,9 +431,9 @@ export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra';
 
 // ─── Settings ───
 
-export interface ToolRule {
+export type ToolRule = {
   pattern: string; // e.g. "Bash(npm run *)", "Read(/src/**)", "mcp__*"
-}
+};
 
 export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
 
@@ -489,6 +489,10 @@ export interface GroveBenchSettings {
   analyticsEnabled: boolean;
   /** Whether the user has been shown the analytics consent prompt. */
   analyticsPrompted: boolean;
+
+  // Mistral
+  /** Mistral API key for authentication. Stored encrypted at rest. */
+  mistralApiKey?: string;
 }
 
 // ─── Memory ───
