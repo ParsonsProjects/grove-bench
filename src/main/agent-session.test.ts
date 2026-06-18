@@ -837,6 +837,75 @@ describe('AgentSessionManager.interruptQuery()', () => {
 
     await sessionManager.destroySession('test-interrupt-nohandle');
   });
+
+  it('sanitizes abort/teardown errors from the result of an interrupted turn', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-interrupt-sanitize',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // User clicks Stop → in-place interrupt.
+    await sessionManager.interruptQuery('test-interrupt-sanitize');
+
+    // The interrupted turn reports abort/teardown noise via the result event.
+    mockAdapter.control!.emitEvent({
+      type: 'result',
+      subtype: 'error_during_execution',
+      isError: true,
+      errors: ['Error: File does not exist.', 'Error: Request was aborted.'],
+    } as any);
+
+    await vi.waitFor(() => {
+      const history = sessionManager.getEventHistory('test-interrupt-sanitize');
+      expect(history.some((e) => e.type === 'result')).toBe(true);
+    });
+
+    const result = sessionManager.getEventHistory('test-interrupt-sanitize')
+      .find((e) => e.type === 'result') as any;
+    expect(result.isError).toBe(false);
+    expect(result.errors).toBeUndefined();
+
+    await sessionManager.destroySession('test-interrupt-sanitize');
+  });
+
+  it('keeps genuine result errors when the turn was not interrupted', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-result-errors',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // No interrupt — a real failure must still surface to the user.
+    mockAdapter.control!.emitEvent({
+      type: 'result',
+      subtype: 'error_during_execution',
+      isError: true,
+      errors: ['Real tool failure'],
+    } as any);
+
+    await vi.waitFor(() => {
+      const history = sessionManager.getEventHistory('test-result-errors');
+      expect(history.some((e) => e.type === 'result')).toBe(true);
+    });
+
+    const result = sessionManager.getEventHistory('test-result-errors')
+      .find((e) => e.type === 'result') as any;
+    expect(result.isError).toBe(true);
+    expect(result.errors).toEqual(['Real tool failure']);
+
+    await sessionManager.destroySession('test-result-errors');
+  });
 });
 
 describe('AgentSessionManager.healthCheckAll()', () => {

@@ -76,6 +76,12 @@ interface ManagedSession {
   devServer: DevServer | null;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
+  /** Set while a user-initiated in-place interrupt is settling. The resulting
+   *  turn reports abort/teardown noise (e.g. "Request was aborted", in-flight
+   *  tool failures); this flag lets runQuery treat that as a clean stop instead
+   *  of surfacing it as an error. Cleared once the interrupt's result/throw is
+   *  consumed. */
+  interrupting: boolean;
   /** Whether a memory auto-save is currently in progress. */
   autoSaveInProgress: boolean;
   /** Emit function for sending events to the renderer — set by createEmitter. */
@@ -257,6 +263,7 @@ class AgentSessionManager {
       displayName: null,
       devServer: null,
       stoppedByUser: false,
+      interrupting: false,
       autoSaveInProgress: false,
       emit: null,
       permRequestCounter: 0,
@@ -576,14 +583,26 @@ class AgentSessionManager {
             totalCostUsd: event.totalCostUsd,
             durationMs: event.durationMs,
           };
+
+          // A turn ended by a user interrupt reports abort/teardown errors
+          // (e.g. "Request was aborted", in-flight tool failures). The user
+          // asked to stop, so present a clean result instead of dumping them.
+          if (session.interrupting) {
+            session.interrupting = false;
+            emit({ ...event, isError: false, errors: undefined });
+            continue;
+          }
         }
 
         emit(event);
       }
       logger.debug(`[runQuery] session=${id} event loop ended normally`);
     } catch (err: any) {
-      // Abort errors are expected when the user stops a query — don't surface them
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted) {
+      // Abort errors are expected when the user stops a query — don't surface them.
+      // interrupting covers an in-place interrupt that tears down the event loop
+      // (the SDK throws "Request was aborted" rather than yielding a result).
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting) {
+        session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else {
         const errMsg = err?.message || String(err);
@@ -675,6 +694,10 @@ class AgentSessionManager {
       logger.debug(`[sendMessage] session=${id} no queryHandle`);
       return false;
     }
+
+    // A new turn supersedes any pending interrupt: don't let a stale flag
+    // sanitize this turn's genuine result.
+    session.interrupting = false;
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
@@ -933,9 +956,13 @@ class AgentSessionManager {
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
+    // Flag the interrupt so the resulting turn's abort/teardown noise (reported
+    // via the result's errors or a thrown abort) is treated as a clean stop.
+    session.interrupting = true;
     try {
       await handle.interrupt();
     } catch (err) {
+      session.interrupting = false;
       logger.warn(`[interruptQuery] session=${id} interrupt failed, falling back to teardown:`, err);
       return this.stopQuery(id);
     }
