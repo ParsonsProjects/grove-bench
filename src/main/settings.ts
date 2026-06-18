@@ -44,6 +44,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Privacy
   analyticsEnabled: false,
   analyticsPrompted: false,
+
+  // Mistral
+  mistralApiKey: '',
 };
 
 let cached: GroveBenchSettings | null = null;
@@ -69,6 +72,12 @@ export function loadSettings(): GroveBenchSettings {
   } catch {
     cached = { ...DEFAULT_SETTINGS };
   }
+  
+  // Set Mistral API key into environment
+  if (cached.mistralApiKey) {
+    process.env.MISTRAL_API_KEY = cached.mistralApiKey;
+  }
+  
   return cached;
 }
 
@@ -83,6 +92,13 @@ export function saveSettings(settings: GroveBenchSettings): void {
   try {
     fs.writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2));
   } catch { /* ignore write errors */ }
+  
+  // Update Mistral API key in environment when settings are saved
+  if (settings.mistralApiKey) {
+    process.env.MISTRAL_API_KEY = settings.mistralApiKey;
+  } else {
+    delete process.env.MISTRAL_API_KEY;
+  }
 }
 
 export function applyImmediateEffects(win: BrowserWindow | null, settings: GroveBenchSettings): void {
