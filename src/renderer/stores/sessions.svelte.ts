@@ -101,12 +101,14 @@ class SessionStore {
     this.addRepo(entry.repoPath);
   }
 
-  /** Quick-create a direct session on a repo (no worktree, no dialog) and focus
-   *  it. Mirrors the tab "New Session" action; the main process resolves the
-   *  repo's current branch from HEAD when branchName is empty. */
-  async createDirectSession(repoPath: string): Promise<void> {
+  /** Quick-create a new session (no dialog) that lands on `sourceSessionId`'s
+   *  branch, sharing its checkout. The main process resolves the branch + path
+   *  from the source session, so a new session forked off a worktree session
+   *  stays on that branch instead of the repo's default branch. Runs in-place
+   *  (direct), so it never creates or removes a worktree. */
+  async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
     try {
-      const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true });
+      const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId });
       this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, createdAt: Date.now() });
     } catch (e: any) {
       this.setError(e?.message || String(e));

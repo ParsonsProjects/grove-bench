@@ -71,7 +71,7 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     const items: MenuItem[] = [
-      { label: 'New Session', icon: 'add', action: () => store.createDirectSession(session.repoPath) },
+      { label: 'New Session', icon: 'add', action: () => store.createAttachedSession(session.id, session.repoPath) },
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
     ];
@@ -173,6 +173,23 @@
     return s.displayName || s.branch;
   }
 
+  /** '#n ' prefix when multiple sessions in the repo share this branch, so
+   *  same-branch sessions (e.g. several agents on one worktree) stay
+   *  distinguishable. Mirrors the old tab bar's numbering. */
+  function branchIndex(s: { id: string; repoPath: string; branch: string }): string {
+    const siblings = store.sessionsForRepo(s.repoPath).filter((x) => x.branch === s.branch);
+    if (siblings.length <= 1) return '';
+    const idx = siblings.findIndex((x) => x.id === s.id);
+    return `#${idx + 1} `;
+  }
+
+  /** Visible row label: a user/auto name when set, else the branch with a '#n'
+   *  prefix when shared. Kept separate from sessionLabel so rename prefill and
+   *  no-op detection use the plain name without the index. */
+  function sessionRowLabel(s: { id: string; repoPath: string; displayName?: string | null; branch: string }): string {
+    return s.displayName || (branchIndex(s) + s.branch);
+  }
+
   function startRename(sessionId: string, currentLabel: string) {
     renamingSessionId = sessionId;
     renameValue = currentLabel;
@@ -252,7 +269,7 @@
       onclick={() => { if (!isDestroying && !greyedOut) focusSession(session.id); }}
       oncontextmenu={(e) => { if (isDestroying || greyedOut) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
       disabled={isDestroying || greyedOut}
-      title={greyedOut ? `${sessionLabel(session)} — active; manage it in the Active list above` : sessionLabel(session)}
+      title={greyedOut ? `${sessionRowLabel(session)} — active; manage it in the Active list above` : sessionRowLabel(session)}
       class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
         {greyedOut ? 'cursor-not-allowed' : isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
     >
@@ -280,7 +297,7 @@
           <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
         {/if}
         <span class="text-sm truncate min-w-0 {greyedOut ? 'opacity-40' : ''}">
-          {#if showRepoPrefix}{#if repoColor}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionLabel(session)}
+          {#if showRepoPrefix}{#if repoColor}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
         </span>
       </div>
       <div class="flex items-center gap-1 shrink-0">

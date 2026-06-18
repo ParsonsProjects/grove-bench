@@ -23,6 +23,10 @@ interface ManifestEntry {
   /** Last model the session ran with, so it can be restored after app restart. */
   model?: string;
   direct?: boolean;
+  /** Explicit checkout path for sessions that share another session's worktree
+   *  (attached sessions). Absent for normal direct (repoPath) and worktree
+   *  (worktreeRoot/hash/id) sessions, whose paths are derived. */
+  path?: string;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string;
 }
@@ -187,15 +191,18 @@ export class WorktreeManager {
   }
 
   /**
-   * Register a "direct" session — runs on the repo checkout, no worktree created.
+   * Register a "direct" session — runs in-place on an existing checkout, no new
+   * worktree created. Defaults to the repo checkout; pass `checkoutPath` to
+   * attach the session to another session's worktree (sharing its branch).
    * Still tracked in the manifest for session ID persistence.
    */
-  async registerDirect(repoPath: string, branch: string): Promise<WorktreeInfo> {
+  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath): Promise<WorktreeInfo> {
     const id = crypto.randomUUID().slice(0, 8);
+    const attached = checkoutPath !== repoPath;
 
     const info: WorktreeInfo = {
       id,
-      path: repoPath,
+      path: checkoutPath,
       branch,
       repoPath,
       createdAt: Date.now(),
@@ -210,6 +217,9 @@ export class WorktreeManager {
         branch,
         createdAt: info.createdAt,
         direct: true,
+        // Persist the path only for attached sessions; plain direct sessions
+        // derive it from repoPath, so storing it would be redundant.
+        ...(attached ? { path: checkoutPath } : {}),
       };
     });
 
@@ -282,7 +292,7 @@ export class WorktreeManager {
       const hash = this.repoHash(entry.repoPath);
       info = {
         id,
-        path: entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id),
+        path: entry.path ?? (entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id)),
         branch: entry.branch,
         repoPath: entry.repoPath,
         createdAt: entry.createdAt,
@@ -372,11 +382,13 @@ export class WorktreeManager {
       for (const [id, entry] of Object.entries(manifest)) {
         if (entry.repoPath !== repoPath) continue;
 
-        // Direct sessions don't have a worktree on disk
+        // Direct sessions don't create their own worktree on disk. Plain ones
+        // run on the repo checkout; attached ones carry an explicit path to the
+        // worktree they share.
         if (entry.direct) {
           entries.push({
             id,
-            path: repoPath,
+            path: entry.path ?? repoPath,
             branch: entry.branch,
             repoPath,
             createdAt: entry.createdAt,
@@ -518,7 +530,7 @@ export class WorktreeManager {
     const hash = this.repoHash(entry.repoPath);
     const info: WorktreeInfo = {
       id,
-      path: entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id),
+      path: entry.path ?? (entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), hash, id)),
       branch: entry.branch,
       repoPath: entry.repoPath,
       createdAt: entry.createdAt,

@@ -95,17 +95,28 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
-    if (opts.direct) {
-      // Direct mode — run on the repo checkout, no worktree
-      const branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
-      logger.info(`Creating direct session: branch=${branch}, repo=${opts.repoPath}`);
+    if (opts.direct || opts.attachToSessionId) {
+      // Direct mode — run in-place on an existing checkout, no worktree created.
+      // When attachToSessionId is set, the new session shares that session's
+      // worktree + branch; otherwise it runs on the repo's current checkout.
+      let branch: string;
+      let checkoutPath = opts.repoPath;
+      if (opts.attachToSessionId) {
+        const src = await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId);
+        if (!src) throw new Error(`Session ${opts.attachToSessionId} not found`);
+        branch = src.branch;
+        checkoutPath = src.path;
+      } else {
+        branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
+      }
+      logger.info(`Creating direct session: branch=${branch}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
 
-      const entry = await worktreeManager.registerDirect(opts.repoPath, branch);
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath);
 
       const session = await sessionManager.createSession({
         id: entry.id,
         branch: entry.branch,
-        cwd: opts.repoPath,
+        cwd: checkoutPath,
         repoPath: opts.repoPath,
         window: win,
         adapterType: opts.adapterType,

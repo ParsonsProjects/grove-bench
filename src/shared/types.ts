@@ -38,6 +38,10 @@ export interface CreateSessionOpts {
   useExisting?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
+  /** Attach a new (direct) session to an existing session's checkout + branch,
+   *  sharing its worktree instead of running on the repo's default branch.
+   *  Implies direct mode; the branch/path are resolved from the source session. */
+  attachToSessionId?: string;
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
 }
