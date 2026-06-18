@@ -1,5 +1,9 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(npx vitest *)",
+      "Bash(npm run *)"
+    ],
     "deny": [
       "Read(../../**)",
       "Edit(../../**)"
