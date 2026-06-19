@@ -12,6 +12,7 @@
   import SystemBlock from './SystemBlock.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
+  import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { isMessageVisible, filterVisibleMessages } from '$lib/message-view.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
@@ -91,9 +92,16 @@
 
   /** Jump to a search result: page in only as deep as the match, reveal it, scroll. */
   async function handleJump(hit: EventSearchHit) {
-    await messageStore.loadOlderUntil(sessionId, hit.eventIndex);
-    const id = messageStore.findMessageIdForEventIndex(sessionId, hit.eventIndex);
-    if (!id) return;
+    await jumpToEventIndex(hit.eventIndex);
+  }
+
+  /** Page in to the given event index, reveal the message it produced and scroll
+   *  to it. Returns true if the message was located, false otherwise (so callers
+   *  can re-resolve a stale index or fall back). */
+  async function jumpToEventIndex(eventIndex: number): Promise<boolean> {
+    await messageStore.loadOlderUntil(sessionId, eventIndex);
+    const id = messageStore.findMessageIdForEventIndex(sessionId, eventIndex);
+    if (!id) return false;
 
     // The target may be hidden by summary mode (thinking, or a non-Edit/Write/Bash
     // tool call). Reveal details so it can be scrolled to.
@@ -115,6 +123,131 @@
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
+    return true;
+  }
+
+  // ─── Bookmark jump (cross-session, driven by messageStore.pendingJumpBySession) ───
+  let fallbackBookmarkText = $state<string | null>(null);
+  let jumpInFlight = false;
+
+  // Bookmark jumps ring the target, then clear on the next user scroll/click
+  // (unlike search, which keeps the ring while you navigate between results).
+  // Armed after the jump's own programmatic scrollIntoView so only genuine user
+  // gestures (wheel / mousedown) dismiss it — scrollIntoView fires neither.
+  let clearHighlightOnInteraction = false;
+  function maybeClearHighlight() {
+    if (!clearHighlightOnInteraction) return;
+    clearHighlightOnInteraction = false;
+    currentMatchId = null;
+  }
+
+  $effect(() => {
+    const req = messageStore.pendingJumpBySession[sessionId];
+    // Track message count so a jump requested before history replay retries once
+    // the pane's history finishes loading.
+    const _loaded = messageStore.getMessages(sessionId).length;
+    if (!req || store.activeSessionId !== sessionId || jumpInFlight) return;
+    jumpInFlight = true;
+    (async () => {
+      try {
+        await resolveBookmarkJump(req);
+      } finally {
+        jumpInFlight = false;
+      }
+    })();
+  });
+
+  async function resolveBookmarkJump(req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+    // Resolve to a concrete event index — cached first, then via the durable uuid.
+    let eventIndex = req.eventIndex;
+    if (eventIndex == null && req.uuid) {
+      eventIndex = await window.groveBench.findEventIndexByUuid(sessionId, req.uuid);
+      if (eventIndex != null) bookmarkStore.patchEventIndex(req.bookmarkId, eventIndex);
+    }
+    if (eventIndex == null) {
+      showBookmarkFallback(req.bookmarkId);
+      messageStore.clearJump(sessionId);
+      return;
+    }
+
+    if (await jumpToEventIndex(eventIndex)) {
+      clearHighlightOnInteraction = true;
+      messageStore.clearJump(sessionId);
+      return;
+    }
+
+    // Cached index was stale (history shifted) — re-resolve via uuid once.
+    if (req.uuid) {
+      const ei = await window.groveBench.findEventIndexByUuid(sessionId, req.uuid);
+      if (ei != null && ei !== eventIndex) {
+        bookmarkStore.patchEventIndex(req.bookmarkId, ei);
+        if (await jumpToEventIndex(ei)) {
+          clearHighlightOnInteraction = true;
+          messageStore.clearJump(sessionId);
+          return;
+        }
+      }
+    }
+
+    // Still not found. If the pane simply hasn't replayed history yet, keep the
+    // request pending so the effect retries when messages arrive; otherwise the
+    // source is genuinely gone (e.g. cleared history) → show the stored text.
+    if (messageStore.getMessages(sessionId).length === 0) return;
+    showBookmarkFallback(req.bookmarkId);
+    messageStore.clearJump(sessionId);
+  }
+
+  function showBookmarkFallback(bookmarkId: string) {
+    const bm = bookmarkStore.list.find((b) => b.id === bookmarkId);
+    fallbackBookmarkText = bm?.selectedText ?? null;
+  }
+
+  // ─── Bookmark capture (select text → floating button) ───
+  let bookmarkBtn = $state<{ x: number; y: number } | null>(null);
+  let pendingSelection: { text: string; msgId: string } | null = null;
+
+  function elementOf(node: Node | null): Element | null {
+    if (!node) return null;
+    return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  }
+
+  function handleSelectionUp() {
+    if (store.activeSessionId !== sessionId) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { bookmarkBtn = null; return; }
+    const text = sel.toString().trim();
+    if (!text) { bookmarkBtn = null; return; }
+    const range = sel.getRangeAt(0);
+    if (!scrollContainer?.contains(range.commonAncestorContainer)) { bookmarkBtn = null; return; }
+    // Anchor to the message the selection starts in (handles multi-message spans).
+    const msgId = elementOf(range.startContainer)?.closest('[data-msg-id]')?.getAttribute('data-msg-id');
+    if (!msgId) { bookmarkBtn = null; return; }
+    pendingSelection = { text, msgId };
+    const rect = range.getBoundingClientRect();
+    bookmarkBtn = { x: rect.right, y: rect.top };
+  }
+
+  async function addBookmarkFromSelection() {
+    if (!pendingSelection) return;
+    const { text, msgId } = pendingSelection;
+    const msg = messageStore.getMessages(sessionId).find((m) => m.id === msgId);
+    const uuid = (msg && 'uuid' in msg ? (msg as { uuid?: string }).uuid : '') || '';
+    let eventIndex: number | null = messageStore.getEventIndexForMessageId(sessionId, msgId);
+    if (eventIndex == null && uuid) {
+      eventIndex = await window.groveBench.findEventIndexByUuid(sessionId, uuid);
+    }
+    const session = store.sessions.find((s) => s.id === sessionId);
+    await bookmarkStore.add({
+      sessionId,
+      repoPath: session?.repoPath ?? '',
+      sessionLabel: session?.displayName || session?.branch || sessionId,
+      messageUuid: uuid || null,
+      eventIndex,
+      selectedText: text,
+    });
+    bookmarkBtn = null;
+    pendingSelection = null;
+    window.getSelection()?.removeAllRanges();
   }
 
   function closeSearch() {
@@ -130,6 +263,12 @@
       e.preventDefault();
       searchOpen = !searchOpen;
       if (!searchOpen) currentMatchId = null;
+    }
+    if (e.key === 'Escape') {
+      bookmarkBtn = null;
+      fallbackBookmarkText = null;
+      clearHighlightOnInteraction = false;
+      currentMatchId = null;
     }
   }
 
@@ -173,6 +312,9 @@
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
+    // The floating bookmark button is anchored to a viewport position; hide it
+    // on scroll rather than letting it drift away from the selection.
+    if (bookmarkBtn) bookmarkBtn = null;
   }
 
   function scrollToBottom() {
@@ -206,10 +348,14 @@
   </svg>
   {showDetails ? 'Detailed' : 'Summary'}{#if hiddenCount > 0} ({hiddenCount} hidden){/if}
 </button>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
+  onmouseup={handleSelectionUp}
+  onmousedown={() => { if (bookmarkBtn) bookmarkBtn = null; maybeClearHighlight(); }}
+  onwheel={maybeClearHighlight}
 >
   {#each Array(20) as _, i}
     <span
@@ -384,4 +530,32 @@
     &darr; Bottom
   </button>
 {/if}
+
+<!-- Bookmark text fallback: shown when a jump can't locate the source message -->
+{#if fallbackBookmarkText}
+  <div class="absolute top-2 left-3 right-16 z-30 bg-card border border-yellow-500/40 shadow-md p-2 text-xs">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-yellow-500/90 font-medium">Bookmarked text — source no longer in history</span>
+      <button
+        onclick={() => fallbackBookmarkText = null}
+        class="text-muted-foreground hover:text-foreground px-1"
+        title="Dismiss"
+      >&times;</button>
+    </div>
+    <pre class="whitespace-pre-wrap break-words max-h-40 overflow-y-auto text-foreground/90">{fallbackBookmarkText}</pre>
+  </div>
+{/if}
 </div>
+
+<!-- Floating "Bookmark selection" button, anchored to the current text selection -->
+{#if bookmarkBtn}
+  <button
+    onclick={addBookmarkFromSelection}
+    style="position: fixed; top: {bookmarkBtn.y - 34}px; left: {bookmarkBtn.x}px;"
+    class="z-50 flex items-center gap-1 px-2 py-1 text-xs bg-card border border-border shadow-md text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+    title="Bookmark selection"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+    Bookmark
+  </button>
+{/if}

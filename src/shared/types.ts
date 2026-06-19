@@ -313,6 +313,14 @@ export interface GroveBenchAPI {
   /** Search the full event history (main-process), newest match first. */
   searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
   clearEventHistory(sessionId: string): Promise<void>;
+  /** Resolve a message's stable SDK uuid to its absolute event index (or null). */
+  findEventIndexByUuid(sessionId: string, uuid: string): Promise<number | null>;
+
+  // Bookmarks
+  listBookmarks(): Promise<Bookmark[]>;
+  addBookmark(bookmark: Omit<Bookmark, 'id' | 'createdAt'>): Promise<Bookmark>;
+  removeBookmark(id: string): Promise<void>;
+  updateBookmark(id: string, patch: Partial<Pick<Bookmark, 'note' | 'eventIndex'>>): Promise<void>;
 
   // Prerequisites
   checkPrerequisites(): Promise<PrerequisiteStatus>;
@@ -504,6 +512,20 @@ export interface MemoryEntry {
   folder: string;        // e.g. "repo", "conventions", "sessions"
 }
 
+// ─── Bookmarks ───
+
+export interface Bookmark {
+  id: string;                 // randomUUID, assigned in main on add
+  sessionId: string;          // per-run session id: fast same-run jump + grouping
+  repoPath: string;           // durable grouping/label key
+  sessionLabel: string;       // snapshot of displayName/branch for headings
+  messageUuid: string | null; // primary durable anchor (SDK event uuid); null if unavailable
+  eventIndex: number | null;  // cached fast-jump hint; may go stale -> re-resolve via uuid
+  selectedText: string;       // the bookmarked snippet (preview + ultimate fallback)
+  note?: string;              // optional user note
+  createdAt: number;
+}
+
 // ─── Auto-Update ───
 
 export interface UpdateInfo {
@@ -589,6 +611,11 @@ export const IPC = {
   APP_STATE_GET_SESSION_SORT: 'appState:getSessionSort',
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   OPEN_SESSION_FOLDER: 'session:openFolder',
+  BOOKMARKS_LIST: 'bookmarks:list',
+  BOOKMARK_ADD: 'bookmarks:add',
+  BOOKMARK_REMOVE: 'bookmarks:remove',
+  BOOKMARK_UPDATE: 'bookmarks:update',
+  FIND_EVENT_INDEX_BY_UUID: 'agent:findEventIndexByUuid',
   MEMORY_LIST: 'memory:list',
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',

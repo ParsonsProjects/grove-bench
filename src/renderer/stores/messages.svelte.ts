@@ -602,6 +602,32 @@ class MessageStore {
     return bestId;
   }
 
+  /** Inverse of findMessageIdForEventIndex: the stable source event index a
+   *  message was stamped with during replay/pagination, or null for live or
+   *  otherwise unstamped messages. Lets bookmark capture anchor a selection to
+   *  a durable eventIndex. */
+  getEventIndexForMessageId(sessionId: string, messageId: string): number | null {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    const ei = idx?.get(messageId);
+    return ei ?? null;
+  }
+
+  /** Cross-session bookmark jump requests, consumed by the active OutputPanel's
+   *  $effect. Keyed by sessionId; the panel resolves the anchor (cached
+   *  eventIndex → uuid re-resolution → text fallback) and then clears the entry. */
+  pendingJumpBySession = $state<Record<string, { eventIndex: number | null; uuid: string | null; bookmarkId: string }>>({});
+
+  requestJump(sessionId: string, req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+    this.pendingJumpBySession = { ...this.pendingJumpBySession, [sessionId]: req };
+  }
+
+  clearJump(sessionId: string) {
+    if (!(sessionId in this.pendingJumpBySession)) return;
+    const next = { ...this.pendingJumpBySession };
+    delete next[sessionId];
+    this.pendingJumpBySession = next;
+  }
+
   private flushStreamingText(sessionId: string) {
     const text = this.streamingText[sessionId];
     if (text) {
@@ -1539,7 +1565,7 @@ class MessageStore {
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.showDetailsBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
-      this.rewindDialogOpen,
+      this.rewindDialogOpen, this.pendingJumpBySession,
     ] as Record<string, unknown>[]) {
       delete record[sessionId];
     }

@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
-import { searchEvents } from './event-search.js';
+import { searchEvents, findEventIndexByUuid } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
@@ -17,6 +17,7 @@ import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
+import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -27,6 +28,15 @@ import { execFile } from 'node:child_process';
  *  These are sent live via IPC but not persisted — the AGENT_HISTORY handler
  *  prepends them so the renderer's history replay can show them. */
 const prelaunchEvents = new Map<string, import('../shared/types.js').AgentEvent[]>();
+
+/** Build the prelaunch-prefixed event array — the index space that all eventIndex
+ *  values (search hits, bookmark anchors) refer to. Keep search and uuid lookups
+ *  using this single builder so their index spaces never drift apart. */
+function prelaunchPrefixedEvents(sessionId: string): import('../shared/types.js').AgentEvent[] {
+  const prelaunch = prelaunchEvents.get(sessionId) ?? [];
+  const history = sessionManager.getEventHistory(sessionId);
+  return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
+}
 
 /**
  * Resolve a user/agent-supplied file path to a worktree-relative path, stripping Docker
@@ -289,6 +299,7 @@ export function registerHandlers() {
     await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
+    bookmarks.removeBookmarksForSession(id); // cascade: no orphan bookmarks
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -403,10 +414,14 @@ export function registerHandlers() {
   ipcMain.handle(IPC.AGENT_HISTORY_SEARCH, (_event, sessionId: string, query: string, limit?: number) => {
     // Search the same prelaunch-prefixed event array the renderer pages over, so
     // returned eventIndex values line up with getEventHistoryPage's index space.
-    const prelaunch = prelaunchEvents.get(sessionId) ?? [];
-    const history = sessionManager.getEventHistory(sessionId);
-    const events = prelaunch.length > 0 ? [...prelaunch, ...history] : history;
-    return searchEvents(events, query, limit ?? 100);
+    return searchEvents(prelaunchPrefixedEvents(sessionId), query, limit ?? 100);
+  });
+
+  ipcMain.handle(IPC.FIND_EVENT_INDEX_BY_UUID, (_event, sessionId: string, uuid: string): number | null => {
+    // Same index space as AGENT_HISTORY_SEARCH so the returned index feeds the
+    // renderer's loadOlderUntil / findMessageIdForEventIndex jump path directly.
+    const idx = findEventIndexByUuid(prelaunchPrefixedEvents(sessionId), uuid);
+    return idx >= 0 ? idx : null;
   });
 
   ipcMain.handle(IPC.AGENT_CLEAR_HISTORY, (_event, sessionId: string) => {
@@ -774,6 +789,24 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
     return memory.deleteMemoryFile(repoPath, relativePath);
+  });
+
+  // ─── Bookmarks ───
+
+  ipcMain.handle(IPC.BOOKMARKS_LIST, () => {
+    return bookmarks.getBookmarks();
+  });
+
+  ipcMain.handle(IPC.BOOKMARK_ADD, (_event, bookmark: Omit<import('../shared/types.js').Bookmark, 'id' | 'createdAt'>) => {
+    return bookmarks.addBookmark(bookmark);
+  });
+
+  ipcMain.handle(IPC.BOOKMARK_REMOVE, (_event, id: string) => {
+    bookmarks.removeBookmark(id);
+  });
+
+  ipcMain.handle(IPC.BOOKMARK_UPDATE, (_event, id: string, patch: Partial<Pick<import('../shared/types.js').Bookmark, 'note' | 'eventIndex'>>) => {
+    bookmarks.updateBookmark(id, patch);
   });
 
   // ─── Shell / Terminal ───

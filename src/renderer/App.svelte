@@ -14,6 +14,8 @@
   import SessionFinder from './components/SessionFinder.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
+  import BookmarksDrawer from './components/BookmarksDrawer.svelte';
+  import { bookmarkStore } from './stores/bookmarks.svelte.js';
 
   let showAnalyticsConsent = $state(false);
 
@@ -163,6 +165,10 @@
       e.preventDefault();
       reopenLastClosedTab();
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'b') {
+      e.preventDefault();
+      bookmarkStore.toggleDrawer();
+    }
   }
 
   // Sessions with a resume in flight (Set, not a single id, so resumes of
@@ -205,6 +211,7 @@
 
   onMount(() => {
     settingsStore.load();
+    bookmarkStore.load();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });
@@ -324,5 +331,7 @@
 {/if}
 
 <ErrorToast />
+
+<BookmarksDrawer />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />

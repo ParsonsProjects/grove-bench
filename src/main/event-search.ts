@@ -68,6 +68,16 @@ export function searchableEventText(event: AgentEvent): string {
   }
 }
 
+/**
+ * Find the index of the first event carrying the given SDK uuid, or -1. Used to
+ * re-anchor a bookmark to its source message when runtime ids / cached event
+ * indices have shifted across reloads. Empty/blank uuids never match.
+ */
+export function findEventIndexByUuid(events: AgentEvent[], uuid: string): number {
+  if (!uuid) return -1;
+  return events.findIndex((e) => 'uuid' in e && e.uuid === uuid);
+}
+
 const SNIPPET_RADIUS = 40;
 
 /** Build a whitespace-collapsed window around the match, with ellipses when cut. */

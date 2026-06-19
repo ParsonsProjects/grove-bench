@@ -1307,6 +1307,39 @@ describe('source-event-index mapping (findMessageIdForEventIndex)', () => {
   it('returns null for sessions with no stamped messages', () => {
     expect(messageStore.findMessageIdForEventIndex('unknown', 5)).toBeNull();
   });
+
+  it('getEventIndexForMessageId returns the stamped index (inverse lookup)', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'first', uuid: 'u1' }, // 10
+      { type: 'assistant_text', text: 'answer', uuid: 'a1' }, // 11
+    ] as AgentEvent[];
+    messageStore.replayEvents(SID, events, undefined, 10);
+
+    const msgs = messageStore.getMessages(SID);
+    const userId = msgs.find((m) => m.kind === 'user')!.id;
+    const textId = msgs.find((m) => m.kind === 'text')!.id;
+
+    expect(messageStore.getEventIndexForMessageId(SID, userId)).toBe(10);
+    expect(messageStore.getEventIndexForMessageId(SID, textId)).toBe(11);
+    // Unknown message id → null (e.g. live/unstamped message)
+    expect(messageStore.getEventIndexForMessageId(SID, 'nope')).toBeNull();
+    // Unknown session → null
+    expect(messageStore.getEventIndexForMessageId('unknown', userId)).toBeNull();
+  });
+});
+
+describe('pendingJumpBySession', () => {
+  it('records and clears a bookmark jump request', () => {
+    messageStore.requestJump(SID, { eventIndex: 5, uuid: 'u1', bookmarkId: 'b1' });
+    expect(messageStore.pendingJumpBySession[SID]).toEqual({ eventIndex: 5, uuid: 'u1', bookmarkId: 'b1' });
+
+    messageStore.clearJump(SID);
+    expect(messageStore.pendingJumpBySession[SID]).toBeUndefined();
+  });
+
+  it('clearJump is a no-op when there is no pending request', () => {
+    expect(() => messageStore.clearJump('no-such-session')).not.toThrow();
+  });
 });
 
 describe('pagination — loadOlderUntil', () => {

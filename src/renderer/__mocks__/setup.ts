@@ -42,6 +42,12 @@ const mockGroveBench = {
   setCollapsedRepos: vi.fn(),
   getSessionSort: vi.fn(() => Promise.resolve({ key: 'age', dir: 'desc' } as import('../../shared/types.js').SessionSortState)),
   setSessionSort: vi.fn(),
+  listBookmarks: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').Bookmark[])),
+  addBookmark: vi.fn((b: Omit<import('../../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
+    Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 } as import('../../shared/types.js').Bookmark)),
+  removeBookmark: vi.fn(() => Promise.resolve()),
+  updateBookmark: vi.fn(() => Promise.resolve()),
+  findEventIndexByUuid: vi.fn(() => Promise.resolve(null as number | null)),
 };
 // Attach the IPC bridge onto the existing (jsdom) window rather than replacing
 // it — replacing window wipes addEventListener/dispatchEvent and breaks any

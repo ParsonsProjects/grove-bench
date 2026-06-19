@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { searchEvents, searchableEventText, eventKind } from './event-search.js';
+import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid } from './event-search.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('searchableEventText', () => {
@@ -97,5 +97,35 @@ describe('searchEvents', () => {
     expect(hits).toHaveLength(3);
     // newest-first → indices 9, 8, 7
     expect(hits.map((h) => h.eventIndex)).toEqual([9, 8, 7]);
+  });
+});
+
+describe('findEventIndexByUuid', () => {
+  const events: AgentEvent[] = [
+    { type: 'user_message', text: 'hi' }, // 0 — no uuid
+    { type: 'assistant_text', text: 'a', uuid: 'u1' }, // 1
+    { type: 'assistant_tool_use', toolName: 'Edit', toolUseId: 't', uuid: 'u2', toolInput: {} }, // 2
+    { type: 'assistant_text', text: 'b', uuid: '' }, // 3 — empty uuid
+  ];
+
+  it('returns the index of the event with the matching uuid', () => {
+    expect(findEventIndexByUuid(events, 'u1')).toBe(1);
+    expect(findEventIndexByUuid(events, 'u2')).toBe(2);
+  });
+
+  it('returns -1 when no event has the uuid', () => {
+    expect(findEventIndexByUuid(events, 'nope')).toBe(-1);
+  });
+
+  it('never matches an empty/blank uuid', () => {
+    expect(findEventIndexByUuid(events, '')).toBe(-1);
+  });
+
+  it('returns the first occurrence when a uuid spans multiple events', () => {
+    const dup: AgentEvent[] = [
+      { type: 'assistant_text', text: 'x', uuid: 'dup' },
+      { type: 'assistant_tool_use', toolName: 'E', toolUseId: 't', uuid: 'dup', toolInput: {} },
+    ];
+    expect(findEventIndexByUuid(dup, 'dup')).toBe(0);
   });
 });

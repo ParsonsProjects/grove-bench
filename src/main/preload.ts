@@ -57,6 +57,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH, sessionId, query, limit),
   clearEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
+  findEventIndexByUuid: (sessionId: string, uuid: string) =>
+    ipcRenderer.invoke(IPC.FIND_EVENT_INDEX_BY_UUID, sessionId, uuid),
+
+  // Bookmarks
+  listBookmarks: () => ipcRenderer.invoke(IPC.BOOKMARKS_LIST),
+  addBookmark: (bookmark: Omit<import('../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
+    ipcRenderer.invoke(IPC.BOOKMARK_ADD, bookmark),
+  removeBookmark: (id: string) => ipcRenderer.invoke(IPC.BOOKMARK_REMOVE, id),
+  updateBookmark: (id: string, patch: Partial<Pick<import('../shared/types.js').Bookmark, 'note' | 'eventIndex'>>) =>
+    ipcRenderer.invoke(IPC.BOOKMARK_UPDATE, id, patch),
 
   // Mode control
   setMode: (sessionId: string, mode: string) =>

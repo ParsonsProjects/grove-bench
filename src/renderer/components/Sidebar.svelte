@@ -5,6 +5,7 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import AddRepoButton from './AddRepoButton.svelte';
@@ -150,6 +151,7 @@
       messageStore.destroySession(id);
       checkpointStore.clear(id);
       terminalStore.destroySession(id);
+      bookmarkStore.dropSessionLocal(id);
     } catch (e: any) {
       store.setError(e.message || String(e));
     } finally {
@@ -482,6 +484,15 @@
         size="sm"
       >
         + Agent
+      </Button>
+      <Button
+        onclick={() => bookmarkStore.toggleDrawer()}
+        variant="ghost"
+        size="sm"
+        class="px-2 shrink-0"
+        title="Bookmarks (Ctrl+B)"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
       </Button>
       <Button
         onclick={() => showMemory = true}
