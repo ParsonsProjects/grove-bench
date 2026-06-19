@@ -117,6 +117,8 @@
       closeCommandPicker();
       userResized = false;
       if (textarea) textarea.style.height = '';
+      // Sending from the Changes tab returns to Activity so the response shows.
+      messageStore.setActiveTab(sessionId, 'activity');
       return;
     }
 
@@ -185,6 +187,9 @@
     userResized = false;
     if (container) container.style.height = '';
     if (textarea) textarea.style.height = '';
+    // Sending from the Changes tab returns to Activity so the response shows
+    // (no-op when already on Activity).
+    messageStore.setActiveTab(sessionId, 'activity');
   }
 
   function useSuggestion(suggestion: string) {

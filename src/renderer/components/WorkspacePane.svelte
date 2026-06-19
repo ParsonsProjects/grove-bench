@@ -230,7 +230,9 @@
   </div>
 
   <StatusBar {sessionId} />
-  {#if activeTab === 'activity'}
+  {#if activeTab === 'activity' || activeTab === 'changes'}
+    <!-- The Changes tab shares the prompt input; sending from it jumps back to
+         Activity (handled in PromptEditor) so the response is visible. -->
     <PromptEditor {sessionId} />
   {:else if activeTab === 'terminal'}
     <!-- Terminal has its own input -->
