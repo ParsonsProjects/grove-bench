@@ -418,7 +418,7 @@ export interface GroveBenchAPI {
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
-  onPowerResume(callback: () => void): () => void;
+  onPowerResume(callback: (resumeIds: string[]) => void): () => void;
 
   // Window controls
   winMinimize(): void;

@@ -1349,3 +1349,63 @@ describe('AgentSessionManager stop/restart race', () => {
     await sessionManager.destroySession('test-race');
   });
 });
+
+describe('AgentSessionManager wake-from-sleep', () => {
+  async function makeRunningSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return win;
+  }
+
+  it('marks a session whose query died during sleep as stopped and returns it to resume', async () => {
+    const win = await makeRunningSession('test-sleep-dead');
+    sessionManager.captureSuspendState();
+    // Simulate the SDK query not surviving suspend.
+    sessionManager.getSession('test-sleep-dead')!.queryHandle = null;
+
+    const toResume = sessionManager.healthCheckAll();
+
+    expect(toResume).toContain('test-sleep-dead');
+    expect(sessionManager.getSession('test-sleep-dead')?.status).toBe('stopped');
+    expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-sleep-dead', 'stopped');
+
+    await sessionManager.destroySession('test-sleep-dead');
+  });
+
+  it('does not resume a session whose query survived sleep', async () => {
+    await makeRunningSession('test-sleep-alive');
+    sessionManager.captureSuspendState();
+    // queryHandle intact → still running after the health check.
+
+    const toResume = sessionManager.healthCheckAll();
+
+    expect(toResume).not.toContain('test-sleep-alive');
+    expect(sessionManager.getSession('test-sleep-alive')?.status).toBe('running');
+
+    await sessionManager.destroySession('test-sleep-alive');
+  });
+
+  it('only resumes sessions captured at suspend, not ones started afterwards', async () => {
+    await makeRunningSession('test-sleep-A');
+    sessionManager.captureSuspendState(); // snapshot contains only A
+    await makeRunningSession('test-sleep-B'); // started after the snapshot
+
+    sessionManager.getSession('test-sleep-A')!.queryHandle = null;
+    sessionManager.getSession('test-sleep-B')!.queryHandle = null;
+
+    const toResume = sessionManager.healthCheckAll();
+
+    expect(toResume).toContain('test-sleep-A');
+    expect(toResume).not.toContain('test-sleep-B');
+    // B is still marked stopped (health check marks every dead query)…
+    expect(sessionManager.getSession('test-sleep-B')?.status).toBe('stopped');
+
+    await sessionManager.destroySession('test-sleep-A');
+    await sessionManager.destroySession('test-sleep-B');
+  });
+});

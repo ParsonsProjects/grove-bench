@@ -233,8 +233,8 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.APP_CLOSING, handler);
     };
   },
-  onPowerResume: (callback: () => void) => {
-    const handler = () => callback();
+  onPowerResume: (callback: (resumeIds: string[]) => void) => {
+    const handler = (_event: unknown, resumeIds: string[]) => callback(resumeIds ?? []);
     ipcRenderer.on(IPC.POWER_RESUME, handler);
     return () => {
       ipcRenderer.removeListener(IPC.POWER_RESUME, handler);

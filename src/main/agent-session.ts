@@ -1318,12 +1318,28 @@ class AgentSessionManager {
     }
   }
 
+  /** Session ids that were running when the system suspended. Captured on
+   *  'suspend' so that on 'resume' we can bring back exactly the tabs that were
+   *  live before sleep (their SDK queries usually die during suspend). */
+  private runningAtSuspend = new Set<string>();
+
+  /** Snapshot the running sessions at suspend so wake-from-sleep can resume them. */
+  captureSuspendState(): void {
+    const ids = new Set<string>();
+    for (const [id, session] of this.sessions) {
+      if (session.status === 'running') ids.add(id);
+    }
+    this.runningAtSuspend = ids;
+  }
+
   /**
-   * Health-check all sessions after system resume.
-   * Detects sessions whose SDK query died silently (e.g. during sleep)
-   * and emits process_exit + SESSION_STATUS so the renderer updates.
+   * Health-check all sessions after system resume. Detects sessions whose SDK
+   * query died silently (e.g. during sleep) and emits process_exit +
+   * SESSION_STATUS so the renderer updates. Returns the ids of sessions that
+   * were running before sleep but are no longer running — the tabs the renderer
+   * should resume so they don't silently close.
    */
-  healthCheckAll(): void {
+  healthCheckAll(): string[] {
     for (const [id, session] of this.sessions) {
       if (session.status !== 'running') continue;
 
@@ -1339,6 +1355,16 @@ class AgentSessionManager {
         }
       }
     }
+
+    // Tabs to bring back: those that were running before sleep but whose query
+    // didn't survive it. Sessions that stayed running are left alone.
+    const toResume: string[] = [];
+    for (const id of this.runningAtSuspend) {
+      const session = this.sessions.get(id);
+      if (session && session.status !== 'running') toResume.push(id);
+    }
+    this.runningAtSuspend.clear();
+    return toResume;
   }
 
   get count(): number {

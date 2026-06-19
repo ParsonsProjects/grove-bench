@@ -127,14 +127,16 @@ app.whenReady().then(() => {
   powerMonitor.on('suspend', () => {
     logger.info('System suspending — flushing pending state saves');
     flushPendingSaves();
+    sessionManager.captureSuspendState();
   });
 
   powerMonitor.on('resume', () => {
     logger.info('System resumed — running session health checks');
-    sessionManager.healthCheckAll();
-    // Notify renderer so it can re-verify subscriptions
+    const resumeIds = sessionManager.healthCheckAll();
+    // Tell the renderer which tabs died during sleep so it can resume them all
+    // (not just the focused one) instead of letting them drop to Inactive.
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.POWER_RESUME);
+      mainWindow.webContents.send(IPC.POWER_RESUME, resumeIds);
     }
   });
 });
