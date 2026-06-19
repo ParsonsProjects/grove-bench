@@ -8,6 +8,7 @@
   import type { GitStatusEntry, FileDiffResult } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
   import ImageDiffView from './ImageDiffView.svelte';
+  import SelectionMenu from './SelectionMenu.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -711,6 +712,9 @@
     </div>
   </div>
 {/if}
+
+<!-- Text-selection actions (Bookmark / To prompt) over the diff content -->
+<SelectionMenu {sessionId} container={diffContainer} />
 
 <!-- Confirmation for destructive revert/discard -->
 <Dialog.Root open={confirmEntry !== null} onOpenChange={(v) => { if (!v) confirmEntry = null; }}>

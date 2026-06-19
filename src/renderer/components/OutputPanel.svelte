@@ -12,13 +12,14 @@
   import SystemBlock from './SystemBlock.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
+  import SelectionMenu from './SelectionMenu.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { isMessageVisible, filterVisibleMessages } from '$lib/message-view.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let scrollContainer: HTMLDivElement;
+  let scrollContainer = $state<HTMLDivElement>();
   let shouldAutoScroll = $state(true);
 
   let allMessages = $derived(messageStore.getMessages(sessionId));
@@ -202,53 +203,8 @@
     fallbackBookmarkText = bm?.selectedText ?? null;
   }
 
-  // ─── Bookmark capture (select text → floating button) ───
-  let bookmarkBtn = $state<{ x: number; y: number } | null>(null);
-  let pendingSelection: { text: string; msgId: string } | null = null;
-
-  function elementOf(node: Node | null): Element | null {
-    if (!node) return null;
-    return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  }
-
-  function handleSelectionUp() {
-    if (store.activeSessionId !== sessionId) return;
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { bookmarkBtn = null; return; }
-    const text = sel.toString().trim();
-    if (!text) { bookmarkBtn = null; return; }
-    const range = sel.getRangeAt(0);
-    if (!scrollContainer?.contains(range.commonAncestorContainer)) { bookmarkBtn = null; return; }
-    // Anchor to the message the selection starts in (handles multi-message spans).
-    const msgId = elementOf(range.startContainer)?.closest('[data-msg-id]')?.getAttribute('data-msg-id');
-    if (!msgId) { bookmarkBtn = null; return; }
-    pendingSelection = { text, msgId };
-    const rect = range.getBoundingClientRect();
-    bookmarkBtn = { x: rect.right, y: rect.top };
-  }
-
-  async function addBookmarkFromSelection() {
-    if (!pendingSelection) return;
-    const { text, msgId } = pendingSelection;
-    const msg = messageStore.getMessages(sessionId).find((m) => m.id === msgId);
-    const uuid = (msg && 'uuid' in msg ? (msg as { uuid?: string }).uuid : '') || '';
-    let eventIndex: number | null = messageStore.getEventIndexForMessageId(sessionId, msgId);
-    if (eventIndex == null && uuid) {
-      eventIndex = await window.groveBench.findEventIndexByUuid(sessionId, uuid);
-    }
-    const session = store.sessions.find((s) => s.id === sessionId);
-    await bookmarkStore.add({
-      sessionId,
-      repoPath: session?.repoPath ?? '',
-      sessionLabel: session?.displayName || session?.branch || sessionId,
-      messageUuid: uuid || null,
-      eventIndex,
-      selectedText: text,
-    });
-    bookmarkBtn = null;
-    pendingSelection = null;
-    window.getSelection()?.removeAllRanges();
-  }
+  // Text-selection actions (Bookmark / To prompt) are handled by the reusable
+  // SelectionMenu component, mounted below with this pane's scroll container.
 
   function closeSearch() {
     searchOpen = false;
@@ -265,7 +221,6 @@
       if (!searchOpen) currentMatchId = null;
     }
     if (e.key === 'Escape') {
-      bookmarkBtn = null;
       fallbackBookmarkText = null;
       clearHighlightOnInteraction = false;
       currentMatchId = null;
@@ -312,9 +267,6 @@
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
-    // The floating bookmark button is anchored to a viewport position; hide it
-    // on scroll rather than letting it drift away from the selection.
-    if (bookmarkBtn) bookmarkBtn = null;
   }
 
   function scrollToBottom() {
@@ -353,8 +305,7 @@
   class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
-  onmouseup={handleSelectionUp}
-  onmousedown={() => { if (bookmarkBtn) bookmarkBtn = null; maybeClearHighlight(); }}
+  onmousedown={maybeClearHighlight}
   onwheel={maybeClearHighlight}
 >
   {#each Array(20) as _, i}
@@ -547,15 +498,4 @@
 {/if}
 </div>
 
-<!-- Floating "Bookmark selection" button, anchored to the current text selection -->
-{#if bookmarkBtn}
-  <button
-    onclick={addBookmarkFromSelection}
-    style="position: fixed; top: {bookmarkBtn.y - 34}px; left: {bookmarkBtn.x}px;"
-    class="z-50 flex items-center gap-1 px-2 py-1 text-xs bg-card border border-border shadow-md text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
-    title="Bookmark selection"
-  >
-    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
-    Bookmark
-  </button>
-{/if}
+<SelectionMenu {sessionId} container={scrollContainer} />

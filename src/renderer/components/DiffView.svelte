@@ -135,9 +135,9 @@
             {:else}
               <tr>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.left ? 'bg-red-950/30' : ''}">{row.left?.lineNum ?? ''}</td>
-                <td class="px-2 border-r border-border/30 whitespace-pre {row.left ? 'bg-red-950/30 text-red-300' : ''}">{#if row.left}{@html hl(row.left.text)}{/if}</td>
+                <td class="px-2 border-r border-border/30 whitespace-pre-wrap break-all align-top {row.left ? 'bg-red-950/30 text-red-300' : ''}">{#if row.left}{@html hl(row.left.text)}{/if}</td>
                 <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top {row.right ? 'bg-green-950/30' : ''}">{row.right?.lineNum ?? ''}</td>
-                <td class="px-2 whitespace-pre {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text)}{/if}</td>
+                <td class="px-2 whitespace-pre-wrap break-all align-top {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text)}{/if}</td>
               </tr>
             {/if}
           {/each}

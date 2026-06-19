@@ -628,6 +628,19 @@ class MessageStore {
     this.pendingJumpBySession = next;
   }
 
+  /** One-shot "insert this text into the prompt" requests (e.g. the activity
+   *  thread's "copy selection to prompt" action). The mounted PromptEditor
+   *  appends `text` to its input whenever `nonce` increments. */
+  promptInsertBySession = $state<Record<string, { text: string; nonce: number }>>({});
+
+  requestPromptInsert(sessionId: string, text: string) {
+    const prev = this.promptInsertBySession[sessionId]?.nonce ?? 0;
+    this.promptInsertBySession = {
+      ...this.promptInsertBySession,
+      [sessionId]: { text, nonce: prev + 1 },
+    };
+  }
+
   private flushStreamingText(sessionId: string) {
     const text = this.streamingText[sessionId];
     if (text) {
@@ -1565,7 +1578,7 @@ class MessageStore {
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.showDetailsBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
-      this.rewindDialogOpen, this.pendingJumpBySession,
+      this.rewindDialogOpen, this.pendingJumpBySession, this.promptInsertBySession,
     ] as Record<string, unknown>[]) {
       delete record[sessionId];
     }

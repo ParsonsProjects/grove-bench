@@ -1342,6 +1342,19 @@ describe('pendingJumpBySession', () => {
   });
 });
 
+describe('requestPromptInsert', () => {
+  it('records the text and increments the nonce each call', () => {
+    messageStore.requestPromptInsert(SID, 'first');
+    const a = messageStore.promptInsertBySession[SID];
+    expect(a.text).toBe('first');
+
+    messageStore.requestPromptInsert(SID, 'second');
+    const b = messageStore.promptInsertBySession[SID];
+    expect(b.text).toBe('second');
+    expect(b.nonce).toBe(a.nonce + 1);
+  });
+});
+
 describe('pagination — loadOlderUntil', () => {
   it('loads older pages until the target index is covered', async () => {
     messageStore.setPagination(SID, 500, 300);

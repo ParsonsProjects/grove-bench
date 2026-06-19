@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -35,6 +35,18 @@
     if (textarea && value) {
       autoResize();
     }
+  });
+
+  // Insert text pushed from elsewhere (e.g. the activity thread's "copy
+  // selection to prompt"). Initialised from the current nonce so a stale
+  // request doesn't re-fire when this editor (re)mounts.
+  let lastInsertNonce = messageStore.promptInsertBySession[sessionId]?.nonce ?? 0;
+  $effect(() => {
+    const req = messageStore.promptInsertBySession[sessionId];
+    if (!req || req.nonce === lastInsertNonce) return;
+    lastInsertNonce = req.nonce;
+    value = value ? `${value}\n${req.text}` : req.text;
+    tick().then(() => { textarea?.focus(); autoResize(); });
   });
   let userResized = $state(false);
   let pickerOpen = $state(false);
