@@ -15,7 +15,7 @@ import type {
 import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { logger } from '../logger.js';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 
@@ -26,6 +26,43 @@ const execFileAsync = promisify(execFile);
 type Query = import('@anthropic-ai/claude-agent-sdk').Query;
 type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
 type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
+type SpawnOptions = import('@anthropic-ai/claude-agent-sdk').SpawnOptions;
+type SpawnedProcess = import('@anthropic-ai/claude-agent-sdk').SpawnedProcess;
+
+/**
+ * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
+ *
+ * By default the SDK launches its bundled CLI as `node <…/cli.js>`, relying on a
+ * `node` binary being on PATH. A GUI-launched Electron app on Windows frequently
+ * inherits a minimal PATH with no `node`, so that spawn fails with ENOENT —
+ * surfaced confusingly as "Claude Code executable not found at …cli.js. Is
+ * options.pathToClaudeCodeExecutable set?". Electron's own binary runs as a plain
+ * Node process when ELECTRON_RUN_AS_NODE=1, and `process.execPath` is always a
+ * valid path in both dev and packaged builds — so we redirect the `node`
+ * invocation to ourselves and drop the PATH dependency entirely. Non-node
+ * commands (e.g. a native `claude` binary) are spawned unchanged.
+ */
+function spawnClaudeCodeProcess(
+  opts: SpawnOptions,
+  onStderr?: (data: string) => void,
+): SpawnedProcess {
+  const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
+  const command = isNode ? process.execPath : opts.command;
+  const env = isNode
+    ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
+    : opts.env;
+  const child = spawn(command, opts.args, {
+    cwd: opts.cwd,
+    env,
+    signal: opts.signal,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  if (onStderr) {
+    child.stderr?.on('data', (d: Buffer) => onStderr(d.toString()));
+  }
+  return child as unknown as SpawnedProcess;
+}
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
@@ -610,6 +647,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
         canUseTool: canUseTool as any,
+        spawnClaudeCodeProcess: (o: SpawnOptions) =>
+          spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`)),
         env: {
           ...cleanEnv(),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
@@ -776,6 +815,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         systemPrompt,
         permissionMode: 'plan',
         maxTurns: 1,
+        spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
       },
     });
 
