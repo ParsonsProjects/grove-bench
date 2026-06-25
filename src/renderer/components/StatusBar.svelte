@@ -5,6 +5,7 @@
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
   import type { PrInfo } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -649,6 +650,12 @@
                   <div class="flex justify-between">
                     <span>Turns</span>
                     <span class="text-foreground">{turns}</span>
+                  </div>
+                {/if}
+                {#if settingsStore.current.outputFiltering}
+                  <div class="flex justify-between">
+                    <span>Output filtering</span>
+                    <span class="text-green-400">Active</span>
                   </div>
                 {/if}
               </div>
