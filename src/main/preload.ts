@@ -112,6 +112,12 @@ const api: GroveBenchAPI = {
   getGitStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId),
 
+  // Merge to base
+  mergePreflight: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.MERGE_PREFLIGHT, sessionId),
+  mergeToBase: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.MERGE_TO_BASE, sessionId),
+
   // PR info
   getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
 

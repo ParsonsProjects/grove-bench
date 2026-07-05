@@ -16,6 +16,9 @@ import {
   validateBranchName,
   mergeNoCommit,
   abortMerge,
+  currentBranch,
+  isWorkingTreeDirty,
+  aheadBehind,
   branchHasRemote,
   renameBranch,
   fileDiff,
@@ -254,6 +257,53 @@ describe('abortMerge()', () => {
   it('does not throw when no merge in progress', async () => {
     mockExeca.mockRejectedValue(new Error('no merge'));
     await expect(abortMerge('/repo')).resolves.toBeUndefined();
+  });
+});
+
+describe('currentBranch()', () => {
+  it('returns the trimmed branch name', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'main\n' } as any);
+    expect(await currentBranch('/repo')).toBe('main');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: '/repo' });
+  });
+
+  it('returns HEAD when detached', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'HEAD\n' } as any);
+    expect(await currentBranch('/repo')).toBe('HEAD');
+  });
+});
+
+describe('isWorkingTreeDirty()', () => {
+  it('returns true when porcelain status has entries', async () => {
+    mockExeca.mockResolvedValue({ stdout: ' M src/index.ts\n?? new.txt' } as any);
+    expect(await isWorkingTreeDirty('/repo')).toBe(true);
+  });
+
+  it('returns false when porcelain status is empty', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    expect(await isWorkingTreeDirty('/repo')).toBe(false);
+  });
+});
+
+describe('aheadBehind()', () => {
+  it('parses left-right counts (left = behind, right = ahead)', async () => {
+    mockExeca.mockResolvedValue({ stdout: '2\t5\n' } as any);
+    expect(await aheadBehind('/repo', 'main', 'feat/x')).toEqual({ ahead: 5, behind: 2 });
+    expect(mockExeca).toHaveBeenCalledWith(
+      'git',
+      ['rev-list', '--left-right', '--count', 'main...feat/x'],
+      { cwd: '/repo' },
+    );
+  });
+
+  it('returns zeros for identical branches', async () => {
+    mockExeca.mockResolvedValue({ stdout: '0\t0' } as any);
+    expect(await aheadBehind('/repo', 'main', 'feat/x')).toEqual({ ahead: 0, behind: 0 });
+  });
+
+  it('propagates errors (e.g. unknown ref)', async () => {
+    mockExeca.mockRejectedValue(new Error('unknown revision'));
+    await expect(aheadBehind('/repo', 'main', 'gone')).rejects.toThrow('unknown revision');
   });
 });
 

@@ -9,6 +9,7 @@
   import CopyButton from './CopyButton.svelte';
   import ImageDiffView from './ImageDiffView.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import MergeDialog from './MergeDialog.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -258,6 +259,9 @@
     }
   }
 
+  // Merge-to-base dialog (offered from the clean state — the natural moment to merge).
+  let mergeOpen = $state(false);
+
   // Entry pending a destructive revert/discard, awaiting confirmation (null = dialog closed).
   let confirmEntry = $state<GitStatusEntry | null>(null);
 
@@ -431,7 +435,17 @@
         "
       ></span>
     {/each}
-    <span class="relative z-10">Working tree clean</span>
+    <div class="relative z-10 flex flex-col items-center gap-3">
+      <span>Working tree clean</span>
+      <button
+        onclick={() => mergeOpen = true}
+        class="text-xs px-3 py-1.5 border border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors flex items-center gap-1.5"
+        title="Merge this session's branch into the branch checked out in the repository"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+        Merge into base…
+      </button>
+    </div>
   </div>
 {:else}
   <div class="flex-1 flex overflow-hidden">
@@ -715,6 +729,8 @@
 
 <!-- Text-selection actions (Bookmark / To prompt) over the diff content -->
 <SelectionMenu {sessionId} container={diffContainer} />
+
+<MergeDialog {sessionId} open={mergeOpen} onclose={() => mergeOpen = false} />
 
 <!-- Confirmation for destructive revert/discard -->
 <Dialog.Root open={confirmEntry !== null} onOpenChange={(v) => { if (!v) confirmEntry = null; }}>

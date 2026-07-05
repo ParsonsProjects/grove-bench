@@ -153,6 +153,25 @@ export async function abortMerge(cwd: string): Promise<void> {
   } catch { /* no merge in progress */ }
 }
 
+/** Name of the currently checked-out branch, or 'HEAD' when detached. */
+export async function currentBranch(cwd: string): Promise<string> {
+  return (await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).trim();
+}
+
+/** True when the working tree or index has any changes (staged, unstaged, or untracked). */
+export async function isWorkingTreeDirty(cwd: string): Promise<boolean> {
+  const status = await git(['status', '--porcelain'], cwd);
+  return status.trim().length > 0;
+}
+
+/** Commit counts unique to each side of base...branch: `ahead` = commits only on
+ *  `branch` (what a merge would bring in), `behind` = commits only on `base`. */
+export async function aheadBehind(cwd: string, base: string, branch: string): Promise<{ ahead: number; behind: number }> {
+  const out = await git(['rev-list', '--left-right', '--count', `${base}...${branch}`], cwd);
+  const [behind, ahead] = out.trim().split(/\s+/).map(n => parseInt(n, 10));
+  return { ahead: ahead || 0, behind: behind || 0 };
+}
+
 export async function branchHasRemote(cwd: string, branch: string): Promise<boolean> {
   try {
     const output = await git(['branch', '-r', '--list', `*/${branch}`], cwd);
