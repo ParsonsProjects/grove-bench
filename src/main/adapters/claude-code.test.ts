@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -26,6 +26,23 @@ describe('isPathInside()', () => {
 
   it('rejects parent-directory traversal', () => {
     expect(isPathInside(root, path.join(root, '..', '..', 'etc', 'passwd'))).toBe(false);
+  });
+});
+
+// ─── getModels ───
+
+describe('getModels()', () => {
+  const models = new ClaudeCodeAdapter().getModels();
+
+  it('lists Opus 5 first (used as the default model)', () => {
+    expect(models[0]).toMatchObject({ id: 'claude-opus-5', label: 'Opus 5' });
+  });
+
+  it('reports 1M context for Opus/Sonnet models and 200k for Haiku', () => {
+    for (const m of models) {
+      const expected = m.id.startsWith('claude-haiku') ? 200_000 : 1_000_000;
+      expect(m.contextWindow, m.id).toBe(expected);
+    }
   });
 });
 
@@ -210,6 +227,33 @@ describe('transformMessage()', () => {
   });
 
   describe('result messages', () => {
+    it('picks contextWindow from the dominant model, not the first modelUsage entry', () => {
+      const events = transformMessage(
+        {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          num_turns: 1,
+          // Helper model (title generation) listed first with tiny usage —
+          // its 200k window must not shadow the session model's 1M.
+          modelUsage: {
+            'claude-haiku-4-5-20251001': {
+              inputTokens: 521, outputTokens: 12,
+              cacheReadInputTokens: 0, cacheCreationInputTokens: 0,
+              contextWindow: 200_000,
+            },
+            'claude-opus-5': {
+              inputTokens: 2, outputTokens: 4,
+              cacheReadInputTokens: 20587, cacheCreationInputTokens: 14163,
+              contextWindow: 1_000_000,
+            },
+          },
+        } as any,
+        makeCtx(),
+      );
+      expect(events[0]).toMatchObject({ type: 'result', contextWindow: 1_000_000 });
+    });
+
     it('transforms result with cost and duration', () => {
       const events = transformMessage(
         {

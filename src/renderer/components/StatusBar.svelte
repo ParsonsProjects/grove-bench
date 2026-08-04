@@ -11,7 +11,7 @@
 
   let prInfo = $state<PrInfo | null>(null);
   let modelPickerOpen = $state(false);
-  let modelOptions = $state<Array<{ value: string; label: string }>>([]);
+  let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
 
   async function switchModel(modelId: string) {
     modelPickerOpen = false;
@@ -35,7 +35,13 @@
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
-  let contextWindow = $derived(messageStore.getContextWindow(sessionId));
+  // SDK-reported window wins; before the first result, fall back to the
+  // selected model's known window (e.g. 1M for Opus), then 200k.
+  let contextWindow = $derived(
+    messageStore.contextWindowBySession[sessionId]
+      ?? modelOptions.find((o) => o.value === model)?.contextWindow
+      ?? 200_000
+  );
   let turns = $derived(messageStore.getTurns(sessionId));
 
   // Total context = input_tokens (non-cached) + cache_read + cache_creation
@@ -197,7 +203,7 @@
       prInfo = info;
     });
     window.groveBench.getModels().then((models) => {
-      modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
+      modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
     });
   });
 

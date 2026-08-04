@@ -36,6 +36,8 @@ export interface ModelInfo {
   label: string;
   /** Optional grouping, e.g. "Claude", "GPT" */
   family?: string;
+  /** Context window in tokens; display fallback until the SDK reports the real value */
+  contextWindow?: number;
 }
 
 // ─── Permission Handling ───

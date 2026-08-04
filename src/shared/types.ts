@@ -428,7 +428,7 @@ export interface GroveBenchAPI {
 
   // Agent adapters
   listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
-  getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string }>>;
+  getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string; contextWindow?: number }>>;
 
   // Auto-update
   checkForUpdate(): Promise<void>;

@@ -341,10 +341,30 @@ export function transformMessage(
     }
 
     case 'result': {
-      const modelUsage = (message as any).modelUsage as Record<string, { contextWindow?: number }> | undefined;
-      const contextWindow = modelUsage
-        ? Object.values(modelUsage)[0]?.contextWindow
+      // modelUsage can contain entries for helper models (e.g. Haiku used
+      // internally for title generation) alongside the session's main model.
+      // Pick the entry that did the bulk of the token work — the first key is
+      // not reliably the conversation model, and helper entries would report
+      // the wrong context window (e.g. Haiku's 200k for an Opus session).
+      const modelUsage = (message as any).modelUsage as Record<string, {
+        contextWindow?: number;
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadInputTokens?: number;
+        cacheCreationInputTokens?: number;
+      }> | undefined;
+      const mainUsage = modelUsage
+        ? Object.values(modelUsage).reduce<(typeof modelUsage)[string] | undefined>((best, u) => {
+            const total = (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+              + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0);
+            const bestTotal = best
+              ? (best.inputTokens ?? 0) + (best.outputTokens ?? 0)
+                + (best.cacheReadInputTokens ?? 0) + (best.cacheCreationInputTokens ?? 0)
+              : -1;
+            return total > bestTotal ? u : best;
+          }, undefined)
         : undefined;
+      const contextWindow = mainUsage?.contextWindow;
       events.push({
         type: 'result',
         subtype: message.subtype,
@@ -466,11 +486,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // TODO: Hardcoded model list — update when new models are released, or fetch dynamically from the SDK if it exposes a model list.
   getModels(): ModelInfo[] {
     return [
-      { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude' },
-      { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude' },
-      { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude' },
-      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude' },
+      { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude', contextWindow: 200_000 },
     ];
   }
 
