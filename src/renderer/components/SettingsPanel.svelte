@@ -347,6 +347,33 @@
               <Button variant="secondary" class="h-[34px] px-3 text-sm" onclick={addWorkingDir}>Add</Button>
             </div>
           </div>
+
+          <Separator />
+
+          <!-- Mistral API Key -->
+          <div>
+            <Label for="settings-mistral-key" class="mb-1 block">Mistral API Key</Label>
+            <div class="flex items-center gap-2">
+              <input
+                id="settings-mistral-key"
+                type="password"
+                bind:value={settingsStore.draft.mistralApiKey}
+                placeholder="Enter your Mistral API key"
+                class="flex-1 bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <Button variant="secondary" class="h-[34px] px-3 text-sm" onclick={() => settingsStore.draft.mistralApiKey = ''}>
+                Clear
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground mt-1">
+              Your Mistral API key for authentication. This is stored locally and used to authenticate with Mistral's API.
+              {#if settingsStore.draft.mistralApiKey}
+                <span class="text-primary">Key is set</span>
+              {:else}
+                <span class="text-muted-foreground/50">No key configured</span>
+              {/if}
+            </p>
+          </div>
         </div>
 
       {:else if tab === 'general'}

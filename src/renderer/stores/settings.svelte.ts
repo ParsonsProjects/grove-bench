@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   spellcheck: true,
   analyticsEnabled: false,
   analyticsPrompted: false,
+  mistralApiKey: '',
 };
 
 class SettingsStore {
@@ -91,6 +92,16 @@ class SettingsStore {
 
   removeWorkingDirectory(index: number) {
     this.draft.workingDirectories = this.draft.workingDirectories.filter((_, i) => i !== index);
+  }
+
+  // ─── Mistral API Key ───
+
+  setMistralApiKey(key: string) {
+    this.draft.mistralApiKey = key;
+  }
+
+  clearMistralApiKey() {
+    this.draft.mistralApiKey = '';
   }
 
 }

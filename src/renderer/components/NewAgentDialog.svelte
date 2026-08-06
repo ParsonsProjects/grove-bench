@@ -12,9 +12,21 @@
 
   let open = $state(true);
   let selectedRepo = $state(store.repos[0] || '');
+  let selectedAdapter = $state<string>('');
+  let adapters = $state<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>([]);
 
-  onMount(() => {
+  onMount(async () => {
     if (defaultRepo) selectedRepo = defaultRepo;
+    // Load available adapters
+    try {
+      adapters = await window.groveBench.listAdapters();
+      // Select the first adapter by default (likely Claude Code)
+      if (adapters.length > 0) {
+        selectedAdapter = adapters[0].id;
+      }
+    } catch (e) {
+      console.error('Failed to load adapters:', e);
+    }
   });
   let branchName = $state('');
   let baseBranch = $state('main');
@@ -125,10 +137,10 @@
 
     try {
       const opts = mode === 'direct'
-        ? { repoPath: selectedRepo, branchName: '', direct: true as const }
+        ? { repoPath: selectedRepo, branchName: '', direct: true as const, adapterType: selectedAdapter || undefined }
         : mode === 'existing'
-        ? { repoPath: selectedRepo, branchName: selectedBranch, useExisting: true as const }
-        : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
+        ? { repoPath: selectedRepo, branchName: selectedBranch, useExisting: true as const, adapterType: selectedAdapter || undefined }
+        : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined, adapterType: selectedAdapter || undefined };
 
       const result = await window.groveBench.createSession(opts);
       trackEvent('session_created', { mode });
@@ -189,6 +201,24 @@
           </Select.Root>
         {/if}
       </div>
+
+      <!-- Adapter selector -->
+      {#if adapters.length > 1}
+        <div>
+          <Label for="adapter" class="mb-1 block">Adapter</Label>
+          <Select.Root type="single" value={selectedAdapter} onValueChange={(v) => { if (v) selectedAdapter = v; }}>
+            <Select.Trigger class="w-full">
+              {adapters.find(a => a.id === selectedAdapter)?.displayName || 'Select adapter'}
+            </Select.Trigger>
+            <Select.Content>
+              {#each adapters as adapter (adapter.id)}
+                <Select.Item value={adapter.id} label={adapter.displayName} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-xs text-muted-foreground mt-1">Choose which AI provider to use for this session.</p>
+        </div>
+      {/if}
 
       <!-- Mode toggle -->
       <div>
