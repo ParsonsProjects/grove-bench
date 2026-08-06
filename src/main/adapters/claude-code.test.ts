@@ -38,6 +38,12 @@ describe('getModels()', () => {
     expect(models[0]).toMatchObject({ id: 'claude-opus-5', label: 'Opus 5' });
   });
 
+  it('offers Fable 5 but not as the default', () => {
+    const fable = models.find((m) => m.id === 'claude-fable-5');
+    expect(fable).toMatchObject({ label: 'Fable 5', contextWindow: 1_000_000 });
+    expect(models[0].id).not.toBe('claude-fable-5');
+  });
+
   it('reports 1M context for Opus/Sonnet models and 200k for Haiku', () => {
     for (const m of models) {
       const expected = m.id.startsWith('claude-haiku') ? 200_000 : 1_000_000;

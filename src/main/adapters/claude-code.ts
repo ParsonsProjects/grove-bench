@@ -480,7 +480,7 @@ export const CONTEXT_1M_BETA = 'context-1m-2025-08-07';
  * unset the SDK uses its own default (currently a 1M-capable model), so we
  * opt in.
  */
-export function supportsLargeContext(model: string | undefined): boolean {
+export function supportsLargeContext(model: string | null | undefined): boolean {
   if (!model) return true;
   return !/haiku/i.test(model);
 }
@@ -507,6 +507,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   getModels(): ModelInfo[] {
     return [
       { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude', contextWindow: 1_000_000 },

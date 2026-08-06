@@ -40,7 +40,7 @@ export async function createMemoryMcpServer(ops: MemoryOperations) {
       _tool('memory_list', 'List all memory files for this project', {}, async () => {
         const entries = ops.list();
         return { content: [{ type: 'text' as const, text: JSON.stringify(entries, null, 2) }] };
-      }, { annotations: { readOnly: true } }),
+      }, { annotations: { readOnlyHint: true } }),
 
       _tool('memory_read', 'Read a memory file by relative path', {
         path: z.string().describe('Relative path within the memory directory, e.g. "repo/overview.md"'),
@@ -50,7 +50,7 @@ export async function createMemoryMcpServer(ops: MemoryOperations) {
           return { content: [{ type: 'text' as const, text: `File not found: ${path}` }], isError: true };
         }
         return { content: [{ type: 'text' as const, text: content }] };
-      }, { annotations: { readOnly: true } }),
+      }, { annotations: { readOnlyHint: true } }),
 
       _tool('memory_write', 'Write or update a memory file', {
         path: z.string().describe('Relative path (must end in .md), e.g. "sessions/current-plan.md"'),
@@ -58,7 +58,7 @@ export async function createMemoryMcpServer(ops: MemoryOperations) {
       }, async ({ path, content }) => {
         ops.write(path, content);
         return { content: [{ type: 'text' as const, text: `Written: ${path}` }] };
-      }, { annotations: { destructive: false } }),
+      }, { annotations: { destructiveHint: false } }),
 
       _tool('memory_delete', 'Delete a memory file', {
         path: z.string().describe('Relative path of the file to delete'),
@@ -68,7 +68,7 @@ export async function createMemoryMcpServer(ops: MemoryOperations) {
           content: [{ type: 'text' as const, text: deleted ? `Deleted: ${path}` : `Not found: ${path}` }],
           isError: !deleted,
         };
-      }, { annotations: { destructive: true } }),
+      }, { annotations: { destructiveHint: true } }),
     ],
   });
 }
