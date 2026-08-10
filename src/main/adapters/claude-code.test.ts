@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -38,11 +38,40 @@ describe('getModels()', () => {
     expect(models[0]).toMatchObject({ id: 'claude-opus-5', label: 'Opus 5' });
   });
 
+  it('offers Fable 5 but not as the default', () => {
+    const fable = models.find((m) => m.id === 'claude-fable-5');
+    expect(fable).toMatchObject({ label: 'Fable 5', contextWindow: 1_000_000 });
+    expect(models[0].id).not.toBe('claude-fable-5');
+  });
+
   it('reports 1M context for Opus/Sonnet models and 200k for Haiku', () => {
     for (const m of models) {
       const expected = m.id.startsWith('claude-haiku') ? 200_000 : 1_000_000;
       expect(m.contextWindow, m.id).toBe(expected);
     }
+  });
+});
+
+// ─── 1M context beta gating ───
+
+describe('supportsLargeContext()', () => {
+  it('opts every non-Haiku model into the 1M-context beta', () => {
+    for (const m of new ClaudeCodeAdapter().getModels()) {
+      const expected = !m.id.startsWith('claude-haiku');
+      expect(supportsLargeContext(m.id), m.id).toBe(expected);
+    }
+  });
+
+  it('skips the beta for Haiku (200k-only)', () => {
+    expect(supportsLargeContext('claude-haiku-4-5-20251001')).toBe(false);
+  });
+
+  it('opts in when the model is unset (SDK default is 1M-capable)', () => {
+    expect(supportsLargeContext(undefined)).toBe(true);
+  });
+
+  it('exposes the current 1M beta flag', () => {
+    expect(CONTEXT_1M_BETA).toBe('context-1m-2025-08-07');
   });
 });
 

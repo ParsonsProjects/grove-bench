@@ -465,6 +465,26 @@ export function transformMessage(
   return events;
 }
 
+// ─── 1M context window ───
+
+/** SDK beta flag that unlocks the 1M-token context window for capable models. */
+export const CONTEXT_1M_BETA = 'context-1m-2025-08-07';
+
+/**
+ * Whether to request the 1M-token context window for `model`.
+ *
+ * The Claude Code CLI gates the 1M window behind CONTEXT_1M_BETA — without it,
+ * even 1M-capable models (Opus, Sonnet) report the 200k default in modelUsage,
+ * which is what the status bar then shows. Haiku is 200k-only, so we skip the
+ * beta there rather than send an unsupported beta header. When the model is
+ * unset the SDK uses its own default (currently a 1M-capable model), so we
+ * opt in.
+ */
+export function supportsLargeContext(model: string | null | undefined): boolean {
+  if (!model) return true;
+  return !/haiku/i.test(model);
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -487,6 +507,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   getModels(): ModelInfo[] {
     return [
       { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude', contextWindow: 1_000_000 },
@@ -663,6 +684,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         systemPrompt,
         permissionMode: config.permissionMode,
         ...(config.model ? { model: config.model } : {}),
+        ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
