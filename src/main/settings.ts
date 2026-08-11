@@ -41,6 +41,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   diffViewMode: 'unified',
   spellcheck: true,
 
+  // Token Optimization
+  outputFiltering: true,
+
   // Privacy
   analyticsEnabled: false,
   analyticsPrompted: false,
