@@ -15,6 +15,8 @@
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
+  import TycoonOffice from './components/tycoon/TycoonOffice.svelte';
+  import TycoonBubble from './components/tycoon/TycoonBubble.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
 
   let showAnalyticsConsent = $state(false);
@@ -68,6 +70,35 @@
   }
 
   let showSessionFinder = $state(false);
+
+  // ─── Game Dev Tycoon UI mode ───
+  let isTycoon = $derived(settingsStore.current.uiMode === 'tycoon');
+  // Whether the speech bubble (workspace) is open over the office floor.
+  let tycoonBubbleOpen = $state(false);
+
+  function openDesk(id: string) {
+    store.activeSessionId = id;
+    store.clearNeedsAttention(id);
+    tycoonBubbleOpen = true;
+  }
+
+  // Focusing a session from elsewhere (sidebar row, session finder, Ctrl+Shift+T)
+  // should open its bubble in tycoon mode. Only reacts to an actual id change so
+  // toggling into tycoon mode lands on the office floor, not inside a bubble.
+  let prevTycoonActiveId: string | null = null;
+  $effect(() => {
+    const id = store.activeSessionId;
+    if (isTycoon && id && id !== prevTycoonActiveId) {
+      tycoonBubbleOpen = true;
+    }
+    prevTycoonActiveId = id;
+  });
+
+  let tycoonBubbleTitle = $derived.by(() => {
+    const s = store.activeSession;
+    if (!s) return '';
+    return `${store.repoDisplayName(s.repoPath)} / ${s.displayName || s.branch}`;
+  });
 
   // Track per-session running state to detect turn completion. Flash state
   // itself lives in the store so the sidebar can read it.
@@ -282,7 +313,43 @@
   <Sidebar />
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if store.sessions.length === 0}
+    <!-- Per-session panes, shared by both UI modes. All live panes stay mounted
+         (inactive ones hidden via CSS) so event subscriptions and terminal
+         state survive session switches — and bubble closes in tycoon mode. -->
+    {#snippet workspacePanes()}
+      {#each store.sessions as session (session.id)}
+        <div class="flex-1 min-h-0 h-full" class:hidden={store.activeSessionId !== session.id}>
+          {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
+            <WorkspacePane sessionId={session.id} />
+          {:else}
+            <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
+              {#each Array(20) as _, i}
+                <span
+                  class="blue-pixel absolute"
+                  style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
+                ></span>
+              {/each}
+              <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
+              <span class="ml-3 text-sm relative z-10">Starting agent...</span>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    {/snippet}
+
+    {#if isTycoon}
+      <!-- Game Dev Tycoon mode: office floor with the workspace in a speech bubble -->
+      <div class="relative flex-1 min-h-0">
+        <TycoonOffice onopendesk={openDesk} />
+        <TycoonBubble
+          open={tycoonBubbleOpen && !!store.activeSessionId}
+          title={tycoonBubbleTitle}
+          onclose={() => tycoonBubbleOpen = false}
+        >
+          {@render workspacePanes()}
+        </TycoonBubble>
+      </div>
+    {:else if store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
@@ -309,24 +376,7 @@
       </div>
     {:else}
       <!-- Active session — keep all live panes mounted, show only the active one -->
-      {#each store.sessions as session (session.id)}
-        <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-          {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
-            <WorkspacePane sessionId={session.id} />
-          {:else}
-            <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
-              {#each Array(20) as _, i}
-                <span
-                  class="blue-pixel absolute"
-                  style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
-                ></span>
-              {/each}
-              <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
-              <span class="ml-3 text-sm relative z-10">Starting agent...</span>
-            </div>
-          {/if}
-        </div>
-      {/each}
+      {@render workspacePanes()}
     {/if}
   </main>
 </div>

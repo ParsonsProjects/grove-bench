@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
+  uiMode: 'standard',
 
   // Appearance
   repoColors: {},

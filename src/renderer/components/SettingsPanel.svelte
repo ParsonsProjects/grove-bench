@@ -10,7 +10,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
-  import type { SettingsPermissionMode, CavemanMode } from '../../shared/types.js';
+  import type { SettingsPermissionMode, CavemanMode, UiMode } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
   interface Props {
@@ -115,6 +115,11 @@
     { value: 'system', label: 'System' },
     { value: 'dark', label: 'Dark' },
     { value: 'light', label: 'Light' },
+  ];
+
+  const uiModes: { value: UiMode; label: string }[] = [
+    { value: 'standard', label: 'Standard' },
+    { value: 'tycoon', label: 'Game Dev Tycoon' },
   ];
 </script>
 
@@ -375,6 +380,24 @@
               <Select.Content>
                 {#each themes as theme (theme.value)}
                   <Select.Item value={theme.value} label={theme.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+
+          <Separator />
+
+          <!-- UI Mode -->
+          <div>
+            <Label class="mb-1 block">UI Mode</Label>
+            <p class="text-xs text-muted-foreground mb-2">Game Dev Tycoon shows each agent as a developer at a desk in a pixel-art office.</p>
+            <Select.Root type="single" value={settingsStore.draft.uiMode} onValueChange={(v) => { if (v) settingsStore.draft.uiMode = v as UiMode; }}>
+              <Select.Trigger class="w-48">
+                {uiModes.find(m => m.value === settingsStore.draft.uiMode)?.label ?? 'Standard'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each uiModes as mode (mode.value)}
+                  <Select.Item value={mode.value} label={mode.label} />
                 {/each}
               </Select.Content>
             </Select.Root>

@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,
+  uiMode: 'standard',
   repoColors: {},
   diffViewMode: 'unified',
   spellcheck: true,
@@ -65,6 +66,21 @@ class SettingsStore {
   reset() {
     this.draft = $state.snapshot(this.current) as GroveBenchSettings;
     this.error = null;
+  }
+
+  /** Switch UI mode and persist immediately (title-bar quick toggle). Writes
+   *  through `current` rather than the draft so an open settings dialog with
+   *  unsaved edits isn't committed as a side effect; the draft's own uiMode is
+   *  synced so the dialog reflects the toggle. */
+  async setUiMode(mode: GroveBenchSettings['uiMode']) {
+    const next = { ...($state.snapshot(this.current) as GroveBenchSettings), uiMode: mode };
+    this.current = next;
+    this.draft.uiMode = mode;
+    try {
+      await window.groveBench.saveSettings(next);
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    }
   }
 
   // ─── List helpers ───

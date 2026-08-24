@@ -1,8 +1,15 @@
 <script lang="ts">
   import UpdateNotification from './UpdateNotification.svelte';
   import HelpPanel from './HelpPanel.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
 
   let showHelp = $state(false);
+
+  let isTycoon = $derived(settingsStore.current.uiMode === 'tycoon');
+
+  function toggleUiMode() {
+    settingsStore.setUiMode(isTycoon ? 'standard' : 'tycoon');
+  }
 
   let isMaximized = $state(false);
 
@@ -153,6 +160,20 @@
     <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
+    <button
+      onclick={toggleUiMode}
+      class="win-btn h-full px-3 flex items-center justify-center transition-colors hover:bg-muted {isTycoon ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
+      title={isTycoon ? 'Switch to standard view' : 'Switch to Game Dev Tycoon view'}
+    >
+      <!-- Pixel-art developer head + shoulders -->
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" shape-rendering="crispEdges">
+        <rect x="3" y="1" width="6" height="1"/>
+        <rect x="3" y="2" width="1" height="1"/><rect x="8" y="2" width="1" height="1"/>
+        <rect x="4" y="4" width="1" height="1"/><rect x="7" y="4" width="1" height="1"/>
+        <rect x="4" y="6" width="4" height="1"/>
+        <rect x="2" y="8" width="8" height="3"/>
+      </svg>
+    </button>
     <button
       onclick={() => showHelp = true}
       class="win-btn h-full px-3 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

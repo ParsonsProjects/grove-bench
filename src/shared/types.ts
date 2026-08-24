@@ -449,6 +449,10 @@ export interface ToolRule {
 
 export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
 
+/** Main workspace presentation: the standard sidebar+pane layout, or the
+ *  Game Dev Tycoon office view where each session is a developer at a desk. */
+export type UiMode = 'standard' | 'tycoon';
+
 export interface GroveBenchSettings {
   // Permission & Security
   defaultPermissionMode: SettingsPermissionMode;
@@ -485,6 +489,8 @@ export interface GroveBenchSettings {
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+  /** Workspace presentation mode. Default 'standard'. */
+  uiMode: UiMode;
 
   // Appearance
   /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */
