@@ -90,6 +90,47 @@ export interface RoomLayout {
   viewBox: { x: number; y: number; w: number; h: number };
 }
 
+/** Where new developers enter the room: the front-right floor edge. */
+export function doorTile(layout: { cols: number; rows: number }): Pt {
+  return { x: layout.cols - 1.5, y: layout.rows - 0.5 };
+}
+
+/** Where a developer sits for a desk whose origin tile is `desk`. */
+export function chairTile(desk: Pt): Pt {
+  return { x: desk.x + 1, y: desk.y - 0.35 };
+}
+
+/** L-shaped walking path in tile space: across the front, then up the column. */
+export function walkWaypoints(from: Pt, to: Pt): Pt[] {
+  if (from.x === to.x || from.y === to.y) return [from, to];
+  return [from, { x: to.x, y: from.y }, to];
+}
+
+/** Total path length in tiles. */
+export function pathLength(waypoints: Pt[]): number {
+  let len = 0;
+  for (let i = 1; i < waypoints.length; i++) {
+    len += Math.hypot(waypoints[i].x - waypoints[i - 1].x, waypoints[i].y - waypoints[i - 1].y);
+  }
+  return len;
+}
+
+/** Position after walking `dist` tiles along the path (clamped to the end). */
+export function pathAt(waypoints: Pt[], dist: number): Pt {
+  let remaining = Math.max(0, dist);
+  for (let i = 1; i < waypoints.length; i++) {
+    const a = waypoints[i - 1];
+    const b = waypoints[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (remaining <= seg && seg > 0) {
+      const t = remaining / seg;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    remaining -= seg;
+  }
+  return waypoints[waypoints.length - 1];
+}
+
 export function roomLayout(count: number): RoomLayout {
   const tier = TIERS.find((t) => count <= t.maxDevs)!.tier;
 

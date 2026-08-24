@@ -95,6 +95,7 @@ npm run test:renderer  # Tests for renderer only
 - `diff` — Diff computation for file changes
 - `marked` + `highlight.js` + `dompurify` — Markdown rendering with syntax highlighting
 - `fuse.js` — Fuzzy search
+- `pixi.js` — WebGL renderer for the Game Dev Tycoon office view
 - `tailwind-merge` + `tailwind-variants` — Tailwind utility helpers
 - `zod` — Schema validation
 - `execa` — Git CLI wrapper

@@ -1,11 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { store } from '../../stores/sessions.svelte.js';
   import { messageStore } from '../../stores/messages.svelte.js';
-  import TycoonDesk from './TycoonDesk.svelte';
-  import TycoonMoodBubble from './TycoonMoodBubble.svelte';
   import { developerAppearance, buildSprite, SPRITE_COLS, SPRITE_ROWS } from '../../lib/tycoon-appearance.js';
-  import { iso, roomLayout, WALL_H } from '../../lib/tycoon-iso.js';
+  import { roomLayout } from '../../lib/tycoon-iso.js';
   import { sessionMood, moodLabel } from '../../lib/tycoon-mood.js';
+  import { TycoonScene, type DeskInput } from '../../lib/tycoon-scene.js';
 
   interface Props {
     onopendesk: (id: string) => void;
@@ -20,8 +20,7 @@
       .toSorted((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.id.localeCompare(b.id)),
   );
 
-  /** The room grows and upgrades with the number of developers. */
-  let layout = $derived(roomLayout(liveSessions.length));
+  let tierName = $derived(roomLayout(liveSessions.length).tier.name);
 
   /** Same mutually-exclusive categories as the sidebar's ACTIVE header. */
   let stats = $derived.by(() => {
@@ -37,9 +36,7 @@
   // ─── RTS-style selection ───
   let selectedId = $state<string | null>(null);
   let selected = $derived(liveSessions.find((s) => s.id === selectedId) ?? null);
-
   let selectedMood = $derived(selected ? moodLabel(sessionMood(selected)) : '');
-
   let selectedSprite = $derived(selected ? buildSprite(developerAppearance(selected.id)) : []);
 
   /** Stop the selected agent (same semantics as the sidebar's stop button,
@@ -59,110 +56,47 @@
     } catch { /* session may already be dead */ }
   }
 
-  // ─── Scene geometry ───
-  function p(x: number, y: number, dy = 0): string {
-    const q = iso(x, y);
-    return `${q.x},${q.y + dy}`;
-  }
+  // ─── PixiJS scene ───
+  let host = $state<HTMLDivElement>();
+  let scene = $state<TycoonScene | null>(null);
 
-  let leftWall = $derived(`${p(0, 0, -WALL_H)} ${p(0, layout.rows, -WALL_H)} ${p(0, layout.rows)} ${p(0, 0)}`);
-  let rightWall = $derived(`${p(0, 0, -WALL_H)} ${p(layout.cols, 0, -WALL_H)} ${p(layout.cols, 0)} ${p(0, 0)}`);
-  let leftTrim = $derived(`${p(0, 0, -7)} ${p(0, layout.rows, -7)} ${p(0, layout.rows)} ${p(0, 0)}`);
-  let rightTrim = $derived(`${p(0, 0, -7)} ${p(layout.cols, 0, -7)} ${p(layout.cols, 0)} ${p(0, 0)}`);
+  /** Declarative desk state consumed by the scene; recomputed on any store change. */
+  let deskInputs = $derived.by((): DeskInput[] => {
+    const layout = roomLayout(liveSessions.length);
+    return liveSessions.map((s, i) => ({
+      id: s.id,
+      tx: layout.desks[i].x,
+      ty: layout.desks[i].y,
+      label: s.displayName || s.branch,
+      mood: sessionMood(s),
+      selected: selectedId === s.id,
+    }));
+  });
 
-  /** Window quads along a wall edge (t runs along the wall in tiles). */
-  function windowsAlong(length: number): number[] {
-    const out: number[] = [];
-    for (let t = 1.4; t + 1.6 <= length - 1; t += 3) out.push(t);
-    return out;
-  }
-  let leftWindows = $derived(windowsAlong(layout.rows));
-  let rightWindows = $derived(windowsAlong(layout.cols));
+  onMount(() => {
+    const sc = new TycoonScene({
+      onselect: (id) => selectedId = id,
+      onopen: (id) => onopendesk(id),
+    });
+    scene = sc;
+    sc.init(host!).catch((e) => console.error('Tycoon scene failed to start:', e));
+    return () => {
+      sc.destroy();
+      scene = null;
+    };
+  });
 
-  function leftWindowQuad(t: number): string {
-    return `${p(0, t, -74)} ${p(0, t + 1.6, -74)} ${p(0, t + 1.6, -36)} ${p(0, t, -36)}`;
-  }
-  function rightWindowQuad(t: number): string {
-    return `${p(t, 0, -74)} ${p(t + 1.6, 0, -74)} ${p(t + 1.6, 0, -36)} ${p(t, 0, -36)}`;
-  }
-
-  // Studio name painted on the left wall (iso plane: x-advance follows the
-  // wall's +y edge direction, vertical stays vertical).
-  let wallTextAnchor = $derived(iso(0, layout.rows * 0.72));
-
-  // Plant decor in the right corner
-  let plantBase = $derived(iso(layout.cols - 1.4, 1.1));
+  $effect(() => {
+    scene?.sync(deskInputs.length, deskInputs);
+  });
 </script>
 
 <div class="office relative h-full overflow-hidden">
-  <svg
-    viewBox="{layout.viewBox.x} {layout.viewBox.y} {layout.viewBox.w} {layout.viewBox.h}"
-    preserveAspectRatio="xMidYMid meet"
-    class="w-full h-full block"
-    onclick={() => selectedId = null}
-    role="presentation"
-  >
-    <!-- walls -->
-    <polygon points={leftWall} fill={layout.tier.wallLeft} />
-    <polygon points={rightWall} fill={layout.tier.wallRight} />
-    <polygon points={leftTrim} fill={layout.tier.trim} />
-    <polygon points={rightTrim} fill={layout.tier.trim} />
-
-    <!-- windows -->
-    {#each leftWindows as t (t)}
-      <polygon points={leftWindowQuad(t)} fill="#cfe6f2" stroke="#f2f2ee" stroke-width="2" opacity="0.9" />
-    {/each}
-    {#each rightWindows as t (t)}
-      <polygon points={rightWindowQuad(t)} fill="#d8ecdf" stroke="#f2f2ee" stroke-width="2" opacity="0.9" />
-    {/each}
-
-    <!-- studio name on the left wall -->
-    <text
-      transform="matrix(0.894 -0.447 0 1 {wallTextAnchor.x + 3} {wallTextAnchor.y - 34})"
-      class="wall-text"
-    >{layout.tier.name}</text>
-
-    <!-- floor -->
-    {#each { length: layout.cols } as _, fx}
-      {#each { length: layout.rows } as _, fy}
-        <polygon
-          points={`${p(fx, fy)} ${p(fx + 1, fy)} ${p(fx + 1, fy + 1)} ${p(fx, fy + 1)}`}
-          fill={(fx + fy) % 2 === 0 ? layout.tier.floorA : layout.tier.floorB}
-        />
-      {/each}
-    {/each}
-
-    <!-- plant decor -->
-    {#if layout.tier.decor}
-      <g>
-        <polygon points={`${plantBase.x - 7},${plantBase.y - 14} ${plantBase.x + 7},${plantBase.y - 14} ${plantBase.x + 5},${plantBase.y} ${plantBase.x - 5},${plantBase.y}`} fill="#a4552f" />
-        <polygon points={`${plantBase.x},${plantBase.y - 44} ${plantBase.x + 12},${plantBase.y - 26} ${plantBase.x},${plantBase.y - 12} ${plantBase.x - 12},${plantBase.y - 26}`} fill="#3f8f4a" />
-        <polygon points={`${plantBase.x - 10},${plantBase.y - 36} ${plantBase.x},${plantBase.y - 26} ${plantBase.x - 4},${plantBase.y - 16}`} fill="#4aa858" />
-        <polygon points={`${plantBase.x + 10},${plantBase.y - 36} ${plantBase.x},${plantBase.y - 26} ${plantBase.x + 4},${plantBase.y - 16}`} fill="#357a40" />
-      </g>
-    {/if}
-
-    <!-- desks, in row-major order (back rows first = painter's algorithm) -->
-    {#each liveSessions as session, i (session.id)}
-      <TycoonDesk
-        {session}
-        tx={layout.desks[i].x}
-        ty={layout.desks[i].y}
-        selected={selectedId === session.id}
-        onselect={(id) => selectedId = id}
-        onopen={onopendesk}
-      />
-    {/each}
-
-    <!-- status bubbles in a top layer so desks in front never cover them -->
-    {#each liveSessions as session, i (session.id)}
-      <TycoonMoodBubble {session} tx={layout.desks[i].x} ty={layout.desks[i].y} />
-    {/each}
-  </svg>
+  <div bind:this={host} class="absolute inset-0"></div>
 
   <!-- HUD: tier + headcount -->
   <div class="absolute top-2 left-3 flex items-center gap-2 pointer-events-none">
-    <span class="hud-chip">{layout.tier.name}</span>
+    <span class="hud-chip">{tierName}</span>
     <span class="hud-chip text-muted-foreground">{liveSessions.length} {liveSessions.length === 1 ? 'dev' : 'devs'}</span>
   </div>
 
@@ -235,13 +169,5 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--foreground);
-  }
-
-  .wall-text {
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    fill: rgb(255 255 255 / 0.65);
   }
 </style>

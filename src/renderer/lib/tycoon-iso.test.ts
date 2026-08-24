@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { iso, roomLayout, TILE_W, TILE_H } from './tycoon-iso.js';
+import { iso, roomLayout, doorTile, chairTile, walkWaypoints, pathLength, pathAt, TILE_W, TILE_H } from './tycoon-iso.js';
 
 describe('iso', () => {
   it('projects the origin to 0,0', () => {
@@ -58,6 +58,24 @@ describe('roomLayout', () => {
     expect(keys.size).toBe(20);
   });
 
+  it('keeps the door and every chair inside the room', () => {
+    for (const n of [1, 6, 12]) {
+      const layout = roomLayout(n);
+      const door = doorTile(layout);
+      expect(door.x).toBeGreaterThan(0);
+      expect(door.x).toBeLessThan(layout.cols);
+      expect(door.y).toBeGreaterThan(0);
+      expect(door.y).toBeLessThan(layout.rows);
+      for (const d of layout.desks) {
+        const c = chairTile(d);
+        expect(c.x).toBeGreaterThan(0);
+        expect(c.x).toBeLessThan(layout.cols);
+        expect(c.y).toBeGreaterThan(0);
+        expect(c.y).toBeLessThan(layout.rows);
+      }
+    }
+  });
+
   it('produces a viewBox that contains the whole floor and walls', () => {
     for (const n of [1, 8, 16]) {
       const { cols, rows, viewBox } = roomLayout(n);
@@ -68,6 +86,40 @@ describe('roomLayout', () => {
         expect(c.y).toBeGreaterThanOrEqual(viewBox.y);
         expect(c.y).toBeLessThanOrEqual(viewBox.y + viewBox.h);
       }
+    }
+  });
+});
+
+describe('walking paths', () => {
+  it('builds an L-shaped path between offset points', () => {
+    const wp = walkWaypoints({ x: 8, y: 10 }, { x: 3, y: 2 });
+    expect(wp).toEqual([{ x: 8, y: 10 }, { x: 3, y: 10 }, { x: 3, y: 2 }]);
+  });
+
+  it('builds a straight path when already aligned', () => {
+    expect(walkWaypoints({ x: 3, y: 10 }, { x: 3, y: 2 })).toHaveLength(2);
+  });
+
+  it('measures path length', () => {
+    const wp = walkWaypoints({ x: 8, y: 10 }, { x: 3, y: 2 });
+    expect(pathLength(wp)).toBe(5 + 8);
+  });
+
+  it('interpolates positions along the path and clamps at the end', () => {
+    const wp = walkWaypoints({ x: 8, y: 10 }, { x: 3, y: 2 });
+    expect(pathAt(wp, 0)).toEqual({ x: 8, y: 10 });
+    expect(pathAt(wp, 2.5)).toEqual({ x: 5.5, y: 10 });
+    expect(pathAt(wp, 5)).toEqual({ x: 3, y: 10 });
+    expect(pathAt(wp, 9)).toEqual({ x: 3, y: 6 });
+    expect(pathAt(wp, 999)).toEqual({ x: 3, y: 2 });
+  });
+
+  it('starts every desk walk at the door and ends at the chair', () => {
+    const layout = roomLayout(6);
+    for (const d of layout.desks) {
+      const wp = walkWaypoints(doorTile(layout), chairTile(d));
+      expect(wp[0]).toEqual(doorTile(layout));
+      expect(wp[wp.length - 1]).toEqual(chairTile(d));
     }
   });
 });
