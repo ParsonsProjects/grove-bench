@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -17,8 +17,10 @@ export interface AgentCapabilities {
   resume: boolean;
   /** Supports switching models at runtime */
   modelSwitching: boolean;
-  /** Supports toggling extended thinking */
+  /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
+  /** Supports runtime MCP server control (list status, disconnect/reconnect) */
+  mcpControl?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports image attachments in messages */
@@ -130,7 +132,18 @@ export interface AgentQueryHandle {
 
   setModel?(model: string): Promise<void>;
   setPermissionMode?(mode: PermissionMode): void;
-  setMaxThinkingTokens?(tokens: number | null): Promise<void>;
+  /** Adjust the thinking/reasoning level. Adapters map the level to their
+   *  provider's mechanism (token budgets, effort params, plain on/off). */
+  setThinkingLevel?(level: ThinkingLevel): Promise<void>;
+
+  // ─── Optional MCP server control — check capabilities.mcpControl first ───
+
+  /** Current status of the agent's MCP server connections. */
+  listMcpServers?(): Promise<McpServerInfo[]>;
+  /** Reconnect a (failed or disconnected) MCP server by name. */
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  /** Enable (connect) or disable (disconnect) an MCP server by name. */
+  setMcpServerEnabled?(serverName: string, enabled: boolean): Promise<void>;
 }
 
 // ─── Prerequisite Status ───

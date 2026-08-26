@@ -1,4 +1,6 @@
-import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, PermissionDecision, PermissionMode, ThinkingLevel } from '../../shared/types.js';
+import { THINKING_LEVELS } from '../../shared/types.js';
+import { settingsStore } from './settings.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { devServerStore } from './devServer.svelte.js';
@@ -159,8 +161,8 @@ class MessageStore {
   /** Current permission mode per session */
   modeBySession = $state<Record<string, PermissionMode>>({});
 
-  /** Whether thinking/extended reasoning is enabled per session */
-  thinkingBySession = $state<Record<string, boolean>>({});
+  /** Thinking/reasoning level per session ('high' = provider default) */
+  thinkingBySession = $state<Record<string, ThinkingLevel>>({});
 
   /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
   usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
@@ -375,13 +377,20 @@ class MessageStore {
     return this.modeBySession[sessionId] ?? 'default';
   }
 
-  getThinking(sessionId: string): boolean {
-    return this.thinkingBySession[sessionId] ?? true;
+  getThinkingLevel(sessionId: string): ThinkingLevel {
+    return this.thinkingBySession[sessionId] ?? settingsStore.current.defaultThinkingLevel ?? 'high';
   }
 
-  async setThinking(sessionId: string, enabled: boolean) {
-    this.thinkingBySession[sessionId] = enabled;
-    await window.groveBench.setThinking(sessionId, enabled);
+  async setThinkingLevel(sessionId: string, level: ThinkingLevel) {
+    this.thinkingBySession[sessionId] = level;
+    await window.groveBench.setThinkingLevel(sessionId, level);
+  }
+
+  /** Cycle off → low → medium → high → off (status-bar button / Alt+T). */
+  cycleThinkingLevel(sessionId: string) {
+    const current = this.getThinkingLevel(sessionId);
+    const next = THINKING_LEVELS[(THINKING_LEVELS.indexOf(current) + 1) % THINKING_LEVELS.length];
+    this.setThinkingLevel(sessionId, next).catch((e) => console.error('Failed to set thinking level:', e));
   }
 
   getUsage(sessionId: string) {
@@ -390,6 +399,16 @@ class MessageStore {
 
   getSystemInfo(sessionId: string) {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+  }
+
+  /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
+  updateMcpServers(sessionId: string, servers: McpServerInfo[]) {
+    const info = this.systemInfoBySession[sessionId];
+    if (!info) return;
+    this.systemInfoBySession[sessionId] = {
+      ...info,
+      mcpServers: servers.map((s) => ({ name: s.name, status: s.status })),
+    };
   }
 
   getContextWindow(sessionId: string): number {
@@ -1082,6 +1101,14 @@ class MessageStore {
       slashCommands: event.slashCommands ?? [],
       mcpServers: event.mcpServers ?? [],
     };
+    // Each (re)initialized query starts at the provider's default thinking
+    // behavior. Pin the session's level (or the settings default for a new
+    // session) and re-apply it when it differs from that default.
+    const thinkingLevel = this.getThinkingLevel(sessionId);
+    this.thinkingBySession[sessionId] = thinkingLevel;
+    if (thinkingLevel !== 'high') {
+      window.groveBench.setThinkingLevel(sessionId, thinkingLevel).catch(() => {});
+    }
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),

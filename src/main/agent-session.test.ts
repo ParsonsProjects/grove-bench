@@ -198,7 +198,7 @@ class MockAdapter implements AgentAdapter {
       closeInput: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
-      setMaxThinkingTokens: vi.fn(),
+      setThinkingLevel: vi.fn(),
     };
   }
 }
