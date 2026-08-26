@@ -31,6 +31,16 @@ When thinking is active, a purple pulsing dot appears while the agent reasons.
 
 When the agent has MCP servers configured, an **MCP** badge shows how many are connected (red dot if any connection is down). Click it to see each server's live status and tool count, and to **Reconnect**, **Disconnect**, or re-**Connect** individual servers without restarting the session.
 
+Each server in the popover shows a status dot:
+
+| Color | Meaning |
+|-------|---------|
+| Green | Connected |
+| Yellow pulsing | Connecting |
+| Yellow | Needs authentication |
+| Gray | Disabled (disconnected) |
+| Red | Failed |
+
 ## Context Window
 
 A colored bar shows how much of the agent's context window has been used:
@@ -73,11 +83,3 @@ When the agent runs background tasks (subagents), their status is shown:
 | Green | Task completed |
 | Red | Task failed |
 
-## MCP Servers
-
-If MCP (Model Context Protocol) servers are connected, each shows a status dot:
-
-| Color | Meaning |
-|-------|---------|
-| Green | Connected |
-| Red | Disconnected |

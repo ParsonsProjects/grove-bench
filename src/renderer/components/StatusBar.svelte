@@ -824,21 +824,8 @@
             </details>
           {/if}
 
-          {#if systemInfo.mcpServers.length > 0}
-            <details class="mt-2 border-t border-border pt-2">
-              <summary class="text-muted-foreground cursor-pointer hover:text-foreground">
-                MCP servers ({systemInfo.mcpServers.length})
-              </summary>
-              <div class="mt-1.5 max-h-24 overflow-y-auto space-y-0.5">
-                {#each systemInfo.mcpServers as server}
-                  <div class="flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 {server.status === 'connected' ? 'bg-green-500' : 'bg-red-500'}"></span>
-                    <span class="font-mono text-[10px] text-muted-foreground truncate">{server.name}</span>
-                  </div>
-                {/each}
-              </div>
-            </details>
-          {/if}
+          <!-- Per-server MCP status and connect/disconnect controls live in the
+               status bar's dedicated MCP popover, not here. -->
 
           <!-- Quick actions -->
           <div class="border-t border-border pt-2.5 mt-2.5 flex gap-2">
