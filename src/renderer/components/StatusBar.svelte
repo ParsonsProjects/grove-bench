@@ -611,12 +611,14 @@
                     : status === 'disabled' ? 'bg-muted-foreground/40'
                     : 'bg-red-500'}"
                 ></span>
-                <span class="font-mono truncate flex-1 text-foreground" title={'error' in server && server.error ? server.error : server.name}>
-                  {server.name}
-                </span>
-                <span class="text-muted-foreground/60 shrink-0">
-                  {status}{#if 'toolCount' in server && server.toolCount !== undefined}&nbsp;· {server.toolCount} tool{server.toolCount === 1 ? '' : 's'}{/if}
-                </span>
+                <div class="flex-1 min-w-0">
+                  <div class="font-mono truncate text-foreground" title={'error' in server && server.error ? server.error : server.name}>
+                    {server.name}
+                  </div>
+                  <div class="text-muted-foreground/60 text-[10px]">
+                    {status}{#if 'toolCount' in server && server.toolCount !== undefined}&nbsp;· {server.toolCount} tool{server.toolCount === 1 ? '' : 's'}{/if}
+                  </div>
+                </div>
                 {#if status === 'disabled'}
                   <button
                     onclick={() => mcpAction(server.name, 'enable')}
