@@ -417,7 +417,9 @@
     // Prevent default only when we have images to handle (preserve normal text paste)
     e.preventDefault();
 
-    const { files: newFiles, skipped } = await processFiles(images, attachedFiles);
+    // Clipboard images all arrive named "image.png" — rename collisions so
+    // pasting several screenshots attaches each one instead of only the first.
+    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision, ThinkingLevel } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -77,8 +77,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
 
   // Thinking control
-  setThinking: (sessionId: string, enabled: boolean) =>
-    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, enabled),
+  setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, level),
+
+  // MCP server control
+  listMcpServers: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_LIST, sessionId),
+  reconnectMcpServer: (sessionId: string, serverName: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT, sessionId, serverName),
+  setMcpServerEnabled: (sessionId: string, serverName: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
 
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),

@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import { killProcessOnPort } from './port-killer.js';
@@ -842,13 +842,50 @@ class AgentSessionManager {
     }
   }
 
-  async setThinking(id: string, enabled: boolean): Promise<void> {
+  async setThinkingLevel(id: string, level: ThinkingLevel): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setMaxThinkingTokens) return;
+    if (!session?.queryHandle?.setThinkingLevel) return;
     try {
-      await session.queryHandle.setMaxThinkingTokens(enabled ? null : 0);
+      await session.queryHandle.setThinkingLevel(level);
     } catch (e) {
-      logger.warn(`Failed to set thinking for session ${id}:`, e);
+      logger.warn(`Failed to set thinking level for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async listMcpServers(id: string): Promise<McpServerInfo[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.listMcpServers) return [];
+    try {
+      return await session.queryHandle.listMcpServers();
+    } catch (e) {
+      logger.warn(`Failed to list MCP servers for session ${id}:`, e);
+      return [];
+    }
+  }
+
+  async reconnectMcpServer(id: string, serverName: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.reconnectMcpServer) {
+      throw new Error('MCP server control is not available for this session');
+    }
+    try {
+      await session.queryHandle.reconnectMcpServer(serverName);
+    } catch (e) {
+      logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.setMcpServerEnabled) {
+      throw new Error('MCP server control is not available for this session');
+    }
+    try {
+      await session.queryHandle.setMcpServerEnabled(serverName, enabled);
+    } catch (e) {
+      logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
   }

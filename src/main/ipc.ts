@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, ThinkingLevel } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
@@ -367,8 +367,20 @@ export function registerHandlers() {
     return sessionManager.setModel(sessionId, model);
   });
 
-  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, enabled: boolean) => {
-    return sessionManager.setThinking(sessionId, enabled);
+  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, level: ThinkingLevel) => {
+    return sessionManager.setThinkingLevel(sessionId, level);
+  });
+
+  ipcMain.handle(IPC.AGENT_MCP_LIST, (_event, sessionId: string) => {
+    return sessionManager.listMcpServers(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_MCP_RECONNECT, (_event, sessionId: string, serverName: string) => {
+    return sessionManager.reconnectMcpServer(sessionId, serverName);
+  });
+
+  ipcMain.handle(IPC.AGENT_MCP_TOGGLE, (_event, sessionId: string, serverName: string, enabled: boolean) => {
+    return sessionManager.setMcpServerEnabled(sessionId, serverName, enabled);
   });
 
   ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {

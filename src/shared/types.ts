@@ -217,6 +217,30 @@ export interface PrInfo {
   url: string;
 }
 
+// ─── Thinking Level ───
+
+/** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
+ *  to its own mechanism (token budgets, effort params, on/off, ...).
+ *  'high' means the provider's default/maximum reasoning behavior. */
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+
+/** Cycle order for the status-bar control and Alt+T shortcut. */
+export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
+
+// ─── MCP Servers ───
+
+/** Provider-agnostic snapshot of an agent's MCP server connection. */
+export interface McpServerInfo {
+  name: string;
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  /** Error message when status is 'failed'. */
+  error?: string;
+  /** Config scope (e.g. project, user, local) when the provider reports one. */
+  scope?: string;
+  /** Number of tools the server exposes, when connected. */
+  toolCount?: number;
+}
+
 // ─── Image Attachment ───
 
 export interface ImageAttachment {
@@ -335,7 +359,12 @@ export interface GroveBenchAPI {
   setModel(sessionId: string, model?: string): Promise<void>;
 
   // Thinking control
-  setThinking(sessionId: string, enabled: boolean): Promise<void>;
+  setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<void>;
+
+  // MCP server control
+  listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
+  reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
+  setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -458,7 +487,8 @@ export interface GroveBenchSettings {
 
   // Agent Defaults
   defaultModel: string;
-  extendedThinking: boolean;
+  /** Default thinking level for new sessions. 'high' = provider default. */
+  defaultThinkingLevel: ThinkingLevel;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
@@ -589,6 +619,9 @@ export const IPC = {
   PR_INFO: 'pr:info',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_THINKING: 'agent:setThinking',
+  AGENT_MCP_LIST: 'agent:mcpList',
+  AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
+  AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',

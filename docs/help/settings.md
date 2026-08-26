@@ -14,7 +14,7 @@ Control how the agent handles actions that need approval:
 Configure agent behavior:
 
 - **Default Model** — Select which Claude model to use for new sessions
-- **Extended Thinking** — Enable or disable extended thinking (deeper reasoning) by default
+- **Default Thinking Level** — How much extended thinking (deeper reasoning) new sessions use: Off, Low, Medium, or High (provider default)
 - **Dev Server Command** — Command to run a dev server in new worktrees (e.g. `npm run dev`)
 - **System Prompt Append** — Add custom instructions that apply to all sessions
 - **Additional Working Directories** — Extra directories the agent can access

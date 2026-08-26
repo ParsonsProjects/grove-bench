@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Agent Defaults
   defaultModel: '',
-  extendedThinking: false,
+  defaultThinkingLevel: 'high',
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -54,7 +54,11 @@ function getSettingsPath(): string {
 
 /** Deep-merge saved data with defaults so new fields are always present. */
 function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettings {
-  return { ...DEFAULT_SETTINGS, ...saved };
+  // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel).
+  // It was never applied to sessions, so there is no preference to migrate —
+  // sessions always ran at the provider default, which 'high' preserves.
+  const { extendedThinking: _legacy, ...rest } = saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean };
+  return { ...DEFAULT_SETTINGS, ...rest };
 }
 
 function validate(_s: GroveBenchSettings): void {

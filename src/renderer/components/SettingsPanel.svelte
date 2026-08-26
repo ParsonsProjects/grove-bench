@@ -10,7 +10,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
-  import type { SettingsPermissionMode, CavemanMode } from '../../shared/types.js';
+  import type { SettingsPermissionMode, CavemanMode, ThinkingLevel } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
   interface Props {
@@ -109,6 +109,13 @@
     { value: 'lite', label: 'Lite', description: 'Drop filler/hedging, keep articles' },
     { value: 'full', label: 'Full', description: 'Drop articles, fragments OK' },
     { value: 'ultra', label: 'Ultra', description: 'Max compression, abbreviations' },
+  ];
+
+  const thinkingLevels: { value: ThinkingLevel; label: string; description: string }[] = [
+    { value: 'off', label: 'Off', description: 'No extended thinking' },
+    { value: 'low', label: 'Low', description: 'Brief reasoning on hard steps' },
+    { value: 'medium', label: 'Medium', description: 'Moderate reasoning budget' },
+    { value: 'high', label: 'High', description: 'Provider default / maximum reasoning' },
   ];
 
   const themes: { value: 'system' | 'dark' | 'light'; label: string }[] = [
@@ -261,11 +268,24 @@
             <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
           </div>
 
-          <!-- Extended Thinking -->
-          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <Checkbox bind:checked={settingsStore.draft.extendedThinking} />
-            Enable extended thinking by default
-          </label>
+          <!-- Thinking Level -->
+          <div>
+            <Label class="mb-1 block">Default Thinking Level</Label>
+            <Select.Root type="single" value={settingsStore.draft.defaultThinkingLevel} onValueChange={(v) => { if (v) settingsStore.draft.defaultThinkingLevel = v as ThinkingLevel; }}>
+              <Select.Trigger class="w-48">
+                {thinkingLevels.find(l => l.value === settingsStore.draft.defaultThinkingLevel)?.label ?? 'High'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each thinkingLevels as level (level.value)}
+                  <Select.Item value={level.value} label={level.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground mt-1">
+              {thinkingLevels.find(l => l.value === settingsStore.draft.defaultThinkingLevel)?.description ?? ''}
+              Adjustable per session from the status bar (Alt+T).
+            </p>
+          </div>
 
           <Separator />
 

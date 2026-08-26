@@ -5,7 +5,7 @@
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
-  import type { PrInfo } from '../../shared/types.js';
+  import type { McpServerInfo, PrInfo, ThinkingLevel } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -31,7 +31,7 @@
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
-  let thinking = $derived(messageStore.getThinking(sessionId));
+  let thinkingLevel = $derived(messageStore.getThinkingLevel(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
@@ -134,6 +134,7 @@
   let bgTasksExpanded = $state(false);
   let devServersExpanded = $state(false);
   let shortcutsOpen = $state(false);
+  let mcpExpanded = $state(false);
 
   // Refs for click-outside detection on popovers
   let modelPickerRef = $state<HTMLDivElement | null>(null);
@@ -142,6 +143,57 @@
   let devServersRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
   let shortcutsRef = $state<HTMLDivElement | null>(null);
+  let mcpRef = $state<HTMLDivElement | null>(null);
+
+  // ─── MCP server control ───
+
+  let mcpServers = $state<McpServerInfo[]>([]);
+  let mcpBusy = $state<Record<string, boolean>>({});
+  let mcpError = $state<string | null>(null);
+  let mcpKnown = $derived(systemInfo.mcpServers);
+  let mcpAnyDown = $derived(
+    (mcpServers.length > 0 ? mcpServers : mcpKnown).some((s) => s.status === 'failed' || s.status === 'needs-auth'),
+  );
+
+  async function refreshMcpServers() {
+    try {
+      const servers = await window.groveBench.listMcpServers(sessionId);
+      if (servers.length > 0) {
+        mcpServers = servers;
+        messageStore.updateMcpServers(sessionId, servers);
+        return;
+      }
+    } catch {
+      // fall through to the last known snapshot
+    }
+    // Live status unavailable (e.g. session stopped) — show the init snapshot
+    mcpServers = mcpKnown.map((s) => ({ name: s.name, status: s.status as McpServerInfo['status'] }));
+  }
+
+  function toggleMcpPopover() {
+    mcpExpanded = !mcpExpanded;
+    if (mcpExpanded) {
+      mcpError = null;
+      refreshMcpServers();
+    }
+  }
+
+  async function mcpAction(name: string, action: 'reconnect' | 'enable' | 'disable') {
+    mcpBusy = { ...mcpBusy, [name]: true };
+    mcpError = null;
+    try {
+      if (action === 'reconnect') {
+        await window.groveBench.reconnectMcpServer(sessionId, name);
+      } else {
+        await window.groveBench.setMcpServerEnabled(sessionId, name, action === 'enable');
+      }
+    } catch (e: any) {
+      mcpError = e?.message ?? `Failed to ${action} ${name}`;
+    } finally {
+      mcpBusy = { ...mcpBusy, [name]: false };
+      await refreshMcpServers();
+    }
+  }
 
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
@@ -163,6 +215,20 @@
     acceptEdits: 'text-purple-400 border-purple-400/40',
   };
 
+  const thinkingLabels: Record<ThinkingLevel, string> = {
+    off: 'No Think',
+    low: 'Think: Low',
+    medium: 'Think: Med',
+    high: 'Think: High',
+  };
+
+  const thinkingColors: Record<ThinkingLevel, string> = {
+    off: 'text-muted-foreground/50 border-muted-foreground/20',
+    low: 'text-purple-300/70 border-purple-300/30',
+    medium: 'text-purple-400/80 border-purple-400/40',
+    high: 'text-purple-400 border-purple-400/50',
+  };
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.altKey && e.key.toLowerCase() === 'm') {
       e.preventDefault();
@@ -170,7 +236,7 @@
     }
     if (e.altKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
-      messageStore.setThinking(sessionId, !messageStore.getThinking(sessionId));
+      messageStore.cycleThinkingLevel(sessionId);
     }
   }
 
@@ -193,6 +259,9 @@
     }
     if (shortcutsOpen && shortcutsRef && !shortcutsRef.contains(target)) {
       shortcutsOpen = false;
+    }
+    if (mcpExpanded && mcpRef && !mcpRef.contains(target)) {
+      mcpExpanded = false;
     }
   }
 
@@ -252,12 +321,12 @@
   </button>
 
   <button
-    onclick={() => messageStore.setThinking(sessionId, !thinking)}
+    onclick={() => messageStore.cycleThinkingLevel(sessionId)}
     class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent
-      {thinking ? 'text-purple-400 border-purple-400/40' : 'text-muted-foreground/50 border-muted-foreground/20'}"
-    title="Toggle extended thinking (Alt+T)"
+      {thinkingColors[thinkingLevel]}"
+    title="Cycle thinking level (Alt+T)"
   >
-    {thinking ? 'Thinking' : 'No Think'}
+    {thinkingLabels[thinkingLevel]}
   </button>
 
   <span class="w-px h-3.5 bg-border"></span>
@@ -503,6 +572,86 @@
     {/if}
   </div>
 
+  {#if mcpKnown.length > 0}
+    <div class="relative" bind:this={mcpRef}>
+      <button
+        onclick={toggleMcpPopover}
+        class="flex items-center gap-1 {mcpAnyDown ? 'text-red-400 hover:text-red-300' : 'text-muted-foreground hover:text-foreground'} transition-colors"
+        title="MCP servers — click to manage connections"
+      >
+        <span class="w-1.5 h-1.5 {mcpAnyDown ? 'bg-red-500' : 'bg-green-500'}"></span>
+        MCP {mcpKnown.length}
+      </button>
+
+      {#if mcpExpanded}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-medium text-foreground">MCP Servers</span>
+            <button
+              onclick={refreshMcpServers}
+              class="text-muted-foreground/60 hover:text-foreground transition-colors"
+              title="Refresh status"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {#if mcpError}
+            <div class="text-destructive mb-2 break-words">{mcpError}</div>
+          {/if}
+
+          <div class="space-y-1.5 max-h-64 overflow-y-auto">
+            {#each mcpServers.length > 0 ? mcpServers : mcpKnown as server (server.name)}
+              {@const status = server.status}
+              <div class="flex items-center gap-2 group">
+                <span class="w-1.5 h-1.5 shrink-0
+                  {status === 'connected' ? 'bg-green-500'
+                    : status === 'pending' ? 'bg-yellow-400 animate-pulse'
+                    : status === 'needs-auth' ? 'bg-yellow-500'
+                    : status === 'disabled' ? 'bg-muted-foreground/40'
+                    : 'bg-red-500'}"
+                ></span>
+                <span class="font-mono truncate flex-1 text-foreground" title={'error' in server && server.error ? server.error : server.name}>
+                  {server.name}
+                </span>
+                <span class="text-muted-foreground/60 shrink-0">
+                  {status}{#if 'toolCount' in server && server.toolCount !== undefined}&nbsp;· {server.toolCount} tool{server.toolCount === 1 ? '' : 's'}{/if}
+                </span>
+                {#if status === 'disabled'}
+                  <button
+                    onclick={() => mcpAction(server.name, 'enable')}
+                    disabled={mcpBusy[server.name]}
+                    class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0 disabled:opacity-50"
+                    title="Reconnect this server"
+                  >
+                    Connect
+                  </button>
+                {:else}
+                  <button
+                    onclick={() => mcpAction(server.name, 'reconnect')}
+                    disabled={mcpBusy[server.name]}
+                    class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
+                    title="Restart the connection to this server"
+                  >
+                    Reconnect
+                  </button>
+                  <button
+                    onclick={() => mcpAction(server.name, 'disable')}
+                    disabled={mcpBusy[server.name]}
+                    class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
+                    title="Disconnect this server for the rest of the session"
+                  >
+                    Disconnect
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if sessionBranch}
     <span class="text-muted-foreground/70 truncate max-w-40" title={sessionBranch}>
       {sessionBranch}
@@ -733,7 +882,7 @@
           <div class="flex justify-between"><span>Session finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
           <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
-          <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
+          <div class="flex justify-between"><span>Cycle thinking level</span><kbd class="text-foreground">Alt+T</kbd></div>
           <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
           <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
           <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>

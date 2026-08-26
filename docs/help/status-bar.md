@@ -14,9 +14,22 @@ The left side shows the current Claude model (click to switch) and operating mod
 
 Click the mode badge or press `Alt+M` to cycle between modes.
 
-## Thinking Indicator
+## Thinking Level
 
-A **thinking** toggle controls whether the agent uses extended thinking (deeper reasoning). Press `Alt+T` or click the button to toggle it on or off. When thinking is active, a purple pulsing dot appears while the agent reasons.
+A **thinking** control sets how much extended thinking (deeper reasoning) the agent uses. Press `Alt+T` or click the badge to cycle through the levels:
+
+| Level | Meaning |
+|-------|---------|
+| **Off** | No extended thinking |
+| **Low** | Brief reasoning on hard steps |
+| **Med** | Moderate reasoning budget |
+| **High** | Provider default / maximum reasoning |
+
+When thinking is active, a purple pulsing dot appears while the agent reasons.
+
+## MCP Servers
+
+When the agent has MCP servers configured, an **MCP** badge shows how many are connected (red dot if any connection is down). Click it to see each server's live status and tool count, and to **Reconnect**, **Disconnect**, or re-**Connect** individual servers without restarting the session.
 
 ## Context Window
 

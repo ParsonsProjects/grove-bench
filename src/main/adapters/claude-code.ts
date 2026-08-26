@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ToolCategory } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, ThinkingLevel, ToolCategory } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -485,6 +485,18 @@ export function supportsLargeContext(model: string | null | undefined): boolean 
   return !/haiku/i.test(model);
 }
 
+/**
+ * Thinking level → max thinking tokens for the Claude SDK.
+ * 0 disables thinking; null clears the limit (provider default/maximum).
+ * The low/medium budgets mirror Claude Code's own "think" / "megathink" tiers.
+ */
+export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
+  off: 0,
+  low: 4_000,
+  medium: 10_000,
+  high: null,
+};
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -497,6 +509,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     resume: true,
     modelSwitching: true,
     thinking: true,
+    mcpControl: true,
     plugins: true,
     imageAttachments: true,
     structuredOutput: true,
@@ -791,8 +804,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         q.setPermissionMode(mode);
       },
 
-      async setMaxThinkingTokens(tokens: number | null) {
-        await q.setMaxThinkingTokens(tokens);
+      async setThinkingLevel(level: ThinkingLevel) {
+        await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[level]);
+      },
+
+      async listMcpServers(): Promise<McpServerInfo[]> {
+        const statuses = await q.mcpServerStatus();
+        return statuses.map((s) => ({
+          name: s.name,
+          status: s.status,
+          ...(s.error ? { error: s.error } : {}),
+          ...(s.scope ? { scope: s.scope } : {}),
+          ...(s.tools ? { toolCount: s.tools.length } : {}),
+        }));
+      },
+
+      async reconnectMcpServer(serverName: string) {
+        await q.reconnectMcpServer(serverName);
+      },
+
+      async setMcpServerEnabled(serverName: string, enabled: boolean) {
+        await q.toggleMcpServer(serverName, enabled);
       },
     };
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -53,6 +53,27 @@ describe('getModels()', () => {
 });
 
 // ─── 1M context beta gating ───
+
+describe('THINKING_LEVEL_TOKENS', () => {
+  it('disables thinking at off', () => {
+    expect(THINKING_LEVEL_TOKENS.off).toBe(0);
+  });
+
+  it('uses the provider default (no limit) at high', () => {
+    expect(THINKING_LEVEL_TOKENS.high).toBeNull();
+  });
+
+  it('scales budgets monotonically between levels', () => {
+    expect(THINKING_LEVEL_TOKENS.low).toBeGreaterThan(0);
+    expect(THINKING_LEVEL_TOKENS.medium).toBeGreaterThan(THINKING_LEVEL_TOKENS.low!);
+  });
+});
+
+describe('capabilities', () => {
+  it('advertises runtime MCP server control', () => {
+    expect(new ClaudeCodeAdapter().capabilities.mcpControl).toBe(true);
+  });
+});
 
 describe('supportsLargeContext()', () => {
   it('opts every non-Haiku model into the 1M-context beta', () => {
