@@ -126,14 +126,12 @@ const api: GroveBenchAPI = {
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
-  // Localhost process cleanup
-  killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
-
-  // Dev server
-  startDevServer: (sessionId: string, command?: string) =>
-    ipcRenderer.invoke(IPC.DEV_SERVER_START, sessionId, command),
-  stopDevServer: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.DEV_SERVER_STOP, sessionId),
+  // MCP server configuration
+  mcpConfigList: (cwd?: string) => ipcRenderer.invoke(IPC.MCP_CONFIG_LIST, cwd),
+  mcpConfigAdd: (opts: import('../shared/types.js').McpAddServerOpts) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_ADD, opts),
+  mcpConfigRemove: (name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_REMOVE, name, scope, cwd),
 
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),

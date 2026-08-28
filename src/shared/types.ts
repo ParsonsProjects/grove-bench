@@ -112,7 +112,6 @@ export type AgentEvent =
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   | { type: 'user_message'; text: string; uuid?: string }
-  | { type: 'devserver_detected'; port: number; url: string }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number }
@@ -221,11 +220,12 @@ export interface PrInfo {
 
 /** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
  *  to its own mechanism (token budgets, effort params, on/off, ...).
- *  'high' means the provider's default/maximum reasoning behavior. */
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+ *  'high' means the provider's default/maximum reasoning behavior.
+ *  'adaptive' lets the model decide when and how much to think. */
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
 
 /** Cycle order for the status-bar control and Alt+T shortcut. */
-export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
+export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'adaptive'];
 
 // ─── MCP Servers ───
 
@@ -239,6 +239,36 @@ export interface McpServerInfo {
   scope?: string;
   /** Number of tools the server exposes, when connected. */
   toolCount?: number;
+}
+
+/** An MCP server from the agent CLI's configuration (settings page view).
+ *  Unlike McpServerInfo this is config-level, not tied to a running session. */
+export interface McpConfiguredServer {
+  name: string;
+  /** Command line (stdio) or URL (http/sse) the server is configured with. */
+  target: string;
+  /** Transport when the CLI reports one (e.g. HTTP, SSE). */
+  transport?: string;
+  status: McpServerInfo['status'];
+}
+
+export type McpConfigScope = 'local' | 'user' | 'project';
+
+/** Options for registering a new MCP server in the agent CLI's config. */
+export interface McpAddServerOpts {
+  name: string;
+  transport: 'stdio' | 'http' | 'sse';
+  /** Command (stdio) or URL (http/sse). */
+  commandOrUrl: string;
+  /** Extra command arguments (stdio only). */
+  args?: string[];
+  /** Environment variables (stdio only). */
+  env?: Record<string, string>;
+  /** Request headers, e.g. "Authorization: Bearer ..." (http/sse only). */
+  headers?: string[];
+  scope: McpConfigScope;
+  /** Repo directory the scope is resolved against (local/project scopes). */
+  cwd?: string;
 }
 
 // ─── Image Attachment ───
@@ -277,22 +307,6 @@ export interface PluginListResult {
   installed: InstalledPlugin[];
   available: AvailablePlugin[];
 }
-
-// ─── Dev Server ───
-
-export interface DevServerSuccess {
-  port: number;
-  url: string;
-}
-
-export interface DevServerFailure {
-  reason: 'exited' | 'error' | 'timeout';
-  exitCode: number | null;
-  lastOutput: string;
-  errorMessage?: string;
-}
-
-export type DevServerResult = DevServerSuccess | DevServerFailure;
 
 /** Sidebar session ordering: key + direction (persisted via app-state). */
 export interface SessionSortState {
@@ -393,12 +407,10 @@ export interface GroveBenchAPI {
   // External links
   openExternal(url: string): Promise<void>;
 
-  // Localhost process cleanup
-  killPort(port: number): Promise<void>;
-
-  // Dev server
-  startDevServer(sessionId: string, command?: string): Promise<DevServerResult>;
-  stopDevServer(sessionId: string): Promise<void>;
+  // MCP server configuration (agent CLI config, not per-session)
+  mcpConfigList(cwd?: string): Promise<McpConfiguredServer[]>;
+  mcpConfigAdd(opts: McpAddServerOpts): Promise<void>;
+  mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
 
   // Plugins
   pluginList(): Promise<PluginListResult>;
@@ -493,10 +505,6 @@ export interface GroveBenchSettings {
   cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
-
-  // Dev Server
-  /** Default dev command (e.g. 'npm run dev'). Auto-detected from package.json if blank. */
-  devCommand: string;
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
@@ -608,7 +616,6 @@ export const IPC = {
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',
   OPEN_EXTERNAL: 'shell:openExternal',
-  KILL_PORT: 'process:killPort',
   FILE_REVERT: 'file:revert',
   FILE_DIFF: 'file:diff',
   FILE_CONTENT_DATA_URL: 'file:contentDataUrl',
@@ -622,6 +629,9 @@ export const IPC = {
   AGENT_MCP_LIST: 'agent:mcpList',
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
+  MCP_CONFIG_LIST: 'mcpConfig:list',
+  MCP_CONFIG_ADD: 'mcpConfig:add',
+  MCP_CONFIG_REMOVE: 'mcpConfig:remove',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',
@@ -631,8 +641,6 @@ export const IPC = {
   WIN_MAXIMIZE: 'win:maximize',
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
-  DEV_SERVER_START: 'devServer:start',
-  DEV_SERVER_STOP: 'devServer:stop',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
   APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',

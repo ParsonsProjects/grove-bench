@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, McpServerInfo, ThinkingLevel, ToolCategory } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, ThinkingLevel, ToolCategory } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -129,8 +129,6 @@ export function isPathInside(parent: string, child: string): boolean {
 interface MessageContext {
   /** Maps toolUseId → toolName for matching tool_results back to their tool. */
   toolUseMap: Map<string, string>;
-  /** Ports where dev servers were detected (written by the orchestrator, not here). */
-  detectedPorts: Set<number>;
 }
 
 /**
@@ -486,8 +484,10 @@ export function supportsLargeContext(model: string | null | undefined): boolean 
 }
 
 /**
- * Thinking level → max thinking tokens for the Claude SDK.
- * 0 disables thinking; null clears the limit (provider default/maximum).
+ * Thinking level → max thinking tokens for the Claude SDK's runtime control
+ * (`setMaxThinkingTokens`). 0 disables thinking; null clears the limit
+ * (provider default/maximum — which on adaptive-capable models means the
+ * model decides when and how much to think, so 'adaptive' also maps to null).
  * The low/medium budgets mirror Claude Code's own "think" / "megathink" tiers.
  */
 export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
@@ -495,7 +495,106 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
   low: 4_000,
   medium: 10_000,
   high: null,
+  adaptive: null,
 };
+
+/**
+ * Thinking level → the SDK's query-start `thinking` config, which (unlike the
+ * deprecated runtime token control) can express adaptive thinking explicitly.
+ * Returns null for 'high' (and unset) so the provider default applies.
+ */
+export function thinkingConfigFor(
+  level: ThinkingLevel | null | undefined,
+): { type: 'adaptive' } | { type: 'disabled' } | { type: 'enabled'; budgetTokens: number } | null {
+  if (!level || level === 'high') return null;
+  if (level === 'adaptive') return { type: 'adaptive' };
+  if (level === 'off') return { type: 'disabled' };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
+}
+
+// ─── MCP config CLI helpers ───
+
+/** Names the CLI accepts and that are safe to pass through a shell. */
+export function validateMcpName(name: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+    throw new Error('Server name may only contain letters, digits, dots, dashes, and underscores');
+  }
+}
+
+/**
+ * Quote a single argument for execFile with `shell: true` (cmd.exe on
+ * Windows joins args with spaces and does NOT quote them). Values that could
+ * defeat double-quoting (`"`, `%`, control chars) are rejected outright.
+ */
+export function quoteArg(arg: string): string {
+  if (/["%\r\n\0]/.test(arg)) {
+    throw new Error(`Unsupported characters in argument: ${arg}`);
+  }
+  return /^[A-Za-z0-9._\/:@=+,-]+$/.test(arg) ? arg : `"${arg}"`;
+}
+
+/**
+ * Parse `claude mcp list` output. Lines look like:
+ *   `name: https://example.com/mcp (HTTP) - ✔ Connected`
+ *   `my-server: npx my-mcp-server - ! Needs authentication`
+ * Names may themselves contain `: ` (e.g. `plugin:figma:figma`), so the
+ * name/target boundary is the LAST `: ` on the left of the status separator.
+ */
+export function parseMcpListOutput(stdout: string): McpConfiguredServer[] {
+  const servers: McpConfiguredServer[] = [];
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const statusSep = line.lastIndexOf(' - ');
+    if (statusSep < 0) continue; // banner/blank lines
+    const left = line.slice(0, statusSep);
+    const statusText = line.slice(statusSep + 3).toLowerCase();
+
+    const nameSep = left.lastIndexOf(': ');
+    if (nameSep < 0) continue;
+    const name = left.slice(0, nameSep);
+    let target = left.slice(nameSep + 2);
+
+    let transport: string | undefined;
+    const transportMatch = target.match(/\s+\(([A-Za-z]+)\)$/);
+    if (transportMatch) {
+      transport = transportMatch[1];
+      target = target.slice(0, -transportMatch[0].length);
+    }
+
+    const status: McpConfiguredServer['status'] =
+      statusText.includes('connected') && !statusText.includes('not connected') ? 'connected'
+        : statusText.includes('auth') ? 'needs-auth'
+        : statusText.includes('pending') ? 'pending'
+        : statusText.includes('disabled') ? 'disabled'
+        : 'failed';
+
+    servers.push({ name, target, ...(transport ? { transport } : {}), status });
+  }
+  return servers;
+}
+
+/** Build the `claude mcp add ...` argument list for the given options. */
+export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
+  validateMcpName(opts.name);
+  const args = ['mcp', 'add', '-s', opts.scope, '-t', opts.transport];
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name: ${key}`);
+    }
+    args.push('-e', quoteArg(`${key}=${value}`));
+  }
+  for (const header of opts.headers ?? []) {
+    args.push('-H', quoteArg(header));
+  }
+  args.push(opts.name);
+  if (opts.transport === 'stdio') {
+    // `--` stops the CLI from parsing the command's own flags
+    args.push('--', quoteArg(opts.commandOrUrl), ...(opts.args ?? []).map(quoteArg));
+  } else {
+    args.push(quoteArg(opts.commandOrUrl));
+  }
+  return args;
+}
 
 // ─── Claude Code Adapter ───
 
@@ -687,6 +786,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: config.appendSystemPrompt }
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
+    const thinking = thinkingConfigFor(config.thinkingLevel);
+
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
@@ -699,6 +800,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.model ? { model: config.model } : {}),
         ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
+        ...(thinking ? { thinking } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
@@ -719,7 +821,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Message context for the transform function
     const ctx: MessageContext = {
       toolUseMap: new Map(),
-      detectedPorts: new Set(),
     };
 
     // Create the async event generator
@@ -829,6 +930,37 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     return handle;
+  }
+
+  // ─── MCP server configuration (delegates to `claude mcp` CLI) ───
+
+  async listConfiguredMcpServers(cwd?: string): Promise<McpConfiguredServer[]> {
+    // `claude mcp list` health-checks each server, so this can take seconds.
+    const { stdout } = await execFileAsync('claude', ['mcp', 'list'], {
+      shell: true,
+      ...(cwd ? { cwd } : {}),
+      timeout: 60_000,
+    });
+    return parseMcpListOutput(stdout);
+  }
+
+  async addConfiguredMcpServer(opts: McpAddServerOpts): Promise<void> {
+    const args = buildMcpAddArgs(opts);
+    await execFileAsync('claude', args, {
+      shell: true,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      timeout: 30_000,
+    });
+  }
+
+  async removeConfiguredMcpServer(name: string, scope?: McpConfigScope, cwd?: string): Promise<void> {
+    validateMcpName(name);
+    const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
+    await execFileAsync('claude', args, {
+      shell: true,
+      ...(cwd ? { cwd } : {}),
+      timeout: 30_000,
+    });
   }
 
   // ─── Plugin management (delegates to `claude` CLI) ───

@@ -37,15 +37,6 @@ vi.mock('./worktree-manager.js', () => ({
     getModel: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock('./port-killer.js', () => ({
-  killProcessOnPort: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('./dev-server.js', () => ({
-  DevServer: vi.fn(),
-}));
-vi.mock('./dev-command-detector.js', () => ({
-  detectDevCommand: vi.fn().mockResolvedValue(null),
-}));
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultPermissionMode: 'default',

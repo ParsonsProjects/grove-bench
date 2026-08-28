@@ -12,7 +12,6 @@ import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, g
 import type { FileDiffResult, ImageDiffContent } from '../shared/types.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
-import { killProcessOnPort } from './port-killer.js';
 import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
@@ -520,23 +519,6 @@ export function registerHandlers() {
     throw new Error('Session not found');
   });
 
-  ipcMain.handle(IPC.KILL_PORT, async (_event, port: number) => {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error('Invalid port number');
-    }
-    return killProcessOnPort(port);
-  });
-
-  // ─── Dev Server ───
-
-  ipcMain.handle(IPC.DEV_SERVER_START, async (_event, sessionId: string, command?: string) => {
-    return sessionManager.startDevServer(sessionId, command || undefined);
-  });
-
-  ipcMain.handle(IPC.DEV_SERVER_STOP, async (_event, sessionId: string) => {
-    return sessionManager.stopDevServer(sessionId);
-  });
-
   // ─── File revert & diff (for changes review panel) ───
 
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean) => {
@@ -700,6 +682,31 @@ export function registerHandlers() {
   function resolveAdapter(adapterType?: string) {
     return adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
   }
+
+  // ─── MCP server configuration ───
+
+  ipcMain.handle(IPC.MCP_CONFIG_LIST, async (_event, cwd?: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.listConfiguredMcpServers) return [];
+    try {
+      return await adapter.listConfiguredMcpServers(cwd);
+    } catch (e: any) {
+      logger.warn('Failed to list configured MCP servers:', e.message);
+      throw e;
+    }
+  });
+
+  ipcMain.handle(IPC.MCP_CONFIG_ADD, async (_event, opts: import('../shared/types.js').McpAddServerOpts, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.addConfiguredMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP configuration`);
+    await adapter.addConfiguredMcpServer(opts);
+  });
+
+  ipcMain.handle(IPC.MCP_CONFIG_REMOVE, async (_event, name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.removeConfiguredMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP configuration`);
+    await adapter.removeConfiguredMcpServer(name, scope, cwd);
+  });
 
   ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
     const adapter = resolveAdapter(adapterType);

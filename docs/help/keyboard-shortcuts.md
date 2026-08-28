@@ -21,7 +21,7 @@
 | Shortcut | Action |
 |----------|--------|
 | `Alt+M` | Cycle agent mode (Code / Plan / Edit) |
-| `Alt+T` | Cycle thinking level (Off / Low / Med / High) |
+| `Alt+T` | Cycle thinking level (Off / Low / Med / High / Auto) |
 
 ## General
 

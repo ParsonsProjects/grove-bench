@@ -14,6 +14,7 @@
     IMAGE_MIME_TYPES,
     TEXT_EXTENSIONS,
   } from '$lib/file-attachments.js';
+  import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -134,12 +135,7 @@
       return;
     }
 
-    const atPattern = /@([\w.\/\-]+)/g;
-    const refs: string[] = [];
-    let match;
-    while ((match = atPattern.exec(text)) !== null) {
-      refs.push(match[1]);
-    }
+    const refs = extractAtRefs(text);
 
     // Separate text files and image attachments
     const textFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'text' } => f.type === 'text');
@@ -162,33 +158,18 @@
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
       : text;
 
-    function send(prefix: string) {
+    function send(outgoing: string) {
       messageStore.addUserMessage(sessionId, displayText);
-      window.groveBench.sendMessage(sessionId, prefix + text, images.length > 0 ? images : undefined);
+      window.groveBench.sendMessage(sessionId, outgoing, images.length > 0 ? images : undefined);
       store.updateLastActive(sessionId);
     }
 
     if (refs.length > 0) {
-      Promise.all(
-        refs.map(async (ref) => {
-          try {
-            const content = await window.groveBench.readFile(sessionId, ref);
-            const isDir = ref.endsWith('/');
-            const tag = isDir ? 'folder' : 'file';
-            return `<${tag} path="${ref}">\n${content}\n</${tag}>`;
-          } catch {
-            const tag = ref.endsWith('/') ? 'folder' : 'file';
-            return `<${tag} path="${ref}">\n(could not read)\n</${tag}>`;
-          }
-        })
-      ).then((refTags) => {
-        const allTags = [...droppedTags, ...refTags];
-        const prefix = allTags.length > 0 ? allTags.join('\n') + '\n\n' : '';
-        send(prefix);
+      buildRefTags(refs, (ref) => window.groveBench.readFile(sessionId, ref)).then((refTags) => {
+        send(buildOutgoingMessage([...droppedTags, ...refTags], text));
       });
     } else {
-      const prefix = droppedTags.length > 0 ? droppedTags.join('\n') + '\n\n' : '';
-      send(prefix);
+      send(buildOutgoingMessage(droppedTags, text));
     }
 
     value = '';

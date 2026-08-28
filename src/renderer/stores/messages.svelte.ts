@@ -3,7 +3,6 @@ import { THINKING_LEVELS } from '../../shared/types.js';
 import { settingsStore } from './settings.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
-import { devServerStore } from './devServer.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 
@@ -270,7 +269,7 @@ class MessageStore {
     this.paginationBySession[sessionId] = { ...p, loading: true };
     try {
       const skipDuringReplay = new Set([
-        'partial_text', 'activity', 'tool_progress', 'usage', 'devserver_detected',
+        'partial_text', 'activity', 'tool_progress', 'usage',
       ]);
       const page = await window.groveBench.getEventHistoryPage(sessionId, pageSize, p.loadedFromIndex);
 
@@ -939,10 +938,6 @@ class MessageStore {
         this.onUserMessage(sessionId, event);
         break;
 
-      case 'devserver_detected':
-        devServerStore.add(sessionId, event.port, event.url);
-        break;
-
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
@@ -968,7 +963,7 @@ class MessageStore {
           this.pushMessage(sessionId, {
             kind: 'system',
             id: nextId(),
-            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString()}` : ''}`,
+            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}`,
           });
         }
         break;
@@ -1613,7 +1608,6 @@ class MessageStore {
     this.sourceIndexBySession.delete(sessionId);
 
     // Extracted stores own their own per-session teardown.
-    devServerStore.destroy(sessionId);
     backgroundTaskStore.destroy(sessionId);
     rateLimitStore.destroy(sessionId);
 

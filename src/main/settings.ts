@@ -17,9 +17,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
 
-  // Dev Server
-  devCommand: '',
-
   // Memory
   memoryAutoSave: true,
 
@@ -54,10 +51,10 @@ function getSettingsPath(): string {
 
 /** Deep-merge saved data with defaults so new fields are always present. */
 function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettings {
-  // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel).
-  // It was never applied to sessions, so there is no preference to migrate —
-  // sessions always ran at the provider default, which 'high' preserves.
-  const { extendedThinking: _legacy, ...rest } = saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean };
+  // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel)
+  // and `devCommand` (the host-managed dev server feature was removed).
+  const { extendedThinking: _legacy, devCommand: _devCommand, ...rest } =
+    saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string };
   return { ...DEFAULT_SETTINGS, ...rest };
 }
 

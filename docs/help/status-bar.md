@@ -24,12 +24,13 @@ A **thinking** control sets how much extended thinking (deeper reasoning) the ag
 | **Low** | Brief reasoning on hard steps |
 | **Med** | Moderate reasoning budget |
 | **High** | Provider default / maximum reasoning |
+| **Auto** | Adaptive — the model decides when and how much to think |
 
 When thinking is active, a purple pulsing dot appears while the agent reasons.
 
 ## MCP Servers
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are connected (red dot if any connection is down). Click it to see each server's live status and tool count, and to **Reconnect**, **Disconnect**, or re-**Connect** individual servers without restarting the session.
+When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. Click it to see each server's live status and tool count, and to **Reconnect**, **Disconnect**, or re-**Connect** individual servers without restarting the session. New servers are added from Settings → MCP.
 
 Each server in the popover shows a status dot:
 
@@ -62,16 +63,6 @@ If the agent hits API rate limits, an indicator appears:
 |-------|---------|
 | Yellow pulsing | Approaching rate limit |
 | Red pulsing | Rate limited — requests are being throttled |
-
-## Dev Servers
-
-If a dev server is detected (e.g. `npm start`, `vite`), its status appears:
-
-| Color | Meaning |
-|-------|---------|
-| Green | Dev server running |
-| Yellow pulsing | Dev server starting |
-| Red | Dev server error |
 
 ## Background Tasks
 

@@ -14,7 +14,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
-  devCommand: '',
   memoryAutoSave: true,
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
