@@ -31,10 +31,7 @@ src/
     settings.ts        # User settings
     prerequisites.ts   # Git/Claude detection & version checks
     logger.ts          # File-based logging
-    dev-server.ts      # Dev server management
-    dev-command-detector.ts
     git-status-parser.ts
-    port-killer.ts
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports
       types.ts         # Adapter interfaces

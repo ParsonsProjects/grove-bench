@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { devServerStore } from '../stores/devServer.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
@@ -113,26 +112,24 @@
     prevRunning = isRunning;
   });
 
-  let devServers = $derived(devServerStore.get(sessionId));
-  let devServerStarting = $state(false);
-  let devServerError = $state<string | null>(null);
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
 
+  /** Reset time as a clock time in the user's locale and timezone. */
   function formatResetTime(epoch: number): string {
-    const now = Date.now() / 1000;
-    const diff = epoch - now;
-    if (diff <= 0) return 'now';
-    if (diff < 60) return `${Math.round(diff)}s`;
-    if (diff < 3600) return `${Math.round(diff / 60)}m`;
-    return `${Math.round(diff / 3600)}h`;
+    const reset = new Date(epoch * 1000);
+    if (reset.getTime() <= Date.now()) return 'now';
+    const time = reset.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    // Resets more than a day out need the date to be unambiguous
+    return reset.getTime() - Date.now() >= 24 * 3600 * 1000
+      ? `${reset.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
+      : time;
   }
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
-  let devServersExpanded = $state(false);
   let shortcutsOpen = $state(false);
   let mcpExpanded = $state(false);
 
@@ -140,7 +137,6 @@
   let modelPickerRef = $state<HTMLDivElement | null>(null);
   let tasksRef = $state<HTMLDivElement | null>(null);
   let bgTasksRef = $state<HTMLDivElement | null>(null);
-  let devServersRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
   let shortcutsRef = $state<HTMLDivElement | null>(null);
   let mcpRef = $state<HTMLDivElement | null>(null);
@@ -151,8 +147,12 @@
   let mcpBusy = $state<Record<string, boolean>>({});
   let mcpError = $state<string | null>(null);
   let mcpKnown = $derived(systemInfo.mcpServers);
-  let mcpAnyDown = $derived(
-    (mcpServers.length > 0 ? mcpServers : mcpKnown).some((s) => s.status === 'failed' || s.status === 'needs-auth'),
+  let mcpStatuses = $derived(mcpServers.length > 0 ? mcpServers : mcpKnown);
+  let mcpDownCount = $derived(mcpStatuses.filter((s) => s.status === 'failed' || s.status === 'needs-auth').length);
+  let mcpConnectedCount = $derived(mcpStatuses.filter((s) => s.status === 'connected').length);
+  /** ok = nothing down, partial = mixed up/down (orange), down = nothing connected (red). */
+  let mcpHealth = $derived<'ok' | 'partial' | 'down'>(
+    mcpDownCount === 0 ? 'ok' : mcpConnectedCount > 0 ? 'partial' : 'down',
   );
 
   async function refreshMcpServers() {
@@ -220,6 +220,7 @@
     low: 'Think: Low',
     medium: 'Think: Med',
     high: 'Think: High',
+    adaptive: 'Think: Auto',
   };
 
   const thinkingColors: Record<ThinkingLevel, string> = {
@@ -227,6 +228,7 @@
     low: 'text-purple-300/70 border-purple-300/30',
     medium: 'text-purple-400/80 border-purple-400/40',
     high: 'text-purple-400 border-purple-400/50',
+    adaptive: 'text-cyan-400 border-cyan-400/50',
   };
 
   function handleKeydown(e: KeyboardEvent) {
@@ -250,9 +252,6 @@
     }
     if (bgTasksExpanded && bgTasksRef && !bgTasksRef.contains(target)) {
       bgTasksExpanded = false;
-    }
-    if (devServersExpanded && devServersRef && !devServersRef.contains(target)) {
-      devServersExpanded = false;
     }
     if (contextExpanded && contextRef && !contextRef.contains(target)) {
       contextExpanded = false;
@@ -388,7 +387,9 @@
       {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
       {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
       {#if rateLimit.resetsAt}
-        <span class="text-muted-foreground">resets {formatResetTime(rateLimit.resetsAt)}</span>
+        <span class="text-muted-foreground" title={new Date(rateLimit.resetsAt * 1000).toLocaleString()}>
+          resets {formatResetTime(rateLimit.resetsAt)}
+        </span>
       {/if}
     </span>
   {/if}
@@ -473,113 +474,20 @@
 
   <span class="w-px h-3.5 bg-border"></span>
 
-  <div class="relative" bind:this={devServersRef}>
-    {#if devServers.length > 0}
-      <button
-        onclick={() => devServersExpanded = !devServersExpanded}
-        class="flex items-center gap-1 {devServers.some(s => s.status === 'error') ? 'text-red-400 hover:text-red-300' : 'text-green-400 hover:text-green-300'} transition-colors"
-        title="Dev servers — click for details"
-      >
-        <span class="w-1.5 h-1.5 {devServers.some(s => s.status === 'error') ? 'bg-red-500' : 'bg-green-500'}"></span>
-        {devServers.length === 1
-          ? `:${devServers[0].port}`
-          : `${devServers.length} servers`}
-      </button>
-    {:else}
-      <button
-        onclick={async () => {
-          if (devServerStarting) return;
-          devServerStarting = true;
-          devServerError = null;
-          try {
-            const result = await window.groveBench.startDevServer(sessionId);
-            if (result && 'reason' in result) {
-              const { reason, exitCode, lastOutput, errorMessage } = result;
-              const lines: string[] = [];
-              if (reason === 'exited') {
-                lines.push(`Dev server exited${exitCode !== null ? ` (code ${exitCode})` : ''} before a URL was detected`);
-              } else if (reason === 'error') {
-                lines.push(`Dev server failed to start: ${errorMessage ?? 'unknown error'}`);
-              } else {
-                lines.push('Dev server timed out — no URL detected');
-              }
-              if (lastOutput) {
-                lines.push(lastOutput.split('\n').slice(-5).join('\n'));
-              }
-              devServerError = lines.join('\n');
-              console.error('Dev server failure:', result);
-            }
-          } catch (e: any) {
-            devServerError = e?.message ?? 'Failed to start dev server';
-            console.error('Failed to start dev server:', e?.message ?? e);
-          } finally {
-            devServerStarting = false;
-            if (devServerError) {
-              setTimeout(() => { devServerError = null; }, 15000);
-            }
-          }
-        }}
-        class="flex items-center gap-1 text-muted-foreground/60 hover:text-green-400 transition-colors"
-        class:opacity-50={devServerStarting}
-        disabled={devServerStarting}
-        title={devServerError ?? (devServerStarting ? 'Starting dev server...' : 'Start dev server')}
-      >
-        <span class="w-1.5 h-1.5 {devServerError ? 'bg-red-500' : devServerStarting ? 'bg-yellow-500 animate-pulse' : 'bg-muted-foreground/40'}"></span>
-        {devServerError ? 'Failed' : devServerStarting ? 'Starting...' : 'Dev'}
-      </button>
-    {/if}
-
-    {#if devServersExpanded && devServers.length > 0}
-      <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-72 z-50">
-        <div class="font-medium text-foreground mb-2">Dev Servers ({devServers.length})</div>
-        <div class="space-y-1.5 max-h-48 overflow-y-auto">
-          {#each devServers as server}
-            <div class="flex items-center gap-2 group">
-              <span class="w-1.5 h-1.5 {server.status === 'error' ? 'bg-red-500' : 'bg-green-500'} shrink-0"></span>
-              <button
-                onclick={() => window.groveBench.openExternal(server.url)}
-                class="text-green-400 hover:text-green-300 hover:underline transition-colors truncate flex-1 text-left"
-                title="Open in browser"
-              >
-                {server.url}
-              </button>
-              <span class="text-muted-foreground/60 shrink-0">:{server.port}</span>
-              <button
-                onclick={() => { window.groveBench.killPort(server.port); devServerStore.remove(sessionId, server.port); }}
-                class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
-                title="Kill server on port {server.port}"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>
-            </div>
-          {/each}
-        </div>
-        <div class="border-t border-border pt-2 mt-2">
-          <button
-            onclick={() => {
-              for (const server of devServers) {
-                window.groveBench.killPort(server.port);
-                devServerStore.remove(sessionId, server.port);
-              }
-              devServersExpanded = false;
-            }}
-            class="w-full text-left px-2 py-1.5 text-destructive hover:bg-destructive/10 transition-colors"
-          >
-            Kill all servers
-          </button>
-        </div>
-      </div>
-    {/if}
-  </div>
-
   {#if mcpKnown.length > 0}
     <div class="relative" bind:this={mcpRef}>
       <button
         onclick={toggleMcpPopover}
-        class="flex items-center gap-1 {mcpAnyDown ? 'text-red-400 hover:text-red-300' : 'text-muted-foreground hover:text-foreground'} transition-colors"
-        title="MCP servers — click to manage connections"
+        class="flex items-center gap-1 transition-colors
+          {mcpHealth === 'down' ? 'text-red-400 hover:text-red-300'
+            : mcpHealth === 'partial' ? 'text-orange-400 hover:text-orange-300'
+            : 'text-muted-foreground hover:text-foreground'}"
+        title="MCP servers — click to manage connections{mcpDownCount > 0 ? ` (${mcpDownCount} down)` : ''}"
       >
-        <span class="w-1.5 h-1.5 {mcpAnyDown ? 'bg-red-500' : 'bg-green-500'}"></span>
+        <span class="w-1.5 h-1.5
+          {mcpHealth === 'down' ? 'bg-red-500'
+            : mcpHealth === 'partial' ? 'bg-orange-400'
+            : 'bg-green-500'}"></span>
         MCP {mcpKnown.length}
       </button>
 

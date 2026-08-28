@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -96,6 +96,9 @@ export interface AdapterConfig {
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;
+  /** Thinking level to start the session at. When unset (or 'high'), the
+   *  provider's own default reasoning behavior applies. */
+  thinkingLevel?: ThinkingLevel | null;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
@@ -184,6 +187,16 @@ export interface AgentAdapter {
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */
   dispose?(): Promise<void>;
+
+  // ─── Optional MCP server configuration (CLI config, not per-session) ───
+
+  /** List MCP servers from the provider's configuration. Only implement if
+   *  capabilities.mcpControl is true. `cwd` scopes local/project servers. */
+  listConfiguredMcpServers?(cwd?: string): Promise<McpConfiguredServer[]>;
+  /** Register a new MCP server in the provider's configuration. */
+  addConfiguredMcpServer?(opts: McpAddServerOpts): Promise<void>;
+  /** Remove an MCP server from the provider's configuration. */
+  removeConfiguredMcpServer?(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
 
   // ─── Optional plugin management ───
 

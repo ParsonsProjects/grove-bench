@@ -3,9 +3,6 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
-import { killProcessOnPort } from './port-killer.js';
-import { DevServer } from './dev-server.js';
-import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
@@ -48,8 +45,6 @@ interface ManagedSession {
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
   eventHistory: AgentEvent[];
-  /** Ports where dev servers were detected — cleaned up on session destroy */
-  detectedPorts: Set<number>;
   /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
   toolUseMap: Map<string, string>;
   /** Last result data for completion callback */
@@ -72,8 +67,8 @@ interface ManagedSession {
   eventLogPath: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName: string | null;
-  /** Host-managed dev server instance. */
-  devServer: DevServer | null;
+  /** Current thinking level — survives stop/restart so query restarts keep it. */
+  thinkingLevel: ThinkingLevel;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
   /** Set while a user-initiated in-place interrupt is settling. The resulting
@@ -249,7 +244,6 @@ class AgentSessionManager {
       model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
       window: win,
       eventHistory: this.loadEventHistory(id),
-      detectedPorts: new Set(),
       toolUseMap: new Map(),
       lastResult: null,
       permissionMode: effectivePermissionMode,
@@ -261,7 +255,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      devServer: null,
+      thinkingLevel: appSettings.defaultThinkingLevel ?? 'high',
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,
@@ -390,6 +384,7 @@ class AgentSessionManager {
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
+      thinkingLevel: session.thinkingLevel,
       resumeSessionId: session.providerSessionId,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
@@ -528,25 +523,6 @@ class AgentSessionManager {
           }
         }
 
-        // Intercept tool_result to track tool names and detect dev server URLs
-        if (event.type === 'tool_result') {
-          // Dev server URL detection (from Bash output)
-          const toolName = session.toolUseMap.get(event.toolUseId);
-          if (toolName === 'Bash' && event.content) {
-            const portMatches = event.content.matchAll(
-              /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
-            );
-            for (const m of portMatches) {
-              const port = parseInt(m[1], 10);
-              if (!session.detectedPorts.has(port)) {
-                session.detectedPorts.add(port);
-                logger.info(`Dev server detected on port ${port} in session ${session.id}`);
-                emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
-              }
-            }
-          }
-        }
-
         // Track tool use IDs for matching tool_results
         if (event.type === 'assistant_tool_use') {
           session.toolUseMap.set(event.toolUseId, event.toolName);
@@ -622,15 +598,10 @@ class AgentSessionManager {
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
-    // Dev servers are preserved so they survive stop/continue cycles.
     if (session.stoppedByUser) {
       session.stoppedByUser = false;
       return;
     }
-
-    // Kill any dev servers that were detected during this session
-    // (only on natural query completion, not user-initiated stop)
-    await this.killDetectedPorts(session);
 
     // Query finished
     session.status = 'stopped';
@@ -844,7 +815,10 @@ class AgentSessionManager {
 
   async setThinkingLevel(id: string, level: ThinkingLevel): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setThinkingLevel) return;
+    if (!session) return;
+    // Record even without a live handle so the next query start picks it up
+    session.thinkingLevel = level;
+    if (!session.queryHandle?.setThinkingLevel) return;
     try {
       await session.queryHandle.setThinkingLevel(level);
     } catch (e) {
@@ -902,56 +876,6 @@ class AgentSessionManager {
     if (session) {
       session.displayName = displayName || null;
     }
-  }
-
-  /** Start a host-managed dev server for the given session. */
-  async startDevServer(sessionId: string, overrideCommand?: string): Promise<import('../shared/types.js').DevServerResult> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
-
-    // Stop existing dev server if any
-    await this.stopDevServer(sessionId);
-
-    // Resolve command via fallback chain: override → settings → auto-detect
-    const command = overrideCommand
-      || settings.getSettings().devCommand
-      || await detectDevCommand(session.worktreePath);
-
-    if (!command) throw new Error('No dev command configured and none detected from package.json');
-
-    const devServer = new DevServer(sessionId, session.worktreePath, command, (info) => {
-      // Emit devserver_detected event through the existing channel
-      session.detectedPorts.add(info.port);
-      const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
-      session.eventHistory.push(event);
-      try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
-      }
-    });
-
-    session.devServer = devServer;
-    return devServer.start();
-  }
-
-  /** Stop the host-managed dev server for the given session. */
-  async stopDevServer(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session?.devServer) return;
-    await session.devServer.stop();
-    session.devServer = null;
-  }
-
-  /** Kill dev servers detected during this session and clear the port set. */
-  private async killDetectedPorts(session: ManagedSession): Promise<void> {
-    if (session.detectedPorts.size === 0) return;
-    const ports = [...session.detectedPorts];
-    session.detectedPorts.clear();
-    logger.info(`Killing ${ports.length} dev server(s) for session ${session.id}: ports ${ports.join(', ')}`);
-    await Promise.all(
-      ports.map((port) => killProcessOnPort(port).catch(() => {}))
-    );
   }
 
   /**
@@ -1098,15 +1022,6 @@ class AgentSessionManager {
         decision: 'deny',
       });
     }
-
-    // Stop host-managed dev server
-    if (session.devServer) {
-      await session.devServer.stop();
-      session.devServer = null;
-    }
-
-    // Kill any dev servers not already cleaned up on query completion
-    await this.killDetectedPorts(session);
 
     // Clean up checkpoint refs
     await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {

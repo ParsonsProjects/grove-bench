@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -59,13 +59,121 @@ describe('THINKING_LEVEL_TOKENS', () => {
     expect(THINKING_LEVEL_TOKENS.off).toBe(0);
   });
 
-  it('uses the provider default (no limit) at high', () => {
+  it('uses the provider default (no limit) at high and adaptive', () => {
     expect(THINKING_LEVEL_TOKENS.high).toBeNull();
+    expect(THINKING_LEVEL_TOKENS.adaptive).toBeNull();
   });
 
   it('scales budgets monotonically between levels', () => {
     expect(THINKING_LEVEL_TOKENS.low).toBeGreaterThan(0);
     expect(THINKING_LEVEL_TOKENS.medium).toBeGreaterThan(THINKING_LEVEL_TOKENS.low!);
+  });
+});
+
+describe('thinkingConfigFor()', () => {
+  it('returns null for high and unset so the provider default applies', () => {
+    expect(thinkingConfigFor('high')).toBeNull();
+    expect(thinkingConfigFor(null)).toBeNull();
+    expect(thinkingConfigFor(undefined)).toBeNull();
+  });
+
+  it('maps adaptive to the adaptive thinking config', () => {
+    expect(thinkingConfigFor('adaptive')).toEqual({ type: 'adaptive' });
+  });
+
+  it('maps off to disabled', () => {
+    expect(thinkingConfigFor('off')).toEqual({ type: 'disabled' });
+  });
+
+  it('maps low/medium to fixed budgets', () => {
+    expect(thinkingConfigFor('low')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low });
+    expect(thinkingConfigFor('medium')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.medium });
+  });
+});
+
+describe('parseMcpListOutput()', () => {
+  it('parses connected http servers with transport annotations', () => {
+    const out = 'Checking MCP server health…\n\nsentry: https://mcp.sentry.dev/mcp (HTTP) - ✔ Connected\n';
+    expect(parseMcpListOutput(out)).toEqual([
+      { name: 'sentry', target: 'https://mcp.sentry.dev/mcp', transport: 'HTTP', status: 'connected' },
+    ]);
+  });
+
+  it('handles names containing colons', () => {
+    const out = 'plugin:figma:figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected\n';
+    expect(parseMcpListOutput(out)).toEqual([
+      { name: 'plugin:figma:figma', target: 'https://mcp.figma.com/mcp', transport: 'HTTP', status: 'connected' },
+    ]);
+  });
+
+  it('maps auth, pending, and failure statuses', () => {
+    const out = [
+      'a: https://a.example/mcp - ! Needs authentication',
+      'b: npx b-server - ⏸ Pending approval',
+      'c: npx c-server - ✘ Failed to connect',
+    ].join('\n');
+    expect(parseMcpListOutput(out).map((s) => s.status)).toEqual(['needs-auth', 'pending', 'failed']);
+  });
+
+  it('parses stdio servers without a transport annotation', () => {
+    const out = 'my-server: npx -y my-mcp-server - ✔ Connected\n';
+    expect(parseMcpListOutput(out)).toEqual([
+      { name: 'my-server', target: 'npx -y my-mcp-server', status: 'connected' },
+    ]);
+  });
+
+  it('skips banner and blank lines', () => {
+    expect(parseMcpListOutput('Checking MCP server health…\n\n')).toEqual([]);
+  });
+});
+
+describe('buildMcpAddArgs()', () => {
+  it('builds an http add command', () => {
+    expect(buildMcpAddArgs({ name: 'sentry', transport: 'http', commandOrUrl: 'https://mcp.sentry.dev/mcp', scope: 'user' }))
+      .toEqual(['mcp', 'add', '-s', 'user', '-t', 'http', 'sentry', 'https://mcp.sentry.dev/mcp']);
+  });
+
+  it('builds a stdio add command with env, args, and the -- separator', () => {
+    expect(buildMcpAddArgs({
+      name: 'my-server',
+      transport: 'stdio',
+      commandOrUrl: 'npx',
+      args: ['-y', 'my-mcp-server'],
+      env: { API_KEY: 'xxx' },
+      scope: 'local',
+    })).toEqual(['mcp', 'add', '-s', 'local', '-t', 'stdio', '-e', 'API_KEY=xxx', 'my-server', '--', 'npx', '-y', 'my-mcp-server']);
+  });
+
+  it('quotes header values containing spaces', () => {
+    const args = buildMcpAddArgs({
+      name: 's',
+      transport: 'http',
+      commandOrUrl: 'https://x.example/mcp',
+      headers: ['Authorization: Bearer abc'],
+      scope: 'user',
+    });
+    expect(args).toContain('"Authorization: Bearer abc"');
+  });
+
+  it('rejects unsafe server names and env keys', () => {
+    expect(() => buildMcpAddArgs({ name: 'bad name', transport: 'http', commandOrUrl: 'https://x', scope: 'user' })).toThrow();
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'stdio', commandOrUrl: 'npx', env: { 'BAD KEY': 'v' }, scope: 'user' })).toThrow();
+  });
+});
+
+describe('quoteArg()', () => {
+  it('passes simple args through unquoted', () => {
+    expect(quoteArg('npx')).toBe('npx');
+    expect(quoteArg('https://x.example/mcp')).toBe('https://x.example/mcp');
+  });
+
+  it('wraps args with spaces in double quotes', () => {
+    expect(quoteArg('has space')).toBe('"has space"');
+  });
+
+  it('rejects args that could defeat quoting', () => {
+    expect(() => quoteArg('a"b')).toThrow();
+    expect(() => quoteArg('%PATH%')).toThrow();
   });
 });
 
@@ -99,7 +207,7 @@ describe('supportsLargeContext()', () => {
 // ─── transformMessage ───
 
 function makeCtx() {
-  return { toolUseMap: new Map<string, string>(), detectedPorts: new Set<number>() };
+  return { toolUseMap: new Map<string, string>() };
 }
 
 describe('transformMessage()', () => {

@@ -84,7 +84,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Project scripts (user-defined scripts bound to keyboard shortcuts)
 
 ### Dev & Preview
-- [x] Localhost run (start/preview dev server from worktree)
+- ~~Localhost run (start/preview dev server from worktree)~~ — implemented, then removed; run dev servers from the session terminal instead
 
 ## Already at Parity or Better
 
@@ -105,7 +105,6 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - **Orphan Worktree Detection & Cleanup** — auto-detect on startup + 15-min background sweeps
 - **Auto-Copy `.env` Files** — automatically copies `.env`, `.npmrc`, etc. to new worktrees
 - **Auto-Install Dependencies** — optional npm install with shared cache in new worktrees
-- **Dev Server Management** — auto-detect dev commands, start/stop, detect localhost ports, kill port conflicts
 - **Tool Visibility Control** — allow/deny rules with glob patterns (more granular than t3's sandbox modes)
 - **Power Monitoring** — flush state on suspend, health-check on resume
 - **Changes Review Panel** — dedicated panel with file staging/unstaging, revert individual files
