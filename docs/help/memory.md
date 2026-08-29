@@ -29,6 +29,8 @@ Before a compaction pass rewrites anything, the previous contents are saved as a
 
 You can also compact on demand with the **Compact** button in the Memory panel, and roll back via **Backups** — restoring a snapshot replaces the current repo, conventions and architecture notes, and takes a snapshot of the current state first so the restore itself can be undone.
 
+**Prune sessions** in the Memory panel lists session notes older than a chosen cutoff (7–180 days) so you can review exactly what will be removed before deleting it. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, session-note deletion is permanent — session notes are not included in backups.
+
 Auto-compaction can be disabled with the `memoryAutoCompact` setting.
 
 ## Managing Memory

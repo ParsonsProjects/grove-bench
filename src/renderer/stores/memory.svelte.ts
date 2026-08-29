@@ -26,6 +26,20 @@ class MemoryStore {
     return Object.keys(this.filesByFolder).sort();
   }
 
+  /**
+   * Session notes last updated before the cutoff, oldest first.
+   * Notes without a parseable updatedAt get ts=0 and are listed first as "unknown date" —
+   * they are surfaced for the user to decide on, never silently excluded.
+   */
+  sessionNotesOlderThan(days: number): Array<MemoryEntry & { ts: number }> {
+    const cutoff = Date.now() - days * 86_400_000;
+    return this.files
+      .filter(f => f.folder.startsWith('sessions'))
+      .map(f => ({ ...f, ts: Date.parse(f.updatedAt) || 0 }))
+      .filter(f => f.ts < cutoff)
+      .sort((a, b) => a.ts - b.ts);
+  }
+
   async loadForRepo(repoPath: string) {
     this.activeRepo = repoPath;
     this.loading = true;
@@ -131,6 +145,24 @@ class MemoryStore {
         this.selectedFile = null;
       }
       this.files = await window.groveBench.memoryList(this.activeRepo);
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    }
+  }
+
+  async deleteFiles(relativePaths: string[]) {
+    if (!this.activeRepo || relativePaths.length === 0) return;
+    this.error = null;
+    this.compactMessage = null;
+    try {
+      for (const p of relativePaths) {
+        await window.groveBench.memoryDelete(this.activeRepo, p);
+      }
+      if (this.selectedFile && relativePaths.includes(this.selectedFile.path)) {
+        this.selectedFile = null;
+      }
+      this.files = await window.groveBench.memoryList(this.activeRepo);
+      this.compactMessage = `Deleted ${relativePaths.length} session ${relativePaths.length === 1 ? 'note' : 'notes'}`;
     } catch (e: any) {
       this.error = e.message || String(e);
     }

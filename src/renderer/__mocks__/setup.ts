@@ -66,6 +66,13 @@ const mockGroveBench = {
   removeBookmark: vi.fn(() => Promise.resolve()),
   updateBookmark: vi.fn(() => Promise.resolve()),
   findEventIndexByUuid: vi.fn(() => Promise.resolve(null as number | null)),
+  memoryList: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryEntry[])),
+  memoryRead: vi.fn(() => Promise.resolve(null as string | null)),
+  memoryWrite: vi.fn(() => Promise.resolve()),
+  memoryDelete: vi.fn(() => Promise.resolve(true)),
+  memoryCompact: vi.fn(() => Promise.resolve({ compacted: false, filesChanged: [] } as import('../../shared/types.js').MemoryCompactionStatus)),
+  memoryListBackups: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryBackupInfo[])),
+  memoryRestoreBackup: vi.fn(() => Promise.resolve({ restored: false, filesChanged: [] } as import('../../shared/types.js').MemoryRestoreStatus)),
 };
 // Attach the IPC bridge onto the existing (jsdom) window rather than replacing
 // it — replacing window wipes addEventListener/dispatchEvent and breaks any

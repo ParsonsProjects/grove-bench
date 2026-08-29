@@ -21,6 +21,12 @@
   let confirmDeletePath = $state<string | null>(null);
   let showBackups = $state(false);
   let confirmRestoreId = $state<string | null>(null);
+  let showPrune = $state(false);
+  let pruneDays = $state('30');
+  let pruneSelection = $state<Record<string, boolean>>({});
+  let confirmPrune = $state(false);
+
+  const pruneDayOptions = ['7', '30', '90', '180'];
 
   const folders = ['repo', 'conventions', 'architecture', 'sessions'];
 
@@ -103,6 +109,25 @@
     if (!iso) return 'unknown';
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? 'unknown' : d.toLocaleString();
+  }
+
+  const prunableNotes = $derived(memoryStore.sessionNotesOlderThan(Number(pruneDays)));
+  const pruneSelectedPaths = $derived(prunableNotes.map(n => n.relativePath).filter(p => pruneSelection[p]));
+
+  // Re-select all matches whenever the dialog opens or the cutoff changes
+  $effect(() => {
+    if (showPrune) {
+      const sel: Record<string, boolean> = {};
+      for (const note of prunableNotes) sel[note.relativePath] = true;
+      pruneSelection = sel;
+    }
+  });
+
+  async function deletePruned() {
+    const paths = pruneSelectedPaths;
+    confirmPrune = false;
+    showPrune = false;
+    await memoryStore.deleteFiles(paths);
   }
 </script>
 
@@ -226,6 +251,7 @@
           {memoryStore.compacting ? 'Compacting...' : 'Compact'}
         </Button>
         <Button size="sm" variant="ghost" onclick={openBackups}>Backups</Button>
+        <Button size="sm" variant="ghost" onclick={() => showPrune = true}>Prune sessions</Button>
       </div>
       <Button variant="secondary" onclick={onclose}>Close</Button>
     </Dialog.Footer>
@@ -303,6 +329,87 @@
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => showBackups = false}>Close</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Prune sessions dialog -->
+{#if showPrune}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) showPrune = false; }}>
+    <Dialog.Content class="max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Prune Session Notes</Dialog.Title>
+        <Dialog.Description>
+          Review and delete old session notes. Deletion is permanent — session notes are not included in compaction backups.
+        </Dialog.Description>
+      </Dialog.Header>
+
+      <div class="flex items-center gap-2">
+        <Label class="shrink-0">Older than</Label>
+        <Select.Root type="single" value={pruneDays} onValueChange={(v) => { if (v) pruneDays = v; }}>
+          <Select.Trigger class="w-28">
+            {pruneDays} days
+          </Select.Trigger>
+          <Select.Content>
+            {#each pruneDayOptions as d}
+              <Select.Item value={d} label="{d} days" />
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+
+      {#if prunableNotes.length === 0}
+        <p class="text-sm text-muted-foreground/50 py-2">No session notes older than {pruneDays} days.</p>
+      {:else}
+        <div class="flex flex-col gap-1 max-h-64 overflow-auto">
+          {#each prunableNotes as note (note.relativePath)}
+            <label class="flex items-center gap-2 px-2 py-1.5 bg-card border border-border cursor-pointer">
+              <input
+                type="checkbox"
+                checked={pruneSelection[note.relativePath] ?? false}
+                onchange={(e) => pruneSelection[note.relativePath] = e.currentTarget.checked}
+              />
+              <div class="min-w-0 flex-1">
+                <div class="text-sm text-foreground truncate" title={note.relativePath}>
+                  {note.title || note.relativePath.split('/').pop()?.replace('.md', '')}
+                </div>
+                <div class="text-xs text-muted-foreground">
+                  {note.ts > 0 ? formatBackupDate(note.updatedAt) : 'unknown date'}
+                </div>
+              </div>
+            </label>
+          {/each}
+        </div>
+      {/if}
+
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => showPrune = false}>Cancel</Button>
+        <Button
+          variant="destructive"
+          disabled={pruneSelectedPaths.length === 0}
+          onclick={() => confirmPrune = true}
+        >
+          Delete {pruneSelectedPaths.length} {pruneSelectedPaths.length === 1 ? 'note' : 'notes'}
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Prune confirmation -->
+{#if confirmPrune}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmPrune = false; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Delete Session Notes?</Dialog.Title>
+        <Dialog.Description>
+          Permanently delete {pruneSelectedPaths.length} session {pruneSelectedPaths.length === 1 ? 'note' : 'notes'}? This cannot be undone.
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmPrune = false}>Cancel</Button>
+        <Button variant="destructive" onclick={deletePruned}>Delete</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
