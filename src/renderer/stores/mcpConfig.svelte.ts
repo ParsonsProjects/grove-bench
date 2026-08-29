@@ -1,5 +1,13 @@
 import type { McpConfiguredServer, McpAddServerOpts, McpConfigScope } from '../../shared/types.js';
 
+const STALE_BRIDGE_ERROR =
+  'MCP configuration is unavailable in this running build — restart Grove Bench to enable it.';
+
+/** The preload bridge is frozen at window load, so a hot-reloaded renderer can be newer than it. */
+function bridgeHas(fn: 'mcpConfigList' | 'mcpConfigAdd' | 'mcpConfigRemove'): boolean {
+  return typeof window.groveBench?.[fn] === 'function';
+}
+
 /** Configured MCP servers from the agent CLI config (settings panel view). */
 class McpConfigStore {
   servers = $state<McpConfiguredServer[]>([]);
@@ -11,6 +19,10 @@ class McpConfigStore {
   actionInProgress = $state<string | null>(null);
 
   async refresh(cwd?: string) {
+    if (!bridgeHas('mcpConfigList')) {
+      this.error = STALE_BRIDGE_ERROR;
+      return;
+    }
     this.loading = true;
     this.error = null;
     try {
@@ -24,6 +36,10 @@ class McpConfigStore {
   }
 
   async add(opts: McpAddServerOpts) {
+    if (!bridgeHas('mcpConfigAdd')) {
+      this.error = STALE_BRIDGE_ERROR;
+      return false;
+    }
     this.actionInProgress = opts.name;
     this.error = null;
     try {
@@ -39,6 +55,10 @@ class McpConfigStore {
   }
 
   async remove(name: string, scope?: McpConfigScope, cwd?: string) {
+    if (!bridgeHas('mcpConfigRemove')) {
+      this.error = STALE_BRIDGE_ERROR;
+      return;
+    }
     this.actionInProgress = name;
     this.error = null;
     try {
