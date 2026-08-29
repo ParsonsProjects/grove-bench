@@ -5,6 +5,8 @@
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import type { PrAlert } from '../stores/pr.svelte.js';
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import CreatePrDialog from './CreatePrDialog.svelte';
@@ -41,6 +43,11 @@
   let prAuto = $derived(prStore.getAuto(sessionId));
   let prPopoverOpen = $state(false);
   let addressingReviews = $state(false);
+
+  // Alerts merge into their popover sections rather than rendering as separate rows
+  let ciAlert = $derived(prAlerts.find((a) => a.kind === 'ci_failed') as Extract<PrAlert, { kind: 'ci_failed' }> | undefined);
+  let commentsAlert = $derived(prAlerts.find((a) => a.kind === 'new_comments') as Extract<PrAlert, { kind: 'new_comments' }> | undefined);
+  let humanAlert = $derived(prAlerts.find((a) => a.kind === 'needs_human') as Extract<PrAlert, { kind: 'needs_human' }> | undefined);
 
   /** Worst-condition dot color for the collapsed PR badge. */
   let prHealthDot = $derived.by(() => {
@@ -692,9 +699,9 @@
 
       {#if prPopoverOpen}
         {@const c = prInfo.checks}
-        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-80 z-50">
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
           <!-- Header -->
-          <div class="flex items-center justify-between gap-2 mb-1">
+          <div class="flex items-center justify-between gap-2">
             <span class="font-medium text-foreground truncate" title={prInfo.title}>
               PR #{prInfo.number}{prInfo.title ? ` — ${prInfo.title}` : ''}
             </span>
@@ -706,102 +713,128 @@
               Open ↗
             </button>
           </div>
-          <div class="text-muted-foreground/70 mb-2">
-            {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{prInfo.reviewDecision === 'APPROVED' ? ' · approved' : prInfo.reviewDecision === 'CHANGES_REQUESTED' ? ' · changes requested' : ''}
+          <div class="text-muted-foreground/70 mt-0.5">
+            {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}
           </div>
 
-          <!-- Checks -->
-          {#if c}
-            <div class="border-t border-border pt-2 mt-2">
-              <div class="flex items-center gap-3">
-                <span class="text-muted-foreground">Checks</span>
-                {#if c.passed > 0}<span class="text-green-400">✓ {c.passed}</span>{/if}
-                {#if c.failed > 0}<span class="text-red-400">✗ {c.failed}</span>{/if}
-                {#if c.pending > 0}<span class="text-yellow-400">● {c.pending}</span>{/if}
+          <!-- Status: checks + reviews, alerts merged in as "new" pills -->
+          <div class="border-t border-border pt-2 mt-2 space-y-1.5">
+            {#if c}
+              <div class="flex items-center gap-2">
+                <span class="text-muted-foreground w-14 shrink-0">Checks</span>
+                <span class="flex items-center gap-2 flex-1 min-w-0">
+                  {#if c.passed > 0}<span class="text-green-400">✓ {c.passed}</span>{/if}
+                  {#if c.failed > 0}<span class="text-red-400">✗ {c.failed}</span>{/if}
+                  {#if c.pending > 0}<span class="text-yellow-400">● {c.pending}</span>{/if}
+                  {#if ciAlert}
+                    {@const ci = ciAlert}
+                    <button
+                      onclick={() => prStore.dismissAlert(sessionId, ci.id)}
+                      class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+                      title="Failed since you last looked — click to clear"
+                    >
+                      new
+                    </button>
+                  {/if}
+                </span>
+                {#if c.failed > 0}
+                  <button
+                    onclick={fixCi}
+                    disabled={!canAgentCreatePr}
+                    class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                    title={canAgentCreatePr ? 'Send a turn asking the agent to read the CI logs and fix the failures' : 'The agent must be idle and running'}
+                  >
+                    fix with agent →
+                  </button>
+                {/if}
               </div>
               {#if prInfo.failingChecks && prInfo.failingChecks.length > 0}
-                <div class="text-red-400/80 mt-1 truncate" title={prInfo.failingChecks.join(', ')}>
+                <div class="text-muted-foreground/60 pl-16 truncate" title={prInfo.failingChecks.join(', ')}>
                   {prInfo.failingChecks.join(', ')}
                 </div>
               {/if}
-              {#if c.failed > 0}
-                <button
-                  onclick={fixCi}
-                  disabled={!canAgentCreatePr}
-                  class="mt-1.5 w-full text-left px-2 py-1 border border-border text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title={canAgentCreatePr ? 'Send a turn asking the agent to read the CI logs and fix the failures' : 'The agent must be idle and running'}
-                >
-                  Fix failures with agent
-                </button>
-              {/if}
-            </div>
-          {/if}
+            {/if}
 
-          <!-- Reviews -->
-          {#if prInfo.state === 'OPEN'}
-            <div class="border-t border-border pt-2 mt-2">
-              <button
-                onclick={addressReviews}
-                disabled={!canAgentCreatePr || addressingReviews}
-                class="w-full text-left px-2 py-1 border border-border text-orange-400 hover:bg-orange-400/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title={canAgentCreatePr ? 'Fetch the review comments and send a turn asking the agent to address them' : 'The agent must be idle and running'}
-              >
-                {addressingReviews ? 'Fetching comments…' : 'Address review comments with agent'}
-              </button>
-            </div>
-          {/if}
-
-          <!-- New activity -->
-          {#if prAlerts.length > 0}
-            <div class="border-t border-border pt-2 mt-2 space-y-1">
-              {#each prAlerts as alert (alert.id)}
-                <div class="flex items-center gap-1.5 {alert.kind === 'needs_human' ? 'text-orange-400' : 'text-yellow-400'}">
-                  <span class="w-1.5 h-1.5 bg-current animate-pulse shrink-0"></span>
-                  <span class="flex-1 truncate">
-                    {#if alert.kind === 'ci_failed'}
-                      New CI failure{alert.checks.length ? `: ${alert.checks.join(', ')}` : ''}
-                    {:else if alert.kind === 'new_comments'}
-                      {alert.count} new comment{alert.count > 1 ? 's' : ''}
-                    {:else}
-                      {alert.reason}
-                    {/if}
-                  </span>
+            {#if prInfo.reviewDecision === 'APPROVED' || prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert}
+              <div class="flex items-center gap-2">
+                <span class="text-muted-foreground w-14 shrink-0">Reviews</span>
+                <span class="flex items-center gap-2 flex-1 min-w-0">
+                  {#if prInfo.reviewDecision === 'APPROVED'}
+                    <span class="text-green-400 whitespace-nowrap">approved</span>
+                  {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
+                    <span class="text-orange-400 whitespace-nowrap" title="Changes requested">changes</span>
+                  {:else}
+                    <span class="text-muted-foreground/70">commented</span>
+                  {/if}
+                  {#if commentsAlert}
+                    {@const ca = commentsAlert}
+                    <button
+                      onclick={() => prStore.dismissAlert(sessionId, ca.id)}
+                      class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+                      title="{ca.count} new comment{ca.count > 1 ? 's' : ''} since you last looked — click to clear"
+                    >
+                      {ca.count} new
+                    </button>
+                  {/if}
+                </span>
+                {#if prInfo.state === 'OPEN' && (prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert)}
                   <button
-                    onclick={() => prStore.dismissAlert(sessionId, alert.id)}
-                    class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
-                    title="Dismiss"
+                    onclick={addressReviews}
+                    disabled={!canAgentCreatePr || addressingReviews}
+                    class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                    title={canAgentCreatePr ? 'Fetch the review comments and send a turn asking the agent to address them' : 'The agent must be idle and running'}
                   >
-                    &times;
+                    {addressingReviews ? 'fetching…' : 'address with agent →'}
                   </button>
-                </div>
-              {/each}
-            </div>
-          {/if}
+                {/if}
+              </div>
+            {/if}
+
+            {#if humanAlert}
+              {@const ha = humanAlert}
+              <div class="flex items-center gap-2 text-orange-400">
+                <span class="w-1.5 h-1.5 bg-current shrink-0"></span>
+                <span class="flex-1" title={ha.reason}>{ha.reason}</span>
+                <button
+                  onclick={() => prStore.dismissAlert(sessionId, ha.id)}
+                  class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
+                  title="Dismiss"
+                >
+                  &times;
+                </button>
+              </div>
+            {/if}
+          </div>
 
           <!-- Automation -->
           <div class="border-t border-border pt-2 mt-2">
-            <div class="font-medium text-foreground mb-1">Automation</div>
-            <label class="flex items-center gap-2 py-0.5 cursor-pointer text-muted-foreground hover:text-foreground">
-              <input
-                type="checkbox"
-                class="accent-primary"
-                checked={prAuto.fixCi}
-                onchange={(e) => prStore.setAuto(sessionId, { fixCi: e.currentTarget.checked })}
-              />
-              Auto-fix CI failures
-            </label>
-            <label class="flex items-center gap-2 py-0.5 cursor-pointer text-muted-foreground hover:text-foreground">
-              <input
-                type="checkbox"
-                class="accent-primary"
-                checked={prAuto.addressReviews}
-                onchange={(e) => prStore.setAuto(sessionId, { addressReviews: e.currentTarget.checked })}
-              />
-              Auto-address review comments
-            </label>
-            <p class="text-[10px] text-muted-foreground/70 mt-1.5 leading-relaxed">
-              Sends a turn to this session's agent when new failures or feedback appear
-              (idle sessions only; max 2 fix attempts per commit; collaborator comments only).
+            <div class="flex items-center gap-2">
+              <span class="text-muted-foreground w-14 shrink-0">Auto</span>
+              <label
+                class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+                title="When CI fails on a new commit, send a fix turn automatically — max 2 attempts per commit, then it asks for you"
+              >
+                <Checkbox
+                  class="size-3.5"
+                  checked={prAuto.fixCi}
+                  onCheckedChange={(v) => prStore.setAuto(sessionId, { fixCi: v === true })}
+                />
+                fix CI
+              </label>
+              <label
+                class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+                title="When repo collaborators leave new review feedback, send a turn to address it automatically"
+              >
+                <Checkbox
+                  class="size-3.5"
+                  checked={prAuto.addressReviews}
+                  onCheckedChange={(v) => prStore.setAuto(sessionId, { addressReviews: v === true })}
+                />
+                address reviews
+              </label>
+            </div>
+            <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+              Auto turns run only while the session is idle; git push / gh may need to be allowed.
             </p>
           </div>
         </div>
