@@ -29,6 +29,7 @@ const mockGroveBench = {
   stageFile: vi.fn(() => Promise.resolve()),
   unstageFile: vi.fn(() => Promise.resolve()),
   commit: vi.fn(() => Promise.resolve()),
+  generateCommitMessage: vi.fn(() => Promise.resolve('feat: mock commit message')),
   push: vi.fn(() => Promise.resolve()),
   getGitSyncStatus: vi.fn(() => Promise.resolve({ upstream: null, ahead: 0, behind: 0 } as import('../../shared/types.js').GitSyncStatus)),
   getBranchCommits: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').BranchCommit[])),

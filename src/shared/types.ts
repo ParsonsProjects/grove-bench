@@ -432,6 +432,8 @@ export interface GroveBenchAPI {
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
   commit(sessionId: string, message: string): Promise<void>;
+  /** Ask the agent to write a commit message for the staged changes. */
+  generateCommitMessage(sessionId: string): Promise<string>;
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
   getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
@@ -670,6 +672,7 @@ export const IPC = {
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',
+  GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_INFO: 'pr:info',
   PR_CREATE: 'pr:create',
   AGENT_SET_MODEL: 'agent:setModel',

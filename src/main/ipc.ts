@@ -10,6 +10,7 @@ import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
 import { prStatus, prCreate } from './gh.js';
+import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
@@ -614,6 +615,14 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     await commit(worktree.path, message);
+  });
+
+  ipcMain.handle(IPC.GIT_GENERATE_COMMIT_MESSAGE, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    // Prefer the session's own adapter; fall back to the default for stopped sessions.
+    const adapter = sessionManager.getSession(sessionId)?.adapter ?? adapterRegistry.getDefault();
+    return generateCommitMessage(worktree.path, adapter);
   });
 
   ipcMain.handle(IPC.GIT_PUSH, async (_event, sessionId: string) => {

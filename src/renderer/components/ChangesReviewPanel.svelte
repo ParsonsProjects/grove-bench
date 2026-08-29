@@ -193,7 +193,21 @@
   let commitMessage = $state('');
   let committing = $state(false);
   let pushing = $state(false);
+  let generatingMsg = $state(false);
   let commitError = $state('');
+
+  async function generateMessage() {
+    if (generatingMsg || committing || stagedEntries.length === 0) return;
+    generatingMsg = true;
+    commitError = '';
+    try {
+      commitMessage = await window.groveBench.generateCommitMessage(sessionId);
+    } catch (e: any) {
+      commitError = e?.message || 'Failed to generate commit message';
+    } finally {
+      generatingMsg = false;
+    }
+  }
 
   function stageEntry(entry: GitStatusEntry) {
     gitStatusStore.stageFile(sessionId, entry.filePath).catch(e => console.error('Failed to stage:', e));
@@ -554,13 +568,29 @@
       <!-- Commit box (shown when there are staged changes) -->
       {#if stagedEntries.length > 0}
         <div class="border-t border-border p-2 shrink-0 space-y-1.5">
-          <textarea
-            bind:value={commitMessage}
-            placeholder="Commit message…"
-            rows="2"
-            onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
-            class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-none"
-          ></textarea>
+          <div class="relative">
+            <textarea
+              bind:value={commitMessage}
+              placeholder={generatingMsg ? 'Generating…' : 'Commit message…'}
+              rows="2"
+              onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
+              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pr-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-none"
+            ></textarea>
+            <button
+              onclick={generateMessage}
+              disabled={generatingMsg || committing}
+              class="absolute right-1 top-1 p-0.5 text-muted-foreground/60 hover:text-primary disabled:cursor-not-allowed transition-colors"
+              title="Generate a commit message from the staged changes"
+            >
+              {#if generatingMsg}
+                <span class="block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              {:else}
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3l1.9 5.7a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-2a2 2 0 0 0 1.3-1.2L12 3z"/>
+                </svg>
+              {/if}
+            </button>
+          </div>
           {#if commitError}
             <div class="text-[10px] text-destructive">{commitError}</div>
           {/if}

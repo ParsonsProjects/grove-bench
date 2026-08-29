@@ -107,6 +107,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
   commit: (sessionId: string, message: string) =>
     ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
+  generateCommitMessage: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId),
   push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
   getGitSyncStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
