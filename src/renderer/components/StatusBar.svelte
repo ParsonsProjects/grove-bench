@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { fly } from 'svelte/transition';
   import { messageStore } from '../stores/messages.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
@@ -688,18 +689,19 @@
       <button
         onclick={() => prPopoverOpen = !prPopoverOpen}
         class="flex items-center gap-1.5 {prColor} transition-colors"
-        title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}: click for checks, reviews, and automation"
+        title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}: click for checks, reviews, and automation"
       >
-        <span class="w-1.5 h-1.5 {prHealthDot}"></span>
+        <!-- One dot: color = worst condition, pulse = unseen activity -->
+        <span class="w-1.5 h-1.5 {prHealthDot} {prAlerts.length > 0 ? 'animate-pulse' : ''}"></span>
         PR #{prInfo.number}
-        {#if prAlerts.length > 0}
-          <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse" title="New PR activity"></span>
-        {/if}
       </button>
 
       {#if prPopoverOpen}
         {@const c = prInfo.checks}
-        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
+        <div
+          transition:fly={{ y: 6, duration: 140 }}
+          class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50"
+        >
           <!-- Header -->
           <div class="flex items-center justify-between gap-2">
             <span class="font-medium text-foreground truncate" title={prInfo.title}>
@@ -720,7 +722,7 @@
           <!-- Status: checks + reviews, alerts merged in as "new" pills -->
           <div class="border-t border-border pt-2 mt-2 space-y-1.5">
             {#if c}
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
                 <span class="text-muted-foreground w-14 shrink-0">Checks</span>
                 <span class="flex items-center gap-2 flex-1 min-w-0">
                   {#if c.passed > 0}<span class="text-green-400">✓ {c.passed}</span>{/if}
@@ -756,7 +758,7 @@
             {/if}
 
             {#if prInfo.reviewDecision === 'APPROVED' || prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert}
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
                 <span class="text-muted-foreground w-14 shrink-0">Reviews</span>
                 <span class="flex items-center gap-2 flex-1 min-w-0">
                   {#if prInfo.reviewDecision === 'APPROVED'}
@@ -792,7 +794,7 @@
 
             {#if humanAlert}
               {@const ha = humanAlert}
-              <div class="flex items-center gap-2 text-orange-400">
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors text-orange-400">
                 <span class="w-1.5 h-1.5 bg-current shrink-0"></span>
                 <span class="flex-1" title={ha.reason}>{ha.reason}</span>
                 <button
@@ -808,7 +810,7 @@
 
           <!-- Automation -->
           <div class="border-t border-border pt-2 mt-2">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
               <span class="text-muted-foreground w-14 shrink-0">Auto</span>
               <label
                 class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
