@@ -234,6 +234,24 @@ export interface PrInfo {
   /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' (no reviews requested). */
   reviewDecision?: string;
   checks?: PrChecksSummary | null;
+  /** Head commit the checks ran against. */
+  headSha?: string;
+  /** Names of the currently failing checks. */
+  failingChecks?: string[];
+  /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
+  commentSignature?: string[];
+}
+
+/** A review comment or review body on a PR (flattened for prompts/UI). */
+export interface PrReviewComment {
+  id: string;
+  author: string;
+  /** OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE | ... */
+  authorAssociation: string;
+  /** File the comment is anchored to (absent for review bodies / conversation comments). */
+  path?: string;
+  line?: number;
+  body: string;
 }
 
 export interface PrCreateOpts {
@@ -449,6 +467,7 @@ export interface GroveBenchAPI {
   // PR info
   getPrInfo(sessionId: string): Promise<PrInfo | null>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
+  getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
 
   // External links
   openExternal(url: string): Promise<void>;
@@ -675,6 +694,7 @@ export const IPC = {
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_INFO: 'pr:info',
   PR_CREATE: 'pr:create',
+  PR_REVIEW_COMMENTS: 'pr:reviewComments',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_THINKING: 'agent:setThinking',
   AGENT_MCP_LIST: 'agent:mcpList',

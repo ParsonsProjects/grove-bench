@@ -35,6 +35,7 @@ const mockGroveBench = {
   getBranchCommits: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').BranchCommit[])),
   getPrInfo: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').PrInfo | null)),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),
+  getPrReviewComments: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').PrReviewComment[])),
   rewindSession: vi.fn(() => Promise.resolve()),
   getCheckpointDiff: vi.fn(() => Promise.resolve('')),
   listCheckpoints: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CheckpointListItem[])),

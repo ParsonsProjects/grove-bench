@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, summarizeChecks, prStatus, prCreate } from './gh.js';
+import { ghVersion, ghAuthenticated, summarizeChecks, failingCheckNames, commentSignature, prStatus, prCreate, prReviewComments } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
@@ -82,7 +82,7 @@ describe('prStatus()', () => {
     const result = await prStatus('/repo', 'feat/x');
     expect(mockExeca).toHaveBeenCalledWith(
       'gh',
-      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup'],
+      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews'],
       { cwd: '/repo' },
     );
     expect(result).toEqual({
@@ -93,7 +93,34 @@ describe('prStatus()', () => {
       title: 'Add feature',
       reviewDecision: 'APPROVED',
       checks: { total: 1, passed: 1, failed: 0, pending: 0 },
+      failingChecks: [],
+      commentSignature: [],
     });
+  });
+
+  it('carries head SHA, failing check names, and the comment signature', async () => {
+    mockExeca.mockResolvedValue({
+      stdout: JSON.stringify({
+        number: 43,
+        url: 'u',
+        state: 'OPEN',
+        headRefOid: 'abc123',
+        statusCheckRollup: [
+          { name: 'test', conclusion: 'FAILURE' },
+          { name: 'lint', conclusion: 'SUCCESS' },
+        ],
+        comments: [{ id: 'C1', author: { login: 'alice' } }],
+        reviews: [
+          { id: 'R1', state: 'CHANGES_REQUESTED' },
+          { id: 'R2', state: 'PENDING' },
+        ],
+      }),
+    } as any);
+
+    const result = await prStatus('/repo', 'feat/x');
+    expect(result?.headSha).toBe('abc123');
+    expect(result?.failingChecks).toEqual(['test']);
+    expect(result?.commentSignature).toEqual(['c:C1', 'r:R1']);
   });
 
   it('returns null when no PR exists for the branch', async () => {
@@ -104,6 +131,51 @@ describe('prStatus()', () => {
   it('returns null on malformed output', async () => {
     mockExeca.mockResolvedValue({ stdout: 'not json' } as any);
     expect(await prStatus('/repo', 'feat/x')).toBeNull();
+  });
+});
+
+describe('failingCheckNames()', () => {
+  it('extracts names of failed checks only', () => {
+    expect(failingCheckNames([
+      { name: 'build', conclusion: 'SUCCESS' },
+      { name: 'test', conclusion: 'FAILURE' },
+      { context: 'ci/legacy', state: 'ERROR' },
+      { conclusion: 'TIMED_OUT' },
+    ])).toEqual(['test', 'ci/legacy', 'check']);
+  });
+
+  it('returns empty for non-arrays', () => {
+    expect(failingCheckNames(undefined)).toEqual([]);
+  });
+});
+
+describe('prReviewComments()', () => {
+  it('merges review bodies and inline comments', async () => {
+    mockExeca
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { id: 9, body: 'Rename this variable', path: 'src/a.ts', line: 12, user: { login: 'bob' }, author_association: 'COLLABORATOR' },
+          { id: 10, body: '', path: 'src/b.ts' },
+        ]),
+      } as any) // pulls/N/comments
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { id: 5, body: 'Looks mostly good, two nits', state: 'CHANGES_REQUESTED', user: { login: 'alice' }, author_association: 'MEMBER' },
+          { id: 6, body: 'wip', state: 'PENDING', user: { login: 'carol' } },
+        ]),
+      } as any); // pulls/N/reviews
+
+    const result = await prReviewComments('/repo', 42);
+    expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/pulls/42/comments?per_page=100'], { cwd: '/repo' });
+    expect(result).toEqual([
+      { id: 'review-5', author: 'alice', authorAssociation: 'MEMBER', body: 'Looks mostly good, two nits' },
+      { id: 'comment-9', author: 'bob', authorAssociation: 'COLLABORATOR', path: 'src/a.ts', line: 12, body: 'Rename this variable' },
+    ]);
+  });
+
+  it('returns empty when both api calls fail', async () => {
+    mockExeca.mockRejectedValue(new Error('gh api failed'));
+    expect(await prReviewComments('/repo', 42)).toEqual([]);
   });
 });
 

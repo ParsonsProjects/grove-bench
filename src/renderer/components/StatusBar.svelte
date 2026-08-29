@@ -36,6 +36,27 @@
   let createPrMenuOpen = $state(false);
   let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
 
+  // ── PR watching: alerts + auto mode ──
+  let prAlerts = $derived(prStore.getAlerts(sessionId));
+  let prAuto = $derived(prStore.getAuto(sessionId));
+  let prAutoOn = $derived(prAuto.fixCi || prAuto.addressReviews);
+  let prAutoOpen = $state(false);
+  let addressingReviews = $state(false);
+
+  function fixCi() {
+    prStore.fixCiWithAgent(sessionId);
+  }
+
+  async function addressReviews() {
+    if (addressingReviews) return;
+    addressingReviews = true;
+    try {
+      await prStore.addressReviewsWithAgent(sessionId);
+    } finally {
+      addressingReviews = false;
+    }
+  }
+
   /** Hand PR creation to the agent as a turn in this conversation. */
   function sendAgentPrTurn() {
     const base = settingsStore.current.defaultBaseBranch?.trim() || 'main';
@@ -184,6 +205,7 @@
   let shortcutsRef = $state<HTMLDivElement | null>(null);
   let mcpRef = $state<HTMLDivElement | null>(null);
   let createPrRef = $state<HTMLDivElement | null>(null);
+  let prAutoRef = $state<HTMLDivElement | null>(null);
 
   // ─── MCP server control ───
 
@@ -308,6 +330,9 @@
     }
     if (createPrMenuOpen && createPrRef && !createPrRef.contains(target)) {
       createPrMenuOpen = false;
+    }
+    if (prAutoOpen && prAutoRef && !prAutoRef.contains(target)) {
+      prAutoOpen = false;
     }
   }
 
@@ -650,7 +675,14 @@
     {#if prInfo.checks}
       {@const c = prInfo.checks}
       {#if c.failed > 0}
-        <span class="text-red-400" title="{c.failed} of {c.total} checks failing">✗ {c.failed}/{c.total}</span>
+        <button
+          onclick={fixCi}
+          disabled={!canAgentCreatePr}
+          class="text-red-400 hover:text-red-300 hover:underline transition-colors disabled:opacity-60 disabled:no-underline"
+          title="{c.failed} of {c.total} checks failing — click to have the agent read the logs and fix them"
+        >
+          ✗ {c.failed}/{c.total}
+        </button>
       {:else if c.pending > 0}
         <span class="text-yellow-400" title="{c.pending} of {c.total} checks pending">● {c.passed}/{c.total}</span>
       {:else}
@@ -661,8 +693,56 @@
     {#if prInfo.reviewDecision === 'APPROVED'}
       <span class="text-green-400" title="Review approved">approved</span>
     {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
-      <span class="text-orange-400" title="Changes requested">changes</span>
+      <button
+        onclick={addressReviews}
+        disabled={!canAgentCreatePr || addressingReviews}
+        class="text-orange-400 hover:text-orange-300 hover:underline transition-colors disabled:opacity-60 disabled:no-underline"
+        title="Changes requested — click to have the agent address the review comments"
+      >
+        {addressingReviews ? 'fetching…' : 'changes'}
+      </button>
     {/if}
+
+    <!-- PR automation toggle (auto-fix CI / auto-address reviews) -->
+    <div class="relative" bind:this={prAutoRef}>
+      <button
+        onclick={() => prAutoOpen = !prAutoOpen}
+        class="transition-colors {prAutoOn ? 'text-cyan-400 hover:text-cyan-300' : 'text-muted-foreground/50 hover:text-foreground'}"
+        title="PR automation — auto-fix CI failures and auto-address review comments"
+      >
+        auto{prAutoOn ? '✓' : ''}
+      </button>
+
+      {#if prAutoOpen}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-72 z-50">
+          <div class="font-medium text-foreground mb-2">PR Automation</div>
+          <label class="flex items-center gap-2 py-1 cursor-pointer text-muted-foreground hover:text-foreground">
+            <input
+              type="checkbox"
+              class="accent-primary"
+              checked={prAuto.fixCi}
+              onchange={(e) => prStore.setAuto(sessionId, { fixCi: e.currentTarget.checked })}
+            />
+            Auto-fix CI failures
+          </label>
+          <label class="flex items-center gap-2 py-1 cursor-pointer text-muted-foreground hover:text-foreground">
+            <input
+              type="checkbox"
+              class="accent-primary"
+              checked={prAuto.addressReviews}
+              onchange={(e) => prStore.setAuto(sessionId, { addressReviews: e.currentTarget.checked })}
+            />
+            Auto-address review comments
+          </label>
+          <p class="text-[10px] text-muted-foreground/70 mt-2 leading-relaxed">
+            When new failures or feedback appear, a turn is sent to this session's agent
+            (only while it's idle; max 2 fix attempts per commit, then it asks for you).
+            Review comments are only auto-addressed when written by repo collaborators.
+            Unattended turns can stall on permission prompts unless git push / gh are allowed.
+          </p>
+        </div>
+      {/if}
+    </div>
   {:else if sessionBranch && ghAvailable}
     <div class="relative flex items-center" bind:this={createPrRef}>
       <button
@@ -706,6 +786,40 @@
       {/if}
     </div>
   {/if}
+
+  {#each prAlerts as alert (alert.id)}
+    <span class="flex items-center gap-1 {alert.kind === 'needs_human' ? 'text-orange-400' : 'text-yellow-400'}">
+      <span class="w-1.5 h-1.5 bg-current animate-pulse"></span>
+      {#if alert.kind === 'ci_failed'}
+        <button
+          onclick={fixCi}
+          disabled={!canAgentCreatePr}
+          class="hover:underline disabled:no-underline disabled:opacity-60"
+          title="New CI failure{alert.checks.length ? `: ${alert.checks.join(', ')}` : ''} — click to have the agent fix it"
+        >
+          CI failed — fix?
+        </button>
+      {:else if alert.kind === 'new_comments'}
+        <button
+          onclick={addressReviews}
+          disabled={!canAgentCreatePr || addressingReviews}
+          class="hover:underline disabled:no-underline disabled:opacity-60"
+          title="New review feedback — click to have the agent address it"
+        >
+          {alert.count} new comment{alert.count > 1 ? 's' : ''} — address?
+        </button>
+      {:else}
+        <span title={alert.reason}>needs human</span>
+      {/if}
+      <button
+        onclick={() => prStore.dismissAlert(sessionId, alert.id)}
+        class="text-muted-foreground/40 hover:text-foreground transition-colors"
+        title="Dismiss"
+      >
+        &times;
+      </button>
+    </span>
+  {/each}
 
   {#if showContext}
     <div class="relative ml-auto" bind:this={contextRef}>

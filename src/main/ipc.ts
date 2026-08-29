@@ -9,7 +9,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
-import { prStatus, prCreate } from './gh.js';
+import { prStatus, prCreate, prReviewComments } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
@@ -701,6 +701,12 @@ export function registerHandlers() {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return null;
     return prStatus(worktree.repoPath, worktree.branch);
+  });
+
+  ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return [];
+    return prReviewComments(worktree.repoPath, prNumber);
   });
 
   ipcMain.handle(IPC.PR_CREATE, async (_event, sessionId: string, opts: PrCreateOpts) => {
