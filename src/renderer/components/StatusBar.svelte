@@ -1,14 +1,98 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { fly } from 'svelte/transition';
   import { messageStore } from '../stores/messages.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
-  import type { McpServerInfo, PrInfo, ThinkingLevel } from '../../shared/types.js';
+  import { prStore } from '../stores/pr.svelte.js';
+  import type { PrAlert } from '../stores/pr.svelte.js';
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
+  import CreatePrDialog from './CreatePrDialog.svelte';
+  import type { McpServerInfo, ThinkingLevel } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let prInfo = $state<PrInfo | null>(null);
+  let prInfo = $derived(prStore.getPr(sessionId));
+  let gitSync = $derived(prStore.getSync(sessionId));
+  let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
+  let createPrOpen = $state(false);
+  let pushing = $state(false);
+  let pushError = $state('');
+
+  async function doPush() {
+    if (pushing) return;
+    pushing = true;
+    pushError = '';
+    try {
+      await prStore.push(sessionId);
+    } catch (e: any) {
+      pushError = e?.message || 'Push failed';
+    } finally {
+      pushing = false;
+    }
+  }
+
+  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
+  let createPrMenuOpen = $state(false);
+  let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
+
+  // ── PR watching: alerts + auto mode (all shown in one popover) ──
+  let prAlerts = $derived(prStore.getAlerts(sessionId));
+  let prAuto = $derived(prStore.getAuto(sessionId));
+  let prPopoverOpen = $state(false);
+  let addressingReviews = $state(false);
+
+  // Alerts merge into their popover sections rather than rendering as separate rows
+  let ciAlert = $derived(prAlerts.find((a) => a.kind === 'ci_failed') as Extract<PrAlert, { kind: 'ci_failed' }> | undefined);
+  let commentsAlert = $derived(prAlerts.find((a) => a.kind === 'new_comments') as Extract<PrAlert, { kind: 'new_comments' }> | undefined);
+  let humanAlert = $derived(prAlerts.find((a) => a.kind === 'needs_human') as Extract<PrAlert, { kind: 'needs_human' }> | undefined);
+
+  /** Worst-condition dot color for the collapsed PR badge. */
+  let prHealthDot = $derived.by(() => {
+    if (!prInfo) return 'bg-muted-foreground/40';
+    if (prInfo.state === 'MERGED') return 'bg-purple-400';
+    if (prInfo.state === 'CLOSED') return 'bg-red-500';
+    if ((prInfo.checks?.failed ?? 0) > 0) return 'bg-red-500';
+    if (prInfo.reviewDecision === 'CHANGES_REQUESTED') return 'bg-orange-400';
+    if ((prInfo.checks?.pending ?? 0) > 0) return 'bg-yellow-400';
+    if (prInfo.reviewDecision === 'APPROVED' || prInfo.checks) return 'bg-green-500';
+    return 'bg-muted-foreground/40';
+  });
+
+  function fixCi() {
+    prStore.fixCiWithAgent(sessionId);
+    prPopoverOpen = false;
+  }
+
+  async function addressReviews() {
+    if (addressingReviews) return;
+    addressingReviews = true;
+    try {
+      const sent = await prStore.addressReviewsWithAgent(sessionId);
+      if (sent) prPopoverOpen = false;
+    } finally {
+      addressingReviews = false;
+    }
+  }
+
+  /** Hand PR creation to the agent as a turn in this conversation. */
+  function sendAgentPrTurn() {
+    const base = settingsStore.current.defaultBaseBranch?.trim() || 'main';
+    const prompt = buildCreatePrPrompt(sessionBranch, base);
+    messageStore.addUserMessage(sessionId, prompt);
+    window.groveBench.sendMessage(sessionId, prompt);
+    store.updateLastActive(sessionId);
+  }
+
+  /** Default click: agent turn when the session can take one, manual dialog otherwise. */
+  function startCreatePr() {
+    createPrMenuOpen = false;
+    if (canAgentCreatePr) sendAgentPrTurn();
+    else createPrOpen = true;
+  }
   let modelPickerOpen = $state(false);
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
 
@@ -101,13 +185,14 @@
     return String(n);
   }
 
-  // Re-fetch PR info when a turn finishes (agent may have created/pushed a PR)
+  // Poll PR + branch sync status while this status bar is mounted
+  $effect(() => prStore.watch(sessionId));
+
+  // Re-fetch PR info when a turn finishes (agent may have committed/pushed/created a PR)
   let prevRunning = $state(false);
   $effect(() => {
     if (prevRunning && !isRunning) {
-      window.groveBench.getPrInfo(sessionId).then((info) => {
-        prInfo = info;
-      });
+      prStore.refresh(sessionId, true);
     }
     prevRunning = isRunning;
   });
@@ -140,6 +225,8 @@
   let contextRef = $state<HTMLDivElement | null>(null);
   let shortcutsRef = $state<HTMLDivElement | null>(null);
   let mcpRef = $state<HTMLDivElement | null>(null);
+  let createPrRef = $state<HTMLDivElement | null>(null);
+  let prPopoverRef = $state<HTMLDivElement | null>(null);
 
   // ─── MCP server control ───
 
@@ -262,14 +349,17 @@
     if (mcpExpanded && mcpRef && !mcpRef.contains(target)) {
       mcpExpanded = false;
     }
+    if (createPrMenuOpen && createPrRef && !createPrRef.contains(target)) {
+      createPrMenuOpen = false;
+    }
+    if (prPopoverOpen && prPopoverRef && !prPopoverRef.contains(target)) {
+      prPopoverOpen = false;
+    }
   }
 
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('click', handleClickOutside);
-    window.groveBench.getPrInfo(sessionId).then((info) => {
-      prInfo = info;
-    });
     window.groveBench.getModels().then((models) => {
       modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
     });
@@ -568,14 +658,232 @@
     </span>
   {/if}
 
-  {#if prInfo}
+  {#if gitSync.ahead > 0}
     <button
-      onclick={() => prInfo && window.groveBench.openExternal(prInfo.url)}
-      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
-      title="Open PR #{prInfo.number} on GitHub"
+      onclick={doPush}
+      disabled={pushing}
+      class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors disabled:opacity-50"
+      title={pushing ? 'Pushing…' : `${gitSync.ahead} unpushed commit${gitSync.ahead > 1 ? 's' : ''} — click to push`}
     >
-      PR #{prInfo.number}
+      {pushing ? 'pushing…' : `↑${gitSync.ahead}`}
     </button>
+  {/if}
+
+  {#if gitSync.behind > 0}
+    <span class="text-muted-foreground/70" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
+      ↓{gitSync.behind}
+    </span>
+  {/if}
+
+  {#if pushError}
+    <span class="text-red-400 truncate max-w-32" title={pushError}>push failed</span>
+  {/if}
+
+  {#if prInfo}
+    {@const prColor =
+      prInfo.state === 'MERGED' ? 'text-purple-400 hover:text-purple-300'
+      : prInfo.state === 'CLOSED' ? 'text-red-400 hover:text-red-300'
+      : prInfo.isDraft ? 'text-muted-foreground hover:text-foreground'
+      : 'text-blue-400 hover:text-blue-300'}
+    <div class="relative" bind:this={prPopoverRef}>
+      <button
+        onclick={() => prPopoverOpen = !prPopoverOpen}
+        class="flex items-center gap-1.5 {prColor} transition-colors"
+        title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}: click for checks, reviews, and automation"
+      >
+        <!-- One dot: color = worst condition, pulse = unseen activity -->
+        <span class="w-1.5 h-1.5 {prHealthDot} {prAlerts.length > 0 ? 'animate-pulse' : ''}"></span>
+        PR #{prInfo.number}
+      </button>
+
+      {#if prPopoverOpen}
+        {@const c = prInfo.checks}
+        <div
+          transition:fly={{ y: 6, duration: 140 }}
+          class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50"
+        >
+          <!-- Header -->
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium text-foreground truncate" title={prInfo.title}>
+              PR #{prInfo.number}{prInfo.title ? ` — ${prInfo.title}` : ''}
+            </span>
+            <button
+              onclick={() => prInfo && window.groveBench.openExternal(prInfo.url)}
+              class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
+              title="Open on GitHub"
+            >
+              Open ↗
+            </button>
+          </div>
+          <div class="text-muted-foreground/70 mt-0.5">
+            {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}
+          </div>
+
+          <!-- Status: checks + reviews, alerts merged in as "new" pills -->
+          <div class="border-t border-border pt-2 mt-2 space-y-1.5">
+            {#if c}
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
+                <span class="text-muted-foreground w-14 shrink-0">Checks</span>
+                <span class="flex items-center gap-2 flex-1 min-w-0">
+                  {#if c.passed > 0}<span class="text-green-400">✓ {c.passed}</span>{/if}
+                  {#if c.failed > 0}<span class="text-red-400">✗ {c.failed}</span>{/if}
+                  {#if c.pending > 0}<span class="text-yellow-400">● {c.pending}</span>{/if}
+                  {#if ciAlert}
+                    {@const ci = ciAlert}
+                    <button
+                      onclick={() => prStore.dismissAlert(sessionId, ci.id)}
+                      class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+                      title="Failed since you last looked — click to clear"
+                    >
+                      new
+                    </button>
+                  {/if}
+                </span>
+                {#if c.failed > 0}
+                  <button
+                    onclick={fixCi}
+                    disabled={!canAgentCreatePr}
+                    class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                    title={canAgentCreatePr ? 'Send a turn asking the agent to read the CI logs and fix the failures' : 'The agent must be idle and running'}
+                  >
+                    fix with agent →
+                  </button>
+                {/if}
+              </div>
+              {#if prInfo.failingChecks && prInfo.failingChecks.length > 0}
+                <div class="text-muted-foreground/60 pl-16 truncate" title={prInfo.failingChecks.join(', ')}>
+                  {prInfo.failingChecks.join(', ')}
+                </div>
+              {/if}
+            {/if}
+
+            {#if prInfo.reviewDecision === 'APPROVED' || prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert}
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
+                <span class="text-muted-foreground w-14 shrink-0">Reviews</span>
+                <span class="flex items-center gap-2 flex-1 min-w-0">
+                  {#if prInfo.reviewDecision === 'APPROVED'}
+                    <span class="text-green-400 whitespace-nowrap">approved</span>
+                  {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
+                    <span class="text-orange-400 whitespace-nowrap" title="Changes requested">changes</span>
+                  {:else}
+                    <span class="text-muted-foreground/70">commented</span>
+                  {/if}
+                  {#if commentsAlert}
+                    {@const ca = commentsAlert}
+                    <button
+                      onclick={() => prStore.dismissAlert(sessionId, ca.id)}
+                      class="px-1 text-[10px] leading-4 whitespace-nowrap bg-yellow-400/15 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/25 transition-colors"
+                      title="{ca.count} new comment{ca.count > 1 ? 's' : ''} since you last looked — click to clear"
+                    >
+                      {ca.count} new
+                    </button>
+                  {/if}
+                </span>
+                {#if prInfo.state === 'OPEN' && (prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert)}
+                  <button
+                    onclick={addressReviews}
+                    disabled={!canAgentCreatePr || addressingReviews}
+                    class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                    title={canAgentCreatePr ? 'Fetch the review comments and send a turn asking the agent to address them' : 'The agent must be idle and running'}
+                  >
+                    {addressingReviews ? 'fetching…' : 'address with agent →'}
+                  </button>
+                {/if}
+              </div>
+            {/if}
+
+            {#if humanAlert}
+              {@const ha = humanAlert}
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors text-orange-400">
+                <span class="w-1.5 h-1.5 bg-current shrink-0"></span>
+                <span class="flex-1" title={ha.reason}>{ha.reason}</span>
+                <button
+                  onclick={() => prStore.dismissAlert(sessionId, ha.id)}
+                  class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
+                  title="Dismiss"
+                >
+                  &times;
+                </button>
+              </div>
+            {/if}
+          </div>
+
+          <!-- Automation -->
+          <div class="border-t border-border pt-2 mt-2">
+            <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
+              <span class="text-muted-foreground w-14 shrink-0">Auto</span>
+              <label
+                class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+                title="When CI fails on a new commit, send a fix turn automatically — max 2 attempts per commit, then it asks for you"
+              >
+                <Checkbox
+                  class="size-3.5"
+                  checked={prAuto.fixCi}
+                  onCheckedChange={(v) => prStore.setAuto(sessionId, { fixCi: v === true })}
+                />
+                fix CI
+              </label>
+              <label
+                class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+                title="When repo collaborators leave new review feedback, send a turn to address it automatically"
+              >
+                <Checkbox
+                  class="size-3.5"
+                  checked={prAuto.addressReviews}
+                  onCheckedChange={(v) => prStore.setAuto(sessionId, { addressReviews: v === true })}
+                />
+                address reviews
+              </label>
+            </div>
+            <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+              Auto turns run only while the session is idle; git push / gh may need to be allowed.
+            </p>
+          </div>
+        </div>
+      {/if}
+    </div>
+  {:else if sessionBranch && ghAvailable}
+    <div class="relative flex items-center" bind:this={createPrRef}>
+      <button
+        onclick={startCreatePr}
+        disabled={isRunning}
+        class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
+        title={canAgentCreatePr
+          ? 'Ask the agent to commit, push, and create a pull request in this conversation'
+          : 'Push this branch and create a pull request'}
+      >
+        Create PR
+      </button>
+      <button
+        onclick={() => createPrMenuOpen = !createPrMenuOpen}
+        class="ml-0.5 text-blue-400/70 hover:text-blue-300 transition-colors"
+        title="Create PR options"
+      >
+        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m18 15-6-6-6 6" />
+        </svg>
+      </button>
+
+      {#if createPrMenuOpen}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl py-1 text-xs w-48 z-50">
+          <button
+            onclick={() => { createPrMenuOpen = false; sendAgentPrTurn(); }}
+            disabled={!canAgentCreatePr}
+            class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open the PR' : 'The agent must be idle and running to take this turn'}
+          >
+            Create with agent
+          </button>
+          <button
+            onclick={() => { createPrMenuOpen = false; createPrOpen = true; }}
+            class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors"
+            title="Open the PR dialog — title and description prefilled from the branch's commits"
+          >
+            Create manually…
+          </button>
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if showContext}
@@ -788,3 +1096,7 @@
     {/if}
   </div>
 </div>
+
+{#if createPrOpen}
+  <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+{/if}

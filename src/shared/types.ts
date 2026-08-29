@@ -79,6 +79,12 @@ export interface PrerequisiteStatus {
     /** Adapter-provided message when not authenticated. */
     authErrorMessage?: string;
   };
+  /** GitHub CLI — optional; only gates PR automation, never blocks the app. */
+  gh?: {
+    available: boolean;
+    version?: string;
+    authenticated?: boolean;
+  };
 }
 
 // ─── Tool Categories (adapter-agnostic) ───
@@ -227,9 +233,61 @@ export interface CheckpointListItem {
 
 // ─── PR Info ───
 
+/** Rollup of a PR's status checks (CI). Null when the PR has no checks. */
+export interface PrChecksSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
+  state?: 'OPEN' | 'MERGED' | 'CLOSED';
+  isDraft?: boolean;
+  title?: string;
+  /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | '' (no reviews requested). */
+  reviewDecision?: string;
+  checks?: PrChecksSummary | null;
+  /** Head commit the checks ran against. */
+  headSha?: string;
+  /** Names of the currently failing checks. */
+  failingChecks?: string[];
+  /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
+  commentSignature?: string[];
+}
+
+/** A review comment or review body on a PR (flattened for prompts/UI). */
+export interface PrReviewComment {
+  id: string;
+  author: string;
+  /** OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE | ... */
+  authorAssociation: string;
+  /** File the comment is anchored to (absent for review bodies / conversation comments). */
+  path?: string;
+  line?: number;
+  body: string;
+}
+
+export interface PrCreateOpts {
+  title: string;
+  body: string;
+  base: string;
+  draft?: boolean;
+}
+
+/** Local branch position vs its upstream. Upstream null = branch never pushed. */
+export interface GitSyncStatus {
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
+/** One commit on the session branch that isn't on the base branch. */
+export interface BranchCommit {
+  subject: string;
+  body: string;
 }
 
 // ─── Thinking Level ───
@@ -413,6 +471,11 @@ export interface GroveBenchAPI {
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
   commit(sessionId: string, message: string): Promise<void>;
+  /** Ask the agent to write a commit message for the staged changes. */
+  generateCommitMessage(sessionId: string): Promise<string>;
+  push(sessionId: string): Promise<void>;
+  getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
+  getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
 
   // Checkpoint rewind
   rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
@@ -424,6 +487,8 @@ export interface GroveBenchAPI {
 
   // PR info
   getPrInfo(sessionId: string): Promise<PrInfo | null>;
+  createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
+  getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
 
   // External links
   openExternal(url: string): Promise<void>;
@@ -648,7 +713,13 @@ export const IPC = {
   FILE_UNSTAGE: 'file:unstage',
   GIT_STATUS: 'git:status',
   GIT_COMMIT: 'git:commit',
+  GIT_PUSH: 'git:push',
+  GIT_SYNC_STATUS: 'git:syncStatus',
+  GIT_BRANCH_COMMITS: 'git:branchCommits',
+  GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_INFO: 'pr:info',
+  PR_CREATE: 'pr:create',
+  PR_REVIEW_COMMENTS: 'pr:reviewComments',
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_THINKING: 'agent:setThinking',
   AGENT_MCP_LIST: 'agent:mcpList',

@@ -111,6 +111,13 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
   commit: (sessionId: string, message: string) =>
     ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
+  generateCommitMessage: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId),
+  push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
+  getGitSyncStatus: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
+  getBranchCommits: (sessionId: string, base: string) =>
+    ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base),
 
   // Checkpoint rewind
   rewindSession: (sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) =>
@@ -126,6 +133,10 @@ const api: GroveBenchAPI = {
 
   // PR info
   getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
+  createPr: (sessionId: string, opts: import('../shared/types.js').PrCreateOpts) =>
+    ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
+  getPrReviewComments: (sessionId: string, prNumber: number) =>
+    ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
 
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
