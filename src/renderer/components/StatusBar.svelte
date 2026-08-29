@@ -33,19 +33,23 @@
   }
 
   let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
+  let createPrMenuOpen = $state(false);
+  let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
 
-  /** One click: hand PR creation to the agent as a turn in this conversation.
-   *  Falls back to the manual dialog when the session process isn't running. */
-  function startCreatePr() {
-    if (sessionStatus !== 'running') {
-      createPrOpen = true;
-      return;
-    }
+  /** Hand PR creation to the agent as a turn in this conversation. */
+  function sendAgentPrTurn() {
     const base = settingsStore.current.defaultBaseBranch?.trim() || 'main';
     const prompt = buildCreatePrPrompt(sessionBranch, base);
     messageStore.addUserMessage(sessionId, prompt);
     window.groveBench.sendMessage(sessionId, prompt);
     store.updateLastActive(sessionId);
+  }
+
+  /** Default click: agent turn when the session can take one, manual dialog otherwise. */
+  function startCreatePr() {
+    createPrMenuOpen = false;
+    if (canAgentCreatePr) sendAgentPrTurn();
+    else createPrOpen = true;
   }
   let modelPickerOpen = $state(false);
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
@@ -179,6 +183,7 @@
   let contextRef = $state<HTMLDivElement | null>(null);
   let shortcutsRef = $state<HTMLDivElement | null>(null);
   let mcpRef = $state<HTMLDivElement | null>(null);
+  let createPrRef = $state<HTMLDivElement | null>(null);
 
   // ─── MCP server control ───
 
@@ -300,6 +305,9 @@
     }
     if (mcpExpanded && mcpRef && !mcpRef.contains(target)) {
       mcpExpanded = false;
+    }
+    if (createPrMenuOpen && createPrRef && !createPrRef.contains(target)) {
+      createPrMenuOpen = false;
     }
   }
 
@@ -656,16 +664,47 @@
       <span class="text-orange-400" title="Changes requested">changes</span>
     {/if}
   {:else if sessionBranch && ghAvailable}
-    <button
-      onclick={startCreatePr}
-      disabled={isRunning}
-      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
-      title={sessionStatus === 'running'
-        ? 'Ask the agent to commit, push, and create a pull request in this conversation'
-        : 'Push this branch and create a pull request'}
-    >
-      Create PR
-    </button>
+    <div class="relative flex items-center" bind:this={createPrRef}>
+      <button
+        onclick={startCreatePr}
+        disabled={isRunning}
+        class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
+        title={canAgentCreatePr
+          ? 'Ask the agent to commit, push, and create a pull request in this conversation'
+          : 'Push this branch and create a pull request'}
+      >
+        Create PR
+      </button>
+      <button
+        onclick={() => createPrMenuOpen = !createPrMenuOpen}
+        class="ml-0.5 text-blue-400/70 hover:text-blue-300 transition-colors"
+        title="Create PR options"
+      >
+        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m18 15-6-6-6 6" />
+        </svg>
+      </button>
+
+      {#if createPrMenuOpen}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl py-1 text-xs w-48 z-50">
+          <button
+            onclick={() => { createPrMenuOpen = false; sendAgentPrTurn(); }}
+            disabled={!canAgentCreatePr}
+            class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open the PR' : 'The agent must be idle and running to take this turn'}
+          >
+            Create with agent
+          </button>
+          <button
+            onclick={() => { createPrMenuOpen = false; createPrOpen = true; }}
+            class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors"
+            title="Open the PR dialog — title and description prefilled from the branch's commits"
+          >
+            Create manually…
+          </button>
+        </div>
+      {/if}
+    </div>
   {/if}
 
   {#if showContext}
