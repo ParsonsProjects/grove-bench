@@ -672,7 +672,7 @@
         + Agent
       </Button>
     </div>
-    <div class="flex gap-2 justify-end">
+    <div class="flex justify-between px-1">
       <Button
         onclick={() => bookmarkStore.toggleDrawer()}
         variant="ghost"
