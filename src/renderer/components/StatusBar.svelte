@@ -5,6 +5,8 @@
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import CreatePrDialog from './CreatePrDialog.svelte';
   import type { McpServerInfo, ThinkingLevel } from '../../shared/types.js';
 
@@ -28,6 +30,22 @@
     } finally {
       pushing = false;
     }
+  }
+
+  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
+
+  /** One click: hand PR creation to the agent as a turn in this conversation.
+   *  Falls back to the manual dialog when the session process isn't running. */
+  function startCreatePr() {
+    if (sessionStatus !== 'running') {
+      createPrOpen = true;
+      return;
+    }
+    const base = settingsStore.current.defaultBaseBranch?.trim() || 'main';
+    const prompt = buildCreatePrPrompt(sessionBranch, base);
+    messageStore.addUserMessage(sessionId, prompt);
+    window.groveBench.sendMessage(sessionId, prompt);
+    store.updateLastActive(sessionId);
   }
   let modelPickerOpen = $state(false);
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
@@ -639,9 +657,12 @@
     {/if}
   {:else if sessionBranch && ghAvailable}
     <button
-      onclick={() => createPrOpen = true}
-      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
-      title="Push this branch and create a pull request"
+      onclick={startCreatePr}
+      disabled={isRunning}
+      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
+      title={sessionStatus === 'running'
+        ? 'Ask the agent to commit, push, and create a pull request in this conversation'
+        : 'Push this branch and create a pull request'}
     >
       Create PR
     </button>

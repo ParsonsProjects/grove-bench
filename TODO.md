@@ -36,6 +36,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Dedicated PR creation dialog (title, body, base branch, draft)
 - [x] Auto-populate PR title/description from the branch's commits
 - [x] Call `gh pr create` from within the app (auto-pushes the branch first)
+- [x] One-click Create PR sends a turn to the session's agent (commit → push → PR); manual dialog is the fallback for stopped sessions
 - [x] PR status watching — state, checks rollup, review decision polled in the status bar
 - [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
 
