@@ -170,14 +170,45 @@
   const cleanupDaysNum = $derived(Math.max(0, Math.floor(Number(cleanupDays)) || 0));
   const cleanupCandidates = $derived(store.stoppedSessionsOlderThan(cleanupDaysNum));
   const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
+  const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
 
-  // Re-select all candidates whenever the dialog opens or the cutoff changes
+  /** sessionId → has uncommitted changes in its worktree. Absent = still checking / unknown. */
+  let cleanupDirty = $state<Record<string, boolean>>({});
+  let cleanupDirtyToken = 0;
+
+  // When the dialog opens or the cutoff changes: preselect all candidates, then
+  // check each worktree's git status and deselect the ones with uncommitted
+  // changes — removing those loses work, so they must be opted into explicitly.
   $effect(() => {
-    if (showCleanup) {
-      const sel: Record<string, boolean> = {};
-      for (const s of cleanupCandidates) sel[s.id] = true;
-      cleanupSelection = sel;
-    }
+    if (!showCleanup) return;
+    const candidates = cleanupCandidates;
+    const token = ++cleanupDirtyToken;
+
+    // Preselect everything; the async status check below deselects dirty ones.
+    // (Not reading cleanupDirty here — it would become a dependency and loop.)
+    const sel: Record<string, boolean> = {};
+    for (const s of candidates) sel[s.id] = true;
+    cleanupSelection = sel;
+
+    (async () => {
+      const dirty: Record<string, boolean> = {};
+      await Promise.all(candidates.map(async (s) => {
+        try {
+          const status = await window.groveBench.getGitStatus(s.id);
+          dirty[s.id] = status.entries.length > 0;
+        } catch {
+          dirty[s.id] = false; // unreadable worktree — nothing to lose
+        }
+      }));
+      if (token !== cleanupDirtyToken) return;
+      cleanupDirty = dirty;
+      // Deselect dirty sessions without re-checking ones the user unticked
+      const next = { ...cleanupSelection };
+      for (const s of candidates) {
+        if (dirty[s.id]) next[s.id] = false;
+      }
+      cleanupSelection = next;
+    })();
   });
 
   async function runCleanup() {
@@ -628,8 +659,10 @@
 
   <!-- Bottom controls -->
   <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
-    <AddRepoButton />
     <div class="flex gap-2">
+      <div class="flex-1 min-w-0">
+        <AddRepoButton />
+      </div>
       <Button
         onclick={() => openNewAgent()}
         disabled={!store.canCreate}
@@ -638,6 +671,8 @@
       >
         + Agent
       </Button>
+    </div>
+    <div class="flex gap-2 justify-end">
       <Button
         onclick={() => bookmarkStore.toggleDrawer()}
         variant="ghost"
@@ -657,7 +692,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
       </Button>
       <Button
-        onclick={() => showCleanup = true}
+        onclick={() => { cleanupDirty = {}; showCleanup = true; }}
         variant="ghost"
         size="sm"
         class="px-2 shrink-0"
@@ -736,7 +771,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Sessions</Dialog.Title>
         <Dialog.Description>
-          Remove stopped sessions you no longer need. Removing a session kills its shell and deletes its worktree — make sure any work you care about is committed and pushed or merged first. Branches are kept unless you choose otherwise. Running sessions are never listed.
+          Remove stopped sessions you no longer need. Removing a session kills its shell and deletes its worktree. Sessions with uncommitted changes are flagged and left unselected — tick them only if you're sure. Branches are kept unless you choose otherwise. Running sessions are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -779,6 +814,9 @@
                 </div>
                 <div class="text-xs text-muted-foreground">
                   {repoShortName(session.repoPath)} · {relativeAge(session.ts)}
+                  {#if cleanupDirty[session.id]}
+                    <span class="text-amber-500 font-medium">· uncommitted changes</span>
+                  {/if}
                 </div>
               </div>
             </label>
@@ -813,7 +851,12 @@
       <Dialog.Header>
         <Dialog.Title>Remove Sessions?</Dialog.Title>
         <Dialog.Description>
-          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'session' : 'sessions'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}? Uncommitted work in those worktrees is lost.
+          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'session' : 'sessions'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}?
+          {#if cleanupSelectedDirtyCount > 0}
+            <span class="text-amber-500 font-medium">
+              {cleanupSelectedDirtyCount} of them {cleanupSelectedDirtyCount === 1 ? 'has' : 'have'} uncommitted changes that will be lost.
+            </span>
+          {/if}
         </Dialog.Description>
       </Dialog.Header>
       <Dialog.Footer>

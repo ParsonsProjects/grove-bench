@@ -67,6 +67,11 @@ const GIT_STATUS: Record<string, { entries: { filePath: string; status: string; 
     { filePath: 'src/auth/refresh.test.ts', status: 'added', staged: false, additions: 41, deletions: 0 },
   ] },
   's-e2e': { entries: [{ filePath: 'e2e/retry-helper.ts', status: 'modified', staged: false, additions: 9, deletions: 4 }] },
+  // Stopped session with uncommitted work — exercises the clean-up dialog's dirty flag
+  's-perf': { entries: [
+    { filePath: 'src/middleware/cache.ts', status: 'modified', staged: false, additions: 22, deletions: 3 },
+    { filePath: 'src/db/query-plan.md', status: 'added', staged: false, additions: 54, deletions: 0 },
+  ] },
 };
 
 const CONTENT_HITS = [

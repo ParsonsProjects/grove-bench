@@ -30,10 +30,9 @@ Right-click a session to access:
 
 At the bottom of the sidebar you'll find:
 
-- **+ Add Repo** — Add a new repository
-- **+ Agent** — Create a new agent session
+- **+ Repository** and **+ Agent** — Add a repository / create a new agent session (side by side)
 - **Memory** (brain icon) — Open the project memory panel
-- **Clean up old sessions** (broom icon) — Review and remove stopped sessions inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in), so commit or merge anything you care about first. Running sessions are never listed.
+- **Clean up old sessions** (broom icon) — Review and remove stopped sessions inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Sessions with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. Running sessions are never listed.
 - **Settings** (gear icon) — Open application settings
 
 You can also access **Help** (? icon) from the title bar, next to the window controls in the top right.
