@@ -696,6 +696,18 @@ export function registerHandlers() {
     return sessionManager.listCheckpoints(sessionId);
   });
 
+  ipcMain.handle(IPC.AGENT_DIFF_HISTORY, async (_event, sessionId: string) => {
+    return sessionManager.getDiffHistory(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_TURN_DIFF, async (_event, sessionId: string, userMessageId: string) => {
+    return sessionManager.getTurnDiff(sessionId, userMessageId);
+  });
+
+  ipcMain.handle(IPC.AGENT_FULL_THREAD_DIFF, async (_event, sessionId: string) => {
+    return sessionManager.getFullThreadDiff(sessionId);
+  });
+
   // ─── Git status ───
 
   ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string) => {

@@ -1198,6 +1198,27 @@ class AgentSessionManager {
     return session.checkpoints.list(id, session.worktreePath);
   }
 
+  /** Per-turn diff history (what each turn changed) plus cumulative stats. */
+  async getDiffHistory(id: string): Promise<import('../shared/types.js').DiffHistoryResult> {
+    const session = this.sessions.get(id);
+    if (!session) return { entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } };
+    return session.checkpoints.history(id, session.worktreePath);
+  }
+
+  /** Unified diff of what a single turn changed. */
+  async getTurnDiff(id: string, userMessageId: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
+  }
+
+  /** Cumulative diff from the session baseline to the current working tree. */
+  async getFullThreadDiff(id: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.fullThreadDiff(id, session.worktreePath);
+  }
+
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
   getEventHistory(id: string): AgentEvent[] {
     const session = this.sessions.get(id);

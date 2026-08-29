@@ -127,6 +127,14 @@ const api: GroveBenchAPI = {
   listCheckpoints: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_LIST_CHECKPOINTS, sessionId),
 
+  // Diff history tracking
+  getDiffHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_DIFF_HISTORY, sessionId),
+  getTurnDiff: (sessionId: string, userMessageId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_TURN_DIFF, sessionId, userMessageId),
+  getFullThreadDiff: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_FULL_THREAD_DIFF, sessionId),
+
   // Git status
   getGitStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId),

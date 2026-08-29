@@ -231,6 +231,26 @@ export interface CheckpointListItem {
   text?: string;
 }
 
+/** Aggregate diff statistics (git diff --numstat totals). */
+export interface DiffStats {
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+}
+
+/** One turn in the session's diff history: what that turn changed on disk. */
+export interface DiffHistoryEntry extends DiffStats {
+  uuid: string;
+  turn: number;
+  text?: string;
+}
+
+/** Per-turn diff history plus the cumulative stats across the whole session. */
+export interface DiffHistoryResult {
+  entries: DiffHistoryEntry[];
+  total: DiffStats;
+}
+
 // ─── PR Info ───
 
 /** Rollup of a PR's status checks (CI). Null when the PR has no checks. */
@@ -481,6 +501,11 @@ export interface GroveBenchAPI {
   rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
   listCheckpoints(sessionId: string): Promise<CheckpointListItem[]>;
+
+  // Diff history tracking
+  getDiffHistory(sessionId: string): Promise<DiffHistoryResult>;
+  getTurnDiff(sessionId: string, userMessageId: string): Promise<string>;
+  getFullThreadDiff(sessionId: string): Promise<string>;
 
   // Git status
   getGitStatus(sessionId: string): Promise<GitStatusResult>;
@@ -774,6 +799,9 @@ export const IPC = {
   AGENT_REWIND: 'agent:rewind',
   AGENT_CHECKPOINT_DIFF: 'agent:checkpointDiff',
   AGENT_LIST_CHECKPOINTS: 'agent:listCheckpoints',
+  AGENT_DIFF_HISTORY: 'agent:diffHistory',
+  AGENT_TURN_DIFF: 'agent:turnDiff',
+  AGENT_FULL_THREAD_DIFF: 'agent:fullThreadDiff',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater
