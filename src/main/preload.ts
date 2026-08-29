@@ -184,6 +184,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
   memoryCompact: (repoPath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_COMPACT, repoPath),
+  memoryListBackups: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_LIST_BACKUPS, repoPath),
+  memoryRestoreBackup: (repoPath: string, backupId: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_RESTORE_BACKUP, repoPath, backupId),
 
   // Shell / Terminal
   shellRun: (sessionId: string, command: string) =>

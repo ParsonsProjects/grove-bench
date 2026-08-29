@@ -29,6 +29,21 @@ export interface CompactionStatus {
   filesChanged: string[];
 }
 
+export interface BackupInfo {
+  /** Directory name under _compact-backup, sortable newest-last. */
+  id: string;
+  /** ISO timestamp of when the backup was taken. */
+  createdAt: string;
+  fileCount: number;
+}
+
+export interface RestoreStatus {
+  restored: boolean;
+  error?: string;
+  /** Paths written or deleted by the restore. */
+  filesChanged: string[];
+}
+
 export interface CompactOptions {
   repoPath: string;
   /** Working directory for the text-generation adapter. Defaults to repoPath. */
@@ -60,6 +75,9 @@ const MAX_COMPACTED_FILE_BYTES = 16 * 1024;
 const COMPACTABLE_FOLDERS = ['repo', 'conventions', 'architecture'];
 
 const BACKUP_DIR = '_compact-backup';
+
+/** Timestamped backup snapshots kept before rotation. */
+const MAX_BACKUPS = 5;
 
 /** Compaction currently running, keyed by repo path. */
 const inProgress = new Set<string>();
@@ -168,26 +186,151 @@ export function pruneSessionNotes(repoPath: string, keep: number = MAX_SESSION_N
   return deleted;
 }
 
-// ─── Backup ───
+// ─── Backups ───
+
+function backupRoot(repoPath: string): string {
+  return path.join(memory.getMemoryDir(repoPath), BACKUP_DIR);
+}
+
+/** Filesystem-safe, lexicographically sortable id, e.g. "2026-08-29T16-25-30-123Z". */
+function newBackupId(): string {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
 
 /**
- * Copy the current non-session memory files into a timestamped backup folder
- * (underscore-prefixed, so it is invisible to memory listing and the system prompt).
- * Only the most recent backup is kept.
+ * Copy the given memory contents into a timestamped snapshot folder under
+ * _compact-backup (underscore-prefixed, so it is invisible to memory listing
+ * and the system prompt). The oldest snapshots beyond MAX_BACKUPS are removed.
+ * Returns the snapshot id, or null when the backup could not be written.
  */
-function backupMemory(repoPath: string, contents: Record<string, string>): void {
-  const backupRoot = path.join(memory.getMemoryDir(repoPath), BACKUP_DIR);
+function backupMemory(repoPath: string, contents: Record<string, string>): string | null {
+  const root = backupRoot(repoPath);
+  let id = newBackupId();
+  // Same-millisecond collisions get a numeric suffix, which still sorts newest-last
+  for (let n = 2; fs.existsSync(path.join(root, id)); n++) {
+    id = `${newBackupId()}-${n}`;
+  }
 
   try {
-    fs.rmSync(backupRoot, { recursive: true, force: true });
     for (const [relPath, content] of Object.entries(contents)) {
-      const target = path.join(backupRoot, relPath);
+      const target = path.join(root, id, relPath);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, content);
     }
+
+    // Rotate: ids sort chronologically, oldest first
+    const snapshots = fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name)
+      .sort();
+    for (const stale of snapshots.slice(0, Math.max(0, snapshots.length - MAX_BACKUPS))) {
+      fs.rmSync(path.join(root, stale), { recursive: true, force: true });
+    }
+
+    return id;
   } catch (err) {
-    logger.warn(`[memory-compact] Failed to back up memory before compaction: ${err}`);
+    logger.warn(`[memory-compact] Failed to back up memory: ${err}`);
+    return null;
   }
+}
+
+/** Resolve and validate a backup id, guarding against path traversal. */
+function resolveBackupDir(repoPath: string, backupId: string): string | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(backupId)) return null;
+  const dir = path.join(backupRoot(repoPath), backupId);
+  return fs.existsSync(dir) && fs.statSync(dir).isDirectory() ? dir : null;
+}
+
+/** Read a snapshot's files as relative path → content. Ignores anything outside the compactable folders. */
+function readBackupContents(dir: string): Record<string, string> {
+  const contents: Record<string, string> = {};
+
+  function walk(current: string, prefix: string) {
+    for (const item of fs.readdirSync(current, { withFileTypes: true })) {
+      const relPath = prefix ? `${prefix}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        walk(path.join(current, item.name), relPath);
+      } else if (isAllowedCompactionPath(relPath)) {
+        contents[relPath] = fs.readFileSync(path.join(current, item.name), 'utf-8');
+      }
+    }
+  }
+
+  walk(dir, '');
+  return contents;
+}
+
+/** List available backup snapshots, newest first. */
+export function listBackups(repoPath: string): BackupInfo[] {
+  const root = backupRoot(repoPath);
+  let dirs: fs.Dirent[];
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return dirs
+    .filter(d => d.isDirectory())
+    .map(d => {
+      const dir = path.join(root, d.name);
+      let createdAt = '';
+      try {
+        createdAt = fs.statSync(dir).mtime.toISOString();
+      } catch {
+        // Leave createdAt empty
+      }
+      return {
+        id: d.name,
+        createdAt,
+        fileCount: Object.keys(readBackupContents(dir)).length,
+      };
+    })
+    .sort((a, b) => b.id.localeCompare(a.id));
+}
+
+/**
+ * Restore the non-session memory files from a backup snapshot, replacing the
+ * current repo/, conventions/ and architecture/ contents. The pre-restore
+ * state is snapshotted first, so a restore is itself undoable.
+ */
+export function restoreBackup(repoPath: string, backupId: string): RestoreStatus {
+  const dir = resolveBackupDir(repoPath, backupId);
+  if (!dir) {
+    return { restored: false, error: `Unknown backup: ${backupId}`, filesChanged: [] };
+  }
+
+  const backupContents = readBackupContents(dir);
+  if (Object.keys(backupContents).length === 0) {
+    return { restored: false, error: 'Backup is empty', filesChanged: [] };
+  }
+
+  // Snapshot current state AFTER reading the backup — rotation may prune the
+  // very snapshot being restored when it is the oldest one.
+  const current = readNonSessionContents(repoPath);
+  backupMemory(repoPath, current);
+
+  const filesChanged: string[] = [];
+
+  // Remove files the backup doesn't have (e.g. merged files a compaction created)
+  for (const relPath of Object.keys(current)) {
+    if (!(relPath in backupContents) && isAllowedCompactionPath(relPath)) {
+      if (memory.deleteMemoryFile(repoPath, relPath)) filesChanged.push(relPath);
+    }
+  }
+
+  for (const [relPath, content] of Object.entries(backupContents)) {
+    try {
+      memory.writeMemoryFile(repoPath, relPath, content);
+      filesChanged.push(relPath);
+    } catch (err) {
+      logger.warn(`[memory-compact] Failed to restore ${relPath}: ${err}`);
+    }
+  }
+
+  logger.info(`[memory-compact] Restored backup ${backupId} for ${repoPath}: ${filesChanged.length} files`);
+  return { restored: true, filesChanged };
 }
 
 // ─── Compaction prompt ───

@@ -32,6 +32,8 @@ import {
   pruneSessionNotes,
   compactMemory,
   validateCompactionResult,
+  listBackups,
+  restoreBackup,
 } from './memory-compact.js';
 
 // ─── Helpers ───
@@ -216,8 +218,11 @@ describe('compactMemory', () => {
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('Vite');
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).not.toContain('Webpack');
 
-    // Originals backed up under the hidden _compact-backup folder
-    const backup = path.join(memoryDir(), '_compact-backup', 'repo', 'build.md');
+    // Originals backed up under a timestamped snapshot in the hidden _compact-backup folder
+    const backupRoot = path.join(memoryDir(), '_compact-backup');
+    const snapshots = fs.readdirSync(backupRoot);
+    expect(snapshots).toHaveLength(1);
+    const backup = path.join(backupRoot, snapshots[0], 'repo', 'build.md');
     expect(fs.readFileSync(backup, 'utf-8')).toContain('The project uses Vite.');
 
     // Backup folder is invisible to memory listing
@@ -286,6 +291,70 @@ describe('compactMemory', () => {
     expect(second.compacted).toBe(false);
     expect(second.skippedReason).toBe('cooldown');
     expect(mockAdapter.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('restore round-trips a compaction, snapshotting the pre-restore state', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'Uses Webpack');
+
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [
+        { action: 'update', path: 'repo/overview.md', content: '---\ntitle: "Overview"\n---\n\nUses Vite\n', reason: 'corrected' },
+      ],
+    }));
+
+    await compactMemory({ repoPath: REPO, force: true });
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('Vite');
+
+    const backups = listBackups(REPO);
+    expect(backups).toHaveLength(1);
+    expect(backups[0].fileCount).toBe(1);
+
+    const status = restoreBackup(REPO, backups[0].id);
+    expect(status.restored).toBe(true);
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('Webpack');
+
+    // The compacted (pre-restore) state was snapshotted, so the restore is undoable
+    expect(listBackups(REPO)).toHaveLength(2);
+  });
+
+  it('restore removes files the snapshot does not contain', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'original');
+
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [
+        { action: 'update', path: 'repo/overview.md', content: 'rewritten', reason: '' },
+        { action: 'update', path: 'repo/merged.md', content: 'new merged file', reason: '' },
+      ],
+    }));
+
+    await compactMemory({ repoPath: REPO, force: true });
+    expect(memory.readMemoryFile(REPO, 'repo/merged.md')).not.toBeNull();
+
+    const backups = listBackups(REPO);
+    restoreBackup(REPO, backups[0].id);
+
+    expect(memory.readMemoryFile(REPO, 'repo/merged.md')).toBeNull();
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('original');
+  });
+
+  it('rejects unknown and traversal backup ids', () => {
+    writeMemory('repo/overview.md', 'Overview', 'safe');
+    expect(restoreBackup(REPO, 'does-not-exist').restored).toBe(false);
+    expect(restoreBackup(REPO, '../../repo').restored).toBe(false);
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('safe');
+  });
+
+  it('rotates snapshots beyond the retention cap', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'v0');
+
+    for (let i = 1; i <= 7; i++) {
+      mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+        files: [{ action: 'update', path: 'repo/overview.md', content: `version ${i}`, reason: '' }],
+      }));
+      await compactMemory({ repoPath: REPO, force: true });
+    }
+
+    expect(listBackups(REPO)).toHaveLength(5);
   });
 
   it('hard-truncates an oversized compacted file', async () => {

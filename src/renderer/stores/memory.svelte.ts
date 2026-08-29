@@ -1,4 +1,4 @@
-import type { MemoryEntry } from '../../shared/types.js';
+import type { MemoryEntry, MemoryBackupInfo } from '../../shared/types.js';
 
 class MemoryStore {
   files = $state<MemoryEntry[]>([]);
@@ -7,6 +7,9 @@ class MemoryStore {
   loading = $state(false);
   saving = $state(false);
   error = $state<string | null>(null);
+  compacting = $state(false);
+  compactMessage = $state<string | null>(null);
+  backups = $state<MemoryBackupInfo[]>([]);
 
   /** Group files by folder for tree display */
   get filesByFolder(): Record<string, MemoryEntry[]> {
@@ -28,6 +31,8 @@ class MemoryStore {
     this.loading = true;
     this.error = null;
     this.selectedFile = null;
+    this.compactMessage = null;
+    this.backups = [];
     try {
       this.files = await window.groveBench.memoryList(repoPath);
     } catch (e: any) {
@@ -66,6 +71,54 @@ class MemoryStore {
       this.error = e.message || String(e);
     } finally {
       this.saving = false;
+    }
+  }
+
+  async compact() {
+    if (!this.activeRepo || this.compacting) return;
+    this.compacting = true;
+    this.error = null;
+    this.compactMessage = null;
+    try {
+      const status = await window.groveBench.memoryCompact(this.activeRepo);
+      this.compactMessage = status.compacted
+        ? `Compacted ${status.filesChanged.length} files`
+        : `Nothing to compact${status.skippedReason ? ` (${status.skippedReason})` : ''}`;
+      this.selectedFile = null;
+      this.files = await window.groveBench.memoryList(this.activeRepo);
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    } finally {
+      this.compacting = false;
+    }
+  }
+
+  async loadBackups() {
+    if (!this.activeRepo) return;
+    this.error = null;
+    try {
+      this.backups = await window.groveBench.memoryListBackups(this.activeRepo);
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    }
+  }
+
+  async restoreBackup(backupId: string) {
+    if (!this.activeRepo) return;
+    this.error = null;
+    this.compactMessage = null;
+    try {
+      const status = await window.groveBench.memoryRestoreBackup(this.activeRepo, backupId);
+      if (status.restored) {
+        this.compactMessage = `Restored ${status.filesChanged.length} files from backup`;
+        this.selectedFile = null;
+        this.files = await window.groveBench.memoryList(this.activeRepo);
+        this.backups = await window.groveBench.memoryListBackups(this.activeRepo);
+      } else {
+        this.error = status.error ?? 'Restore failed';
+      }
+    } catch (e: any) {
+      this.error = e.message || String(e);
     }
   }
 

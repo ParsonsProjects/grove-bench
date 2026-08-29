@@ -19,6 +19,8 @@
   let newFilePath = $state('');
   let newFileFolder = $state('repo');
   let confirmDeletePath = $state<string | null>(null);
+  let showBackups = $state(false);
+  let confirmRestoreId = $state<string | null>(null);
 
   const folders = ['repo', 'conventions', 'architecture', 'sessions'];
 
@@ -82,6 +84,25 @@
 
   function switchRepo(repoPath: string) {
     memoryStore.loadForRepo(repoPath);
+  }
+
+  function openBackups() {
+    memoryStore.loadBackups();
+    showBackups = true;
+  }
+
+  async function confirmRestore() {
+    if (confirmRestoreId) {
+      await memoryStore.restoreBackup(confirmRestoreId);
+      confirmRestoreId = null;
+      showBackups = false;
+    }
+  }
+
+  function formatBackupDate(iso: string): string {
+    if (!iso) return 'unknown';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? 'unknown' : d.toLocaleString();
   }
 </script>
 
@@ -189,9 +210,23 @@
 
     {#if memoryStore.error}
       <p class="text-xs text-destructive mt-2">{memoryStore.error}</p>
+    {:else if memoryStore.compactMessage}
+      <p class="text-xs text-muted-foreground mt-2">{memoryStore.compactMessage}</p>
     {/if}
 
-    <Dialog.Footer>
+    <Dialog.Footer class="sm:justify-between">
+      <div class="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          onclick={() => memoryStore.compact()}
+          disabled={memoryStore.compacting || memoryStore.files.length === 0}
+          title="Merge duplicate notes, resolve contradictions, and prune old session notes"
+        >
+          {memoryStore.compacting ? 'Compacting...' : 'Compact'}
+        </Button>
+        <Button size="sm" variant="ghost" onclick={openBackups}>Backups</Button>
+      </div>
       <Button variant="secondary" onclick={onclose}>Close</Button>
     </Dialog.Footer>
   </Dialog.Content>
@@ -234,6 +269,58 @@
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => showNewFile = false}>Cancel</Button>
         <Button onclick={createNewFile}>Create</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Backups dialog -->
+{#if showBackups}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) showBackups = false; }}>
+    <Dialog.Content class="max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Memory Backups</Dialog.Title>
+        <Dialog.Description>
+          Snapshots taken before each compaction or restore. Restoring replaces the current repo, conventions and architecture notes (a snapshot of the current state is taken first).
+        </Dialog.Description>
+      </Dialog.Header>
+      {#if memoryStore.backups.length === 0}
+        <p class="text-sm text-muted-foreground/50 py-2">No backups yet. One is created automatically before each compaction.</p>
+      {:else}
+        <div class="flex flex-col gap-1 max-h-64 overflow-auto">
+          {#each memoryStore.backups as backup (backup.id)}
+            <div class="flex items-center justify-between gap-2 px-2 py-1.5 bg-card border border-border">
+              <div class="min-w-0">
+                <div class="text-sm text-foreground truncate">{formatBackupDate(backup.createdAt)}</div>
+                <div class="text-xs text-muted-foreground">{backup.fileCount} {backup.fileCount === 1 ? 'file' : 'files'}</div>
+              </div>
+              <Button size="sm" variant="ghost" class="shrink-0" onclick={() => confirmRestoreId = backup.id}>
+                Restore
+              </Button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => showBackups = false}>Close</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Restore confirmation -->
+{#if confirmRestoreId}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmRestoreId = null; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Restore Backup?</Dialog.Title>
+        <Dialog.Description>
+          The current repo, conventions and architecture notes will be replaced by this snapshot. The current state is backed up first, so you can undo this.
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmRestoreId = null}>Cancel</Button>
+        <Button onclick={confirmRestore}>Restore</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>

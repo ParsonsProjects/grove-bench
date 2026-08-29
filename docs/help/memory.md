@@ -25,7 +25,9 @@ Memory grows as the agent saves notes across sessions, and over time it accumula
 - **Dedupe & merge** — when memory grows past its budget, an AI pass merges files covering the same topic and removes repeated facts.
 - **Contradiction resolution** — when two notes conflict, the more recently updated one wins; explicit user corrections always take priority over inferred facts.
 
-Before a compaction pass rewrites anything, the previous contents are backed up inside the memory folder, and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when memory has actually outgrown the space injected into the agent's system prompt.
+Before a compaction pass rewrites anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept), and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when memory has actually outgrown the space injected into the agent's system prompt.
+
+You can also compact on demand with the **Compact** button in the Memory panel, and roll back via **Backups** — restoring a snapshot replaces the current repo, conventions and architecture notes, and takes a snapshot of the current state first so the restore itself can be undone.
 
 Auto-compaction can be disabled with the `memoryAutoCompact` setting.
 

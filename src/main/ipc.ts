@@ -889,6 +889,14 @@ export function registerHandlers() {
     return memoryCompact.compactMemory({ repoPath, force: true });
   });
 
+  ipcMain.handle(IPC.MEMORY_LIST_BACKUPS, (_event, repoPath: string) => {
+    return memoryCompact.listBackups(repoPath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_RESTORE_BACKUP, (_event, repoPath: string, backupId: string) => {
+    return memoryCompact.restoreBackup(repoPath, backupId);
+  });
+
   // ─── Bookmarks ───
 
   ipcMain.handle(IPC.BOOKMARKS_LIST, () => {

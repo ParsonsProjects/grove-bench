@@ -516,6 +516,8 @@ export interface GroveBenchAPI {
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
   memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
+  memoryListBackups(repoPath: string): Promise<MemoryBackupInfo[]>;
+  memoryRestoreBackup(repoPath: string, backupId: string): Promise<MemoryRestoreStatus>;
 
   // Shell / Terminal (legacy)
   shellRun(sessionId: string, command: string): Promise<string>;
@@ -652,6 +654,18 @@ export interface MemoryCompactionStatus {
   filesChanged: string[];   // paths written, rewritten, or deleted
 }
 
+export interface MemoryBackupInfo {
+  id: string;               // snapshot folder name, sortable
+  createdAt: string;        // ISO timestamp
+  fileCount: number;
+}
+
+export interface MemoryRestoreStatus {
+  restored: boolean;
+  error?: string;
+  filesChanged: string[];   // paths written or deleted by the restore
+}
+
 // ─── Bookmarks ───
 
 export interface Bookmark {
@@ -775,6 +789,8 @@ export const IPC = {
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
   MEMORY_COMPACT: 'memory:compact',
+  MEMORY_LIST_BACKUPS: 'memory:listBackups',
+  MEMORY_RESTORE_BACKUP: 'memory:restoreBackup',
   SHELL_RUN: 'shell:run',
   SHELL_KILL: 'shell:kill',
   SHELL_INPUT: 'shell:input',
