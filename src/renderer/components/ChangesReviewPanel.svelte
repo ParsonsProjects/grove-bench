@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { prStore } from '../stores/pr.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
   import type { DiffLine } from './DiffView.svelte';
   import { hunkLineIndices } from '../lib/diff-highlight.js';
@@ -191,6 +192,7 @@
   // Staging + commit
   let commitMessage = $state('');
   let committing = $state(false);
+  let pushing = $state(false);
   let commitError = $state('');
 
   function stageEntry(entry: GitStatusEntry) {
@@ -215,17 +217,24 @@
     }
   }
 
-  async function doCommit() {
+  async function doCommit(andPush = false) {
     if (!commitMessage.trim() || stagedEntries.length === 0 || committing) return;
     committing = true;
     commitError = '';
+    let committed = false;
     try {
       await gitStatusStore.commit(sessionId, commitMessage);
+      committed = true;
       commitMessage = '';
+      if (andPush) {
+        pushing = true;
+        await prStore.push(sessionId);
+      }
     } catch (e: any) {
-      commitError = e?.message || 'Commit failed';
+      commitError = e?.message || (committed ? 'Push failed' : 'Commit failed');
     } finally {
       committing = false;
+      pushing = false;
     }
   }
 
@@ -555,13 +564,23 @@
           {#if commitError}
             <div class="text-[10px] text-destructive">{commitError}</div>
           {/if}
-          <button
-            onclick={doCommit}
-            disabled={!commitMessage.trim() || committing}
-            class="w-full text-xs px-2 py-1 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {committing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
-          </button>
+          <div class="flex gap-1.5">
+            <button
+              onclick={() => doCommit()}
+              disabled={!commitMessage.trim() || committing}
+              class="flex-1 text-xs px-2 py-1 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {committing && !pushing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
+            </button>
+            <button
+              onclick={() => doCommit(true)}
+              disabled={!commitMessage.trim() || committing}
+              class="text-xs px-2 py-1 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="Commit staged files, then push the branch to origin"
+            >
+              {pushing ? 'Pushing…' : '& Push'}
+            </button>
+          </div>
         </div>
       {/if}
     </div>

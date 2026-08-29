@@ -4,11 +4,31 @@
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
-  import type { McpServerInfo, PrInfo, ThinkingLevel } from '../../shared/types.js';
+  import { prStore } from '../stores/pr.svelte.js';
+  import CreatePrDialog from './CreatePrDialog.svelte';
+  import type { McpServerInfo, ThinkingLevel } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let prInfo = $state<PrInfo | null>(null);
+  let prInfo = $derived(prStore.getPr(sessionId));
+  let gitSync = $derived(prStore.getSync(sessionId));
+  let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
+  let createPrOpen = $state(false);
+  let pushing = $state(false);
+  let pushError = $state('');
+
+  async function doPush() {
+    if (pushing) return;
+    pushing = true;
+    pushError = '';
+    try {
+      await prStore.push(sessionId);
+    } catch (e: any) {
+      pushError = e?.message || 'Push failed';
+    } finally {
+      pushing = false;
+    }
+  }
   let modelPickerOpen = $state(false);
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
 
@@ -101,13 +121,14 @@
     return String(n);
   }
 
-  // Re-fetch PR info when a turn finishes (agent may have created/pushed a PR)
+  // Poll PR + branch sync status while this status bar is mounted
+  $effect(() => prStore.watch(sessionId));
+
+  // Re-fetch PR info when a turn finishes (agent may have committed/pushed/created a PR)
   let prevRunning = $state(false);
   $effect(() => {
     if (prevRunning && !isRunning) {
-      window.groveBench.getPrInfo(sessionId).then((info) => {
-        prInfo = info;
-      });
+      prStore.refresh(sessionId, true);
     }
     prevRunning = isRunning;
   });
@@ -267,9 +288,6 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('click', handleClickOutside);
-    window.groveBench.getPrInfo(sessionId).then((info) => {
-      prInfo = info;
-    });
     window.groveBench.getModels().then((models) => {
       modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
     });
@@ -568,13 +586,64 @@
     </span>
   {/if}
 
+  {#if gitSync.ahead > 0}
+    <button
+      onclick={doPush}
+      disabled={pushing}
+      class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors disabled:opacity-50"
+      title={pushing ? 'Pushing…' : `${gitSync.ahead} unpushed commit${gitSync.ahead > 1 ? 's' : ''} — click to push`}
+    >
+      {pushing ? 'pushing…' : `↑${gitSync.ahead}`}
+    </button>
+  {/if}
+
+  {#if gitSync.behind > 0}
+    <span class="text-muted-foreground/70" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
+      ↓{gitSync.behind}
+    </span>
+  {/if}
+
+  {#if pushError}
+    <span class="text-red-400 truncate max-w-32" title={pushError}>push failed</span>
+  {/if}
+
   {#if prInfo}
+    {@const prColor =
+      prInfo.state === 'MERGED' ? 'text-purple-400 hover:text-purple-300'
+      : prInfo.state === 'CLOSED' ? 'text-red-400 hover:text-red-300'
+      : prInfo.isDraft ? 'text-muted-foreground hover:text-foreground'
+      : 'text-blue-400 hover:text-blue-300'}
     <button
       onclick={() => prInfo && window.groveBench.openExternal(prInfo.url)}
-      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
-      title="Open PR #{prInfo.number} on GitHub"
+      class="{prColor} hover:underline transition-colors"
+      title="{prInfo.title ? `${prInfo.title} — ` : ''}open PR #{prInfo.number} on GitHub"
     >
-      PR #{prInfo.number}
+      PR #{prInfo.number}{prInfo.isDraft ? ' draft' : prInfo.state === 'MERGED' ? ' merged' : prInfo.state === 'CLOSED' ? ' closed' : ''}
+    </button>
+
+    {#if prInfo.checks}
+      {@const c = prInfo.checks}
+      {#if c.failed > 0}
+        <span class="text-red-400" title="{c.failed} of {c.total} checks failing">✗ {c.failed}/{c.total}</span>
+      {:else if c.pending > 0}
+        <span class="text-yellow-400" title="{c.pending} of {c.total} checks pending">● {c.passed}/{c.total}</span>
+      {:else}
+        <span class="text-green-400" title="All {c.total} checks passing">✓ {c.total}</span>
+      {/if}
+    {/if}
+
+    {#if prInfo.reviewDecision === 'APPROVED'}
+      <span class="text-green-400" title="Review approved">approved</span>
+    {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
+      <span class="text-orange-400" title="Changes requested">changes</span>
+    {/if}
+  {:else if sessionBranch && ghAvailable}
+    <button
+      onclick={() => createPrOpen = true}
+      class="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+      title="Push this branch and create a pull request"
+    >
+      Create PR
     </button>
   {/if}
 
@@ -788,3 +857,7 @@
     {/if}
   </div>
 </div>
+
+{#if createPrOpen}
+  <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+{/if}

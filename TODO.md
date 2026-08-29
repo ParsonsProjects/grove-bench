@@ -33,9 +33,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Full thread diff view (cumulative changes across all turns)
 
 ### PR Creation Workflow
-- [ ] Dedicated PR creation dialog (title, body, base branch)
-- [ ] Auto-populate PR description from agent's changes
-- [ ] Call `gh pr create` from within the app
+- [x] Dedicated PR creation dialog (title, body, base branch, draft)
+- [x] Auto-populate PR title/description from the branch's commits
+- [x] Call `gh pr create` from within the app (auto-pushes the branch first)
+- [x] PR status watching — state, checks rollup, review decision polled in the status bar
+- [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
 
 ### Session Search
 - [x] Fuzzy search to find and resume past conversations (Ctrl+R)
@@ -75,7 +77,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] MCP server connections (connect to external MCP servers)
 
 ### Git & Workflow
-- [ ] Branch → PR link (create PR from session branch)
+- [x] Branch → PR link (create PR from session branch)
 - [x] Branch without worktree (use existing checkout, no worktree creation)
 - [ ] Stacked branch workflows (dependent branch chains)
 

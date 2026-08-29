@@ -1,5 +1,6 @@
 import type { PrerequisiteStatus } from '../shared/types.js';
 import { gitVersion } from './git.js';
+import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
 
 const MIN_GIT_MAJOR = 2;
@@ -20,11 +21,25 @@ export async function checkGit(): Promise<PrerequisiteStatus['git']> {
   };
 }
 
+/** GitHub CLI detection — optional; only gates PR automation in the UI. */
+export async function checkGh(): Promise<NonNullable<PrerequisiteStatus['gh']>> {
+  const version = await ghVersion();
+  if (!version) {
+    return { available: false };
+  }
+  return {
+    available: true,
+    version,
+    authenticated: await ghAuthenticated(),
+  };
+}
+
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
   const adapter = adapterRegistry.getDefault();
-  const [gitStatus, agentStatus] = await Promise.all([
+  const [gitStatus, agentStatus, ghStatus] = await Promise.all([
     checkGit(),
     adapter.checkPrerequisites(),
+    checkGh(),
   ]);
   // Build error/auth message from adapter when not available or not authenticated
   let errorMessage: string | undefined;
@@ -50,5 +65,6 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
       errorMessage,
       authErrorMessage,
     },
+    gh: ghStatus,
   };
 }

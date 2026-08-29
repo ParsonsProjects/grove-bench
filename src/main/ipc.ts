@@ -8,8 +8,9 @@ import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit } from './git.js';
-import type { FileDiffResult, ImageDiffContent } from '../shared/types.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
+import { prStatus, prCreate } from './gh.js';
+import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
@@ -615,6 +616,34 @@ export function registerHandlers() {
     await commit(worktree.path, message);
   });
 
+  ipcMain.handle(IPC.GIT_PUSH, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    await push(worktree.path, worktree.branch);
+  });
+
+  ipcMain.handle(IPC.GIT_SYNC_STATUS, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return { upstream: null, ahead: 0, behind: 0 };
+    try {
+      return await syncStatus(worktree.path);
+    } catch (e) {
+      logger.warn(`git sync status failed for session ${sessionId}:`, e);
+      return { upstream: null, ahead: 0, behind: 0 };
+    }
+  });
+
+  ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return [];
+    try {
+      return await branchCommits(worktree.path, base);
+    } catch (e) {
+      logger.warn(`branch commits failed for session ${sessionId}:`, e);
+      return [];
+    }
+  });
+
   // ─── Checkpoint rewind ───
 
   ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) => {
@@ -662,18 +691,15 @@ export function registerHandlers() {
   ipcMain.handle(IPC.PR_INFO, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return null;
-    try {
-      const { stdout } = await execa('gh', ['pr', 'view', worktree.branch, '--json', 'number,url'], {
-        cwd: worktree.repoPath,
-      });
-      const data = JSON.parse(stdout);
-      if (data.number && data.url) {
-        return { number: data.number, url: data.url };
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    return prStatus(worktree.repoPath, worktree.branch);
+  });
+
+  ipcMain.handle(IPC.PR_CREATE, async (_event, sessionId: string, opts: PrCreateOpts) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    // The branch must exist on origin before gh can open a PR for it.
+    await push(worktree.path, worktree.branch);
+    return prCreate(worktree.repoPath, worktree.branch, opts);
   });
 
   // ─── Plugins ───
