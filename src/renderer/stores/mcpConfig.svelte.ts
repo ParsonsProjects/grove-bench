@@ -5,7 +5,7 @@ const STALE_BRIDGE_ERROR =
 
 /** The preload bridge is frozen at window load, so a hot-reloaded renderer can be newer than it. */
 function bridgeHas(fn: 'mcpConfigList' | 'mcpConfigAdd' | 'mcpConfigRemove'): boolean {
-  return typeof (window.groveBench as Record<string, unknown> | undefined)?.[fn] === 'function';
+  return typeof window.groveBench?.[fn] === 'function';
 }
 
 /** Configured MCP servers from the agent CLI config (settings panel view). */

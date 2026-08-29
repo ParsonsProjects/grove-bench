@@ -6,10 +6,10 @@ import type { McpConfiguredServer } from '../../shared/types.js';
 
 const SERVER: McpConfiguredServer = {
   name: 'test-server',
+  target: 'npx test-server',
   transport: 'stdio',
-  command: 'npx test-server',
-  scope: 'user',
-} as McpConfiguredServer;
+  status: 'connected',
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
