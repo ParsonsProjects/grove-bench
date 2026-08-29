@@ -30,7 +30,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Diff Viewer
 - [x] Side-by-side diff view option (toggle in Edit tool header)
 - [ ] Syntax highlighting in diff views across multiple languages
-- [ ] Full thread diff view (cumulative changes across all turns)
+- [x] Full thread diff view (cumulative changes across all turns) — "All turns" entry in the Checkpoints tab, plus per-turn diff stats and a This turn / Since here toggle
 
 ### PR Creation Workflow
 - [x] Dedicated PR creation dialog (title, body, base branch, draft)
