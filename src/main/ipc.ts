@@ -897,6 +897,18 @@ export function registerHandlers() {
     return memoryCompact.restoreBackup(repoPath, backupId);
   });
 
+  ipcMain.handle(IPC.MEMORY_STATS, (_event, repoPath: string) => {
+    return { ...memory.getMemoryStats(repoPath), ...memoryCompact.getCompactionInfo(repoPath) };
+  });
+
+  ipcMain.handle(IPC.MEMORY_BACKUP_PREVIEW, (_event, repoPath: string, backupId: string) => {
+    return memoryCompact.previewBackup(repoPath, backupId);
+  });
+
+  ipcMain.handle(IPC.MEMORY_BACKUP_READ_FILE, (_event, repoPath: string, backupId: string, relativePath: string) => {
+    return memoryCompact.readBackupFile(repoPath, backupId, relativePath);
+  });
+
   // ─── Bookmarks ───
 
   ipcMain.handle(IPC.BOOKMARKS_LIST, () => {

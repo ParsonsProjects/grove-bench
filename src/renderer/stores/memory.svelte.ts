@@ -1,4 +1,10 @@
-import type { MemoryEntry, MemoryBackupInfo } from '../../shared/types.js';
+import type {
+  MemoryEntry,
+  MemoryBackupInfo,
+  MemoryBackupFile,
+  MemoryCompactionStatus,
+  MemoryStatsResult,
+} from '../../shared/types.js';
 
 class MemoryStore {
   files = $state<MemoryEntry[]>([]);
@@ -10,6 +16,14 @@ class MemoryStore {
   compacting = $state(false);
   compactMessage = $state<string | null>(null);
   backups = $state<MemoryBackupInfo[]>([]);
+  stats = $state<MemoryStatsResult | null>(null);
+  /** Result of the last manual compaction — drives the change-summary dialog and its Undo. */
+  lastCompaction = $state<MemoryCompactionStatus | null>(null);
+  undoing = $state(false);
+  /** Preview of one backup snapshot's contents, keyed to backupPreviewId. */
+  backupPreviewId = $state<string | null>(null);
+  backupPreviewFiles = $state<MemoryBackupFile[]>([]);
+  backupPreviewFile = $state<{ path: string; content: string } | null>(null);
 
   /** Group files by folder for tree display */
   get filesByFolder(): Record<string, MemoryEntry[]> {
@@ -47,12 +61,23 @@ class MemoryStore {
     this.selectedFile = null;
     this.compactMessage = null;
     this.backups = [];
+    this.lastCompaction = null;
     try {
       this.files = await window.groveBench.memoryList(repoPath);
     } catch (e: any) {
       this.error = e.message || String(e);
     } finally {
       this.loading = false;
+    }
+    await this.loadStats();
+  }
+
+  async loadStats() {
+    if (!this.activeRepo) return;
+    try {
+      this.stats = await window.groveBench.memoryStats(this.activeRepo);
+    } catch {
+      this.stats = null; // meter is decorative — never surface an error for it
     }
   }
 
@@ -93,13 +118,17 @@ class MemoryStore {
     this.compacting = true;
     this.error = null;
     this.compactMessage = null;
+    this.lastCompaction = null;
     try {
       const status = await window.groveBench.memoryCompact(this.activeRepo);
-      this.compactMessage = status.compacted
-        ? `Compacted ${status.filesChanged.length} files`
-        : `Nothing to compact${status.skippedReason ? ` (${status.skippedReason})` : ''}`;
+      if (status.compacted) {
+        this.lastCompaction = status; // opens the change-summary dialog with Undo
+      } else {
+        this.compactMessage = `Nothing to compact${status.skippedReason ? ` (${status.skippedReason})` : ''}`;
+      }
       this.selectedFile = null;
       this.files = await window.groveBench.memoryList(this.activeRepo);
+      await this.loadStats();
     } catch (e: any) {
       this.error = e.message || String(e);
     } finally {
@@ -107,9 +136,65 @@ class MemoryStore {
     }
   }
 
+  /** Roll back the last manual compaction via its pre-apply snapshot. */
+  async undoCompaction() {
+    const backupId = this.lastCompaction?.backupId;
+    if (!this.activeRepo || !backupId || this.undoing) return;
+    this.undoing = true;
+    this.error = null;
+    try {
+      const status = await window.groveBench.memoryRestoreBackup(this.activeRepo, backupId);
+      if (status.restored) {
+        this.lastCompaction = null;
+        this.compactMessage = 'Compaction undone';
+        this.selectedFile = null;
+        this.files = await window.groveBench.memoryList(this.activeRepo);
+        await this.loadStats();
+      } else {
+        this.error = status.error ?? 'Undo failed';
+      }
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    } finally {
+      this.undoing = false;
+    }
+  }
+
+  async previewBackup(backupId: string) {
+    if (!this.activeRepo) return;
+    if (this.backupPreviewId === backupId) {
+      // Toggle off
+      this.backupPreviewId = null;
+      this.backupPreviewFiles = [];
+      this.backupPreviewFile = null;
+      return;
+    }
+    this.error = null;
+    try {
+      this.backupPreviewFiles = await window.groveBench.memoryBackupPreview(this.activeRepo, backupId);
+      this.backupPreviewId = backupId;
+      this.backupPreviewFile = null;
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    }
+  }
+
+  async readBackupFile(backupId: string, path: string) {
+    if (!this.activeRepo) return;
+    try {
+      const content = await window.groveBench.memoryReadBackupFile(this.activeRepo, backupId, path);
+      this.backupPreviewFile = { path, content: content ?? '(unreadable)' };
+    } catch (e: any) {
+      this.error = e.message || String(e);
+    }
+  }
+
   async loadBackups() {
     if (!this.activeRepo) return;
     this.error = null;
+    this.backupPreviewId = null;
+    this.backupPreviewFiles = [];
+    this.backupPreviewFile = null;
     try {
       this.backups = await window.groveBench.memoryListBackups(this.activeRepo);
     } catch (e: any) {
@@ -128,6 +213,7 @@ class MemoryStore {
         this.selectedFile = null;
         this.files = await window.groveBench.memoryList(this.activeRepo);
         this.backups = await window.groveBench.memoryListBackups(this.activeRepo);
+        await this.loadStats();
       } else {
         this.error = status.error ?? 'Restore failed';
       }
@@ -163,6 +249,7 @@ class MemoryStore {
       }
       this.files = await window.groveBench.memoryList(this.activeRepo);
       this.compactMessage = `Deleted ${relativePaths.length} session ${relativePaths.length === 1 ? 'note' : 'notes'}`;
+      await this.loadStats();
     } catch (e: any) {
       this.error = e.message || String(e);
     }

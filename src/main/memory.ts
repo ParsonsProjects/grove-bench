@@ -149,6 +149,52 @@ export function deleteMemoryFile(repoPath: string, relativePath: string): boolea
   }
 }
 
+// ─── Stats ───
+
+export interface MemoryStats {
+  /** Bytes of non-session memory bodies (frontmatter stripped) — what competes for the prompt budget. */
+  totalBytes: number;
+  budgetBytes: number;
+  fileCount: number;
+  sessionNoteCount: number;
+  /** Files that no longer fit in the system prompt budget. */
+  skippedFiles: string[];
+}
+
+/**
+ * Budget accounting for the memory panel meter. Mirrors the accounting in
+ * getMemoryForSystemPrompt exactly, so "skipped" here means skipped there.
+ */
+export function getMemoryStats(repoPath: string): MemoryStats {
+  const entries = listMemoryFiles(repoPath);
+  const stats: MemoryStats = {
+    totalBytes: 0,
+    budgetBytes: MAX_SYSTEM_PROMPT_BYTES,
+    fileCount: 0,
+    sessionNoteCount: entries.filter(e => e.folder.startsWith('sessions')).length,
+    skippedFiles: [],
+  };
+
+  let promptSize = 0;
+  for (const entry of entries) {
+    if (entry.folder.startsWith('sessions')) continue;
+    const content = readMemoryFile(repoPath, entry.relativePath);
+    if (!content) continue;
+    const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '').trim();
+    if (!body) continue;
+
+    stats.fileCount++;
+    stats.totalBytes += body.length;
+    if (promptSize + body.length > MAX_SYSTEM_PROMPT_BYTES) {
+      stats.skippedFiles.push(entry.relativePath);
+    } else {
+      promptSize += body.length;
+    }
+  }
+
+  return stats;
+}
+
 // ─── System prompt builder ───
 
 export function getMemoryForSystemPrompt(repoPath: string): string {

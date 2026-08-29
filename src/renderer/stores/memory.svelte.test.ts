@@ -21,6 +21,10 @@ beforeEach(() => {
   memoryStore.activeRepo = '/repo';
   memoryStore.error = null;
   memoryStore.compactMessage = null;
+  memoryStore.lastCompaction = null;
+  memoryStore.backupPreviewId = null;
+  memoryStore.backupPreviewFiles = [];
+  memoryStore.backupPreviewFile = null;
 });
 
 describe('sessionNotesOlderThan', () => {
@@ -85,5 +89,71 @@ describe('deleteFiles', () => {
     mockGroveBench.memoryDelete.mockRejectedValueOnce(new Error('disk gone'));
     await memoryStore.deleteFiles(['sessions/a.md']);
     expect(memoryStore.error).toBe('disk gone');
+  });
+});
+
+describe('compact result and undo', () => {
+  it('stores the compaction result for the summary dialog when files changed', async () => {
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
+      compacted: true,
+      filesChanged: ['repo/a.md', 'repo/b.md'],
+      changes: [{ action: 'delete', path: 'repo/b.md', reason: 'merged into a' }],
+      backupId: 'snap-1',
+    });
+
+    await memoryStore.compact();
+
+    expect(memoryStore.lastCompaction?.backupId).toBe('snap-1');
+    expect(memoryStore.compactMessage).toBeNull();
+  });
+
+  it('shows a message instead of the dialog when nothing was compacted', async () => {
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
+      compacted: false, skippedReason: 'below threshold', filesChanged: [],
+    });
+
+    await memoryStore.compact();
+
+    expect(memoryStore.lastCompaction).toBeNull();
+    expect(memoryStore.compactMessage).toContain('below threshold');
+  });
+
+  it('undoCompaction restores the recorded snapshot and clears the result', async () => {
+    memoryStore.lastCompaction = {
+      compacted: true, filesChanged: ['repo/a.md'], backupId: 'snap-1',
+    };
+    mockGroveBench.memoryRestoreBackup.mockResolvedValueOnce({ restored: true, filesChanged: ['repo/a.md'] });
+
+    await memoryStore.undoCompaction();
+
+    expect(mockGroveBench.memoryRestoreBackup).toHaveBeenCalledWith('/repo', 'snap-1');
+    expect(memoryStore.lastCompaction).toBeNull();
+    expect(memoryStore.compactMessage).toBe('Compaction undone');
+  });
+
+  it('undoCompaction is a no-op without a backupId', async () => {
+    memoryStore.lastCompaction = { compacted: true, filesChanged: [] };
+    await memoryStore.undoCompaction();
+    expect(mockGroveBench.memoryRestoreBackup).not.toHaveBeenCalled();
+  });
+});
+
+describe('backup preview', () => {
+  it('loads a snapshot file list and toggles off on second call', async () => {
+    mockGroveBench.memoryBackupPreview.mockResolvedValue([{ path: 'repo/a.md', bytes: 100 }]);
+
+    await memoryStore.previewBackup('snap-1');
+    expect(memoryStore.backupPreviewId).toBe('snap-1');
+    expect(memoryStore.backupPreviewFiles).toHaveLength(1);
+
+    await memoryStore.previewBackup('snap-1');
+    expect(memoryStore.backupPreviewId).toBeNull();
+    expect(memoryStore.backupPreviewFiles).toEqual([]);
+  });
+
+  it('reads a single snapshot file for display', async () => {
+    mockGroveBench.memoryReadBackupFile.mockResolvedValueOnce('archived content');
+    await memoryStore.readBackupFile('snap-1', 'repo/a.md');
+    expect(memoryStore.backupPreviewFile).toEqual({ path: 'repo/a.md', content: 'archived content' });
   });
 });

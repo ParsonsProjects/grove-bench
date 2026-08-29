@@ -518,6 +518,9 @@ export interface GroveBenchAPI {
   memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
   memoryListBackups(repoPath: string): Promise<MemoryBackupInfo[]>;
   memoryRestoreBackup(repoPath: string, backupId: string): Promise<MemoryRestoreStatus>;
+  memoryStats(repoPath: string): Promise<MemoryStatsResult>;
+  memoryBackupPreview(repoPath: string, backupId: string): Promise<MemoryBackupFile[]>;
+  memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
 
   // Shell / Terminal (legacy)
   shellRun(sessionId: string, command: string): Promise<string>;
@@ -652,6 +655,26 @@ export interface MemoryCompactionStatus {
   compacted: boolean;
   skippedReason?: string;   // why compaction was skipped, when it was
   filesChanged: string[];   // paths written, rewritten, or deleted
+  /** Per-file summary of what the pass did (action, path, model's reason). */
+  changes?: Array<{ action: 'update' | 'delete'; path: string; reason: string }>;
+  /** Snapshot taken before applying — restore it to undo the compaction. */
+  backupId?: string;
+}
+
+export interface MemoryStatsResult {
+  totalBytes: number;        // non-session memory bytes (frontmatter stripped)
+  budgetBytes: number;       // system-prompt budget
+  fileCount: number;         // non-session files
+  sessionNoteCount: number;
+  skippedFiles: string[];    // files that no longer fit in the prompt budget
+  lastCompactedAt: string | null;
+  lastAuto?: boolean;        // last pass was automatic (vs the panel button)
+  lastFilesChanged?: number;
+}
+
+export interface MemoryBackupFile {
+  path: string;
+  bytes: number;
 }
 
 export interface MemoryBackupInfo {
@@ -791,6 +814,9 @@ export const IPC = {
   MEMORY_COMPACT: 'memory:compact',
   MEMORY_LIST_BACKUPS: 'memory:listBackups',
   MEMORY_RESTORE_BACKUP: 'memory:restoreBackup',
+  MEMORY_STATS: 'memory:stats',
+  MEMORY_BACKUP_PREVIEW: 'memory:backupPreview',
+  MEMORY_BACKUP_READ_FILE: 'memory:backupReadFile',
   SHELL_RUN: 'shell:run',
   SHELL_KILL: 'shell:kill',
   SHELL_INPUT: 'shell:input',

@@ -34,6 +34,9 @@ import {
   validateCompactionResult,
   listBackups,
   restoreBackup,
+  previewBackup,
+  readBackupFile,
+  getCompactionInfo,
 } from './memory-compact.js';
 
 // ─── Helpers ───
@@ -60,6 +63,35 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+// ─── getMemoryStats ───
+
+describe('getMemoryStats', () => {
+  it('counts non-session bytes and files, session notes separately', () => {
+    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(100));
+    writeMemory('conventions/naming.md', 'Naming', 'y'.repeat(50));
+    writeMemory('sessions/note.md', 'Note', 'z'.repeat(999));
+
+    const stats = memory.getMemoryStats(REPO);
+
+    expect(stats.fileCount).toBe(2);
+    expect(stats.sessionNoteCount).toBe(1);
+    expect(stats.totalBytes).toBe(150);
+    expect(stats.budgetBytes).toBe(16 * 1024);
+    expect(stats.skippedFiles).toEqual([]);
+  });
+
+  it('marks files beyond the prompt budget as skipped, matching the prompt builder', () => {
+    writeMemory('repo/big-1.md', 'Big 1', 'a'.repeat(9 * 1024));
+    writeMemory('repo/big-2.md', 'Big 2', 'b'.repeat(9 * 1024));
+
+    const stats = memory.getMemoryStats(REPO);
+
+    expect(stats.skippedFiles).toHaveLength(1);
+    // The same file the prompt builder reports as skipped
+    expect(memory.getMemoryForSystemPrompt(REPO)).toContain(stats.skippedFiles[0]);
+  });
 });
 
 // ─── needsCompaction ───
@@ -342,6 +374,60 @@ describe('compactMemory', () => {
     expect(restoreBackup(REPO, 'does-not-exist').restored).toBe(false);
     expect(restoreBackup(REPO, '../../repo').restored).toBe(false);
     expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('safe');
+  });
+
+  it('reports per-file changes and the undo backupId, and records compaction info', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'Uses Webpack');
+
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [
+        { action: 'update', path: 'repo/overview.md', content: 'Uses Vite', reason: 'kept the newer claim' },
+      ],
+    }));
+
+    const status = await compactMemory({ repoPath: REPO, force: true });
+
+    expect(status.changes).toEqual([
+      { action: 'update', path: 'repo/overview.md', reason: 'kept the newer claim' },
+    ]);
+    expect(status.backupId).toBeTruthy();
+
+    // The reported backupId really is the undo handle
+    const undo = restoreBackup(REPO, status.backupId!);
+    expect(undo.restored).toBe(true);
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('Webpack');
+
+    const info = getCompactionInfo(REPO);
+    expect(info.lastCompactedAt).toBeTruthy();
+    expect(info.lastAuto).toBe(false);
+    expect(info.lastFilesChanged).toBe(1);
+  });
+
+  it('marks auto-triggered passes in the compaction info', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'x'.repeat(13 * 1024));
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [{ action: 'update', path: 'repo/overview.md', content: 'condensed '.repeat(200), reason: '' }],
+    }));
+
+    await compactMemory({ repoPath: REPO, auto: true });
+
+    expect(getCompactionInfo(REPO).lastAuto).toBe(true);
+  });
+
+  it('previews snapshot contents and reads single files without touching live memory', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'original body');
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [{ action: 'update', path: 'repo/overview.md', content: 'rewritten', reason: '' }],
+    }));
+
+    const status = await compactMemory({ repoPath: REPO, force: true });
+    const files = previewBackup(REPO, status.backupId!);
+
+    expect(files).toEqual([{ path: 'repo/overview.md', bytes: expect.any(Number) }]);
+    expect(readBackupFile(REPO, status.backupId!, 'repo/overview.md')).toContain('original body');
+    expect(readBackupFile(REPO, status.backupId!, '../../_index.json')).toBeNull();
+    // Live memory unchanged by the reads
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toBe('rewritten');
   });
 
   it('rotates snapshots beyond the retention cap', async () => {

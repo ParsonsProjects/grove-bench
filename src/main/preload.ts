@@ -188,6 +188,12 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MEMORY_LIST_BACKUPS, repoPath),
   memoryRestoreBackup: (repoPath: string, backupId: string) =>
     ipcRenderer.invoke(IPC.MEMORY_RESTORE_BACKUP, repoPath, backupId),
+  memoryStats: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_STATS, repoPath),
+  memoryBackupPreview: (repoPath: string, backupId: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_BACKUP_PREVIEW, repoPath, backupId),
+  memoryReadBackupFile: (repoPath: string, backupId: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_BACKUP_READ_FILE, repoPath, backupId, relativePath),
 
   // Shell / Terminal
   shellRun: (sessionId: string, command: string) =>

@@ -26,7 +26,7 @@
   let pruneSelection = $state<Record<string, boolean>>({});
   let confirmPrune = $state(false);
 
-  const pruneDayOptions = ['7', '30', '90', '180'];
+  const pruneDayPresets = [7, 30, 90, 180];
 
   const folders = ['repo', 'conventions', 'architecture', 'sessions'];
 
@@ -111,8 +111,31 @@
     return Number.isNaN(d.getTime()) ? 'unknown' : d.toLocaleString();
   }
 
-  const prunableNotes = $derived(memoryStore.sessionNotesOlderThan(Number(pruneDays)));
+  const pruneDaysNum = $derived(Math.max(0, Math.floor(Number(pruneDays)) || 0));
+  const prunableNotes = $derived(memoryStore.sessionNotesOlderThan(pruneDaysNum));
   const pruneSelectedPaths = $derived(prunableNotes.map(n => n.relativePath).filter(p => pruneSelection[p]));
+
+  // ─── Budget meter ───
+  const budgetPct = $derived(memoryStore.stats
+    ? Math.min(100, Math.round((memoryStore.stats.totalBytes / memoryStore.stats.budgetBytes) * 100))
+    : 0);
+  const budgetWarn = $derived(budgetPct >= 75);
+
+  function formatKb(bytes: number): string {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  function relativeTime(iso: string | null | undefined): string {
+    if (!iso) return '';
+    const ms = Date.now() - Date.parse(iso);
+    if (Number.isNaN(ms) || ms < 0) return '';
+    const mins = Math.floor(ms / 60_000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  }
 
   // Re-select all matches whenever the dialog opens or the cutoff changes
   $effect(() => {
@@ -154,6 +177,36 @@
             {/each}
           </Select.Content>
         </Select.Root>
+      </div>
+    {/if}
+
+    <!-- Budget meter: how much of the agent's system-prompt budget memory uses -->
+    {#if memoryStore.stats}
+      <div class="mb-2">
+        <div class="flex items-center justify-between text-xs mb-1">
+          <span class="text-muted-foreground">
+            Agent prompt budget:
+            <span class={budgetWarn ? 'text-amber-500 font-medium' : 'text-foreground/80'}>
+              {formatKb(memoryStore.stats.totalBytes)} / {formatKb(memoryStore.stats.budgetBytes)}
+            </span>
+            {#if memoryStore.stats.skippedFiles.length > 0}
+              <span class="text-destructive font-medium" title={memoryStore.stats.skippedFiles.join(', ')}>
+                · {memoryStore.stats.skippedFiles.length} {memoryStore.stats.skippedFiles.length === 1 ? 'file' : 'files'} not reaching the agent
+              </span>
+            {/if}
+          </span>
+          {#if memoryStore.stats.lastCompactedAt}
+            <span class="text-muted-foreground/70">
+              Last compacted {relativeTime(memoryStore.stats.lastCompactedAt)}{memoryStore.stats.lastAuto ? ' (auto)' : ''}
+            </span>
+          {/if}
+        </div>
+        <div class="h-1.5 w-full bg-border overflow-hidden rounded-full">
+          <div
+            class="h-full rounded-full transition-all {budgetPct >= 100 ? 'bg-destructive' : budgetWarn ? 'bg-amber-500' : 'bg-primary'}"
+            style="width: {budgetPct}%"
+          ></div>
+        </div>
       </div>
     {/if}
 
@@ -235,6 +288,10 @@
 
     {#if memoryStore.error}
       <p class="text-xs text-destructive mt-2">{memoryStore.error}</p>
+    {:else if memoryStore.compacting}
+      <p class="text-xs text-muted-foreground mt-2 animate-pulse">
+        Analyzing {memoryStore.stats?.fileCount ?? ''} memory files with the agent — this can take up to a minute…
+      </p>
     {:else if memoryStore.compactMessage}
       <p class="text-xs text-muted-foreground mt-2">{memoryStore.compactMessage}</p>
     {/if}
@@ -243,15 +300,22 @@
       <div class="flex items-center gap-1">
         <Button
           size="sm"
-          variant="ghost"
+          variant="secondary"
           onclick={() => memoryStore.compact()}
           disabled={memoryStore.compacting || memoryStore.files.length === 0}
-          title="Merge duplicate notes, resolve contradictions, and prune old session notes"
+          title="Merge duplicate notes, resolve contradictions, and drop stale details. Shows a summary you can undo."
         >
-          {memoryStore.compacting ? 'Compacting...' : 'Compact'}
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          {memoryStore.compacting ? 'Compacting…' : 'Compact'}
         </Button>
-        <Button size="sm" variant="ghost" onclick={openBackups}>Backups</Button>
-        <Button size="sm" variant="ghost" onclick={() => showPrune = true}>Prune sessions</Button>
+        <Button size="sm" variant="ghost" onclick={openBackups} title="View and restore snapshots taken before each compaction">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          Backups
+        </Button>
+        <Button size="sm" variant="ghost" onclick={() => showPrune = true} title="Review and delete old session notes (memory files only — never your actual sessions)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
+          Clean up notes
+        </Button>
       </div>
       <Button variant="secondary" onclick={onclose}>Close</Button>
     </Dialog.Footer>
@@ -300,6 +364,49 @@
   </Dialog.Root>
 {/if}
 
+<!-- Compaction result: what changed, with one-click Undo -->
+{#if memoryStore.lastCompaction}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) memoryStore.lastCompaction = null; }}>
+    <Dialog.Content class="max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Memory Compacted</Dialog.Title>
+        <Dialog.Description>
+          {memoryStore.lastCompaction.filesChanged.length} {memoryStore.lastCompaction.filesChanged.length === 1 ? 'file' : 'files'} changed. A snapshot of the previous state was saved — Undo restores it.
+        </Dialog.Description>
+      </Dialog.Header>
+
+      {#if memoryStore.lastCompaction.changes?.length}
+        <div class="flex flex-col gap-1 max-h-64 overflow-auto">
+          {#each memoryStore.lastCompaction.changes as change (change.path)}
+            <div class="px-2 py-1.5 bg-card border border-border">
+              <div class="flex items-center gap-2 text-sm">
+                <span class="text-xs uppercase tracking-wide shrink-0 {change.action === 'delete' ? 'text-destructive' : 'text-primary'}">
+                  {change.action === 'delete' ? 'removed' : 'rewritten'}
+                </span>
+                <span class="text-foreground truncate" title={change.path}>{change.path}</span>
+              </div>
+              {#if change.reason}
+                <p class="text-xs text-muted-foreground mt-0.5">{change.reason}</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <Dialog.Footer>
+        <Button
+          variant="secondary"
+          onclick={() => memoryStore.undoCompaction()}
+          disabled={memoryStore.undoing || !memoryStore.lastCompaction.backupId}
+        >
+          {memoryStore.undoing ? 'Undoing…' : 'Undo'}
+        </Button>
+        <Button onclick={() => memoryStore.lastCompaction = null}>Keep changes</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
 <!-- Backups dialog -->
 {#if showBackups}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) showBackups = false; }}>
@@ -313,16 +420,40 @@
       {#if memoryStore.backups.length === 0}
         <p class="text-sm text-muted-foreground/50 py-2">No backups yet. One is created automatically before each compaction.</p>
       {:else}
-        <div class="flex flex-col gap-1 max-h-64 overflow-auto">
+        <div class="flex flex-col gap-1 max-h-72 overflow-auto">
           {#each memoryStore.backups as backup (backup.id)}
-            <div class="flex items-center justify-between gap-2 px-2 py-1.5 bg-card border border-border">
-              <div class="min-w-0">
-                <div class="text-sm text-foreground truncate">{formatBackupDate(backup.createdAt)}</div>
-                <div class="text-xs text-muted-foreground">{backup.fileCount} {backup.fileCount === 1 ? 'file' : 'files'}</div>
+            <div class="bg-card border border-border">
+              <div class="flex items-center justify-between gap-2 px-2 py-1.5">
+                <div class="min-w-0">
+                  <div class="text-sm text-foreground truncate">{formatBackupDate(backup.createdAt)}</div>
+                  <div class="text-xs text-muted-foreground">{backup.fileCount} {backup.fileCount === 1 ? 'file' : 'files'}</div>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                  <Button size="sm" variant="ghost" onclick={() => memoryStore.previewBackup(backup.id)}>
+                    {memoryStore.backupPreviewId === backup.id ? 'Hide' : 'View'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onclick={() => confirmRestoreId = backup.id}>
+                    Restore
+                  </Button>
+                </div>
               </div>
-              <Button size="sm" variant="ghost" class="shrink-0" onclick={() => confirmRestoreId = backup.id}>
-                Restore
-              </Button>
+              {#if memoryStore.backupPreviewId === backup.id}
+                <div class="border-t border-border px-2 py-1.5">
+                  {#each memoryStore.backupPreviewFiles as file (file.path)}
+                    <button
+                      onclick={() => memoryStore.readBackupFile(backup.id, file.path)}
+                      class="w-full flex items-center justify-between text-xs px-1 py-0.5 transition-colors
+                        {memoryStore.backupPreviewFile?.path === file.path ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
+                    >
+                      <span class="truncate">{file.path}</span>
+                      <span class="shrink-0 ml-2 text-muted-foreground/60">{(file.bytes / 1024).toFixed(1)} KB</span>
+                    </button>
+                  {/each}
+                  {#if memoryStore.backupPreviewFile}
+                    <pre class="mt-1 max-h-40 overflow-auto text-xs text-foreground/80 whitespace-pre-wrap p-1.5 bg-background border border-border">{memoryStore.backupPreviewFile.content}</pre>
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/each}
         </div>
@@ -339,24 +470,32 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) showPrune = false; }}>
     <Dialog.Content class="max-w-md">
       <Dialog.Header>
-        <Dialog.Title>Prune Session Notes</Dialog.Title>
+        <Dialog.Title>Clean Up Session Notes</Dialog.Title>
         <Dialog.Description>
-          Review and delete old session notes. Deletion is permanent — session notes are not included in compaction backups.
+          Delete old session notes — the agent's memory files about past work. Your actual sessions in the sidebar are never touched. Deletion is permanent; session notes are not included in compaction backups.
         </Dialog.Description>
       </Dialog.Header>
 
       <div class="flex items-center gap-2">
         <Label class="shrink-0">Older than</Label>
-        <Select.Root type="single" value={pruneDays} onValueChange={(v) => { if (v) pruneDays = v; }}>
-          <Select.Trigger class="w-28">
-            {pruneDays} days
-          </Select.Trigger>
-          <Select.Content>
-            {#each pruneDayOptions as d}
-              <Select.Item value={d} label="{d} days" />
-            {/each}
-          </Select.Content>
-        </Select.Root>
+        <input
+          type="number"
+          min="0"
+          bind:value={pruneDays}
+          class="w-16 text-sm bg-card border border-border px-2 py-1 text-foreground focus:outline-none focus:border-primary"
+        />
+        <span class="text-xs text-muted-foreground">days</span>
+        <div class="flex gap-1 ml-1">
+          {#each pruneDayPresets as d}
+            <button
+              onclick={() => pruneDays = String(d)}
+              class="text-xs px-1.5 py-0.5 border transition-colors
+                {pruneDaysNum === d ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:text-foreground'}"
+            >
+              {d}
+            </button>
+          {/each}
+        </div>
       </div>
 
       {#if prunableNotes.length === 0}

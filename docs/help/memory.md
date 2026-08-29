@@ -27,9 +27,11 @@ Memory grows as the agent saves notes across sessions, and over time it accumula
 
 Before a compaction pass rewrites anything, the previous contents are saved as a timestamped snapshot inside the memory folder (the 5 most recent snapshots are kept), and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when memory has actually outgrown the space injected into the agent's system prompt.
 
-You can also compact on demand with the **Compact** button in the Memory panel, and roll back via **Backups** — restoring a snapshot replaces the current repo, conventions and architecture notes, and takes a snapshot of the current state first so the restore itself can be undone.
+The Memory panel shows a **budget meter** — how much of the agent's system-prompt budget your notes consume, when the last compaction ran (and whether it was automatic), and which files no longer fit in the prompt.
 
-**Prune sessions** in the Memory panel lists session notes older than a chosen cutoff (7–180 days) so you can review exactly what will be removed before deleting it. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, session-note deletion is permanent — session notes are not included in backups.
+You can also compact on demand with the **Compact** button. After a pass, a summary lists every file that was rewritten or removed with the reason, and **Undo** restores the pre-compaction snapshot in one click. **Backups** lists all snapshots — use **View** to inspect a snapshot's files before restoring it; restoring takes a snapshot of the current state first so the restore itself can be undone.
+
+**Clean up notes** lists session notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual sessions in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, session-note deletion is permanent — session notes are not included in backups. (To remove old *sessions* themselves, use **Clean up old sessions** in the sidebar.)
 
 Auto-compaction can be disabled with the `memoryAutoCompact` setting.
 

@@ -134,10 +134,40 @@ const api: Record<string, unknown> = {
   memoryCompact: async () => {
     // Simulate merging the duplicated tech-stack file into the overview
     memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
-    return { compacted: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] };
+    return {
+      compacted: true,
+      filesChanged: ['repo/overview.md', 'repo/tech-stack.md'],
+      changes: [
+        { action: 'update', path: 'repo/overview.md', reason: 'Merged the tech stack details in; dropped the duplicated Electron/Svelte facts' },
+        { action: 'delete', path: 'repo/tech-stack.md', reason: 'Fully covered by repo/overview.md after the merge' },
+      ],
+      backupId: memoryBackups[0].id,
+    };
   },
   memoryListBackups: async () => memoryBackups,
   memoryRestoreBackup: async () => ({ restored: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] }),
+  memoryStats: async () => {
+    const nonSession = memoryFiles.filter(f => !f.folder.startsWith('sessions'));
+    const totalBytes = nonSession.reduce((sum, f) => sum + f.content.length, 0) + 11.5 * 1024; // pad to a realistic fill level
+    return {
+      totalBytes,
+      budgetBytes: 16 * 1024,
+      fileCount: nonSession.length,
+      sessionNoteCount: memoryFiles.length - nonSession.length,
+      skippedFiles: [],
+      lastCompactedAt: new Date(now - 7 * 60 * min).toISOString(),
+      lastAuto: true,
+      lastFilesChanged: 2,
+    };
+  },
+  memoryBackupPreview: async (_repo: string, id: string) =>
+    memoryFiles
+      .filter(f => !f.folder.startsWith('sessions'))
+      .map(f => ({ path: f.relativePath, bytes: f.content.length }))
+      .concat(id === memoryBackups[1].id ? [{ path: 'repo/tech-stack.md', bytes: 212 }] : []),
+  memoryReadBackupFile: async (_repo: string, _id: string, p: string) =>
+    memoryFiles.find(f => f.relativePath === p)?.content
+      ?? `---\ntitle: "Tech Stack"\n---\n\nArchived copy from before the last compaction.\n`,
   getSettings: async () => SETTINGS,
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },

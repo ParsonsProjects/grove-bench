@@ -21,12 +21,30 @@ const CompactionResultSchema = z.object({
 
 export type CompactionResult = z.infer<typeof CompactionResultSchema>;
 
+export interface CompactionChange {
+  action: 'update' | 'delete';
+  path: string;
+  /** The model's stated reason: what was merged, dropped, or resolved. */
+  reason: string;
+}
+
 export interface CompactionStatus {
   compacted: boolean;
   /** Why compaction was skipped, when it was. */
   skippedReason?: string;
   /** Paths written, rewritten, or deleted. */
   filesChanged: string[];
+  /** Per-file summary of what the compaction pass did. */
+  changes?: CompactionChange[];
+  /** Snapshot taken before applying — pass to restoreBackup to undo. */
+  backupId?: string;
+}
+
+export interface CompactionInfo {
+  lastCompactedAt: string | null;
+  /** Whether the last pass was triggered automatically (vs the panel button). */
+  lastAuto?: boolean;
+  lastFilesChanged?: number;
 }
 
 export interface BackupInfo {
@@ -52,6 +70,8 @@ export interface CompactOptions {
   adapterType?: string;
   /** Skip the threshold + cooldown checks and compact unconditionally. */
   force?: boolean;
+  /** Marks this pass as automatically triggered (recorded for the panel's trace line). */
+  auto?: boolean;
 }
 
 // ─── Constants ───
@@ -107,13 +127,34 @@ function getLastCompactedAt(repoPath: string): number {
   return 0;
 }
 
-function setLastCompactedAt(repoPath: string, ts: number): void {
+function setLastCompactedAt(repoPath: string, ts: number, auto: boolean, filesChanged: number): void {
   lastCompacted.set(repoPath, ts);
   try {
-    fs.writeFileSync(compactStatePath(repoPath), JSON.stringify({ lastCompactedAt: new Date(ts).toISOString() }, null, 2));
+    fs.writeFileSync(compactStatePath(repoPath), JSON.stringify({
+      lastCompactedAt: new Date(ts).toISOString(),
+      lastAuto: auto,
+      lastFilesChanged: filesChanged,
+    }, null, 2));
   } catch (err) {
     logger.warn(`[memory-compact] Failed to persist compaction state: ${err}`);
   }
+}
+
+/** When and how the last compaction pass ran — the panel's trace line. */
+export function getCompactionInfo(repoPath: string): CompactionInfo {
+  try {
+    const raw = JSON.parse(fs.readFileSync(compactStatePath(repoPath), 'utf-8'));
+    if (typeof raw.lastCompactedAt === 'string' && !Number.isNaN(Date.parse(raw.lastCompactedAt))) {
+      return {
+        lastCompactedAt: raw.lastCompactedAt,
+        lastAuto: raw.lastAuto === true,
+        lastFilesChanged: typeof raw.lastFilesChanged === 'number' ? raw.lastFilesChanged : undefined,
+      };
+    }
+  } catch {
+    // No state yet
+  }
+  return { lastCompactedAt: null };
 }
 
 // ─── Helpers ───
@@ -259,6 +300,22 @@ function readBackupContents(dir: string): Record<string, string> {
 
   walk(dir, '');
   return contents;
+}
+
+/** The files inside one snapshot, for previewing before a restore. */
+export function previewBackup(repoPath: string, backupId: string): Array<{ path: string; bytes: number }> {
+  const dir = resolveBackupDir(repoPath, backupId);
+  if (!dir) return [];
+  return Object.entries(readBackupContents(dir))
+    .map(([p, content]) => ({ path: p, bytes: Buffer.byteLength(content, 'utf-8') }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Read one file from a snapshot (read-only peek — never touches live memory). */
+export function readBackupFile(repoPath: string, backupId: string, relativePath: string): string | null {
+  const dir = resolveBackupDir(repoPath, backupId);
+  if (!dir || !isAllowedCompactionPath(relativePath)) return null;
+  return readBackupContents(dir)[path.normalize(relativePath).replace(/\\/g, '/')] ?? null;
 }
 
 /** List available backup snapshots, newest first. */
@@ -526,12 +583,21 @@ export async function compactMemory(opts: CompactOptions): Promise<CompactionSta
       return { compacted: false, skippedReason: invalid, filesChanged };
     }
 
-    backupMemory(repoPath, contents);
+    const backupId = backupMemory(repoPath, contents) ?? undefined;
     const compactedFiles = applyCompaction(repoPath, result);
-    setLastCompactedAt(repoPath, Date.now());
+    setLastCompactedAt(repoPath, Date.now(), opts.auto === true, compactedFiles.length);
+
+    const changes: CompactionChange[] = result.files
+      .filter((f): f is typeof f & { action: 'update' | 'delete' } => f.action !== 'keep')
+      .map(f => ({ action: f.action, path: f.path, reason: f.reason }));
 
     logger.info(`[memory-compact] Compacted ${repoPath}: ${compactedFiles.length} files changed`);
-    return { compacted: compactedFiles.length > 0, filesChanged: [...filesChanged, ...compactedFiles] };
+    return {
+      compacted: compactedFiles.length > 0,
+      filesChanged: [...filesChanged, ...compactedFiles],
+      changes,
+      backupId,
+    };
   } catch (err) {
     logger.error(`[memory-compact] Compaction failed for ${repoPath}: ${err}`);
     return { compacted: false, skippedReason: String(err), filesChanged: [] };
@@ -548,7 +614,7 @@ export function maybeCompact(opts: Omit<CompactOptions, 'force'>): void {
   const appSettings = settings.getSettings();
   if (appSettings.memoryAutoCompact === false) return;
 
-  compactMemory(opts).catch(err => {
+  compactMemory({ ...opts, auto: true }).catch(err => {
     logger.error(`[memory-compact] Background compaction failed: ${err}`);
   });
 }
