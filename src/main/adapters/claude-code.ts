@@ -804,6 +804,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
+        // Truncating resume (rewind): keep the conversation up to and including
+        // the given chain-entry uuid and fork to a new session id, so the old
+        // (pre-rewind) session stays intact on disk.
+        ...(config.resumeSessionId && config.resumeAtUuid
+          ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
+          : {}),
         canUseTool: canUseTool as any,
         spawnClaudeCodeProcess: (o: SpawnOptions) =>
           spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`)),

@@ -103,6 +103,11 @@ export interface AdapterConfig {
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
   resumeSessionId?: string | null;
+  /** Resume the conversation only up to and including this provider chain-entry
+   *  UUID, forking to a new provider session id (used by rewind so the agent
+   *  keeps the turns before the rewind point and forgets everything after).
+   *  Only meaningful together with resumeSessionId. */
+  resumeAtUuid?: string | null;
   onPermissionRequest: PermissionHandler;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];

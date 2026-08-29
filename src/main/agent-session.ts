@@ -12,6 +12,7 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
+import { findRewindForkPoint } from './agent-utils.js';
 import { CheckpointManager } from './checkpoints.js';
 
 interface PendingPermission {
@@ -37,6 +38,10 @@ interface ManagedSession {
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
   providerSessionId: string | null;
+  /** Set by rewindFiles(): provider chain-entry uuid to fork the conversation
+   *  at on the next query start (resume truncated at this point, forkSession).
+   *  Cleared once a query starts successfully with it. */
+  pendingResumeAt: string | null;
   /** Current model for this session — the source of truth across stop/restart,
    *  in-app resume, and app-restart resume (persisted to the worktree manifest).
    *  Initialised from the restored/default model, updated on model switches and
@@ -241,6 +246,7 @@ class AgentSessionManager {
       pendingPermissions: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
+      pendingResumeAt: null,
       model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
       window: win,
       eventHistory: this.loadEventHistory(id),
@@ -363,6 +369,11 @@ class AgentSessionManager {
       };
     } catch { /* best effort */ }
 
+    // Snapshot the rewind fork target for this start attempt. It stays set on
+    // the session until a query successfully starts with it, so a stop that
+    // lands mid-startup (restartRequested) retries the same truncated resume.
+    const resumeAtUuid = session.pendingResumeAt;
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -386,6 +397,7 @@ class AgentSessionManager {
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       thinkingLevel: session.thinkingLevel,
       resumeSessionId: session.providerSessionId,
+      resumeAtUuid,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
@@ -439,6 +451,17 @@ class AgentSessionManager {
         this.relaunchQuery(session);
         return;
       }
+      // A truncated (rewind) resume failed to start — fall back to a fresh
+      // conversation rather than wedging the session. The retry cannot loop:
+      // both resume fields are cleared before relaunching.
+      if (resumeAtUuid) {
+        logger.warn(`[runQuery] session=${id} truncated resume failed, falling back to fresh conversation:`, startErr);
+        session.pendingResumeAt = null;
+        session.providerSessionId = null;
+        worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+        this.relaunchQuery(session);
+        return;
+      }
       // Reject any pending sendMessage() waiters
       if (session.resolveQueryReady) {
         session.resolveQueryReady();
@@ -460,6 +483,11 @@ class AgentSessionManager {
 
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // The truncated resume (if any) has been consumed by this start — later
+    // restarts must resume the forked conversation normally.
+    if (resumeAtUuid && session.pendingResumeAt === resumeAtUuid) {
+      session.pendingResumeAt = null;
+    }
     // Signal any pending sendMessage() that the queryHandle is ready
     if (session.resolveQueryReady) {
       session.resolveQueryReady();
@@ -1154,6 +1182,17 @@ class AgentSessionManager {
     // Remove orphaned checkpoint refs for turns after the rewind point
     await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
 
+    // Cancel any pending memory auto-save so notes about the turns being
+    // rewound away aren't extracted and persisted after the truncation.
+    memoryAutosave.cancelAutoSave(id);
+
+    // Fork point for a truncating resume: the provider uuid of the last
+    // assistant event before the rewind target. Must be computed before the
+    // event history is truncated below.
+    const forkPoint = session.providerSessionId
+      ? findRewindForkPoint(session.eventHistory, userMessageId)
+      : null;
+
     // Truncate event history to the rewind point so replays after refresh
     // don't resurrect events that occurred after the rewound turn.
     const rewindIdx = session.eventHistory.findLastIndex(
@@ -1171,15 +1210,27 @@ class AgentSessionManager {
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
 
-    // Clear the provider session ID so the next query starts with a fresh
-    // LLM context — otherwise the SDK resumes the old conversation which
-    // still contains the rewound messages.
-    session.providerSessionId = null;
+    if (forkPoint) {
+      // True rewind: resume the same conversation truncated at the last kept
+      // chain entry, forked to a new provider session — the agent keeps the
+      // turns before the rewind point and genuinely forgets everything after.
+      session.pendingResumeAt = forkPoint;
+    } else {
+      // No provider content to keep (rewind to the first message, or the
+      // provider session never initialised) — start a fresh conversation.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+    }
+
+    // Persist an empty provider session id in both cases. If the app dies
+    // before the restarted query's system_init persists the forked session's
+    // new id, an app-restart resume of the OLD id would bring the rewound
+    // messages back; degrading to a fresh conversation is the safe fallback.
     worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
 
-    // Restart the query so the SDK gets a fresh context.  stopQuery() tears
-    // down the current handle and immediately calls runQuery() which will
-    // see providerSessionId === null and skip the resume option.
+    // Restart the query. stopQuery() tears down the current handle and calls
+    // runQuery(), which picks up pendingResumeAt (truncated fork resume) or —
+    // with providerSessionId null — starts a fresh conversation.
     await this.stopQuery(id);
   }
 
