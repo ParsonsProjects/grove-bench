@@ -6,15 +6,15 @@
   import { Label } from '$lib/components/ui/label/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { settingsStore } from '../stores/settings.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
 
   let { sessionId, onclose }: { sessionId: string; onclose: () => void } = $props();
 
   let open = $state(true);
   let title = $state('');
   let body = $state('');
-  let base = $state(settingsStore.current.defaultBaseBranch?.trim() || 'main');
+  let base = $state('');
   let draft = $state(false);
   let creating = $state(false);
   let dialogError = $state('');
@@ -49,7 +49,11 @@
     }
   }
 
-  onMount(prefillFromCommits);
+  onMount(async () => {
+    const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
+    base = await resolveBaseBranch(repoPath);
+    await prefillFromCommits();
+  });
 
   async function handleCreate() {
     if (!title.trim() || creating) return;
@@ -59,7 +63,7 @@
       const pr = await prStore.createPr(sessionId, {
         title: title.trim(),
         body,
-        base: base.trim(),
+        base: base.trim() || 'main',
         draft,
       });
       open = false;

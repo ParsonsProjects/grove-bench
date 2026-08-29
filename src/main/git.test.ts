@@ -12,6 +12,7 @@ import {
   isGitRepo,
   branchExists,
   branchExistsAnywhere,
+  getDefaultBranch,
   listBranches,
   validateBranchName,
   mergeNoCommit,
@@ -123,6 +124,38 @@ describe('branchExistsAnywhere()', () => {
     mockExeca.mockRejectedValueOnce(new Error('not found'));
     mockExeca.mockRejectedValueOnce(new Error('no remote'));
     expect(await branchExistsAnywhere('/repo', 'feat/x')).toBe(false);
+  });
+});
+
+describe('getDefaultBranch()', () => {
+  it('uses origin/HEAD when set', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: 'origin/develop\n' } as any);
+    expect(await getDefaultBranch('/repo')).toBe('develop');
+    expect(mockExeca).toHaveBeenCalledWith(
+      'git',
+      ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'],
+      { cwd: '/repo' },
+    );
+  });
+
+  it('falls back to main when it exists and origin/HEAD is unset', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('no origin/HEAD')); // symbolic-ref
+    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any); // rev-parse main
+    expect(await getDefaultBranch('/repo')).toBe('main');
+  });
+
+  it('falls back to master when main does not exist', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('no origin/HEAD')); // symbolic-ref
+    mockExeca.mockRejectedValueOnce(new Error('no main')); // rev-parse main
+    mockExeca.mockResolvedValueOnce({ stdout: 'origin/master' } as any); // branch -r for main
+    // "main" not in remote refs → try master
+    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any); // rev-parse master
+    expect(await getDefaultBranch('/repo')).toBe('master');
+  });
+
+  it('returns main when nothing can be detected', async () => {
+    mockExeca.mockRejectedValue(new Error('fail'));
+    expect(await getDefaultBranch('/repo')).toBe('main');
   });
 });
 

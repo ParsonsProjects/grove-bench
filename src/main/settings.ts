@@ -27,7 +27,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   idleAutoStopMinutes: 30,
 
   // General
-  defaultBaseBranch: 'main',
+  defaultBaseBranch: '', // empty = auto-detect the repo's default branch
   theme: 'system',
   alwaysOnTop: false,
 
@@ -55,6 +55,11 @@ function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettin
   // and `devCommand` (the host-managed dev server feature was removed).
   const { extendedThinking: _legacy, devCommand: _devCommand, ...rest } =
     saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string };
+  // 'main' was the old shipped default for defaultBaseBranch; the field is now
+  // an explicit override (empty = auto-detect the repo's default branch), so
+  // treat the legacy default value as unset. Auto-detect still resolves to
+  // main wherever main really is the default branch.
+  if (rest.defaultBaseBranch === 'main') rest.defaultBaseBranch = '';
   return { ...DEFAULT_SETTINGS, ...rest };
 }
 

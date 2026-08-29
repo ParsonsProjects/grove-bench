@@ -455,9 +455,12 @@
               id="settings-base"
               type="text"
               bind:value={settingsStore.draft.defaultBaseBranch}
-              placeholder="main"
+              placeholder="auto (repository default branch)"
               class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
+            <p class="text-xs text-muted-foreground mt-1">
+              Leave empty to use each repository's default branch (e.g. main or master).
+            </p>
           </div>
 
           <Separator />

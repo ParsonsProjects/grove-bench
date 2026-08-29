@@ -65,6 +65,23 @@ export async function branchExistsAnywhere(cwd: string, branch: string): Promise
   }
 }
 
+/** The repository's default branch (what origin/HEAD points at), falling back
+ *  to `main`/`master` when the remote HEAD is unknown (no remote, or never
+ *  fetched with set-head). Offline-safe — never touches the network. */
+export async function getDefaultBranch(cwd: string): Promise<string> {
+  try {
+    const ref = (await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], cwd)).trim();
+    // "origin/main" → "main"
+    const slash = ref.indexOf('/');
+    if (slash !== -1) return ref.slice(slash + 1);
+    if (ref) return ref;
+  } catch { /* origin/HEAD not set */ }
+  for (const name of ['main', 'master']) {
+    if (await branchExistsAnywhere(cwd, name)) return name;
+  }
+  return 'main';
+}
+
 export async function listBranches(cwd: string): Promise<string[]> {
   // Fetch latest remote refs (non-blocking — proceed with local cache on failure)
   try { await git(['fetch', '--prune'], cwd); } catch { /* offline or no remote */ }

@@ -33,6 +33,7 @@ const mockGroveBench = {
   push: vi.fn(() => Promise.resolve()),
   getGitSyncStatus: vi.fn(() => Promise.resolve({ upstream: null, ahead: 0, behind: 0 } as import('../../shared/types.js').GitSyncStatus)),
   getBranchCommits: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').BranchCommit[])),
+  getDefaultBranch: vi.fn(() => Promise.resolve('main')),
   getPrInfo: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').PrInfo | null)),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),
   getPrReviewComments: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').PrReviewComment[])),

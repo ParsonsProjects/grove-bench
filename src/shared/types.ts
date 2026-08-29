@@ -410,6 +410,8 @@ export interface GroveBenchAPI {
 
   // Branch operations
   listBranches(repoPath: string): Promise<string[]>;
+  /** The repo's default branch (origin/HEAD, falling back to main/master). */
+  getDefaultBranch(repoPath: string): Promise<string>;
   renameBranch(sessionId: string, newBranchName: string): Promise<{ branch: string }>;
 
   // Agent I/O (replaces terminal I/O)
@@ -608,6 +610,8 @@ export interface GroveBenchSettings {
   idleAutoStopMinutes: number;
 
   // General
+  /** Base branch for new worktrees and PRs. Empty = auto-detect the
+   *  repository's default branch (origin/HEAD, falling back to main/master). */
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
@@ -687,6 +691,7 @@ export const IPC = {
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',
   BRANCH_LIST: 'branch:list',
+  BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
   PREREQUISITES_CHECK: 'prerequisites:check',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
