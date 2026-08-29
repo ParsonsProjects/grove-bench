@@ -515,6 +515,7 @@ export interface GroveBenchAPI {
   memoryRead(repoPath: string, relativePath: string): Promise<string | null>;
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
+  memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
 
   // Shell / Terminal (legacy)
   shellRun(sessionId: string, command: string): Promise<string>;
@@ -599,6 +600,9 @@ export interface GroveBenchSettings {
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;
+  /** Enable automatic memory compaction (dedupe, contradiction resolution,
+   *  session-note pruning) when memory grows past its budget. Default true. */
+  memoryAutoCompact: boolean;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
@@ -640,6 +644,12 @@ export interface MemoryEntry {
   title: string;         // from frontmatter
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
+}
+
+export interface MemoryCompactionStatus {
+  compacted: boolean;
+  skippedReason?: string;   // why compaction was skipped, when it was
+  filesChanged: string[];   // paths written, rewritten, or deleted
 }
 
 // ─── Bookmarks ───
@@ -764,6 +774,7 @@ export const IPC = {
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
+  MEMORY_COMPACT: 'memory:compact',
   SHELL_RUN: 'shell:run',
   SHELL_KILL: 'shell:kill',
   SHELL_INPUT: 'shell:input',

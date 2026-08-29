@@ -31,6 +31,7 @@ const SETTINGS = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   memoryAutoSave: true,
+  memoryAutoCompact: true,
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',

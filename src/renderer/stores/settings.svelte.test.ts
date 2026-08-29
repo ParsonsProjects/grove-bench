@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   memoryAutoSave: true,
+  memoryAutoCompact: true,
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: 'main',

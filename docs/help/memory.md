@@ -17,6 +17,18 @@ Memory is organized into four folders:
 - **architecture/** — Data flow, module relationships, and architectural decisions
 - **sessions/** — Notes from past sessions, summaries of work done
 
+## Auto-Compaction
+
+Memory grows as the agent saves notes across sessions, and over time it accumulates duplicates, stale details, and statements that contradict newer discoveries. Grove Bench compacts memory automatically:
+
+- **Session pruning** — only the 20 most recent session notes are kept; older ones are deleted.
+- **Dedupe & merge** — when memory grows past its budget, an AI pass merges files covering the same topic and removes repeated facts.
+- **Contradiction resolution** — when two notes conflict, the more recently updated one wins; explicit user corrections always take priority over inferred facts.
+
+Before a compaction pass rewrites anything, the previous contents are backed up inside the memory folder, and a result that would destroy most of the stored knowledge is rejected outright. Compaction runs at most once every few hours, only when memory has actually outgrown the space injected into the agent's system prompt.
+
+Auto-compaction can be disabled with the `memoryAutoCompact` setting.
+
 ## Managing Memory
 
 - **Browse** — Select a repo and click through folders and files to read their contents

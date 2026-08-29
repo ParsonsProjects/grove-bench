@@ -16,7 +16,7 @@ const MEMORY_ROOT = () => path.join(app.getPath('userData'), 'memory');
 
 const DEFAULT_FOLDERS = ['repo', 'conventions', 'architecture', 'sessions'];
 
-const MAX_SYSTEM_PROMPT_BYTES = 16 * 1024; // ~4K tokens
+export const MAX_SYSTEM_PROMPT_BYTES = 16 * 1024; // ~4K tokens
 
 // ─── Path helpers ───
 

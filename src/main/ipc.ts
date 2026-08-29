@@ -18,6 +18,7 @@ import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
+import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
@@ -882,6 +883,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
     return memory.deleteMemoryFile(repoPath, relativePath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_COMPACT, (_event, repoPath: string) => {
+    return memoryCompact.compactMemory({ repoPath, force: true });
   });
 
   // ─── Bookmarks ───
