@@ -153,6 +153,22 @@ export interface EventSearchHit {
   snippet: string;
 }
 
+/** A search match from the cross-session search (SessionFinder "in conversations"). */
+export interface CrossSessionSearchHit extends EventSearchHit {
+  /** Session whose history contained the match. */
+  sessionId: string;
+}
+
+/** Lightweight conversation context for a session, derived from its event history.
+ *  Used for sidebar subtitles / search entries when the renderer hasn't loaded
+ *  the session's messages (e.g. stopped sessions). */
+export interface SessionPreview {
+  /** First real user prompt (slash commands skipped), whitespace-collapsed. */
+  firstPrompt: string;
+  /** Most recent user/assistant text, whitespace-collapsed. */
+  lastText: string;
+}
+
 // ─── PTY / Terminal ───
 
 /** @deprecated Legacy shell output event — replaced by PTY data stream. */
@@ -350,6 +366,11 @@ export interface GroveBenchAPI {
   getEventHistoryCount(sessionId: string): Promise<number>;
   /** Search the full event history (main-process), newest match first. */
   searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
+  /** Search every given session's full history (main-process). Hits are capped
+   *  per session and tagged with their sessionId, newest match first per session. */
+  searchAllEventHistory(sessionIds: string[], query: string, limitPerSession?: number): Promise<CrossSessionSearchHit[]>;
+  /** First-prompt / last-message previews for the given sessions (main-process). */
+  getSessionPreviews(sessionIds: string[]): Promise<Record<string, SessionPreview>>;
   clearEventHistory(sessionId: string): Promise<void>;
   /** Resolve a message's stable SDK uuid to its absolute event index (or null). */
   findEventIndexByUuid(sessionId: string, uuid: string): Promise<number | null>;
@@ -456,6 +477,8 @@ export interface GroveBenchAPI {
   setCollapsedRepos(map: Record<string, boolean>): void;
   getSessionSort(): Promise<SessionSortState>;
   setSessionSort(sort: SessionSortState): void;
+  getSidebarWidth(): Promise<number | null>;
+  setSidebarWidth(width: number): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
@@ -608,6 +631,8 @@ export const IPC = {
   AGENT_HISTORY_PAGE: 'agent:history-page',
   AGENT_HISTORY_COUNT: 'agent:history-count',
   AGENT_HISTORY_SEARCH: 'agent:history-search',
+  AGENT_HISTORY_SEARCH_ALL: 'agent:history-search-all',
+  SESSION_PREVIEWS: 'session:previews',
   AGENT_CLEAR_HISTORY: 'agent:clear-history',
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
@@ -651,6 +676,8 @@ export const IPC = {
   APP_STATE_SET_COLLAPSED_REPOS: 'appState:setCollapsedRepos',
   APP_STATE_GET_SESSION_SORT: 'appState:getSessionSort',
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
+  APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
+  APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARK_ADD: 'bookmarks:add',

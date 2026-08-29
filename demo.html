@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grove Bench (demo)</title>
+  </head>
+  <body class="bg-neutral-950 text-neutral-100">
+    <div id="app"></div>
+    <!-- Mock IPC bridge must evaluate before the app's module graph -->
+    <script type="module" src="./src/renderer/demo-mock.ts"></script>
+    <script type="module" src="./src/renderer/main.ts"></script>
+  </body>
+</html>

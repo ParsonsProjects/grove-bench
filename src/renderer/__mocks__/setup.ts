@@ -35,6 +35,8 @@ const mockGroveBench = {
   clearEventHistory: vi.fn(() => Promise.resolve()),
   getEventHistoryPage: vi.fn(() => Promise.resolve({ events: [], totalCount: 0, startIndex: 0 })),
   searchEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').EventSearchHit[])),
+  searchAllEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CrossSessionSearchHit[])),
+  getSessionPreviews: vi.fn(() => Promise.resolve({} as Record<string, import('../../shared/types.js').SessionPreview>)),
   getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
   sendMessage: vi.fn(),
   getSettings: vi.fn(),
@@ -48,6 +50,8 @@ const mockGroveBench = {
   setCollapsedRepos: vi.fn(),
   getSessionSort: vi.fn(() => Promise.resolve({ key: 'age', dir: 'desc' } as import('../../shared/types.js').SessionSortState)),
   setSessionSort: vi.fn(),
+  getSidebarWidth: vi.fn(() => Promise.resolve(null as number | null)),
+  setSidebarWidth: vi.fn(),
   listBookmarks: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').Bookmark[])),
   addBookmark: vi.fn((b: Omit<import('../../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
     Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 } as import('../../shared/types.js').Bookmark)),

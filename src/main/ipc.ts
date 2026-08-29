@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, ThinkingLevel } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
-import { searchEvents, findEventIndexByUuid } from './event-search.js';
+import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
@@ -17,7 +17,7 @@ import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, flushPendingSaves } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -426,6 +426,35 @@ export function registerHandlers() {
     // Search the same prelaunch-prefixed event array the renderer pages over, so
     // returned eventIndex values line up with getEventHistoryPage's index space.
     return searchEvents(prelaunchPrefixedEvents(sessionId), query, limit ?? 100);
+  });
+
+  ipcMain.handle(IPC.AGENT_HISTORY_SEARCH_ALL, (_event, sessionIds: string[], query: string, limitPerSession?: number) => {
+    // Cross-session search for the SessionFinder. Same prelaunch-prefixed index
+    // space as AGENT_HISTORY_SEARCH, so hits feed the same jump path.
+    const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
+    const perSession = limitPerSession ?? 5;
+    for (const id of sessionIds ?? []) {
+      try {
+        for (const hit of searchEvents(prelaunchPrefixedEvents(id), query, perSession)) {
+          hits.push({ ...hit, sessionId: id });
+        }
+      } catch (e) {
+        logger.warn(`[history-search-all] search failed for ${id}:`, e);
+      }
+    }
+    return hits;
+  });
+
+  ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {
+    const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
+    for (const id of sessionIds ?? []) {
+      try {
+        previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
+      } catch (e) {
+        logger.warn(`[session-previews] preview failed for ${id}:`, e);
+      }
+    }
+    return previews;
   });
 
   ipcMain.handle(IPC.FIND_EVENT_INDEX_BY_UUID, (_event, sessionId: string, uuid: string): number | null => {
@@ -894,6 +923,17 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_SESSION_SORT, (_event, sort: import('../shared/types.js').SessionSortState) => {
     saveSessionSort(sort);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => {
+    flushPendingSaves();
+    return loadAppState().sidebarWidth ?? null;
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_SIDEBAR_WIDTH, (_event, width: number) => {
+    if (typeof width === 'number' && Number.isFinite(width)) {
+      saveSidebarWidth(Math.round(width));
+    }
   });
 
   // ─── Window controls ───

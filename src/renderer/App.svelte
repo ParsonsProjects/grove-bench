@@ -67,8 +67,6 @@
     restored = true;
   }
 
-  let showSessionFinder = $state(false);
-
   // Track per-session running state to detect turn completion. Flash state
   // itself lives in the store so the sidebar can read it.
   let prevRunningState = $state<Record<string, boolean>>({});
@@ -159,7 +157,7 @@
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
-      showSessionFinder = !showSessionFinder;
+      store.finderOpen = !store.finderOpen;
     }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'T') {
       e.preventDefault();
@@ -332,8 +330,8 @@
 </div>
 </div>
 
-{#if showSessionFinder}
-  <SessionFinder onclose={() => showSessionFinder = false} />
+{#if store.finderOpen}
+  <SessionFinder onclose={() => store.finderOpen = false} />
 {/if}
 
 <ErrorToast />
