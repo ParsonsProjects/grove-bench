@@ -27,6 +27,7 @@ const api: GroveBenchAPI = {
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
+  getDefaultBranch: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_DEFAULT, repoPath) as Promise<string>,
   renameBranch: (sessionId: string, newBranchName: string) =>
     ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
 

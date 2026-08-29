@@ -33,7 +33,7 @@ const SETTINGS = {
   memoryAutoSave: true,
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
-  defaultBaseBranch: 'main',
+  defaultBaseBranch: '',
   theme: 'dark',
   alwaysOnTop: false,
   repoColors: {},
@@ -105,6 +105,7 @@ const api: Record<string, unknown> = {
     q.toLowerCase().includes('oauth') ? CONTENT_HITS : [],
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
+  getDefaultBranch: async () => 'main',
   getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
   getPrInfo: async () => null,
   listCheckpoints: async () => [],

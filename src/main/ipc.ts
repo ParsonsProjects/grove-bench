@@ -8,7 +8,7 @@ import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
 import { prStatus, prCreate, prReviewComments } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -320,6 +320,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.BRANCH_LIST, async (_event, repoPath: string) => {
     return listBranches(repoPath);
+  });
+
+  ipcMain.handle(IPC.BRANCH_DEFAULT, async (_event, repoPath: string) => {
+    return getDefaultBranch(repoPath);
   });
 
   ipcMain.handle(IPC.BRANCH_RENAME, async (_event, sessionId: string, newBranchName: string) => {

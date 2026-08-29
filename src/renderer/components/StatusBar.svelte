@@ -8,8 +8,8 @@
   import { prStore } from '../stores/pr.svelte.js';
   import type { PrAlert } from '../stores/pr.svelte.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
-  import { settingsStore } from '../stores/settings.svelte.js';
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
   import CreatePrDialog from './CreatePrDialog.svelte';
   import type { McpServerInfo, ThinkingLevel } from '../../shared/types.js';
 
@@ -79,8 +79,9 @@
   }
 
   /** Hand PR creation to the agent as a turn in this conversation. */
-  function sendAgentPrTurn() {
-    const base = settingsStore.current.defaultBaseBranch?.trim() || 'main';
+  async function sendAgentPrTurn() {
+    const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
+    const base = await resolveBaseBranch(repoPath);
     const prompt = buildCreatePrPrompt(sessionBranch, base);
     messageStore.addUserMessage(sessionId, prompt);
     window.groveBench.sendMessage(sessionId, prompt);
