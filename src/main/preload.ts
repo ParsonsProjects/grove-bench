@@ -55,6 +55,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_HISTORY_COUNT, sessionId),
   searchEventHistory: (sessionId: string, query: string, limit?: number) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH, sessionId, query, limit),
+  searchAllEventHistory: (sessionIds: string[], query: string, limitPerSession?: number) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH_ALL, sessionIds, query, limitPerSession),
+  getSessionPreviews: (sessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.SESSION_PREVIEWS, sessionIds),
   clearEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
   findEventIndexByUuid: (sessionId: string, uuid: string) =>
@@ -231,6 +235,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
   setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
+  getSidebarWidth: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
+  setSidebarWidth: (width: number) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_SIDEBAR_WIDTH, width),
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();

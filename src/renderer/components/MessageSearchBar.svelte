@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { highlightSegments as segments } from '../lib/search-highlight.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let {
@@ -44,23 +45,6 @@
     }, 150);
     return () => clearTimeout(timer);
   });
-
-  /** Split a snippet into match / non-match segments for highlighting. */
-  function segments(snippet: string, q: string): { text: string; match: boolean }[] {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return [{ text: snippet, match: false }];
-    const lower = snippet.toLowerCase();
-    const out: { text: string; match: boolean }[] = [];
-    let i = 0;
-    while (i < snippet.length) {
-      const idx = lower.indexOf(needle, i);
-      if (idx < 0) { out.push({ text: snippet.slice(i), match: false }); break; }
-      if (idx > i) out.push({ text: snippet.slice(i, idx), match: false });
-      out.push({ text: snippet.slice(idx, idx + needle.length), match: true });
-      i = idx + needle.length;
-    }
-    return out;
-  }
 
   function jumpTo(index: number) {
     const hit = hits[index];

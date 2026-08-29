@@ -22,6 +22,10 @@ class SessionStore {
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
 
+  /** Whether the session finder (Ctrl+R palette) is open — toggled by the
+   *  global shortcut in App and the sidebar's search field. */
+  finderOpen = $state(false);
+
   /** Sessions that completed a turn while not focused — drives the "needs you"
    *  flash on their sidebar row until the user focuses them. */
   needsAttention = $state<Record<string, boolean>>({});

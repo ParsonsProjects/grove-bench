@@ -19,6 +19,8 @@
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor, DEFAULT_SORT } from '../lib/session-sort.js';
+  import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
+  import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import type { SessionSortState } from '../../shared/types.js';
   import { onMount } from 'svelte';
 
@@ -31,12 +33,71 @@
   // Session ordering (name/age, asc/desc), also persisted via app-state.
   let sort = $state<SessionSortState>({ ...DEFAULT_SORT });
 
+  // User-resizable sidebar width (px), persisted via app-state.
+  const SIDEBAR_MIN = 240;
+  const SIDEBAR_MAX = 480;
+  const SIDEBAR_DEFAULT = 300;
+  let sidebarWidth = $state(SIDEBAR_DEFAULT);
+  let resizing = $state(false);
+
   onMount(async () => {
-    [collapsedRepos, sort] = await Promise.all([
+    let savedWidth: number | null;
+    [collapsedRepos, sort, savedWidth] = await Promise.all([
       window.groveBench.getCollapsedRepos(),
       window.groveBench.getSessionSort(),
+      window.groveBench.getSidebarWidth(),
     ]);
+    if (savedWidth != null) {
+      sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, savedWidth));
+    }
   });
+
+  function startResize(e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    resizing = true;
+    const onMove = (ev: PointerEvent) => {
+      sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + (ev.clientX - startX)));
+    };
+    const onUp = () => {
+      resizing = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.groveBench.setSidebarWidth(sidebarWidth);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
+  // Fetch conversation previews for sessions whose messages aren't loaded in the
+  // renderer (stopped sessions), so their rows still show what the agent was about.
+  $effect(() => {
+    const unloaded = store.sessions
+      .filter((s) => messageStore.getMessages(s.id).length === 0)
+      .map((s) => s.id);
+    if (unloaded.length > 0) sessionPreviewStore.ensure(unloaded);
+  });
+
+  /** Context line under a session row: waiting-reason > live activity > last/first message. */
+  function rowSubtitle(session: { id: string }): SessionSubtitle | null {
+    const msgs = messageStore.getMessages(session.id);
+    const loaded = msgs.length > 0;
+    const preview = sessionPreviewStore.get(session.id);
+    return sessionSubtitle({
+      isRunning: messageStore.getIsRunning(session.id),
+      activity: messageStore.getActivity(session.id),
+      pendingTool: loaded ? pendingPermissionTool(msgs) : null,
+      lastText: (loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null),
+      firstPrompt: (loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null),
+    });
+  }
+
+  const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
+    working: 'text-primary/80',
+    waiting: 'text-amber-500',
+    context: 'text-muted-foreground/60',
+  };
 
   function toggleRepoCollapsed(repo: string) {
     const current = isRepoCollapsed(collapsedRepos, repo);
@@ -110,6 +171,9 @@
       store.activeSessionId = next?.id ?? null;
     }
     store.updateStatus(id, 'stopped');
+    // Refetch this session's preview next time it's needed — the cached one
+    // (if any) predates the conversation that just ended.
+    sessionPreviewStore.invalidate(id);
     try {
       await window.groveBench.stopSession(id);
     } catch { /* session may already be dead */ }
@@ -152,6 +216,7 @@
       checkpointStore.clear(id);
       terminalStore.destroySession(id);
       bookmarkStore.dropSessionLocal(id);
+      sessionPreviewStore.invalidate(id);
     } catch (e: any) {
       store.setError(e.message || String(e));
     } finally {
@@ -260,21 +325,27 @@
   }
 </script>
 
-<aside class="w-60 border-r border-sidebar-border flex flex-col bg-sidebar shrink-0">
+<aside
+  class="relative border-r border-sidebar-border flex flex-col bg-sidebar shrink-0"
+  style="width: {sidebarWidth}px"
+>
   <!-- Reusable session row, shared by the Active list and the Inactive tree -->
   {#snippet sessionRow(session: (typeof store.sessions)[number], showRepoPrefix: boolean, labelOverride: string | null, greyedOut: boolean = false)}
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
+    {@const subtitle = rowSubtitle(session)}
+    {@const changedCount = isStopped ? 0 : gitStatusStore.getStatus(session.id).entries.length}
     <button
       onclick={() => { if (!isDestroying && !greyedOut) focusSession(session.id); }}
       oncontextmenu={(e) => { if (isDestroying || greyedOut) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
       disabled={isDestroying || greyedOut}
-      title={greyedOut ? `${sessionRowLabel(session)} — active; manage it in the Active list above` : sessionRowLabel(session)}
-      class="w-full flex items-center justify-between pl-4 pr-2 py-1.5 text-left group/session transition-colors
+      title={greyedOut ? `${sessionRowLabel(session)} — active; manage it in the Active list above` : subtitle ? `${sessionRowLabel(session)}\n${subtitle.text}` : sessionRowLabel(session)}
+      class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left group/session transition-colors
         {greyedOut ? 'cursor-not-allowed' : isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
     >
+      <div class="w-full flex items-center justify-between">
       <div class="flex items-center gap-2 min-w-0">
         {#if isDestroying}
           <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
@@ -336,6 +407,20 @@
           </span>
         {/if}
       </div>
+      </div>
+      {#if subtitle || changedCount > 0}
+        <div class="w-full flex items-center gap-1.5 pl-4 pr-1 mt-0.5 min-w-0 {greyedOut ? 'opacity-40' : ''}">
+          {#if subtitle}
+            <span class="text-[11px] truncate min-w-0 {SUBTITLE_TONE_CLASS[subtitle.tone]}">{subtitle.text}</span>
+          {/if}
+          {#if changedCount > 0}
+            <span
+              class="ml-auto shrink-0 text-[10px] text-muted-foreground/60 border border-border/60 px-1 leading-4"
+              title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
+            >±{changedCount}</span>
+          {/if}
+        </div>
+      {/if}
     </button>
   {/snippet}
 
@@ -355,6 +440,19 @@
       {/if}
     </button>
   {/snippet}
+
+  <!-- Search: opens the session finder (titles + full conversation content) -->
+  <div class="px-3 pt-3">
+    <button
+      onclick={() => store.finderOpen = true}
+      class="w-full flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
+      title="Search sessions and conversations (Ctrl+R)"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <span class="text-xs truncate">Search chats…</span>
+      <span class="ml-auto text-[10px] text-muted-foreground/40 shrink-0">Ctrl+R</span>
+    </button>
+  </div>
 
   <div class="flex-1 overflow-auto px-3 py-3">
     <!-- Sort control (applies to active list + inactive sessions) -->
@@ -514,6 +612,15 @@
       </Button>
     </div>
   </div>
+
+  <!-- Resize handle: drag to adjust sidebar width (persisted) -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    onpointerdown={startResize}
+    class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-10 -mr-0.5
+      {resizing ? 'bg-primary/40' : 'hover:bg-primary/25'} transition-colors"
+    title="Drag to resize sidebar"
+  ></div>
 </aside>
 
 {#if showNewAgent}

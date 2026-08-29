@@ -9,6 +9,8 @@ interface AppState {
   openTabIds: string[];
   collapsedRepos: Record<string, boolean>;
   sessionSort: SessionSortState;
+  /** Sidebar width in px (user-resizable). Null/absent = renderer default. */
+  sidebarWidth?: number | null;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -16,6 +18,7 @@ const DEFAULT_STATE: AppState = {
   openTabIds: [],
   collapsedRepos: {},
   sessionSort: { key: 'name', dir: 'asc' },
+  sidebarWidth: null,
 };
 
 function getStatePath(): string {
@@ -120,6 +123,28 @@ function writePendingSessionSort(): void {
   sessionSortTimer = null;
 }
 
+let sidebarWidthTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSidebarWidth: { value: number } | null = null;
+
+export function saveSidebarWidth(width: number): void {
+  pendingSidebarWidth = { value: width };
+  if (sidebarWidthTimer) clearTimeout(sidebarWidthTimer);
+  sidebarWidthTimer = setTimeout(() => {
+    writePendingSidebarWidth();
+  }, 500);
+}
+
+function writePendingSidebarWidth(): void {
+  if (!pendingSidebarWidth) return;
+  try {
+    const state = loadAppState();
+    state.sidebarWidth = pendingSidebarWidth.value;
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+  pendingSidebarWidth = null;
+  sidebarWidthTimer = null;
+}
+
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */
 export function flushPendingSaves(): void {
   if (saveTimer) {
@@ -138,8 +163,13 @@ export function flushPendingSaves(): void {
     clearTimeout(sessionSortTimer);
     sessionSortTimer = null;
   }
+  if (sidebarWidthTimer) {
+    clearTimeout(sidebarWidthTimer);
+    sidebarWidthTimer = null;
+  }
   writePendingActiveTab();
   writePendingOpenTabs();
   writePendingCollapsedRepos();
   writePendingSessionSort();
+  writePendingSidebarWidth();
 }
