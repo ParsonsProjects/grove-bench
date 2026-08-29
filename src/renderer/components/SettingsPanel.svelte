@@ -564,6 +564,21 @@
 
           <Separator />
 
+          <!-- Project Memory -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.memoryAutoSave} />
+            Auto-save project memory
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">After substantial sessions, extract project knowledge and session notes into memory automatically. On by default.</p>
+
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.memoryAutoCompact} />
+            Auto-compact project memory
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old session notes in the background. A backup is taken first. On by default.</p>
+
+          <Separator />
+
           <!-- Idle Auto-Stop -->
           <div>
             <Label class="mb-1 block">Auto-stop idle sessions</Label>

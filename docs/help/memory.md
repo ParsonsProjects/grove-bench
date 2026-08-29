@@ -21,7 +21,7 @@ Memory is organized into four folders:
 
 Memory grows as the agent saves notes across sessions, and over time it accumulates duplicates, stale details, and statements that contradict newer discoveries. Grove Bench compacts memory automatically:
 
-- **Session pruning** — only the 20 most recent session notes are kept; older ones are deleted.
+- **Session pruning** — only the 20 most recent session notes are kept. A note's age comes from its `updatedAt` frontmatter, falling back to the file's modification time, so an actively-written note is never pruned by mistake. Pruned notes are archived to a hidden folder inside the memory directory (the last 50 are kept) rather than destroyed outright.
 - **Dedupe & merge** — when memory grows past its budget, an AI pass merges files covering the same topic and removes repeated facts.
 - **Contradiction resolution** — when two notes conflict, the more recently updated one wins; explicit user corrections always take priority over inferred facts.
 
@@ -33,7 +33,7 @@ You can also compact on demand with the **Compact** button. After a pass, a summ
 
 **Clean up notes** lists session notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual sessions in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, session-note deletion is permanent — session notes are not included in backups. (To remove old *sessions* themselves, use **Clean up old sessions** in the sidebar.)
 
-Auto-compaction can be disabled with the `memoryAutoCompact` setting.
+Memory auto-save and auto-compaction can each be toggled in **Settings → General** (both on by default).
 
 ## Managing Memory
 

@@ -99,6 +99,12 @@ const BACKUP_DIR = '_compact-backup';
 /** Timestamped backup snapshots kept before rotation. */
 const MAX_BACKUPS = 5;
 
+/** Hidden folder where auto-pruned session notes are archived instead of destroyed. */
+const PRUNED_ARCHIVE_DIR = '_pruned-sessions';
+
+/** Archived pruned notes kept before the oldest are dropped for real. */
+const MAX_ARCHIVED_NOTES = 50;
+
 /** Compaction currently running, keyed by repo path. */
 const inProgress = new Set<string>();
 
@@ -197,9 +203,47 @@ export function needsCompaction(repoPath: string): { needed: boolean; totalBytes
 }
 
 /**
- * Delete the oldest session notes beyond the cap. Runs without an LLM.
- * Ordering: frontmatter `updatedAt` descending; notes without a timestamp are treated as oldest.
- * Returns the paths of deleted notes.
+ * A note's effective age: frontmatter `updatedAt` when parseable, else the
+ * file's mtime — an actively-written note with stale or missing frontmatter
+ * must never look old enough to prune.
+ */
+function noteTimestamp(repoPath: string, entry: { relativePath: string; updatedAt: string }): number {
+  const parsed = Date.parse(entry.updatedAt);
+  if (!Number.isNaN(parsed)) return parsed;
+  try {
+    return fs.statSync(path.join(memory.getMemoryDir(repoPath), entry.relativePath)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Move a pruned note into the hidden archive folder (a safety net — automatic
+ * pruning must never be the only copy's destruction). Oldest archived notes
+ * beyond the cap are dropped for real.
+ */
+function archivePrunedNote(repoPath: string, relativePath: string, content: string): void {
+  const archiveDir = path.join(memory.getMemoryDir(repoPath), PRUNED_ARCHIVE_DIR);
+  try {
+    fs.mkdirSync(archiveDir, { recursive: true });
+    // Prefix with a timestamp so re-pruned same-named notes never overwrite each other
+    const name = `${Date.now()}-${path.basename(relativePath)}`;
+    fs.writeFileSync(path.join(archiveDir, name), content);
+
+    const archived = fs.readdirSync(archiveDir).sort(); // timestamp prefix → chronological
+    for (const stale of archived.slice(0, Math.max(0, archived.length - MAX_ARCHIVED_NOTES))) {
+      fs.rmSync(path.join(archiveDir, stale), { force: true });
+    }
+  } catch (err) {
+    logger.warn(`[memory-compact] Failed to archive pruned note ${relativePath}: ${err}`);
+  }
+}
+
+/**
+ * Prune the oldest session notes beyond the cap. Runs without an LLM.
+ * Ordering: frontmatter `updatedAt` descending, falling back to file mtime for
+ * notes without a parseable timestamp. Pruned notes are archived to the hidden
+ * _pruned-sessions folder before removal. Returns the paths of pruned notes.
  */
 export function pruneSessionNotes(repoPath: string, keep: number = MAX_SESSION_NOTES): string[] {
   const sessionEntries = memory
@@ -208,21 +252,21 @@ export function pruneSessionNotes(repoPath: string, keep: number = MAX_SESSION_N
 
   if (sessionEntries.length <= keep) return [];
 
-  const sorted = [...sessionEntries].sort((a, b) => {
-    const ta = Date.parse(a.updatedAt) || 0;
-    const tb = Date.parse(b.updatedAt) || 0;
-    return tb - ta;
-  });
+  const sorted = sessionEntries
+    .map(e => ({ entry: e, ts: noteTimestamp(repoPath, e) }))
+    .sort((a, b) => b.ts - a.ts);
 
   const deleted: string[] = [];
-  for (const entry of sorted.slice(keep)) {
+  for (const { entry } of sorted.slice(keep)) {
+    const content = memory.readMemoryFile(repoPath, entry.relativePath);
+    if (content) archivePrunedNote(repoPath, entry.relativePath, content);
     if (memory.deleteMemoryFile(repoPath, entry.relativePath)) {
       deleted.push(entry.relativePath);
     }
   }
 
   if (deleted.length > 0) {
-    logger.info(`[memory-compact] Pruned ${deleted.length} old session notes: ${deleted.join(', ')}`);
+    logger.info(`[memory-compact] Pruned ${deleted.length} old session notes (archived): ${deleted.join(', ')}`);
   }
   return deleted;
 }

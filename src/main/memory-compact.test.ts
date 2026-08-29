@@ -145,12 +145,43 @@ describe('pruneSessionNotes', () => {
     expect(memory.readMemoryFile(REPO, 'sessions/new.md')).not.toBeNull();
   });
 
-  it('treats notes without a timestamp as oldest', () => {
+  it('falls back to file mtime when updatedAt is missing — a freshly-written note is never pruned first', () => {
     writeMemory('sessions/dated.md', 'Dated', 'note', '2026-01-01T00:00:00Z');
-    writeMemory('sessions/undated.md', 'Undated', 'note', '');
+    writeMemory('sessions/undated-active.md', 'Active plan', 'note', ''); // no timestamp, but just written
 
     const deleted = pruneSessionNotes(REPO, 1);
-    expect(deleted).toEqual(['sessions/undated.md']);
+    // The stale dated note goes, not the actively-written undated one
+    expect(deleted).toEqual(['sessions/dated.md']);
+    expect(memory.readMemoryFile(REPO, 'sessions/undated-active.md')).not.toBeNull();
+  });
+
+  it('prunes an undated note whose file is genuinely old', () => {
+    writeMemory('sessions/fresh.md', 'Fresh', 'note', new Date().toISOString());
+    writeMemory('sessions/undated-stale.md', 'Stale', 'note', '');
+    const stalePath = path.join(memoryDir(), 'sessions', 'undated-stale.md');
+    const old = new Date('2024-01-01');
+    fs.utimesSync(stalePath, old, old);
+
+    const deleted = pruneSessionNotes(REPO, 1);
+    expect(deleted).toEqual(['sessions/undated-stale.md']);
+  });
+
+  it('archives pruned notes into the hidden _pruned-sessions folder before deleting', () => {
+    writeMemory('sessions/keep.md', 'Keep', 'recent note', new Date().toISOString());
+    writeMemory('sessions/goner.md', 'Goner', 'precious context', '2024-01-01T00:00:00Z');
+
+    const deleted = pruneSessionNotes(REPO, 1);
+    expect(deleted).toEqual(['sessions/goner.md']);
+
+    const archiveDir = path.join(memoryDir(), '_pruned-sessions');
+    const archived = fs.readdirSync(archiveDir);
+    expect(archived).toHaveLength(1);
+    expect(archived[0]).toContain('goner.md');
+    expect(fs.readFileSync(path.join(archiveDir, archived[0]), 'utf-8')).toContain('precious context');
+
+    // The archive is invisible to memory listing and the prompt
+    const listed = memory.listMemoryFiles(REPO).map(e => e.relativePath);
+    expect(listed.some(p => p.includes('_pruned-sessions'))).toBe(false);
   });
 });
 
