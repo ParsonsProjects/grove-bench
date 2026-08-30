@@ -279,4 +279,38 @@ describe('SessionStore', () => {
       expect(store.error).toBeNull();
     });
   });
+
+  describe('stoppedSessionsOlderThan', () => {
+    const DAY = 86_400_000;
+
+    it('returns only stopped sessions past the cutoff, oldest first', () => {
+      store.sessions = [
+        makeSession({ id: 'running-old', status: 'running', lastActiveAt: Date.now() - 60 * DAY } as never),
+        makeSession({ id: 'stopped-old', status: 'stopped', lastActiveAt: Date.now() - 60 * DAY } as never),
+        makeSession({ id: 'stopped-ancient', status: 'stopped', lastActiveAt: Date.now() - 200 * DAY } as never),
+        makeSession({ id: 'stopped-fresh', status: 'stopped', lastActiveAt: Date.now() - 2 * DAY } as never),
+      ] as never;
+
+      const result = store.stoppedSessionsOlderThan(14);
+
+      expect(result.map((s) => s.id)).toEqual(['stopped-ancient', 'stopped-old']);
+    });
+
+    it('falls back to createdAt, and surfaces unknown-age sessions first', () => {
+      store.sessions = [
+        makeSession({ id: 'by-created', status: 'stopped', createdAt: Date.now() - 30 * DAY } as never),
+        makeSession({ id: 'no-timestamps', status: 'stopped' }),
+      ] as never;
+
+      const result = store.stoppedSessionsOlderThan(14);
+
+      expect(result.map((s) => s.id)).toEqual(['no-timestamps', 'by-created']);
+      expect(result[0].ts).toBe(0);
+    });
+
+    it('returns empty when nothing qualifies', () => {
+      store.sessions = [makeSession({ id: 'fresh', status: 'stopped', lastActiveAt: Date.now() } as never)] as never;
+      expect(store.stoppedSessionsOlderThan(14)).toEqual([]);
+    });
+  });
 });

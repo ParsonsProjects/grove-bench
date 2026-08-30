@@ -540,6 +540,12 @@ export interface GroveBenchAPI {
   memoryRead(repoPath: string, relativePath: string): Promise<string | null>;
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
+  memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
+  memoryListBackups(repoPath: string): Promise<MemoryBackupInfo[]>;
+  memoryRestoreBackup(repoPath: string, backupId: string): Promise<MemoryRestoreStatus>;
+  memoryStats(repoPath: string): Promise<MemoryStatsResult>;
+  memoryBackupPreview(repoPath: string, backupId: string): Promise<MemoryBackupFile[]>;
+  memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
 
   // Shell / Terminal (legacy)
   shellRun(sessionId: string, command: string): Promise<string>;
@@ -624,6 +630,9 @@ export interface GroveBenchSettings {
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;
+  /** Enable automatic memory compaction (dedupe, contradiction resolution,
+   *  session-note pruning) when memory grows past its budget. Default true. */
+  memoryAutoCompact: boolean;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
@@ -665,6 +674,44 @@ export interface MemoryEntry {
   title: string;         // from frontmatter
   updatedAt: string;     // ISO date from frontmatter
   folder: string;        // e.g. "repo", "conventions", "sessions"
+}
+
+export interface MemoryCompactionStatus {
+  compacted: boolean;
+  skippedReason?: string;   // why compaction was skipped, when it was
+  filesChanged: string[];   // paths written, rewritten, or deleted
+  /** Per-file summary of what the pass did (action, path, model's reason). */
+  changes?: Array<{ action: 'update' | 'delete'; path: string; reason: string }>;
+  /** Snapshot taken before applying — restore it to undo the compaction. */
+  backupId?: string;
+}
+
+export interface MemoryStatsResult {
+  totalBytes: number;        // non-session memory bytes (frontmatter stripped)
+  budgetBytes: number;       // system-prompt budget
+  fileCount: number;         // non-session files
+  sessionNoteCount: number;
+  skippedFiles: string[];    // files that no longer fit in the prompt budget
+  lastCompactedAt: string | null;
+  lastAuto?: boolean;        // last pass was automatic (vs the panel button)
+  lastFilesChanged?: number;
+}
+
+export interface MemoryBackupFile {
+  path: string;
+  bytes: number;
+}
+
+export interface MemoryBackupInfo {
+  id: string;               // snapshot folder name, sortable
+  createdAt: string;        // ISO timestamp
+  fileCount: number;
+}
+
+export interface MemoryRestoreStatus {
+  restored: boolean;
+  error?: string;
+  filesChanged: string[];   // paths written or deleted by the restore
 }
 
 // ─── Bookmarks ───
@@ -789,6 +836,12 @@ export const IPC = {
   MEMORY_READ: 'memory:read',
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
+  MEMORY_COMPACT: 'memory:compact',
+  MEMORY_LIST_BACKUPS: 'memory:listBackups',
+  MEMORY_RESTORE_BACKUP: 'memory:restoreBackup',
+  MEMORY_STATS: 'memory:stats',
+  MEMORY_BACKUP_PREVIEW: 'memory:backupPreview',
+  MEMORY_BACKUP_READ_FILE: 'memory:backupReadFile',
   SHELL_RUN: 'shell:run',
   SHELL_KILL: 'shell:kill',
   SHELL_INPUT: 'shell:input',

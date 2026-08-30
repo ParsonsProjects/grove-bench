@@ -18,6 +18,7 @@ import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
+import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
@@ -894,6 +895,30 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.MEMORY_DELETE, (_event, repoPath: string, relativePath: string) => {
     return memory.deleteMemoryFile(repoPath, relativePath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_COMPACT, (_event, repoPath: string) => {
+    return memoryCompact.compactMemory({ repoPath, force: true });
+  });
+
+  ipcMain.handle(IPC.MEMORY_LIST_BACKUPS, (_event, repoPath: string) => {
+    return memoryCompact.listBackups(repoPath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_RESTORE_BACKUP, (_event, repoPath: string, backupId: string) => {
+    return memoryCompact.restoreBackup(repoPath, backupId);
+  });
+
+  ipcMain.handle(IPC.MEMORY_STATS, (_event, repoPath: string) => {
+    return { ...memory.getMemoryStats(repoPath), ...memoryCompact.getCompactionInfo(repoPath) };
+  });
+
+  ipcMain.handle(IPC.MEMORY_BACKUP_PREVIEW, (_event, repoPath: string, backupId: string) => {
+    return memoryCompact.previewBackup(repoPath, backupId);
+  });
+
+  ipcMain.handle(IPC.MEMORY_BACKUP_READ_FILE, (_event, repoPath: string, backupId: string, relativePath: string) => {
+    return memoryCompact.readBackupFile(repoPath, backupId, relativePath);
   });
 
   // ─── Bookmarks ───

@@ -31,6 +31,7 @@ const SETTINGS = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   memoryAutoSave: true,
+  memoryAutoCompact: true,
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',
@@ -66,6 +67,11 @@ const GIT_STATUS: Record<string, { entries: { filePath: string; status: string; 
     { filePath: 'src/auth/refresh.test.ts', status: 'added', staged: false, additions: 41, deletions: 0 },
   ] },
   's-e2e': { entries: [{ filePath: 'e2e/retry-helper.ts', status: 'modified', staged: false, additions: 9, deletions: 4 }] },
+  // Stopped session with uncommitted work — exercises the clean-up dialog's dirty flag
+  's-perf': { entries: [
+    { filePath: 'src/middleware/cache.ts', status: 'modified', staged: false, additions: 22, deletions: 3 },
+    { filePath: 'src/db/query-plan.md', status: 'added', staged: false, additions: 54, deletions: 0 },
+  ] },
 };
 
 const CONTENT_HITS = [
@@ -75,7 +81,98 @@ const CONTENT_HITS = [
   { sessionId: 's-readme', eventIndex: 3, kind: 'assistant', snippet: '…documented the OAuth setup env vars in the README configuration table…' },
 ];
 
+// ─── Memory demo data (stateful, so panel actions visibly work) ───
+
+const day = 24 * 60 * min;
+
+function memFile(relativePath: string, title: string, ageMs: number | null, body: string) {
+  const updatedAt = ageMs === null ? '' : new Date(now - ageMs).toISOString();
+  return {
+    relativePath,
+    title,
+    updatedAt,
+    folder: relativePath.split('/').slice(0, -1).join('/') || '.',
+    content: `---\ntitle: "${title}"\nupdatedAt: "${updatedAt}"\n---\n\n${body}\n`,
+  };
+}
+
+let memoryFiles = [
+  memFile('repo/overview.md', 'Project Overview', 2 * 60 * min,
+    'Electron 33 desktop app orchestrating multiple Claude Code sessions, each in an isolated git worktree with a dedicated PTY terminal.\n\n- UI: Svelte 5 + Tailwind v4 (renderer)\n- Main process: Node, node-pty, execa git wrapper\n- Windows-native (NSIS installer), no cross-platform support in v1'),
+  memFile('repo/tech-stack.md', 'Tech Stack', 9 * day,
+    'Uses Electron with a Svelte UI. Terminals via xterm.js. Git operations shell out to the git CLI via execa (not simple-git). Tests run on Vitest.'),
+  memFile('conventions/naming.md', 'Naming Conventions', 6 * day,
+    '- Svelte stores live in `src/renderer/stores/*.svelte.ts` and export a singleton instance\n- IPC channels are namespaced strings, e.g. `memory:list`\n- Main-process modules are flat files under `src/main/`'),
+  memFile('architecture/ipc-flow.md', 'IPC Flow', 4 * day,
+    'Renderer calls `window.groveBench.*` (exposed by preload contextBridge) → `ipcMain.handle` in `ipc.ts` → main-process module. Events stream back via `webContents.send`.'),
+  memFile('sessions/sidebar-revamp.md', 'Session: sidebar-revamp', 60 * min,
+    'Widened sidebar, two-line session cards, cross-chat search. Tests green.'),
+  memFile('sessions/fix-oauth-refresh.md', 'Session: fix-oauth-refresh', 2 * day,
+    'Root cause: refresh token rotated twice per request. Patched refresh.ts to reuse rotation result.'),
+  memFile('sessions/perf-audit.md', 'Session: perf-audit', 5 * day,
+    'Found 3 N+1 query spots; fixed two, third needs a schema change.'),
+  memFile('sessions/update-readme.md', 'Session: update-readme', 45 * day,
+    'Added quick-start section and screenshots to README.'),
+  memFile('sessions/legacy-migration.md', 'Session: legacy-migration', 120 * day,
+    'Migrated settings storage from JSON blobs to per-key files. Obsolete now.'),
+  memFile('sessions/spike-notes.md', 'Session: spike notes', null,
+    'Scratch notes from an early spike. No timestamp recorded.'),
+];
+
+const memoryBackups = [
+  { id: '2026-08-29T09-15-02-541Z', createdAt: new Date(now - 7 * 60 * min).toISOString(), fileCount: 4 },
+  { id: '2026-08-27T18-40-11-102Z', createdAt: new Date(now - 2 * day).toISOString(), fileCount: 5 },
+];
+
 const api: Record<string, unknown> = {
+  memoryList: async () => memoryFiles.map(({ content: _c, ...entry }) => entry),
+  memoryRead: async (_repo: string, p: string) => memoryFiles.find(f => f.relativePath === p)?.content ?? null,
+  memoryWrite: async (_repo: string, p: string, content: string) => {
+    const existing = memoryFiles.find(f => f.relativePath === p);
+    if (existing) existing.content = content;
+    else memoryFiles.push({ ...memFile(p, p.split('/').pop()!.replace('.md', ''), 0, ''), content });
+  },
+  memoryDelete: async (_repo: string, p: string) => {
+    memoryFiles = memoryFiles.filter(f => f.relativePath !== p);
+    return true;
+  },
+  memoryCompact: async () => {
+    // Simulate merging the duplicated tech-stack file into the overview
+    memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
+    return {
+      compacted: true,
+      filesChanged: ['repo/overview.md', 'repo/tech-stack.md'],
+      changes: [
+        { action: 'update', path: 'repo/overview.md', reason: 'Merged the tech stack details in; dropped the duplicated Electron/Svelte facts' },
+        { action: 'delete', path: 'repo/tech-stack.md', reason: 'Fully covered by repo/overview.md after the merge' },
+      ],
+      backupId: memoryBackups[0].id,
+    };
+  },
+  memoryListBackups: async () => memoryBackups,
+  memoryRestoreBackup: async () => ({ restored: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] }),
+  memoryStats: async () => {
+    const nonSession = memoryFiles.filter(f => !f.folder.startsWith('sessions'));
+    const totalBytes = nonSession.reduce((sum, f) => sum + f.content.length, 0) + 11.5 * 1024; // pad to a realistic fill level
+    return {
+      totalBytes,
+      budgetBytes: 16 * 1024,
+      fileCount: nonSession.length,
+      sessionNoteCount: memoryFiles.length - nonSession.length,
+      skippedFiles: [],
+      lastCompactedAt: new Date(now - 7 * 60 * min).toISOString(),
+      lastAuto: true,
+      lastFilesChanged: 2,
+    };
+  },
+  memoryBackupPreview: async (_repo: string, id: string) =>
+    memoryFiles
+      .filter(f => !f.folder.startsWith('sessions'))
+      .map(f => ({ path: f.relativePath, bytes: f.content.length }))
+      .concat(id === memoryBackups[1].id ? [{ path: 'repo/tech-stack.md', bytes: 212 }] : []),
+  memoryReadBackupFile: async (_repo: string, _id: string, p: string) =>
+    memoryFiles.find(f => f.relativePath === p)?.content
+      ?? `---\ntitle: "Tech Stack"\n---\n\nArchived copy from before the last compaction.\n`,
   getSettings: async () => SETTINGS,
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },

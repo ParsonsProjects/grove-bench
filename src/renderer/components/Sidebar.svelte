@@ -12,6 +12,7 @@
   import NewAgentDialog from './NewAgentDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import SettingsPanel from './SettingsPanel.svelte';
   import MemoryPanel from './MemoryPanel.svelte';
@@ -157,6 +158,84 @@
   let renameValue = $state('');
   let renameError = $state<string | null>(null);
 
+  // ─── Bulk session clean-up ───
+  let showCleanup = $state(false);
+  let cleanupDays = $state('14');
+  let cleanupSelection = $state<Record<string, boolean>>({});
+  let cleanupDeleteBranches = $state(false);
+  let confirmCleanup = $state(false);
+  let cleaningUp = $state(false);
+  const cleanupDayPresets = [7, 14, 30, 90];
+
+  const cleanupDaysNum = $derived(Math.max(0, Math.floor(Number(cleanupDays)) || 0));
+  const cleanupCandidates = $derived(store.stoppedSessionsOlderThan(cleanupDaysNum));
+  const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
+  const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
+
+  /** sessionId → has uncommitted changes in its worktree. Absent = still checking / unknown. */
+  let cleanupDirty = $state<Record<string, boolean>>({});
+  let cleanupDirtyToken = 0;
+
+  // When the dialog opens or the cutoff changes: preselect all candidates, then
+  // check each worktree's git status and deselect the ones with uncommitted
+  // changes — removing those loses work, so they must be opted into explicitly.
+  $effect(() => {
+    if (!showCleanup) return;
+    const candidates = cleanupCandidates;
+    const token = ++cleanupDirtyToken;
+
+    // Preselect everything; the async status check below deselects dirty ones.
+    // (Not reading cleanupDirty here — it would become a dependency and loop.)
+    const sel: Record<string, boolean> = {};
+    for (const s of candidates) sel[s.id] = true;
+    cleanupSelection = sel;
+
+    (async () => {
+      const dirty: Record<string, boolean> = {};
+      await Promise.all(candidates.map(async (s) => {
+        try {
+          const status = await window.groveBench.getGitStatus(s.id);
+          dirty[s.id] = status.entries.length > 0;
+        } catch {
+          dirty[s.id] = false; // unreadable worktree — nothing to lose
+        }
+      }));
+      if (token !== cleanupDirtyToken) return;
+      cleanupDirty = dirty;
+      // Deselect dirty sessions without re-checking ones the user unticked
+      const next = { ...cleanupSelection };
+      for (const s of candidates) {
+        if (dirty[s.id]) next[s.id] = false;
+      }
+      cleanupSelection = next;
+    })();
+  });
+
+  async function runCleanup() {
+    const ids = cleanupSelectedIds;
+    const deleteBranches = cleanupDeleteBranches;
+    confirmCleanup = false;
+    cleaningUp = true;
+    for (const id of ids) {
+      await destroySessionById(id, deleteBranches);
+    }
+    cleaningUp = false;
+    showCleanup = false;
+  }
+
+  function relativeAge(ts: number): string {
+    if (ts <= 0) return 'unknown age';
+    const days = Math.floor((Date.now() - ts) / 86_400_000);
+    if (days < 1) return 'today';
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    return months < 12 ? `${months}mo ago` : `${Math.floor(months / 12)}y ago`;
+  }
+
+  function repoShortName(repoPath: string): string {
+    return repoPath.split(/[/\\]/).pop() ?? repoPath;
+  }
+
   function focusSession(id: string) {
     store.activeSessionId = id;
     store.clearNeedsAttention(id);
@@ -189,11 +268,10 @@
     deleteBranchOnDestroy = false;
   }
 
-  async function confirmDestroy() {
-    if (!confirmDestroyId) return;
-    const id = confirmDestroyId;
-    const deleteBranch = deleteBranchOnDestroy;
-    confirmDestroyId = null;
+  /** Full teardown of one session: main-process destroy plus all per-session
+   *  renderer state (messages + IPC listener, checkpoints, terminal). Shared
+   *  by the per-row destroy flow and the bulk clean-up dialog. */
+  async function destroySessionById(id: string, deleteBranch: boolean): Promise<boolean> {
     destroying = new Set([...destroying, id]);
 
     // Mark stopped immediately so the tab closes right away
@@ -210,20 +288,28 @@
       trackEvent('session_destroyed');
       store.removeSession(id);
       gitStatusStore.clear(id);
-      // Tear down all per-session renderer state so nothing leaks for the
-      // lifetime of the app (messages + IPC listener, checkpoints, terminal).
       messageStore.destroySession(id);
       checkpointStore.clear(id);
       terminalStore.destroySession(id);
       bookmarkStore.dropSessionLocal(id);
       sessionPreviewStore.invalidate(id);
+      return true;
     } catch (e: any) {
       store.setError(e.message || String(e));
+      return false;
     } finally {
       const next = new Set(destroying);
       next.delete(id);
       destroying = next;
     }
+  }
+
+  async function confirmDestroy() {
+    if (!confirmDestroyId) return;
+    const id = confirmDestroyId;
+    const deleteBranch = deleteBranchOnDestroy;
+    confirmDestroyId = null;
+    await destroySessionById(id, deleteBranch);
   }
 
   async function handleRemoveRepo(repoPath: string) {
@@ -573,8 +659,10 @@
 
   <!-- Bottom controls -->
   <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
-    <AddRepoButton />
     <div class="flex gap-2">
+      <div class="flex-1 min-w-0">
+        <AddRepoButton />
+      </div>
       <Button
         onclick={() => openNewAgent()}
         disabled={!store.canCreate}
@@ -583,6 +671,8 @@
       >
         + Agent
       </Button>
+    </div>
+    <div class="flex justify-between px-1">
       <Button
         onclick={() => bookmarkStore.toggleDrawer()}
         variant="ghost"
@@ -600,6 +690,15 @@
         title="Project Memory"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+      </Button>
+      <Button
+        onclick={() => { cleanupDirty = {}; showCleanup = true; }}
+        variant="ghost"
+        size="sm"
+        class="px-2 shrink-0"
+        title="Clean up old sessions"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
       </Button>
       <Button
         onclick={() => showSettings = true}
@@ -660,6 +759,109 @@
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => renamingSessionId = null}>Cancel</Button>
         <Button onclick={confirmRename}>Rename</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Clean up old sessions dialog -->
+{#if showCleanup}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !cleaningUp) showCleanup = false; }}>
+    <Dialog.Content class="max-w-md">
+      <Dialog.Header>
+        <Dialog.Title>Clean Up Old Sessions</Dialog.Title>
+        <Dialog.Description>
+          Remove stopped sessions you no longer need. Removing a session kills its shell and deletes its worktree. Sessions with uncommitted changes are flagged and left unselected — tick them only if you're sure. Branches are kept unless you choose otherwise. Running sessions are never listed.
+        </Dialog.Description>
+      </Dialog.Header>
+
+      <div class="flex items-center gap-2">
+        <Label class="shrink-0">Inactive for</Label>
+        <input
+          type="number"
+          min="0"
+          bind:value={cleanupDays}
+          class="w-16 text-sm bg-card border border-border px-2 py-1 text-foreground focus:outline-none focus:border-primary"
+        />
+        <span class="text-xs text-muted-foreground">days</span>
+        <div class="flex gap-1 ml-1">
+          {#each cleanupDayPresets as d}
+            <button
+              onclick={() => cleanupDays = String(d)}
+              class="text-xs px-1.5 py-0.5 border transition-colors
+                {cleanupDaysNum === d ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:text-foreground'}"
+            >
+              {d}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      {#if cleanupCandidates.length === 0}
+        <p class="text-sm text-muted-foreground/50 py-2">No stopped sessions inactive for {cleanupDaysNum} days.</p>
+      {:else}
+        <div class="flex flex-col gap-1 max-h-64 overflow-auto">
+          {#each cleanupCandidates as session (session.id)}
+            <label class="flex items-center gap-2 px-2 py-1.5 bg-card border border-border cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cleanupSelection[session.id] ?? false}
+                onchange={(e) => cleanupSelection[session.id] = e.currentTarget.checked}
+              />
+              <div class="min-w-0 flex-1">
+                <div class="text-sm text-foreground truncate" title={session.branch}>
+                  {sessionRowLabel(session)}
+                </div>
+                <div class="text-xs text-muted-foreground">
+                  {repoShortName(session.repoPath)} · {relativeAge(session.ts)}
+                  {#if cleanupDirty[session.id]}
+                    <span class="text-amber-500 font-medium">· uncommitted changes</span>
+                  {/if}
+                </div>
+              </div>
+            </label>
+          {/each}
+        </div>
+        <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+          <Checkbox bind:checked={cleanupDeleteBranches} />
+          Also delete their branches
+        </label>
+      {/if}
+
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => showCleanup = false} disabled={cleaningUp}>Cancel</Button>
+        <Button
+          variant="destructive"
+          disabled={cleanupSelectedIds.length === 0 || cleaningUp}
+          onclick={() => confirmCleanup = true}
+        >
+          {cleaningUp
+            ? 'Removing…'
+            : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'session' : 'sessions'}`}
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Clean-up confirmation -->
+{#if confirmCleanup}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmCleanup = false; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Remove Sessions?</Dialog.Title>
+        <Dialog.Description>
+          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'session' : 'sessions'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}?
+          {#if cleanupSelectedDirtyCount > 0}
+            <span class="text-amber-500 font-medium">
+              {cleanupSelectedDirtyCount} of them {cleanupSelectedDirtyCount === 1 ? 'has' : 'have'} uncommitted changes that will be lost.
+            </span>
+          {/if}
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmCleanup = false}>Cancel</Button>
+        <Button variant="destructive" onclick={runCleanup}>Remove</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
