@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid } from './event-search.js';
+import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('searchableEventText', () => {
@@ -127,5 +127,54 @@ describe('findEventIndexByUuid', () => {
       { type: 'assistant_tool_use', toolName: 'E', toolUseId: 't', uuid: 'dup', toolInput: {} },
     ];
     expect(findEventIndexByUuid(dup, 'dup')).toBe(0);
+  });
+});
+
+describe('extractSessionPreview', () => {
+  it('returns the first real user prompt and the latest text', () => {
+    const events: AgentEvent[] = [
+      { type: 'status', message: 'creating worktree' },
+      { type: 'user_message', text: '/clear' }, // slash command — skipped
+      { type: 'user_message', text: 'refactor   the\n\nsidebar layout' },
+      { type: 'assistant_text', text: 'Working on it', uuid: '' },
+      { type: 'user_message', text: 'also add tests' },
+      { type: 'assistant_text', text: 'Done — added tests for the sidebar', uuid: '' },
+    ];
+    const preview = extractSessionPreview(events);
+    expect(preview.firstPrompt).toBe('refactor the sidebar layout');
+    expect(preview.lastText).toBe('Done — added tests for the sidebar');
+  });
+
+  it('falls back to the latest user message when the assistant has not replied', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'first prompt' },
+      { type: 'assistant_tool_use', toolName: 'Edit', toolUseId: 't', uuid: '', toolInput: {} },
+    ];
+    const preview = extractSessionPreview(events);
+    expect(preview.firstPrompt).toBe('first prompt');
+    expect(preview.lastText).toBe('first prompt');
+  });
+
+  it('uses tool_use_summary text when it is the latest', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'do the thing' },
+      { type: 'tool_use_summary', summary: 'Edited 3 files', toolUseIds: [] },
+    ];
+    expect(extractSessionPreview(events).lastText).toBe('Edited 3 files');
+  });
+
+  it('returns empty strings for a history with no text events', () => {
+    const events: AgentEvent[] = [
+      { type: 'status', message: 'installing' },
+      { type: 'user_message', text: '/compact' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: '', lastText: '' });
+  });
+
+  it('truncates long prompts with an ellipsis', () => {
+    const long = 'a'.repeat(300);
+    const preview = extractSessionPreview([{ type: 'user_message', text: long }]);
+    expect(preview.firstPrompt.length).toBeLessThanOrEqual(161);
+    expect(preview.firstPrompt.endsWith('…')).toBe(true);
   });
 });

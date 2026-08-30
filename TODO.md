@@ -32,7 +32,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### OS Notifications
 - [ ] Native notification when an agent finishes a turn while the window is unfocused
-- [ ] Native notification when an agent is blocked on a permission prompt
+- [ ] Native notification when an agent is blocked on a permission prompt, and for PR-watch alerts (new CI failure / review comment)
 - [ ] Taskbar flash / overlay badge for sessions needing attention
 
 ### Robustness
@@ -45,19 +45,25 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Diff Viewer
 - [x] Side-by-side diff view option (toggle in Edit tool header)
 - [ ] Syntax highlighting in diff views across multiple languages
-- [ ] Full thread diff view (cumulative changes across all turns)
+- [x] Full thread diff view (cumulative changes across all turns) — "All turns" entry in the Checkpoints tab, plus per-turn diff stats and a This turn / Since here toggle
 
 ### PR Creation Workflow
-- [ ] Dedicated PR creation dialog (title, body, base branch)
-- [ ] Auto-populate PR description from agent's changes
-- [ ] Call `gh pr create` from within the app
+- [x] Dedicated PR creation dialog (title, body, base branch, draft)
+- [x] Auto-populate PR title/description from the branch's commits
+- [x] Call `gh pr create` from within the app (auto-pushes the branch first)
+- [x] One-click Create PR sends a turn to the session's agent (commit → push → PR); manual dialog is the fallback for stopped sessions
+- [x] PR status watching — state, checks rollup, review decision polled in the status bar (all sessions, not just the open tab)
+- [x] One-click fix turns — clickable failing-checks / changes-requested badges send the agent to read CI logs or review comments and fix
+- [x] New-failure / new-comment detection with pulsing alert chips (baseline seeded on startup, one alert per pushed commit)
+- [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 attempts per commit then "needs human", collaborator-authored comments only)
+- [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
 
 ### Session Search
 - [x] Fuzzy search to find and resume past conversations (Ctrl+R)
 - [x] Filter/search within message history (Ctrl+F with highlighting)
 
 ### Help System
-- [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md`; missing piece is the in-app F1 surface
+- [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md` and HelpPanel is mounted; missing piece is the F1 shortcut
 - [ ] Context-aware footer showing relevant keyboard shortcuts
 
 ### Cost & Usage Dashboard
@@ -96,7 +102,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Maintenance & Hygiene
 - [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
 - [ ] Tests for the IPC layer (`ipc.ts` currently has zero coverage)
-- [ ] Component tests (3 of 41 Svelte components covered) and E2E tests (Playwright)
+- [ ] Component tests (5 of 42 Svelte components covered) and E2E tests (Playwright)
 - [ ] In-app log viewer or "open logs folder" action; configurable log level
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
@@ -127,7 +133,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] MCP server connections (connect to external MCP servers)
 
 ### Git & Workflow
-- [ ] Branch → PR link (create PR from session branch)
+- [x] Branch → PR link (create PR from session branch)
 - [x] Branch without worktree (use existing checkout, no worktree creation)
 - [ ] Stacked branch workflows (dependent branch chains)
 
@@ -136,7 +142,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Project scripts (user-defined scripts bound to keyboard shortcuts)
 
 ### Dev & Preview
-- [x] Localhost run (start/preview dev server from worktree)
+- ~~Localhost run (start/preview dev server from worktree)~~ — implemented, then removed; run dev servers from the session terminal instead
 
 ## Already at Parity or Better
 
@@ -157,7 +163,6 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - **Orphan Worktree Detection & Cleanup** — auto-detect on startup + 15-min background sweeps
 - **Auto-Copy `.env` Files** — automatically copies `.env`, `.npmrc`, etc. to new worktrees
 - **Auto-Install Dependencies** — optional npm install with shared cache in new worktrees
-- **Dev Server Management** — auto-detect dev commands, start/stop, detect localhost ports, kill port conflicts
 - **Tool Visibility Control** — allow/deny rules with glob patterns (more granular than t3's sandbox modes)
 - **Power Monitoring** — flush state on suspend, health-check on resume
 - **Changes Review Panel** — dedicated panel with file staging/unstaging, revert individual files

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settingsStore } from '../stores/settings.svelte.js';
   import { pluginStore } from '../stores/plugins.svelte.js';
+  import { mcpConfigStore } from '../stores/mcpConfig.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
   import PluginCard from './PluginCard.svelte';
@@ -10,7 +11,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
-  import type { SettingsPermissionMode, CavemanMode } from '../../shared/types.js';
+  import type { SettingsPermissionMode, CavemanMode, ThinkingLevel, McpConfigScope } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
   interface Props {
@@ -20,7 +21,7 @@
 
   let { open, onclose }: Props = $props();
 
-  type Tab = 'permissions' | 'agent' | 'general' | 'plugins';
+  type Tab = 'permissions' | 'agent' | 'general' | 'mcp' | 'plugins';
   let tab = $state<Tab>('permissions');
 
   // Temp input values for adding list items
@@ -60,6 +61,90 @@
     }
   });
 
+  // ─── MCP servers tab ───
+
+  // `claude mcp list` health-checks every server (slow), so load lazily on
+  // first visit to the MCP tab rather than on every settings open.
+  $effect(() => {
+    if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
+      mcpConfigStore.refresh();
+    }
+    if (open && tab === 'mcp' && mcpRepos.length === 0) {
+      window.groveBench.listRepos().then((repos) => { mcpRepos = repos; }).catch(() => {});
+    }
+  });
+
+  let mcpRepos = $state<string[]>([]);
+  let mcpName = $state('');
+  let mcpTransport = $state<'stdio' | 'http' | 'sse'>('stdio');
+  let mcpCommand = $state('');
+  let mcpArgs = $state('');
+  let mcpEnv = $state('');
+  let mcpHeaders = $state('');
+  let mcpScope = $state<McpConfigScope>('user');
+  let mcpRepo = $state('');
+  let mcpAdded = $state<string | null>(null);
+
+  const mcpTransports: { value: 'stdio' | 'http' | 'sse'; label: string }[] = [
+    { value: 'stdio', label: 'stdio (local command)' },
+    { value: 'http', label: 'HTTP' },
+    { value: 'sse', label: 'SSE' },
+  ];
+
+  const mcpScopes: { value: McpConfigScope; label: string; description: string }[] = [
+    { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
+    { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the repo' },
+    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen repo' },
+  ];
+
+  const mcpCanAdd = $derived(
+    mcpName.trim() !== '' && mcpCommand.trim() !== ''
+      && (mcpScope === 'user' || mcpRepo !== ''),
+  );
+
+  async function addMcpServer() {
+    if (!mcpCanAdd || mcpConfigStore.actionInProgress) return;
+    const env: Record<string, string> = {};
+    for (const line of mcpEnv.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) {
+        mcpConfigStore.error = `Environment variables must be KEY=value (got "${trimmed}")`;
+        return;
+      }
+      env[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+    }
+    const headers = mcpHeaders.split('\n').map((h) => h.trim()).filter(Boolean);
+
+    const name = mcpName.trim();
+    const ok = await mcpConfigStore.add({
+      name,
+      transport: mcpTransport,
+      commandOrUrl: mcpCommand.trim(),
+      args: mcpTransport === 'stdio'
+        ? mcpArgs.trim().split(/\s+/).filter(Boolean)
+        : undefined,
+      env: mcpTransport === 'stdio' && Object.keys(env).length > 0 ? env : undefined,
+      headers: mcpTransport !== 'stdio' && headers.length > 0 ? headers : undefined,
+      scope: mcpScope,
+      cwd: mcpScope !== 'user' ? mcpRepo : undefined,
+    });
+    if (ok) {
+      mcpName = ''; mcpCommand = ''; mcpArgs = ''; mcpEnv = ''; mcpHeaders = '';
+      mcpAdded = name;
+      setTimeout(() => { if (mcpAdded === name) mcpAdded = null; }, 8000);
+    }
+  }
+
+  function mcpStatusDot(status: string): string {
+    return status === 'connected' ? 'bg-green-500'
+      : status === 'pending' ? 'bg-yellow-400 animate-pulse'
+      : status === 'needs-auth' ? 'bg-yellow-500'
+      : status === 'disabled' ? 'bg-muted-foreground/40'
+      : 'bg-red-500';
+  }
+
   function handleSave() {
     settingsStore.save();
   }
@@ -94,6 +179,7 @@
     { id: 'permissions', label: 'Permissions' },
     { id: 'agent', label: 'Agent' },
     { id: 'general', label: 'General' },
+    { id: 'mcp', label: 'MCP' },
     { id: 'plugins', label: 'Plugins' },
   ];
 
@@ -109,6 +195,14 @@
     { value: 'lite', label: 'Lite', description: 'Drop filler/hedging, keep articles' },
     { value: 'full', label: 'Full', description: 'Drop articles, fragments OK' },
     { value: 'ultra', label: 'Ultra', description: 'Max compression, abbreviations' },
+  ];
+
+  const thinkingLevels: { value: ThinkingLevel; label: string; description: string }[] = [
+    { value: 'off', label: 'Off', description: 'No extended thinking' },
+    { value: 'low', label: 'Low', description: 'Brief reasoning on hard steps' },
+    { value: 'medium', label: 'Medium', description: 'Moderate reasoning budget' },
+    { value: 'high', label: 'High', description: 'Provider default / maximum reasoning' },
+    { value: 'adaptive', label: 'Adaptive', description: 'Model decides when and how much to think' },
   ];
 
   const themes: { value: 'system' | 'dark' | 'light'; label: string }[] = [
@@ -154,10 +248,15 @@
         {pluginStore.error}
       </div>
     {/if}
+    {#if tab === 'mcp' && mcpConfigStore.error}
+      <div class="mt-2 text-xs text-destructive bg-destructive/10 px-3 py-2 whitespace-pre-wrap">
+        {mcpConfigStore.error}
+      </div>
+    {/if}
 
     <!-- Content -->
     <div class="flex-1 overflow-auto mt-3 min-h-0 px-2">
-      {#if settingsStore.loading && tab !== 'plugins'}
+      {#if settingsStore.loading && tab !== 'plugins' && tab !== 'mcp'}
         <div class="flex items-center justify-center py-8 text-muted-foreground">
           <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
           <span class="text-sm">Loading settings...</span>
@@ -261,11 +360,24 @@
             <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
           </div>
 
-          <!-- Extended Thinking -->
-          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <Checkbox bind:checked={settingsStore.draft.extendedThinking} />
-            Enable extended thinking by default
-          </label>
+          <!-- Thinking Level -->
+          <div>
+            <Label class="mb-1 block">Default Thinking Level</Label>
+            <Select.Root type="single" value={settingsStore.draft.defaultThinkingLevel} onValueChange={(v) => { if (v) settingsStore.draft.defaultThinkingLevel = v as ThinkingLevel; }}>
+              <Select.Trigger class="w-48">
+                {thinkingLevels.find(l => l.value === settingsStore.draft.defaultThinkingLevel)?.label ?? 'High'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each thinkingLevels as level (level.value)}
+                  <Select.Item value={level.value} label={level.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground mt-1">
+              {thinkingLevels.find(l => l.value === settingsStore.draft.defaultThinkingLevel)?.description ?? ''}
+              Adjustable per session from the status bar (Alt+T).
+            </p>
+          </div>
 
           <Separator />
 
@@ -288,21 +400,6 @@
                 — reduces output tokens ~65-75%. Code blocks stay normal.
               {/if}
             </p>
-          </div>
-
-          <Separator />
-
-          <!-- Dev Server Command -->
-          <div>
-            <Label for="settings-dev-command" class="mb-1 block">Dev Server Command</Label>
-            <input
-              id="settings-dev-command"
-              type="text"
-              bind:value={settingsStore.draft.devCommand}
-              placeholder="npm run dev  (auto-detected if blank)"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Command to start the dev server. Leave blank to auto-detect from package.json.</p>
           </div>
 
           <Separator />
@@ -358,9 +455,12 @@
               id="settings-base"
               type="text"
               bind:value={settingsStore.draft.defaultBaseBranch}
-              placeholder="main"
+              placeholder="auto (repository default branch)"
               class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
+            <p class="text-xs text-muted-foreground mt-1">
+              Leave empty to use each repository's default branch (e.g. main or master).
+            </p>
           </div>
 
           <Separator />
@@ -464,6 +564,21 @@
 
           <Separator />
 
+          <!-- Project Memory -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.memoryAutoSave} />
+            Auto-save project memory
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">After substantial sessions, extract project knowledge and session notes into memory automatically. On by default.</p>
+
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.memoryAutoCompact} />
+            Auto-compact project memory
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old session notes in the background. A backup is taken first. On by default.</p>
+
+          <Separator />
+
           <!-- Idle Auto-Stop -->
           <div>
             <Label class="mb-1 block">Auto-stop idle sessions</Label>
@@ -487,6 +602,179 @@
             Help improve Grove Bench by sending anonymous usage data
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">No personal information or code content is collected.</p>
+        </div>
+
+      {:else if tab === 'mcp'}
+        <!-- Configured servers -->
+        <div class="flex items-start justify-between mb-3">
+          <div>
+            <div class="text-sm font-medium text-foreground">MCP Servers</div>
+            <p class="text-xs text-muted-foreground mt-0.5">
+              Servers from your Claude Code configuration. New and restarted sessions pick them up automatically.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading} class="text-xs shrink-0">
+            Refresh
+          </Button>
+        </div>
+
+        {#if mcpConfigStore.loading}
+          <div class="flex items-center justify-center py-8 text-muted-foreground">
+            <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
+            <span class="text-sm">Checking MCP server health — this can take a few seconds...</span>
+          </div>
+        {:else if mcpConfigStore.servers.length === 0}
+          <p class="text-sm text-muted-foreground/60 text-center py-6">
+            {mcpConfigStore.loaded ? 'No MCP servers configured yet.' : ''}
+          </p>
+        {:else}
+          <div class="flex flex-col gap-1.5 mb-4">
+            {#each mcpConfigStore.servers as server (server.name)}
+              <div class="flex items-center gap-2.5 border border-border/50 px-2.5 py-2">
+                <span class="w-1.5 h-1.5 shrink-0 {mcpStatusDot(server.status)}"></span>
+                <div class="flex-1 min-w-0">
+                  <div class="font-mono text-xs text-foreground truncate">{server.name}</div>
+                  <div class="text-[10px] text-muted-foreground/60 truncate" title={server.target}>
+                    {server.target}{server.transport ? ` · ${server.transport}` : ''} · {server.status}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="text-destructive hover:bg-destructive/10 text-xs shrink-0"
+                  disabled={mcpConfigStore.actionInProgress !== null}
+                  onclick={() => mcpConfigStore.remove(server.name)}
+                >
+                  {mcpConfigStore.actionInProgress === server.name ? 'Removing...' : 'Remove'}
+                </Button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        <Separator />
+
+        <!-- Add a new server -->
+        <div class="mt-3 space-y-3">
+          <div class="text-sm font-medium text-foreground">Add MCP Server</div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <Label for="mcp-name" class="mb-1 block">Name</Label>
+              <input
+                id="mcp-name"
+                type="text"
+                bind:value={mcpName}
+                placeholder="my-server"
+                class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            <div>
+              <Label class="mb-1 block">Transport</Label>
+              <Select.Root type="single" value={mcpTransport} onValueChange={(v) => { if (v) mcpTransport = v as typeof mcpTransport; }}>
+                <Select.Trigger class="w-full">
+                  {mcpTransports.find(t => t.value === mcpTransport)?.label}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each mcpTransports as t (t.value)}
+                    <Select.Item value={t.value} label={t.label} />
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+            </div>
+          </div>
+
+          <div>
+            <Label for="mcp-command" class="mb-1 block">{mcpTransport === 'stdio' ? 'Command' : 'URL'}</Label>
+            <input
+              id="mcp-command"
+              type="text"
+              bind:value={mcpCommand}
+              placeholder={mcpTransport === 'stdio' ? 'npx' : 'https://example.com/mcp'}
+              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+
+          {#if mcpTransport === 'stdio'}
+            <div>
+              <Label for="mcp-args" class="mb-1 block">Arguments</Label>
+              <input
+                id="mcp-args"
+                type="text"
+                bind:value={mcpArgs}
+                placeholder="-y my-mcp-server"
+                class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            <div>
+              <Label for="mcp-env" class="mb-1 block">Environment Variables</Label>
+              <textarea
+                id="mcp-env"
+                bind:value={mcpEnv}
+                placeholder="API_KEY=xxx&#10;ONE_PER_LINE=value"
+                class="w-full bg-background border border-input px-3 py-2 text-sm min-h-[48px] max-h-[120px] resize-y font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+              ></textarea>
+            </div>
+          {:else}
+            <div>
+              <Label for="mcp-headers" class="mb-1 block">Headers</Label>
+              <textarea
+                id="mcp-headers"
+                bind:value={mcpHeaders}
+                placeholder="Authorization: Bearer xxx&#10;One header per line"
+                class="w-full bg-background border border-input px-3 py-2 text-sm min-h-[48px] max-h-[120px] resize-y font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+              ></textarea>
+            </div>
+          {/if}
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <Label class="mb-1 block">Scope</Label>
+              <Select.Root type="single" value={mcpScope} onValueChange={(v) => { if (v) mcpScope = v as McpConfigScope; }}>
+                <Select.Trigger class="w-full">
+                  {mcpScopes.find(s => s.value === mcpScope)?.label}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each mcpScopes as s (s.value)}
+                    <Select.Item value={s.value} label={s.label} />
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+              <p class="text-xs text-muted-foreground mt-1">
+                {mcpScopes.find(s => s.value === mcpScope)?.description ?? ''}
+              </p>
+            </div>
+            {#if mcpScope !== 'user'}
+              <div>
+                <Label class="mb-1 block">Repository</Label>
+                <Select.Root type="single" value={mcpRepo} onValueChange={(v) => { if (v) mcpRepo = v; }}>
+                  <Select.Trigger class="w-full">
+                    <span class="truncate">{mcpRepo || 'Select a repository...'}</span>
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each mcpRepos as repo (repo)}
+                      <Select.Item value={repo} label={repo} />
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+              </div>
+            {/if}
+          </div>
+
+          <div class="flex items-center gap-3">
+            <Button
+              size="sm"
+              onclick={addMcpServer}
+              disabled={!mcpCanAdd || mcpConfigStore.actionInProgress !== null}
+            >
+              {mcpConfigStore.actionInProgress && mcpConfigStore.actionInProgress === mcpName.trim() ? 'Adding...' : 'Add Server'}
+            </Button>
+            {#if mcpAdded}
+              <span class="text-xs text-green-400">
+                Added "{mcpAdded}" — restart sessions to connect it.
+              </span>
+            {/if}
+          </div>
         </div>
 
       {:else if tab === 'plugins'}
@@ -567,7 +855,7 @@
     </div>
 
     <Dialog.Footer class="mt-3">
-      {#if tab !== 'plugins'}
+      {#if tab !== 'plugins' && tab !== 'mcp'}
         <Button variant="ghost" size="sm" onclick={() => settingsStore.reset()} disabled={!settingsStore.dirty}>
           Reset
         </Button>

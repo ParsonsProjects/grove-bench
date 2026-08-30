@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -17,8 +17,10 @@ export interface AgentCapabilities {
   resume: boolean;
   /** Supports switching models at runtime */
   modelSwitching: boolean;
-  /** Supports toggling extended thinking */
+  /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
+  /** Supports runtime MCP server control (list status, disconnect/reconnect) */
+  mcpControl?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports image attachments in messages */
@@ -36,6 +38,8 @@ export interface ModelInfo {
   label: string;
   /** Optional grouping, e.g. "Claude", "GPT" */
   family?: string;
+  /** Context window in tokens; display fallback until the SDK reports the real value */
+  contextWindow?: number;
 }
 
 // ─── Permission Handling ───
@@ -92,10 +96,18 @@ export interface AdapterConfig {
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;
+  /** Thinking level to start the session at. When unset (or 'high'), the
+   *  provider's own default reasoning behavior applies. */
+  thinkingLevel?: ThinkingLevel | null;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
   resumeSessionId?: string | null;
+  /** Resume the conversation only up to and including this provider chain-entry
+   *  UUID, forking to a new provider session id (used by rewind so the agent
+   *  keeps the turns before the rewind point and forgets everything after).
+   *  Only meaningful together with resumeSessionId. */
+  resumeAtUuid?: string | null;
   onPermissionRequest: PermissionHandler;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
@@ -128,7 +140,18 @@ export interface AgentQueryHandle {
 
   setModel?(model: string): Promise<void>;
   setPermissionMode?(mode: PermissionMode): void;
-  setMaxThinkingTokens?(tokens: number | null): Promise<void>;
+  /** Adjust the thinking/reasoning level. Adapters map the level to their
+   *  provider's mechanism (token budgets, effort params, plain on/off). */
+  setThinkingLevel?(level: ThinkingLevel): Promise<void>;
+
+  // ─── Optional MCP server control — check capabilities.mcpControl first ───
+
+  /** Current status of the agent's MCP server connections. */
+  listMcpServers?(): Promise<McpServerInfo[]>;
+  /** Reconnect a (failed or disconnected) MCP server by name. */
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  /** Enable (connect) or disable (disconnect) an MCP server by name. */
+  setMcpServerEnabled?(serverName: string, enabled: boolean): Promise<void>;
 }
 
 // ─── Prerequisite Status ───
@@ -169,6 +192,16 @@ export interface AgentAdapter {
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */
   dispose?(): Promise<void>;
+
+  // ─── Optional MCP server configuration (CLI config, not per-session) ───
+
+  /** List MCP servers from the provider's configuration. Only implement if
+   *  capabilities.mcpControl is true. `cwd` scopes local/project servers. */
+  listConfiguredMcpServers?(cwd?: string): Promise<McpConfiguredServer[]>;
+  /** Register a new MCP server in the provider's configuration. */
+  addConfiguredMcpServer?(opts: McpAddServerOpts): Promise<void>;
+  /** Remove an MCP server from the provider's configuration. */
+  removeConfiguredMcpServer?(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
 
   // ─── Optional plugin management ───
 

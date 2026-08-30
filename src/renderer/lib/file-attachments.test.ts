@@ -4,6 +4,7 @@ import {
   validateFileSize,
   processFiles,
   extractClipboardImages,
+  uniquifyFileName,
   TEXT_EXTENSIONS,
   IMAGE_MIME_TYPES,
   MAX_TEXT_SIZE,
@@ -181,6 +182,60 @@ describe('processFiles', () => {
     const result = await processFiles(files, []);
     expect(result.files).toHaveLength(2);
     expect(result.skipped).toHaveLength(1);
+  });
+
+  it('renames duplicates instead of skipping when renameDuplicates is set', async () => {
+    const file = makeFile('image.png', 'second-paste', 'image/png');
+    const existing = [{ name: 'image.png', dataUrl: 'data:image/png;base64,first', type: 'image' as const }];
+    const result = await processFiles([file], existing, { renameDuplicates: true });
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].name).toBe('image-2.png');
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it('renames colliding names within a single batch (multi-image paste)', async () => {
+    const files = [
+      makeFile('image.png', 'a', 'image/png'),
+      makeFile('image.png', 'b', 'image/png'),
+      makeFile('image.png', 'c', 'image/png'),
+    ];
+    const result = await processFiles(files, [], { renameDuplicates: true });
+    const names = result.files.map((f) => f.name).sort();
+    expect(names).toEqual(['image-2.png', 'image-3.png', 'image.png']);
+  });
+
+  it('keeps counting past existing renamed attachments', async () => {
+    const file = makeFile('image.png', 'third-paste', 'image/png');
+    const existing = [
+      { name: 'image.png', dataUrl: 'data:1', type: 'image' as const },
+      { name: 'image-2.png', dataUrl: 'data:2', type: 'image' as const },
+    ];
+    const result = await processFiles([file], existing, { renameDuplicates: true });
+    expect(result.files[0].name).toBe('image-3.png');
+  });
+});
+
+// ─── uniquifyFileName ───
+
+describe('uniquifyFileName', () => {
+  it('returns the name unchanged when not taken', () => {
+    expect(uniquifyFileName('image.png', new Set())).toBe('image.png');
+  });
+
+  it('appends a counter before the extension', () => {
+    expect(uniquifyFileName('image.png', new Set(['image.png']))).toBe('image-2.png');
+  });
+
+  it('increments until the name is free', () => {
+    expect(uniquifyFileName('image.png', new Set(['image.png', 'image-2.png', 'image-3.png']))).toBe('image-4.png');
+  });
+
+  it('handles extensionless names', () => {
+    expect(uniquifyFileName('dockerfile', new Set(['dockerfile']))).toBe('dockerfile-2');
+  });
+
+  it('handles dotfiles without treating the leading dot as an extension', () => {
+    expect(uniquifyFileName('.prettierrc', new Set(['.prettierrc']))).toBe('.prettierrc-2');
   });
 });
 

@@ -37,15 +37,6 @@ vi.mock('./worktree-manager.js', () => ({
     getModel: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock('./port-killer.js', () => ({
-  killProcessOnPort: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('./dev-server.js', () => ({
-  DevServer: vi.fn(),
-}));
-vi.mock('./dev-command-detector.js', () => ({
-  detectDevCommand: vi.fn().mockResolvedValue(null),
-}));
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultPermissionMode: 'default',
@@ -198,7 +189,7 @@ class MockAdapter implements AgentAdapter {
       closeInput: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
-      setMaxThinkingTokens: vi.fn(),
+      setThinkingLevel: vi.fn(),
     };
   }
 }
@@ -1111,8 +1102,10 @@ describe('AgentSessionManager.rewindFiles()', () => {
     // adapter.start() should be called again (query restarted)
     expect(mockAdapter.startCallCount).toBe(2);
 
-    // The new query should NOT have a resumeSessionId
+    // Rewinding to the first message keeps no provider content, so the new
+    // query starts a fresh conversation: no resume, no truncated fork.
     expect(mockAdapter.lastConfig?.resumeSessionId).toBeFalsy();
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBeFalsy();
 
     await sessionManager.destroySession('test-rewind-restart');
   });
@@ -1190,6 +1183,84 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(rewindEvent![1]).toMatchObject({ type: 'rewind', toMessageId: uuid });
 
     await sessionManager.destroySession('test-rewind-emit');
+  });
+
+  it('forks the provider conversation at the last kept assistant message', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-fork',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Turn 1: user message + assistant reply carrying a provider uuid
+    await sessionManager.sendMessage('test-rewind-fork', 'First');
+    await new Promise((r) => setTimeout(r, 50));
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'reply one', uuid: 'sdk-uuid-1' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Turn 2: the message we rewind away
+    await sessionManager.sendMessage('test-rewind-fork', 'Second');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-fork');
+    const userMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
+    const secondUuid = (userMsgs[1] as any).uuid;
+
+    await sessionManager.rewindFiles('test-rewind-fork', secondUuid);
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Provider session is kept so the restarted query resumes it, truncated
+    // at the last kept assistant message and forked.
+    expect(session?.providerSessionId).toBe('mock-session-id');
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBe('mock-session-id');
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBe('sdk-uuid-1');
+    // Consumed by the successful start
+    expect(session?.pendingResumeAt).toBeNull();
+
+    // The persisted id is blanked so a crash before the forked session's
+    // system_init degrades to a fresh conversation, never the old one.
+    const { worktreeManager } = await import('./worktree-manager.js');
+    expect(vi.mocked(worktreeManager.saveProviderSessionId)).toHaveBeenCalledWith('test-rewind-fork', '');
+
+    await sessionManager.destroySession('test-rewind-fork');
+  });
+
+  it('cancels any pending memory auto-save on rewind', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-autosave',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.sendMessage('test-rewind-autosave', 'Hello');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-autosave');
+    const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
+
+    await sessionManager.rewindFiles('test-rewind-autosave', (userMsg as any).uuid);
+
+    const autosave = await import('./memory-autosave.js');
+    expect(vi.mocked(autosave.cancelAutoSave)).toHaveBeenCalledWith('test-rewind-autosave');
+
+    await sessionManager.destroySession('test-rewind-autosave');
   });
 });
 

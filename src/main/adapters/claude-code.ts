@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ToolCategory } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, ThinkingLevel, ToolCategory } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -129,8 +129,6 @@ export function isPathInside(parent: string, child: string): boolean {
 interface MessageContext {
   /** Maps toolUseId → toolName for matching tool_results back to their tool. */
   toolUseMap: Map<string, string>;
-  /** Ports where dev servers were detected (written by the orchestrator, not here). */
-  detectedPorts: Set<number>;
 }
 
 /**
@@ -341,10 +339,30 @@ export function transformMessage(
     }
 
     case 'result': {
-      const modelUsage = (message as any).modelUsage as Record<string, { contextWindow?: number }> | undefined;
-      const contextWindow = modelUsage
-        ? Object.values(modelUsage)[0]?.contextWindow
+      // modelUsage can contain entries for helper models (e.g. Haiku used
+      // internally for title generation) alongside the session's main model.
+      // Pick the entry that did the bulk of the token work — the first key is
+      // not reliably the conversation model, and helper entries would report
+      // the wrong context window (e.g. Haiku's 200k for an Opus session).
+      const modelUsage = (message as any).modelUsage as Record<string, {
+        contextWindow?: number;
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadInputTokens?: number;
+        cacheCreationInputTokens?: number;
+      }> | undefined;
+      const mainUsage = modelUsage
+        ? Object.values(modelUsage).reduce<(typeof modelUsage)[string] | undefined>((best, u) => {
+            const total = (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+              + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0);
+            const bestTotal = best
+              ? (best.inputTokens ?? 0) + (best.outputTokens ?? 0)
+                + (best.cacheReadInputTokens ?? 0) + (best.cacheCreationInputTokens ?? 0)
+              : -1;
+            return total > bestTotal ? u : best;
+          }, undefined)
         : undefined;
+      const contextWindow = mainUsage?.contextWindow;
       events.push({
         type: 'result',
         subtype: message.subtype,
@@ -445,6 +463,139 @@ export function transformMessage(
   return events;
 }
 
+// ─── 1M context window ───
+
+/** SDK beta flag that unlocks the 1M-token context window for capable models. */
+export const CONTEXT_1M_BETA = 'context-1m-2025-08-07';
+
+/**
+ * Whether to request the 1M-token context window for `model`.
+ *
+ * The Claude Code CLI gates the 1M window behind CONTEXT_1M_BETA — without it,
+ * even 1M-capable models (Opus, Sonnet) report the 200k default in modelUsage,
+ * which is what the status bar then shows. Haiku is 200k-only, so we skip the
+ * beta there rather than send an unsupported beta header. When the model is
+ * unset the SDK uses its own default (currently a 1M-capable model), so we
+ * opt in.
+ */
+export function supportsLargeContext(model: string | null | undefined): boolean {
+  if (!model) return true;
+  return !/haiku/i.test(model);
+}
+
+/**
+ * Thinking level → max thinking tokens for the Claude SDK's runtime control
+ * (`setMaxThinkingTokens`). 0 disables thinking; null clears the limit
+ * (provider default/maximum — which on adaptive-capable models means the
+ * model decides when and how much to think, so 'adaptive' also maps to null).
+ * The low/medium budgets mirror Claude Code's own "think" / "megathink" tiers.
+ */
+export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
+  off: 0,
+  low: 4_000,
+  medium: 10_000,
+  high: null,
+  adaptive: null,
+};
+
+/**
+ * Thinking level → the SDK's query-start `thinking` config, which (unlike the
+ * deprecated runtime token control) can express adaptive thinking explicitly.
+ * Returns null for 'high' (and unset) so the provider default applies.
+ */
+export function thinkingConfigFor(
+  level: ThinkingLevel | null | undefined,
+): { type: 'adaptive' } | { type: 'disabled' } | { type: 'enabled'; budgetTokens: number } | null {
+  if (!level || level === 'high') return null;
+  if (level === 'adaptive') return { type: 'adaptive' };
+  if (level === 'off') return { type: 'disabled' };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
+}
+
+// ─── MCP config CLI helpers ───
+
+/** Names the CLI accepts and that are safe to pass through a shell. */
+export function validateMcpName(name: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+    throw new Error('Server name may only contain letters, digits, dots, dashes, and underscores');
+  }
+}
+
+/**
+ * Quote a single argument for execFile with `shell: true` (cmd.exe on
+ * Windows joins args with spaces and does NOT quote them). Values that could
+ * defeat double-quoting (`"`, `%`, control chars) are rejected outright.
+ */
+export function quoteArg(arg: string): string {
+  if (/["%\r\n\0]/.test(arg)) {
+    throw new Error(`Unsupported characters in argument: ${arg}`);
+  }
+  return /^[A-Za-z0-9._\/:@=+,-]+$/.test(arg) ? arg : `"${arg}"`;
+}
+
+/**
+ * Parse `claude mcp list` output. Lines look like:
+ *   `name: https://example.com/mcp (HTTP) - ✔ Connected`
+ *   `my-server: npx my-mcp-server - ! Needs authentication`
+ * Names may themselves contain `: ` (e.g. `plugin:figma:figma`), so the
+ * name/target boundary is the LAST `: ` on the left of the status separator.
+ */
+export function parseMcpListOutput(stdout: string): McpConfiguredServer[] {
+  const servers: McpConfiguredServer[] = [];
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const statusSep = line.lastIndexOf(' - ');
+    if (statusSep < 0) continue; // banner/blank lines
+    const left = line.slice(0, statusSep);
+    const statusText = line.slice(statusSep + 3).toLowerCase();
+
+    const nameSep = left.lastIndexOf(': ');
+    if (nameSep < 0) continue;
+    const name = left.slice(0, nameSep);
+    let target = left.slice(nameSep + 2);
+
+    let transport: string | undefined;
+    const transportMatch = target.match(/\s+\(([A-Za-z]+)\)$/);
+    if (transportMatch) {
+      transport = transportMatch[1];
+      target = target.slice(0, -transportMatch[0].length);
+    }
+
+    const status: McpConfiguredServer['status'] =
+      statusText.includes('connected') && !statusText.includes('not connected') ? 'connected'
+        : statusText.includes('auth') ? 'needs-auth'
+        : statusText.includes('pending') ? 'pending'
+        : statusText.includes('disabled') ? 'disabled'
+        : 'failed';
+
+    servers.push({ name, target, ...(transport ? { transport } : {}), status });
+  }
+  return servers;
+}
+
+/** Build the `claude mcp add ...` argument list for the given options. */
+export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
+  validateMcpName(opts.name);
+  const args = ['mcp', 'add', '-s', opts.scope, '-t', opts.transport];
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name: ${key}`);
+    }
+    args.push('-e', quoteArg(`${key}=${value}`));
+  }
+  for (const header of opts.headers ?? []) {
+    args.push('-H', quoteArg(header));
+  }
+  args.push(opts.name);
+  if (opts.transport === 'stdio') {
+    // `--` stops the CLI from parsing the command's own flags
+    args.push('--', quoteArg(opts.commandOrUrl), ...(opts.args ?? []).map(quoteArg));
+  } else {
+    args.push(quoteArg(opts.commandOrUrl));
+  }
+  return args;
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -457,6 +608,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     resume: true,
     modelSwitching: true,
     thinking: true,
+    mcpControl: true,
     plugins: true,
     imageAttachments: true,
     structuredOutput: true,
@@ -466,11 +618,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // TODO: Hardcoded model list — update when new models are released, or fetch dynamically from the SDK if it exposes a model list.
   getModels(): ModelInfo[] {
     return [
-      { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude' },
-      { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude' },
-      { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude' },
-      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude' },
+      { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude', contextWindow: 1_000_000 },
+      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude', contextWindow: 200_000 },
     ];
   }
 
@@ -632,6 +786,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: config.appendSystemPrompt }
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
+    const thinking = thinkingConfigFor(config.thinkingLevel);
+
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
@@ -642,10 +798,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         systemPrompt,
         permissionMode: config.permissionMode,
         ...(config.model ? { model: config.model } : {}),
+        ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
+        ...(thinking ? { thinking } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
+        // Truncating resume (rewind): keep the conversation up to and including
+        // the given chain-entry uuid and fork to a new session id, so the old
+        // (pre-rewind) session stays intact on disk.
+        ...(config.resumeSessionId && config.resumeAtUuid
+          ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
+          : {}),
         canUseTool: canUseTool as any,
         spawnClaudeCodeProcess: (o: SpawnOptions) =>
           spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`)),
@@ -663,7 +827,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Message context for the transform function
     const ctx: MessageContext = {
       toolUseMap: new Map(),
-      detectedPorts: new Set(),
     };
 
     // Create the async event generator
@@ -748,12 +911,62 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         q.setPermissionMode(mode);
       },
 
-      async setMaxThinkingTokens(tokens: number | null) {
-        await q.setMaxThinkingTokens(tokens);
+      async setThinkingLevel(level: ThinkingLevel) {
+        await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[level]);
+      },
+
+      async listMcpServers(): Promise<McpServerInfo[]> {
+        const statuses = await q.mcpServerStatus();
+        return statuses.map((s) => ({
+          name: s.name,
+          status: s.status,
+          ...(s.error ? { error: s.error } : {}),
+          ...(s.scope ? { scope: s.scope } : {}),
+          ...(s.tools ? { toolCount: s.tools.length } : {}),
+        }));
+      },
+
+      async reconnectMcpServer(serverName: string) {
+        await q.reconnectMcpServer(serverName);
+      },
+
+      async setMcpServerEnabled(serverName: string, enabled: boolean) {
+        await q.toggleMcpServer(serverName, enabled);
       },
     };
 
     return handle;
+  }
+
+  // ─── MCP server configuration (delegates to `claude mcp` CLI) ───
+
+  async listConfiguredMcpServers(cwd?: string): Promise<McpConfiguredServer[]> {
+    // `claude mcp list` health-checks each server, so this can take seconds.
+    const { stdout } = await execFileAsync('claude', ['mcp', 'list'], {
+      shell: true,
+      ...(cwd ? { cwd } : {}),
+      timeout: 60_000,
+    });
+    return parseMcpListOutput(stdout);
+  }
+
+  async addConfiguredMcpServer(opts: McpAddServerOpts): Promise<void> {
+    const args = buildMcpAddArgs(opts);
+    await execFileAsync('claude', args, {
+      shell: true,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      timeout: 30_000,
+    });
+  }
+
+  async removeConfiguredMcpServer(name: string, scope?: McpConfigScope, cwd?: string): Promise<void> {
+    validateMcpName(name);
+    const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
+    await execFileAsync('claude', args, {
+      shell: true,
+      ...(cwd ? { cwd } : {}),
+      timeout: 30_000,
+    });
   }
 
   // ─── Plugin management (delegates to `claude` CLI) ───

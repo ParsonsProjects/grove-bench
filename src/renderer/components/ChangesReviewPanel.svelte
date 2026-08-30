@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+  import { prStore } from '../stores/pr.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
   import type { DiffLine } from './DiffView.svelte';
   import { hunkLineIndices } from '../lib/diff-highlight.js';
@@ -192,7 +193,22 @@
   // Staging + commit
   let commitMessage = $state('');
   let committing = $state(false);
+  let pushing = $state(false);
+  let generatingMsg = $state(false);
   let commitError = $state('');
+
+  async function generateMessage() {
+    if (generatingMsg || committing || stagedEntries.length === 0) return;
+    generatingMsg = true;
+    commitError = '';
+    try {
+      commitMessage = await window.groveBench.generateCommitMessage(sessionId);
+    } catch (e: any) {
+      commitError = e?.message || 'Failed to generate commit message';
+    } finally {
+      generatingMsg = false;
+    }
+  }
 
   function stageEntry(entry: GitStatusEntry) {
     gitStatusStore.stageFile(sessionId, entry.filePath).catch(e => console.error('Failed to stage:', e));
@@ -216,17 +232,24 @@
     }
   }
 
-  async function doCommit() {
+  async function doCommit(andPush = false) {
     if (!commitMessage.trim() || stagedEntries.length === 0 || committing) return;
     committing = true;
     commitError = '';
+    let committed = false;
     try {
       await gitStatusStore.commit(sessionId, commitMessage);
+      committed = true;
       commitMessage = '';
+      if (andPush) {
+        pushing = true;
+        await prStore.push(sessionId);
+      }
     } catch (e: any) {
-      commitError = e?.message || 'Commit failed';
+      commitError = e?.message || (committed ? 'Push failed' : 'Commit failed');
     } finally {
       committing = false;
+      pushing = false;
     }
   }
 
@@ -559,23 +582,49 @@
       <!-- Commit box (shown when there are staged changes) -->
       {#if stagedEntries.length > 0}
         <div class="border-t border-border p-2 shrink-0 space-y-1.5">
-          <textarea
-            bind:value={commitMessage}
-            placeholder="Commit message…"
-            rows="2"
-            onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
-            class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-none"
-          ></textarea>
+          <div class="relative">
+            <textarea
+              bind:value={commitMessage}
+              placeholder={generatingMsg ? 'Generating…' : 'Commit message…'}
+              rows="2"
+              onkeydown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCommit(); } }}
+              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pr-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 resize-none"
+            ></textarea>
+            <button
+              onclick={generateMessage}
+              disabled={generatingMsg || committing}
+              class="absolute right-1 top-1 p-0.5 text-muted-foreground/60 hover:text-primary disabled:cursor-not-allowed transition-colors"
+              title="Generate a commit message from the staged changes"
+            >
+              {#if generatingMsg}
+                <span class="block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              {:else}
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3l1.9 5.7a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-2a2 2 0 0 0 1.3-1.2L12 3z"/>
+                </svg>
+              {/if}
+            </button>
+          </div>
           {#if commitError}
             <div class="text-[10px] text-destructive">{commitError}</div>
           {/if}
-          <button
-            onclick={doCommit}
-            disabled={!commitMessage.trim() || committing}
-            class="w-full text-xs px-2 py-1 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {committing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
-          </button>
+          <div class="flex gap-1.5">
+            <button
+              onclick={() => doCommit()}
+              disabled={!commitMessage.trim() || committing}
+              class="flex-1 text-xs px-2 py-1 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {committing && !pushing ? 'Committing…' : `Commit ${stagedEntries.length} file${stagedEntries.length !== 1 ? 's' : ''}`}
+            </button>
+            <button
+              onclick={() => doCommit(true)}
+              disabled={!commitMessage.trim() || committing}
+              class="text-xs px-2 py-1 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="Commit staged files, then push the branch to origin"
+            >
+              {pushing ? 'Pushing…' : '& Push'}
+            </button>
+          </div>
         </div>
       {/if}
     </div>

@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import type { BranchCommit, GitSyncStatus } from '../shared/types.js';
 
 export async function git(args: string[], cwd: string): Promise<string> {
   const result = await execa('git', args, { cwd });
@@ -62,6 +63,23 @@ export async function branchExistsAnywhere(cwd: string, branch: string): Promise
   } catch {
     return false;
   }
+}
+
+/** The repository's default branch (what origin/HEAD points at), falling back
+ *  to `main`/`master` when the remote HEAD is unknown (no remote, or never
+ *  fetched with set-head). Offline-safe — never touches the network. */
+export async function getDefaultBranch(cwd: string): Promise<string> {
+  try {
+    const ref = (await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], cwd)).trim();
+    // "origin/main" → "main"
+    const slash = ref.indexOf('/');
+    if (slash !== -1) return ref.slice(slash + 1);
+    if (ref) return ref;
+  } catch { /* origin/HEAD not set */ }
+  for (const name of ['main', 'master']) {
+    if (await branchExistsAnywhere(cwd, name)) return name;
+  }
+  return 'main';
 }
 
 export async function listBranches(cwd: string): Promise<string[]> {
@@ -231,6 +249,56 @@ export async function unstageFile(cwd: string, relPath: string): Promise<void> {
 export async function commit(cwd: string, message: string): Promise<void> {
   if (!message.trim()) throw new Error('Commit message cannot be empty');
   await git(['commit', '-m', message], cwd);
+}
+
+/** Push the branch to origin, setting upstream (idempotent when already set). */
+export async function push(cwd: string, branch: string): Promise<void> {
+  try {
+    await git(['push', '--set-upstream', 'origin', branch], cwd);
+  } catch (e: any) {
+    throw new Error(e?.stderr?.trim() || e?.message || 'git push failed');
+  }
+}
+
+/** Local branch position vs its upstream — no network access, so `behind`
+ *  reflects the last fetch. No upstream → the branch was never pushed. */
+export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
+  let upstream: string | null = null;
+  try {
+    upstream = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd)).trim() || null;
+  } catch { /* no upstream configured */ }
+  if (!upstream) return { upstream: null, ahead: 0, behind: 0 };
+  try {
+    const counts = await git(['rev-list', '--left-right', '--count', '@{u}...HEAD'], cwd);
+    const [behind, ahead] = counts.trim().split(/\s+/).map((n) => parseInt(n, 10));
+    return { upstream, ahead: ahead || 0, behind: behind || 0 };
+  } catch {
+    return { upstream, ahead: 0, behind: 0 };
+  }
+}
+
+/** Commits on HEAD that aren't on the base branch, newest first.
+ *  Falls back to origin/<base> when the base has no local ref. */
+export async function branchCommits(cwd: string, base: string): Promise<BranchCommit[]> {
+  for (const ref of [base, `origin/${base}`]) {
+    try {
+      const raw = await git(['log', '--format=%s%x1f%b%x1e', `${ref}..HEAD`], cwd);
+      return parseBranchCommits(raw);
+    } catch { /* ref missing — try the remote-tracking name */ }
+  }
+  return [];
+}
+
+export function parseBranchCommits(raw: string): BranchCommit[] {
+  return raw
+    .split('\x1e')
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const sep = chunk.indexOf('\x1f');
+      if (sep === -1) return { subject: chunk.trim(), body: '' };
+      return { subject: chunk.slice(0, sep).trim(), body: chunk.slice(sep + 1).trim() };
+    });
 }
 
 /** MIME type for an image extension (for building data URLs); octet-stream when unknown. */

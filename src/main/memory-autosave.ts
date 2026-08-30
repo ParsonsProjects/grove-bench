@@ -1,5 +1,6 @@
 import { logger } from './logger.js';
 import * as memory from './memory.js';
+import * as memoryCompact from './memory-compact.js';
 import * as settings from './settings.js';
 import type { AgentEvent } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
@@ -149,8 +150,9 @@ Rules:
 - Use "update" if an existing file covers the same topic — merge new info into it.
 - Use "create" only for genuinely new topics not covered by any existing file.
 - Use "skip" if a file exists and needs no changes.
+- When updating a file, rewrite it as a coherent whole: remove statements the new information contradicts or supersedes rather than appending both. If the user corrected something, the correction replaces the old claim.
 - Do NOT save ephemeral information (debugging steps, temporary state, conversation pleasantries).
-- Do NOT duplicate information already in existing memory files.
+- Do NOT duplicate information already in existing memory files — merge instead.
 - Memory files use markdown with YAML frontmatter (title, updatedAt).
 - Organize into folders: repo/ (overview, tech stack), conventions/ (naming, patterns), architecture/ (data flow, modules).
 - For the session note: only save if the conversation involved substantial work (multi-step implementation, important decisions, debugging sessions). Skip for simple Q&A.
@@ -404,6 +406,10 @@ async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
     }
 
     const written = applyExtraction(repoPath, extraction, sessionId, branchName);
+
+    // Auto-saves grow memory; opportunistically compact it back down
+    // (deduped, contradictions resolved, old session notes pruned).
+    memoryCompact.maybeCompact({ repoPath, cwd, adapterType });
 
     if (written.length > 0) {
       logger.info(`[memory-autosave] Session ${sessionId}: wrote ${written.length} files: ${written.join(', ')}`);

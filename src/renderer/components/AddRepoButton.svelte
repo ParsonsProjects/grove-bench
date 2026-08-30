@@ -16,6 +16,7 @@
   size="sm"
   class="w-full text-muted-foreground"
   onclick={addRepo}
+  title="Add a repository"
 >
-  + Add Repository
+  + Repository
 </Button>

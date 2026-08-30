@@ -12,6 +12,7 @@ import {
   isGitRepo,
   branchExists,
   branchExistsAnywhere,
+  getDefaultBranch,
   listBranches,
   validateBranchName,
   mergeNoCommit,
@@ -30,6 +31,10 @@ import {
   stageFile,
   unstageFile,
   commit,
+  push,
+  syncStatus,
+  branchCommits,
+  parseBranchCommits,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -122,6 +127,38 @@ describe('branchExistsAnywhere()', () => {
     mockExeca.mockRejectedValueOnce(new Error('not found'));
     mockExeca.mockRejectedValueOnce(new Error('no remote'));
     expect(await branchExistsAnywhere('/repo', 'feat/x')).toBe(false);
+  });
+});
+
+describe('getDefaultBranch()', () => {
+  it('uses origin/HEAD when set', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: 'origin/develop\n' } as any);
+    expect(await getDefaultBranch('/repo')).toBe('develop');
+    expect(mockExeca).toHaveBeenCalledWith(
+      'git',
+      ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'],
+      { cwd: '/repo' },
+    );
+  });
+
+  it('falls back to main when it exists and origin/HEAD is unset', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('no origin/HEAD')); // symbolic-ref
+    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any); // rev-parse main
+    expect(await getDefaultBranch('/repo')).toBe('main');
+  });
+
+  it('falls back to master when main does not exist', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('no origin/HEAD')); // symbolic-ref
+    mockExeca.mockRejectedValueOnce(new Error('no main')); // rev-parse main
+    mockExeca.mockResolvedValueOnce({ stdout: 'origin/master' } as any); // branch -r for main
+    // "main" not in remote refs → try master
+    mockExeca.mockResolvedValueOnce({ stdout: 'abc123' } as any); // rev-parse master
+    expect(await getDefaultBranch('/repo')).toBe('master');
+  });
+
+  it('returns main when nothing can be detected', async () => {
+    mockExeca.mockRejectedValue(new Error('fail'));
+    expect(await getDefaultBranch('/repo')).toBe('main');
   });
 });
 
@@ -472,5 +509,79 @@ describe('synthesizeUntrackedDiff()', () => {
   it('normalizes Windows path separators to forward slashes', () => {
     const patch = synthesizeUntrackedDiff('src\\nested\\new.ts', 'x');
     expect(patch).toContain('+++ b/src/nested/new.ts');
+  });
+});
+
+describe('push()', () => {
+  it('pushes with --set-upstream to origin', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    await push('/repo', 'feat/x');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['push', '--set-upstream', 'origin', 'feat/x'], { cwd: '/repo' });
+  });
+
+  it('surfaces stderr on failure', async () => {
+    mockExeca.mockRejectedValue(Object.assign(new Error('Command failed: git push ...'), {
+      stderr: 'remote: Permission denied',
+    }));
+    await expect(push('/repo', 'feat/x')).rejects.toThrow('remote: Permission denied');
+  });
+});
+
+describe('syncStatus()', () => {
+  it('reports no upstream when @{u} does not resolve', async () => {
+    mockExeca.mockRejectedValue(new Error('no upstream configured'));
+    expect(await syncStatus('/repo')).toEqual({ upstream: null, ahead: 0, behind: 0 });
+  });
+
+  it('parses ahead/behind counts against the upstream', async () => {
+    mockExeca
+      .mockResolvedValueOnce({ stdout: 'origin/feat/x\n' } as any)
+      .mockResolvedValueOnce({ stdout: '1\t3\n' } as any);
+    expect(await syncStatus('/repo')).toEqual({ upstream: 'origin/feat/x', ahead: 3, behind: 1 });
+    expect(mockExeca).toHaveBeenNthCalledWith(2, 'git', ['rev-list', '--left-right', '--count', '@{u}...HEAD'], { cwd: '/repo' });
+  });
+
+  it('falls back to zero counts when rev-list fails', async () => {
+    mockExeca
+      .mockResolvedValueOnce({ stdout: 'origin/feat/x' } as any)
+      .mockRejectedValueOnce(new Error('bad revision'));
+    expect(await syncStatus('/repo')).toEqual({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
+  });
+});
+
+describe('parseBranchCommits()', () => {
+  it('splits records on \\x1e and fields on \\x1f', () => {
+    const raw = 'feat: add login\x1fLonger body\nsecond line\x1e\nfix: typo\x1f\x1e\n';
+    expect(parseBranchCommits(raw)).toEqual([
+      { subject: 'feat: add login', body: 'Longer body\nsecond line' },
+      { subject: 'fix: typo', body: '' },
+    ]);
+  });
+
+  it('returns empty for empty output', () => {
+    expect(parseBranchCommits('')).toEqual([]);
+  });
+});
+
+describe('branchCommits()', () => {
+  it('logs commits between the base branch and HEAD', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'subject\x1fbody\x1e' } as any);
+    const result = await branchCommits('/repo', 'main');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'main..HEAD'], { cwd: '/repo' });
+    expect(result).toEqual([{ subject: 'subject', body: 'body' }]);
+  });
+
+  it('falls back to origin/<base> when the local base ref is missing', async () => {
+    mockExeca
+      .mockRejectedValueOnce(new Error('unknown revision'))
+      .mockResolvedValueOnce({ stdout: 'subject\x1f\x1e' } as any);
+    const result = await branchCommits('/repo', 'main');
+    expect(mockExeca).toHaveBeenNthCalledWith(2, 'git', ['log', '--format=%s%x1f%b%x1e', 'origin/main..HEAD'], { cwd: '/repo' });
+    expect(result).toEqual([{ subject: 'subject', body: '' }]);
+  });
+
+  it('returns empty when neither ref resolves', async () => {
+    mockExeca.mockRejectedValue(new Error('unknown revision'));
+    expect(await branchCommits('/repo', 'main')).toEqual([]);
   });
 });

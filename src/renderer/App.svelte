@@ -3,6 +3,7 @@
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
+  import { prStore } from './stores/pr.svelte.js';
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
@@ -66,8 +67,6 @@
 
     restored = true;
   }
-
-  let showSessionFinder = $state(false);
 
   // Track per-session running state to detect turn completion. Flash state
   // itself lives in the store so the sidebar can read it.
@@ -159,7 +158,7 @@
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
-      showSessionFinder = !showSessionFinder;
+      store.finderOpen = !store.finderOpen;
     }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'T') {
       e.preventDefault();
@@ -223,6 +222,9 @@
       console.error('Failed to load repos:', e);
     });
     window.addEventListener('keydown', handleGlobalKeydown);
+
+    // Watch every session's PR (checks, reviews) — not just the focused tab
+    prStore.startGlobalPolling(() => store.sessions.map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);
@@ -332,8 +334,8 @@
 </div>
 </div>
 
-{#if showSessionFinder}
-  <SessionFinder onclose={() => showSessionFinder = false} />
+{#if store.finderOpen}
+  <SessionFinder onclose={() => store.finderOpen = false} />
 {/if}
 
 <ErrorToast />

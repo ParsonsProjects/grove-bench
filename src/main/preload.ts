@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision, ThinkingLevel } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -27,6 +27,7 @@ const api: GroveBenchAPI = {
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
+  getDefaultBranch: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_DEFAULT, repoPath) as Promise<string>,
   renameBranch: (sessionId: string, newBranchName: string) =>
     ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
 
@@ -55,6 +56,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_HISTORY_COUNT, sessionId),
   searchEventHistory: (sessionId: string, query: string, limit?: number) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH, sessionId, query, limit),
+  searchAllEventHistory: (sessionIds: string[], query: string, limitPerSession?: number) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH_ALL, sessionIds, query, limitPerSession),
+  getSessionPreviews: (sessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.SESSION_PREVIEWS, sessionIds),
   clearEventHistory: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CLEAR_HISTORY, sessionId),
   findEventIndexByUuid: (sessionId: string, uuid: string) =>
@@ -77,8 +82,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
 
   // Thinking control
-  setThinking: (sessionId: string, enabled: boolean) =>
-    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, enabled),
+  setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, level),
+
+  // MCP server control
+  listMcpServers: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_LIST, sessionId),
+  reconnectMcpServer: (sessionId: string, serverName: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT, sessionId, serverName),
+  setMcpServerEnabled: (sessionId: string, serverName: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
 
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
@@ -99,6 +112,13 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.FILE_UNSTAGE, sessionId, filePath),
   commit: (sessionId: string, message: string) =>
     ipcRenderer.invoke(IPC.GIT_COMMIT, sessionId, message),
+  generateCommitMessage: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_GENERATE_COMMIT_MESSAGE, sessionId),
+  push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
+  getGitSyncStatus: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
+  getBranchCommits: (sessionId: string, base: string) =>
+    ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base),
 
   // Checkpoint rewind
   rewindSession: (sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) =>
@@ -107,6 +127,14 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_DIFF, sessionId, userMessageId),
   listCheckpoints: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_LIST_CHECKPOINTS, sessionId),
+
+  // Diff history tracking
+  getDiffHistory: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_DIFF_HISTORY, sessionId),
+  getTurnDiff: (sessionId: string, userMessageId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_TURN_DIFF, sessionId, userMessageId),
+  getFullThreadDiff: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_FULL_THREAD_DIFF, sessionId),
 
   // Git status
   getGitStatus: (sessionId: string) =>
@@ -120,18 +148,20 @@ const api: GroveBenchAPI = {
 
   // PR info
   getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
+  createPr: (sessionId: string, opts: import('../shared/types.js').PrCreateOpts) =>
+    ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
+  getPrReviewComments: (sessionId: string, prNumber: number) =>
+    ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
 
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
-  // Localhost process cleanup
-  killPort: (port: number) => ipcRenderer.invoke(IPC.KILL_PORT, port),
-
-  // Dev server
-  startDevServer: (sessionId: string, command?: string) =>
-    ipcRenderer.invoke(IPC.DEV_SERVER_START, sessionId, command),
-  stopDevServer: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.DEV_SERVER_STOP, sessionId),
+  // MCP server configuration
+  mcpConfigList: (cwd?: string) => ipcRenderer.invoke(IPC.MCP_CONFIG_LIST, cwd),
+  mcpConfigAdd: (opts: import('../shared/types.js').McpAddServerOpts) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_ADD, opts),
+  mcpConfigRemove: (name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_REMOVE, name, scope, cwd),
 
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),
@@ -166,6 +196,18 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MEMORY_WRITE, repoPath, relativePath, content),
   memoryDelete: (repoPath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
+  memoryCompact: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_COMPACT, repoPath),
+  memoryListBackups: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_LIST_BACKUPS, repoPath),
+  memoryRestoreBackup: (repoPath: string, backupId: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_RESTORE_BACKUP, repoPath, backupId),
+  memoryStats: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_STATS, repoPath),
+  memoryBackupPreview: (repoPath: string, backupId: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_BACKUP_PREVIEW, repoPath, backupId),
+  memoryReadBackupFile: (repoPath: string, backupId: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_BACKUP_READ_FILE, repoPath, backupId, relativePath),
 
   // Shell / Terminal
   shellRun: (sessionId: string, command: string) =>
@@ -231,6 +273,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
   setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
+  getSidebarWidth: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
+  setSidebarWidth: (width: number) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_SIDEBAR_WIDTH, width),
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();

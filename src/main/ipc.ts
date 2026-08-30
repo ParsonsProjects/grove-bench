@@ -1,24 +1,26 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, ThinkingLevel } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
-import { searchEvents, findEventIndexByUuid } from './event-search.js';
+import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, mergeNoCommit, abortMerge, currentBranch, isWorkingTreeDirty, aheadBehind } from './git.js';
-import type { FileDiffResult, ImageDiffContent, MergePreflight, MergeResult } from '../shared/types.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, mergeNoCommit, abortMerge, currentBranch, isWorkingTreeDirty, aheadBehind } from './git.js';
+import { prStatus, prCreate, prReviewComments } from './gh.js';
+import { generateCommitMessage } from './commit-message.js';
+import type { FileDiffResult, ImageDiffContent, PrCreateOpts, MergePreflight, MergeResult } from '../shared/types.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
-import { killProcessOnPort } from './port-killer.js';
 import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
+import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, flushPendingSaves } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -321,6 +323,10 @@ export function registerHandlers() {
     return listBranches(repoPath);
   });
 
+  ipcMain.handle(IPC.BRANCH_DEFAULT, async (_event, repoPath: string) => {
+    return getDefaultBranch(repoPath);
+  });
+
   ipcMain.handle(IPC.BRANCH_RENAME, async (_event, sessionId: string, newBranchName: string) => {
     const newName = await worktreeManager.renameBranch(sessionId, newBranchName);
     sessionManager.renameBranch(sessionId, newName);
@@ -367,8 +373,20 @@ export function registerHandlers() {
     return sessionManager.setModel(sessionId, model);
   });
 
-  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, enabled: boolean) => {
-    return sessionManager.setThinking(sessionId, enabled);
+  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, level: ThinkingLevel) => {
+    return sessionManager.setThinkingLevel(sessionId, level);
+  });
+
+  ipcMain.handle(IPC.AGENT_MCP_LIST, (_event, sessionId: string) => {
+    return sessionManager.listMcpServers(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_MCP_RECONNECT, (_event, sessionId: string, serverName: string) => {
+    return sessionManager.reconnectMcpServer(sessionId, serverName);
+  });
+
+  ipcMain.handle(IPC.AGENT_MCP_TOGGLE, (_event, sessionId: string, serverName: string, enabled: boolean) => {
+    return sessionManager.setMcpServerEnabled(sessionId, serverName, enabled);
   });
 
   ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
@@ -415,6 +433,35 @@ export function registerHandlers() {
     // Search the same prelaunch-prefixed event array the renderer pages over, so
     // returned eventIndex values line up with getEventHistoryPage's index space.
     return searchEvents(prelaunchPrefixedEvents(sessionId), query, limit ?? 100);
+  });
+
+  ipcMain.handle(IPC.AGENT_HISTORY_SEARCH_ALL, (_event, sessionIds: string[], query: string, limitPerSession?: number) => {
+    // Cross-session search for the SessionFinder. Same prelaunch-prefixed index
+    // space as AGENT_HISTORY_SEARCH, so hits feed the same jump path.
+    const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
+    const perSession = limitPerSession ?? 5;
+    for (const id of sessionIds ?? []) {
+      try {
+        for (const hit of searchEvents(prelaunchPrefixedEvents(id), query, perSession)) {
+          hits.push({ ...hit, sessionId: id });
+        }
+      } catch (e) {
+        logger.warn(`[history-search-all] search failed for ${id}:`, e);
+      }
+    }
+    return hits;
+  });
+
+  ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {
+    const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
+    for (const id of sessionIds ?? []) {
+      try {
+        previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
+      } catch (e) {
+        logger.warn(`[session-previews] preview failed for ${id}:`, e);
+      }
+    }
+    return previews;
   });
 
   ipcMain.handle(IPC.FIND_EVENT_INDEX_BY_UUID, (_event, sessionId: string, uuid: string): number | null => {
@@ -506,23 +553,6 @@ export function registerHandlers() {
       return;
     }
     throw new Error('Session not found');
-  });
-
-  ipcMain.handle(IPC.KILL_PORT, async (_event, port: number) => {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error('Invalid port number');
-    }
-    return killProcessOnPort(port);
-  });
-
-  // ─── Dev Server ───
-
-  ipcMain.handle(IPC.DEV_SERVER_START, async (_event, sessionId: string, command?: string) => {
-    return sessionManager.startDevServer(sessionId, command || undefined);
-  });
-
-  ipcMain.handle(IPC.DEV_SERVER_STOP, async (_event, sessionId: string) => {
-    return sessionManager.stopDevServer(sessionId);
   });
 
   // ─── File revert & diff (for changes review panel) ───
@@ -621,6 +651,42 @@ export function registerHandlers() {
     await commit(worktree.path, message);
   });
 
+  ipcMain.handle(IPC.GIT_GENERATE_COMMIT_MESSAGE, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    // Prefer the session's own adapter; fall back to the default for stopped sessions.
+    const adapter = sessionManager.getSession(sessionId)?.adapter ?? adapterRegistry.getDefault();
+    return generateCommitMessage(worktree.path, adapter);
+  });
+
+  ipcMain.handle(IPC.GIT_PUSH, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    await push(worktree.path, worktree.branch);
+  });
+
+  ipcMain.handle(IPC.GIT_SYNC_STATUS, async (_event, sessionId: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return { upstream: null, ahead: 0, behind: 0 };
+    try {
+      return await syncStatus(worktree.path);
+    } catch (e) {
+      logger.warn(`git sync status failed for session ${sessionId}:`, e);
+      return { upstream: null, ahead: 0, behind: 0 };
+    }
+  });
+
+  ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return [];
+    try {
+      return await branchCommits(worktree.path, base);
+    } catch (e) {
+      logger.warn(`branch commits failed for session ${sessionId}:`, e);
+      return [];
+    }
+  });
+
   // ─── Checkpoint rewind ───
 
   ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) => {
@@ -633,6 +699,18 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_LIST_CHECKPOINTS, async (_event, sessionId: string) => {
     return sessionManager.listCheckpoints(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_DIFF_HISTORY, async (_event, sessionId: string) => {
+    return sessionManager.getDiffHistory(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_TURN_DIFF, async (_event, sessionId: string, userMessageId: string) => {
+    return sessionManager.getTurnDiff(sessionId, userMessageId);
+  });
+
+  ipcMain.handle(IPC.AGENT_FULL_THREAD_DIFF, async (_event, sessionId: string) => {
+    return sessionManager.getFullThreadDiff(sessionId);
   });
 
   // ─── Git status ───
@@ -723,18 +801,21 @@ export function registerHandlers() {
   ipcMain.handle(IPC.PR_INFO, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return null;
-    try {
-      const { stdout } = await execa('gh', ['pr', 'view', worktree.branch, '--json', 'number,url'], {
-        cwd: worktree.repoPath,
-      });
-      const data = JSON.parse(stdout);
-      if (data.number && data.url) {
-        return { number: data.number, url: data.url };
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    return prStatus(worktree.repoPath, worktree.branch);
+  });
+
+  ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return [];
+    return prReviewComments(worktree.repoPath, prNumber);
+  });
+
+  ipcMain.handle(IPC.PR_CREATE, async (_event, sessionId: string, opts: PrCreateOpts) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    // The branch must exist on origin before gh can open a PR for it.
+    await push(worktree.path, worktree.branch);
+    return prCreate(worktree.repoPath, worktree.branch, opts);
   });
 
   // ─── Plugins ───
@@ -743,6 +824,31 @@ export function registerHandlers() {
   function resolveAdapter(adapterType?: string) {
     return adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
   }
+
+  // ─── MCP server configuration ───
+
+  ipcMain.handle(IPC.MCP_CONFIG_LIST, async (_event, cwd?: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.listConfiguredMcpServers) return [];
+    try {
+      return await adapter.listConfiguredMcpServers(cwd);
+    } catch (e: any) {
+      logger.warn('Failed to list configured MCP servers:', e.message);
+      throw e;
+    }
+  });
+
+  ipcMain.handle(IPC.MCP_CONFIG_ADD, async (_event, opts: import('../shared/types.js').McpAddServerOpts, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.addConfiguredMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP configuration`);
+    await adapter.addConfiguredMcpServer(opts);
+  });
+
+  ipcMain.handle(IPC.MCP_CONFIG_REMOVE, async (_event, name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.removeConfiguredMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP configuration`);
+    await adapter.removeConfiguredMcpServer(name, scope, cwd);
+  });
 
   ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
     const adapter = resolveAdapter(adapterType);
@@ -846,6 +952,30 @@ export function registerHandlers() {
     return memory.deleteMemoryFile(repoPath, relativePath);
   });
 
+  ipcMain.handle(IPC.MEMORY_COMPACT, (_event, repoPath: string) => {
+    return memoryCompact.compactMemory({ repoPath, force: true });
+  });
+
+  ipcMain.handle(IPC.MEMORY_LIST_BACKUPS, (_event, repoPath: string) => {
+    return memoryCompact.listBackups(repoPath);
+  });
+
+  ipcMain.handle(IPC.MEMORY_RESTORE_BACKUP, (_event, repoPath: string, backupId: string) => {
+    return memoryCompact.restoreBackup(repoPath, backupId);
+  });
+
+  ipcMain.handle(IPC.MEMORY_STATS, (_event, repoPath: string) => {
+    return { ...memory.getMemoryStats(repoPath), ...memoryCompact.getCompactionInfo(repoPath) };
+  });
+
+  ipcMain.handle(IPC.MEMORY_BACKUP_PREVIEW, (_event, repoPath: string, backupId: string) => {
+    return memoryCompact.previewBackup(repoPath, backupId);
+  });
+
+  ipcMain.handle(IPC.MEMORY_BACKUP_READ_FILE, (_event, repoPath: string, backupId: string, relativePath: string) => {
+    return memoryCompact.readBackupFile(repoPath, backupId, relativePath);
+  });
+
   // ─── Bookmarks ───
 
   ipcMain.handle(IPC.BOOKMARKS_LIST, () => {
@@ -930,6 +1060,17 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_SESSION_SORT, (_event, sort: import('../shared/types.js').SessionSortState) => {
     saveSessionSort(sort);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => {
+    flushPendingSaves();
+    return loadAppState().sidebarWidth ?? null;
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_SIDEBAR_WIDTH, (_event, width: number) => {
+    if (typeof width === 'number' && Number.isFinite(width)) {
+      saveSidebarWidth(Math.round(width));
+    }
   });
 
   // ─── Window controls ───

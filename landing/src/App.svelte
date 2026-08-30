@@ -125,9 +125,9 @@
         { type: 'assistant', text: "I've created the JWT middleware and applied it to all protected routes. Running tests now..." },
         { type: 'tool', name: 'Bash', cmd: 'npm test' },
       ],
-      model: 'Opus 4.6',
-      tokens: '12.4k / 200k',
-      tokenPct: 6,
+      model: 'Opus 5',
+      tokens: '12.4k / 1M',
+      tokenPct: 1,
     },
     'feat/api': {
       messages: [
@@ -138,8 +138,8 @@
         { type: 'tool', name: 'Edit', file: 'src/routes/index.ts', added: 3, removed: 1 },
       ],
       model: 'Sonnet 4.6',
-      tokens: '8.2k / 200k',
-      tokenPct: 4,
+      tokens: '8.2k / 1M',
+      tokenPct: 1,
     },
     'fix/login-bug': {
       messages: [
@@ -148,9 +148,9 @@
         { type: 'tool', name: 'Edit', file: 'src/auth/session.ts', added: 12, removed: 4 },
         { type: 'result', text: 'Session timeout fix applied. Token refreshes 30s before expiry.' },
       ],
-      model: 'Opus 4.6',
-      tokens: '5.1k / 200k',
-      tokenPct: 3,
+      model: 'Opus 5',
+      tokens: '5.1k / 1M',
+      tokenPct: 1,
     },
   };
 
@@ -568,7 +568,7 @@
                   <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-sidebar text-[9px]">
                     <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
                     <span class="text-foreground/80">feat/auth</span>
-                    <span class="ml-auto text-muted-foreground/50">Opus 4.6</span>
+                    <span class="ml-auto text-muted-foreground/50">Opus 5</span>
                   </div>
                   <div class="flex-1 p-2 space-y-1.5 text-[9px]">
                     <div class="text-muted-foreground/60">Adding JWT middleware...</div>
@@ -630,7 +630,7 @@
                   <div class="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-sidebar text-[9px]">
                     <span class="w-1.5 h-1.5 bg-green-500"></span>
                     <span class="text-foreground/80">fix/login-bug</span>
-                    <span class="ml-auto text-muted-foreground/50">Opus 4.6</span>
+                    <span class="ml-auto text-muted-foreground/50">Opus 5</span>
                   </div>
                   <div class="flex-1 p-2 space-y-1.5 text-[9px]">
                     <div class="text-muted-foreground/60">Session timeout fix...</div>

@@ -77,17 +77,41 @@ export function validateFileSize(file: { name: string; size: number }, kind: 'im
   return null;
 }
 
+/** Make `name` unique against `taken` by appending a counter before the
+ *  extension: image.png → image-2.png → image-3.png. */
+export function uniquifyFileName(name: string, taken: Set<string>): string {
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 2; ; i++) {
+    const candidate = `${base}-${i}${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+export interface ProcessFilesOptions {
+  /** When a file's name collides with an existing attachment, rename it
+   *  (image.png → image-2.png) instead of silently skipping it. Clipboard
+   *  images all arrive named "image.png", so pasting must rename — otherwise
+   *  every paste after the first is dropped. */
+  renameDuplicates?: boolean;
+}
+
 /**
  * Process a FileList into attached files. Returns a promise because files are read asynchronously.
- * `existing` is used to skip duplicates.
+ * `existing` is used to detect duplicates: by default a same-named file is skipped;
+ * with `renameDuplicates` it is attached under a uniquified name instead.
  */
 export function processFiles(
   files: FileList | File[],
   existing: AttachedFile[],
+  options: ProcessFilesOptions = {},
 ): Promise<ProcessedFiles> {
   const result: AttachedFile[] = [];
   const skipped: string[] = [];
   const promises: Promise<void>[] = [];
+  const takenNames = new Set(existing.map((f) => f.name));
 
   for (const file of Array.from(files)) {
     const kind = classifyFile(file);
@@ -102,14 +126,19 @@ export function processFiles(
       continue;
     }
 
-    if (existing.some((f) => f.name === file.name)) continue;
+    let name = file.name;
+    if (takenNames.has(name)) {
+      if (!options.renameDuplicates) continue;
+      name = uniquifyFileName(name, takenNames);
+    }
+    takenNames.add(name);
 
     if (kind === 'image') {
       promises.push(
         new Promise<void>((resolve) => {
           const reader = new FileReader();
           reader.onload = () => {
-            result.push({ name: file.name, dataUrl: reader.result as string, type: 'image' });
+            result.push({ name, dataUrl: reader.result as string, type: 'image' });
             resolve();
           };
           reader.onerror = () => resolve();
@@ -121,7 +150,7 @@ export function processFiles(
         new Promise<void>((resolve) => {
           const reader = new FileReader();
           reader.onload = () => {
-            result.push({ name: file.name, content: reader.result as string, type: 'text' });
+            result.push({ name, content: reader.result as string, type: 'text' });
             resolve();
           };
           reader.onerror = () => resolve();

@@ -1,11 +1,8 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
-import { killProcessOnPort } from './port-killer.js';
-import { DevServer } from './dev-server.js';
-import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
@@ -15,6 +12,7 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
+import { findRewindForkPoint } from './agent-utils.js';
 import { CheckpointManager } from './checkpoints.js';
 
 interface PendingPermission {
@@ -40,6 +38,10 @@ interface ManagedSession {
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
   providerSessionId: string | null;
+  /** Set by rewindFiles(): provider chain-entry uuid to fork the conversation
+   *  at on the next query start (resume truncated at this point, forkSession).
+   *  Cleared once a query starts successfully with it. */
+  pendingResumeAt: string | null;
   /** Current model for this session — the source of truth across stop/restart,
    *  in-app resume, and app-restart resume (persisted to the worktree manifest).
    *  Initialised from the restored/default model, updated on model switches and
@@ -48,8 +50,6 @@ interface ManagedSession {
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
   eventHistory: AgentEvent[];
-  /** Ports where dev servers were detected — cleaned up on session destroy */
-  detectedPorts: Set<number>;
   /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
   toolUseMap: Map<string, string>;
   /** Last result data for completion callback */
@@ -72,8 +72,8 @@ interface ManagedSession {
   eventLogPath: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName: string | null;
-  /** Host-managed dev server instance. */
-  devServer: DevServer | null;
+  /** Current thinking level — survives stop/restart so query restarts keep it. */
+  thinkingLevel: ThinkingLevel;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
   /** Set while a user-initiated in-place interrupt is settling. The resulting
@@ -246,10 +246,10 @@ class AgentSessionManager {
       pendingPermissions: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
+      pendingResumeAt: null,
       model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
       window: win,
       eventHistory: this.loadEventHistory(id),
-      detectedPorts: new Set(),
       toolUseMap: new Map(),
       lastResult: null,
       permissionMode: effectivePermissionMode,
@@ -261,7 +261,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      devServer: null,
+      thinkingLevel: appSettings.defaultThinkingLevel ?? 'high',
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,
@@ -369,6 +369,11 @@ class AgentSessionManager {
       };
     } catch { /* best effort */ }
 
+    // Snapshot the rewind fork target for this start attempt. It stays set on
+    // the session until a query successfully starts with it, so a stop that
+    // lands mid-startup (restartRequested) retries the same truncated resume.
+    const resumeAtUuid = session.pendingResumeAt;
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -390,7 +395,9 @@ class AgentSessionManager {
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
+      thinkingLevel: session.thinkingLevel,
       resumeSessionId: session.providerSessionId,
+      resumeAtUuid,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
@@ -444,6 +451,17 @@ class AgentSessionManager {
         this.relaunchQuery(session);
         return;
       }
+      // A truncated (rewind) resume failed to start — fall back to a fresh
+      // conversation rather than wedging the session. The retry cannot loop:
+      // both resume fields are cleared before relaunching.
+      if (resumeAtUuid) {
+        logger.warn(`[runQuery] session=${id} truncated resume failed, falling back to fresh conversation:`, startErr);
+        session.pendingResumeAt = null;
+        session.providerSessionId = null;
+        worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+        this.relaunchQuery(session);
+        return;
+      }
       // Reject any pending sendMessage() waiters
       if (session.resolveQueryReady) {
         session.resolveQueryReady();
@@ -465,6 +483,11 @@ class AgentSessionManager {
 
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // The truncated resume (if any) has been consumed by this start — later
+    // restarts must resume the forked conversation normally.
+    if (resumeAtUuid && session.pendingResumeAt === resumeAtUuid) {
+      session.pendingResumeAt = null;
+    }
     // Signal any pending sendMessage() that the queryHandle is ready
     if (session.resolveQueryReady) {
       session.resolveQueryReady();
@@ -525,25 +548,6 @@ class AgentSessionManager {
             session.checkpoints.capture(id, session.worktreePath, '__baseline__').catch(err => {
               logger.warn(`Checkpoint baseline failed for ${id}:`, err);
             });
-          }
-        }
-
-        // Intercept tool_result to track tool names and detect dev server URLs
-        if (event.type === 'tool_result') {
-          // Dev server URL detection (from Bash output)
-          const toolName = session.toolUseMap.get(event.toolUseId);
-          if (toolName === 'Bash' && event.content) {
-            const portMatches = event.content.matchAll(
-              /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
-            );
-            for (const m of portMatches) {
-              const port = parseInt(m[1], 10);
-              if (!session.detectedPorts.has(port)) {
-                session.detectedPorts.add(port);
-                logger.info(`Dev server detected on port ${port} in session ${session.id}`);
-                emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
-              }
-            }
           }
         }
 
@@ -622,15 +626,10 @@ class AgentSessionManager {
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
-    // Dev servers are preserved so they survive stop/continue cycles.
     if (session.stoppedByUser) {
       session.stoppedByUser = false;
       return;
     }
-
-    // Kill any dev servers that were detected during this session
-    // (only on natural query completion, not user-initiated stop)
-    await this.killDetectedPorts(session);
 
     // Query finished
     session.status = 'stopped';
@@ -842,13 +841,53 @@ class AgentSessionManager {
     }
   }
 
-  async setThinking(id: string, enabled: boolean): Promise<void> {
+  async setThinkingLevel(id: string, level: ThinkingLevel): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setMaxThinkingTokens) return;
+    if (!session) return;
+    // Record even without a live handle so the next query start picks it up
+    session.thinkingLevel = level;
+    if (!session.queryHandle?.setThinkingLevel) return;
     try {
-      await session.queryHandle.setMaxThinkingTokens(enabled ? null : 0);
+      await session.queryHandle.setThinkingLevel(level);
     } catch (e) {
-      logger.warn(`Failed to set thinking for session ${id}:`, e);
+      logger.warn(`Failed to set thinking level for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async listMcpServers(id: string): Promise<McpServerInfo[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.listMcpServers) return [];
+    try {
+      return await session.queryHandle.listMcpServers();
+    } catch (e) {
+      logger.warn(`Failed to list MCP servers for session ${id}:`, e);
+      return [];
+    }
+  }
+
+  async reconnectMcpServer(id: string, serverName: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.reconnectMcpServer) {
+      throw new Error('MCP server control is not available for this session');
+    }
+    try {
+      await session.queryHandle.reconnectMcpServer(serverName);
+    } catch (e) {
+      logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.setMcpServerEnabled) {
+      throw new Error('MCP server control is not available for this session');
+    }
+    try {
+      await session.queryHandle.setMcpServerEnabled(serverName, enabled);
+    } catch (e) {
+      logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
   }
@@ -865,56 +904,6 @@ class AgentSessionManager {
     if (session) {
       session.displayName = displayName || null;
     }
-  }
-
-  /** Start a host-managed dev server for the given session. */
-  async startDevServer(sessionId: string, overrideCommand?: string): Promise<import('../shared/types.js').DevServerResult> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
-
-    // Stop existing dev server if any
-    await this.stopDevServer(sessionId);
-
-    // Resolve command via fallback chain: override → settings → auto-detect
-    const command = overrideCommand
-      || settings.getSettings().devCommand
-      || await detectDevCommand(session.worktreePath);
-
-    if (!command) throw new Error('No dev command configured and none detected from package.json');
-
-    const devServer = new DevServer(sessionId, session.worktreePath, command, (info) => {
-      // Emit devserver_detected event through the existing channel
-      session.detectedPorts.add(info.port);
-      const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
-      session.eventHistory.push(event);
-      try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
-      }
-    });
-
-    session.devServer = devServer;
-    return devServer.start();
-  }
-
-  /** Stop the host-managed dev server for the given session. */
-  async stopDevServer(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session?.devServer) return;
-    await session.devServer.stop();
-    session.devServer = null;
-  }
-
-  /** Kill dev servers detected during this session and clear the port set. */
-  private async killDetectedPorts(session: ManagedSession): Promise<void> {
-    if (session.detectedPorts.size === 0) return;
-    const ports = [...session.detectedPorts];
-    session.detectedPorts.clear();
-    logger.info(`Killing ${ports.length} dev server(s) for session ${session.id}: ports ${ports.join(', ')}`);
-    await Promise.all(
-      ports.map((port) => killProcessOnPort(port).catch(() => {}))
-    );
   }
 
   /**
@@ -1062,15 +1051,6 @@ class AgentSessionManager {
       });
     }
 
-    // Stop host-managed dev server
-    if (session.devServer) {
-      await session.devServer.stop();
-      session.devServer = null;
-    }
-
-    // Kill any dev servers not already cleaned up on query completion
-    await this.killDetectedPorts(session);
-
     // Clean up checkpoint refs
     await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {
       logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
@@ -1202,6 +1182,17 @@ class AgentSessionManager {
     // Remove orphaned checkpoint refs for turns after the rewind point
     await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
 
+    // Cancel any pending memory auto-save so notes about the turns being
+    // rewound away aren't extracted and persisted after the truncation.
+    memoryAutosave.cancelAutoSave(id);
+
+    // Fork point for a truncating resume: the provider uuid of the last
+    // assistant event before the rewind target. Must be computed before the
+    // event history is truncated below.
+    const forkPoint = session.providerSessionId
+      ? findRewindForkPoint(session.eventHistory, userMessageId)
+      : null;
+
     // Truncate event history to the rewind point so replays after refresh
     // don't resurrect events that occurred after the rewound turn.
     const rewindIdx = session.eventHistory.findLastIndex(
@@ -1219,15 +1210,27 @@ class AgentSessionManager {
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
 
-    // Clear the provider session ID so the next query starts with a fresh
-    // LLM context — otherwise the SDK resumes the old conversation which
-    // still contains the rewound messages.
-    session.providerSessionId = null;
+    if (forkPoint) {
+      // True rewind: resume the same conversation truncated at the last kept
+      // chain entry, forked to a new provider session — the agent keeps the
+      // turns before the rewind point and genuinely forgets everything after.
+      session.pendingResumeAt = forkPoint;
+    } else {
+      // No provider content to keep (rewind to the first message, or the
+      // provider session never initialised) — start a fresh conversation.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+    }
+
+    // Persist an empty provider session id in both cases. If the app dies
+    // before the restarted query's system_init persists the forked session's
+    // new id, an app-restart resume of the OLD id would bring the rewound
+    // messages back; degrading to a fresh conversation is the safe fallback.
     worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
 
-    // Restart the query so the SDK gets a fresh context.  stopQuery() tears
-    // down the current handle and immediately calls runQuery() which will
-    // see providerSessionId === null and skip the resume option.
+    // Restart the query. stopQuery() tears down the current handle and calls
+    // runQuery(), which picks up pendingResumeAt (truncated fork resume) or —
+    // with providerSessionId null — starts a fresh conversation.
     await this.stopQuery(id);
   }
 
@@ -1244,6 +1247,27 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return [];
     return session.checkpoints.list(id, session.worktreePath);
+  }
+
+  /** Per-turn diff history (what each turn changed) plus cumulative stats. */
+  async getDiffHistory(id: string): Promise<import('../shared/types.js').DiffHistoryResult> {
+    const session = this.sessions.get(id);
+    if (!session) return { entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } };
+    return session.checkpoints.history(id, session.worktreePath);
+  }
+
+  /** Unified diff of what a single turn changed. */
+  async getTurnDiff(id: string, userMessageId: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
+  }
+
+  /** Cumulative diff from the session baseline to the current working tree. */
+  async getFullThreadDiff(id: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.fullThreadDiff(id, session.worktreePath);
   }
 
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */

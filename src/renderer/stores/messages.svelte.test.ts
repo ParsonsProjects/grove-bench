@@ -3,7 +3,6 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
-import { devServerStore } from './devServer.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
@@ -24,7 +23,6 @@ beforeEach(() => {
   messageStore.modelBySession = {};
   messageStore.usageBySession = {};
   messageStore.pendingClear = {};
-  devServerStore.serversBySession = {};
   rateLimitStore.bySession = {};
   messageStore.promptSuggestionsBySession = {};
   backgroundTaskStore.tasksBySession = {};
@@ -36,6 +34,32 @@ beforeEach(() => {
 });
 
 describe('ingestEvent — system_init', () => {
+  it('does not push a thinking level when the session is at the provider default (high)', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'test-model-v1',
+      tools: [],
+    } as AgentEvent);
+
+    expect(messageStore.getThinkingLevel(SID)).toBe('high');
+    expect(mockGroveBench.setThinkingLevel).not.toHaveBeenCalled();
+  });
+
+  it('re-applies a non-default thinking level when the query (re)initializes', () => {
+    messageStore.thinkingBySession[SID] = 'low';
+
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'test-model-v1',
+      tools: [],
+    } as AgentEvent);
+
+    expect(messageStore.getThinkingLevel(SID)).toBe('low');
+    expect(mockGroveBench.setThinkingLevel).toHaveBeenCalledWith(SID, 'low');
+  });
+
   it('marks session as ready and not running', () => {
     messageStore.ingestEvent(SID, {
       type: 'system_init',
@@ -436,25 +460,6 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toContain('Rate limited');
     expect((msgs[0] as any).text).toContain('token');
-  });
-});
-
-describe('ingestEvent — devserver_detected (delegates to devServerStore)', () => {
-  it('adds dev server', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'devserver_detected',
-      port: 3000,
-      url: 'http://localhost:3000',
-    } as AgentEvent);
-
-    expect(devServerStore.get(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000', status: 'ok' }]);
-  });
-
-  it('does not duplicate same port', () => {
-    messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
-
-    expect(devServerStore.get(SID)).toHaveLength(1);
   });
 });
 
@@ -1035,14 +1040,59 @@ describe('getters with defaults', () => {
     expect(messageStore.getContextWindow('unknown')).toBe(200000);
   });
 
-  it('getThinking returns true by default', () => {
-    expect(messageStore.getThinking('unknown')).toBe(true);
+  it('getThinkingLevel returns high by default', () => {
+    expect(messageStore.getThinkingLevel('unknown')).toBe('high');
   });
 
   it('getUsage returns zeros for unknown session', () => {
     const u = messageStore.getUsage('unknown');
     expect(u.inputTokens).toBe(0);
     expect(u.outputTokens).toBe(0);
+  });
+});
+
+describe('thinking level control', () => {
+  it('setThinkingLevel stores the level and forwards it over IPC', async () => {
+    await messageStore.setThinkingLevel(SID, 'medium');
+    expect(messageStore.getThinkingLevel(SID)).toBe('medium');
+    expect(mockGroveBench.setThinkingLevel).toHaveBeenCalledWith(SID, 'medium');
+  });
+
+  it('cycleThinkingLevel advances off → low → medium → high → adaptive → off', () => {
+    messageStore.thinkingBySession[SID] = 'off';
+    for (const expected of ['low', 'medium', 'high', 'adaptive', 'off'] as const) {
+      messageStore.cycleThinkingLevel(SID);
+      expect(messageStore.getThinkingLevel(SID)).toBe(expected);
+    }
+  });
+});
+
+describe('updateMcpServers', () => {
+  it('replaces the MCP snapshot while preserving other system info', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'test-model-v1',
+      tools: ['Read'],
+      mcpServers: [{ name: 'docs', status: 'connected' }],
+    } as AgentEvent);
+
+    messageStore.updateMcpServers(SID, [
+      { name: 'docs', status: 'failed', error: 'boom' },
+      { name: 'search', status: 'connected', toolCount: 3 },
+    ]);
+
+    const info = messageStore.getSystemInfo(SID);
+    expect(info.tools).toEqual(['Read']);
+    expect(info.mcpServers).toEqual([
+      { name: 'docs', status: 'failed' },
+      { name: 'search', status: 'connected' },
+    ]);
+  });
+
+  it('is a no-op before system_init', () => {
+    messageStore.updateMcpServers('uninitialized', [{ name: 'docs', status: 'connected' }]);
+    expect(messageStore.getSystemInfo('uninitialized').mcpServers).toEqual([]);
   });
 });
 

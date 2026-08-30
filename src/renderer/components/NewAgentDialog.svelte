@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -17,7 +18,9 @@
     if (defaultRepo) selectedRepo = defaultRepo;
   });
   let branchName = $state('');
-  let baseBranch = $state('main');
+  let baseBranch = $state('');
+  // Last auto-filled value — only overwrite the field while the user hasn't edited it
+  let autoBaseBranch = '';
   let creating = $state(false);
   let dialogError = $state('');
 
@@ -105,12 +108,25 @@
     }
   }
 
+  /** Prefill the base branch with the settings override or the repo's default branch. */
+  async function fetchDefaultBaseBranch() {
+    const repo = selectedRepo;
+    if (!repo) return;
+    const detected = await resolveBaseBranch(repo);
+    if (repo !== selectedRepo) return; // repo changed while awaiting
+    if (!baseBranch.trim() || baseBranch === autoBaseBranch) {
+      baseBranch = detected;
+      autoBaseBranch = detected;
+    }
+  }
+
   $effect(() => {
     if (mode === 'existing' && selectedRepo) {
       fetchBranches();
     }
     if (mode === 'new' && selectedRepo) {
       fetchBaseBranches();
+      fetchDefaultBaseBranch();
     }
   });
 

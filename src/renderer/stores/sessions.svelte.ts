@@ -22,6 +22,10 @@ class SessionStore {
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
 
+  /** Whether the session finder (Ctrl+R palette) is open — toggled by the
+   *  global shortcut in App and the sidebar's search field. */
+  finderOpen = $state(false);
+
   /** Sessions that completed a turn while not focused — drives the "needs you"
    *  flash on their sidebar row until the user focuses them. */
   needsAttention = $state<Record<string, boolean>>({});
@@ -43,6 +47,21 @@ class SessionStore {
 
   get activeSession() {
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
+  }
+
+  /**
+   * Stopped sessions whose last activity is before the cutoff, oldest first —
+   * candidates for the sidebar's session clean-up dialog. Sessions without a
+   * timestamp get ts=0 and are listed first as unknown age, never hidden.
+   * Running sessions are never candidates.
+   */
+  stoppedSessionsOlderThan(days: number): Array<SessionEntry & { ts: number }> {
+    const cutoff = Date.now() - days * 86_400_000;
+    return this.sessions
+      .filter((s) => s.status === 'stopped')
+      .map((s) => ({ ...s, ts: s.lastActiveAt ?? s.createdAt ?? 0 }))
+      .filter((s) => s.ts < cutoff)
+      .sort((a, b) => a.ts - b.ts);
   }
 
   /** Load repos from the worktree manifest (main process). Must be called before restoreWorktrees. */

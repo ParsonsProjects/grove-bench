@@ -12,16 +12,14 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Agent Defaults
   defaultModel: '',
-  extendedThinking: false,
+  defaultThinkingLevel: 'high',
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
 
-  // Dev Server
-  devCommand: '',
-
   // Memory
   memoryAutoSave: true,
+  memoryAutoCompact: true,
 
   // Worktree
   autoInstallDeps: false,
@@ -30,7 +28,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   idleAutoStopMinutes: 30,
 
   // General
-  defaultBaseBranch: 'main',
+  defaultBaseBranch: '', // empty = auto-detect the repo's default branch
   theme: 'system',
   alwaysOnTop: false,
 
@@ -54,7 +52,16 @@ function getSettingsPath(): string {
 
 /** Deep-merge saved data with defaults so new fields are always present. */
 function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettings {
-  return { ...DEFAULT_SETTINGS, ...saved };
+  // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel)
+  // and `devCommand` (the host-managed dev server feature was removed).
+  const { extendedThinking: _legacy, devCommand: _devCommand, ...rest } =
+    saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string };
+  // 'main' was the old shipped default for defaultBaseBranch; the field is now
+  // an explicit override (empty = auto-detect the repo's default branch), so
+  // treat the legacy default value as unset. Auto-detect still resolves to
+  // main wherever main really is the default branch.
+  if (rest.defaultBaseBranch === 'main') rest.defaultBaseBranch = '';
+  return { ...DEFAULT_SETTINGS, ...rest };
 }
 
 function validate(_s: GroveBenchSettings): void {
