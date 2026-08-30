@@ -264,10 +264,30 @@ async function seedConversations() {
       { kind: 'text', id: 'd5', text: 'Found it: the refresh token is rotated twice per request. I need to patch src/auth/refresh.ts to reuse the rotation result.', uuid: '' },
       { kind: 'permission', id: 'd6', requestId: 'dr1', toolName: 'Write', toolInput: { file_path: 'src/auth/refresh.ts' }, toolUseId: 'dt2', resolved: false },
     ],
-    // Idle: finished its turn, showing the last answer
+    // Idle: finished its turn with a document-style report (exercises the
+    // markdown preview affordance in screenshots)
     's-e2e': [
       { kind: 'user', id: 'd7', text: 'The checkout e2e suite is flaky on CI — investigate and stabilize' },
-      { kind: 'text', id: 'd8', text: 'Done — the retry helper now waits for network idle instead of a fixed 500ms; 40 consecutive green runs on CI.', uuid: '' },
+      { kind: 'text', id: 'd8', text: [
+        '## Investigation summary',
+        '',
+        'The flakiness came from two independent causes, both timing-related:',
+        '',
+        '| Test | Failure rate | Root cause |',
+        '| --- | --- | --- |',
+        '| checkout-guest.spec | 18% | fixed 500ms wait races the cart API |',
+        '| checkout-saved-card.spec | 7% | stale session cookie between retries |',
+        '',
+        '## Changes made',
+        '',
+        '1. Replaced the fixed 500ms wait in `retry-helper.ts` with a network-idle wait',
+        '2. Cleared the session cookie jar between retry attempts',
+        '3. Added a `flake-report` CI step that uploads per-test retry counts',
+        '',
+        '## Verification',
+        '',
+        '40 consecutive green runs on CI, and the flake-report step shows zero retries for both specs.',
+      ].join('\n'), uuid: '' },
     ],
   } as never;
   messageStore.activityBySession = {

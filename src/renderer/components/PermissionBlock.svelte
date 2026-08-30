@@ -3,6 +3,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
+  import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 
   let {
     sessionId,
@@ -200,6 +201,16 @@
   <div class="flex items-center gap-2 text-xs">
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
     <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolName}</span>
+    {#if isExitPlanMode && planText}
+      <button
+        onclick={() => markdownPreviewStore.show(planText, 'Proposed plan')}
+        class="flex items-center gap-1 text-[11px] px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shrink-0"
+        title="Open the plan rendered full-width"
+      >
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        Preview
+      </button>
+    {/if}
     {#if filePath}
       <button
         onclick={openInEditor}

@@ -127,10 +127,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
 
 ### Markdown Preview Panel
-- [ ] Slide-out panel rendering markdown full-width (reuse the marked + highlight.js + DOMPurify pipeline already used for chat)
-- [ ] "Open preview" button on in-turn assistant responses with substantial markdown (planning updates, reports, status write-ups) — read them as a document instead of in the chat column
-- [ ] Same preview affordance in the activity feed's Summary view mode, where long responses are most condensed
-- [ ] Preview for plan-approval text (`planText` on permission blocks) so a proposed plan can be reviewed full-width before approving
+- [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)
+- [x] Hover "Preview" button on in-turn assistant responses with document-like markdown (≥2 headings, a table, ≥3 code fences, or structure + length) — works in both Detailed and Summary view modes
+- [x] "Preview" on plan-approval blocks so a proposed plan can be read full-width before approving
 - [ ] Secondary: preview `.md` files the agent writes (file-op blocks, Changes tab, @ file picker)
 
 ### Agent Capabilities

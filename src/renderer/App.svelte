@@ -16,6 +16,7 @@
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
+  import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
 
   let showAnalyticsConsent = $state(false);
@@ -350,5 +351,6 @@
 <ErrorToast />
 
 <BookmarksDrawer />
+<MarkdownPreviewPanel />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />
