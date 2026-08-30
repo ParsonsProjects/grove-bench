@@ -10,7 +10,7 @@ Your messages appear with a blue left border. These are the instructions and fol
 ### Assistant Responses
 The agent's text responses are rendered as markdown with syntax highlighting for code blocks.
 
-Document-like responses — plans, reports, audits, anything with multiple headings, a table, or several code blocks — show a **Preview** button on hover. It opens the response rendered full-width in a slide-out panel, which is easier to read than the chat column (especially in Summary view). Plan-approval prompts have the same button so you can review a proposed plan full-width before approving. Press `Esc` or click outside the panel to close it.
+Document-like responses — plans, reports, audits, anything with multiple headings, a table, or several code blocks — show a **Focus** button on hover. It opens the response rendered full-width in a slide-out panel, which is easier to read than the chat column (especially in Summary view). Plan-approval prompts have the same button so you can review a proposed plan full-width before approving. Press `Esc` or click outside the panel to close it.
 
 ### Tool Calls
 When the agent uses tools (editing files, running commands, reading files), each action is shown as a collapsible block. Click to expand and see full details including inputs and outputs.
