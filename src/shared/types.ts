@@ -365,6 +365,18 @@ export interface McpAddServerOpts {
   cwd?: string;
 }
 
+// ─── OS Notifications ───
+
+/** Renderer → main request to show a desktop notification. Main gates on
+ *  window focus and the per-kind settings, so callers can fire unconditionally. */
+export interface OsNotificationRequest {
+  kind: 'turn_complete' | 'permission_request' | 'pr_alert';
+  /** Session to focus when the notification is clicked. */
+  sessionId: string;
+  title: string;
+  body: string;
+}
+
 // ─── Image Attachment ───
 
 export interface ImageAttachment {
@@ -582,6 +594,11 @@ export interface GroveBenchAPI {
   onAppClosing(callback: () => void): () => void;
   onPowerResume(callback: (resumeIds: string[]) => void): () => void;
 
+  // OS notifications
+  notify(req: OsNotificationRequest): void;
+  /** Fired when the user clicks an OS notification — jump to that session. */
+  onFocusSession(callback: (sessionId: string) => void): () => void;
+
   // Window controls
   winMinimize(): void;
   winMaximize(): void;
@@ -659,6 +676,16 @@ export interface GroveBenchSettings {
   diffViewMode: 'unified' | 'side-by-side';
   /** Enable spell checking in the prompt textarea. */
   spellcheck: boolean;
+
+  // Notifications (OS-level; shown only while the window is unfocused)
+  /** Notify when an agent finishes a turn. Default true. */
+  notifyOnTurnComplete: boolean;
+  /** Notify when an agent is blocked waiting on a permission decision. Default true. */
+  notifyOnPermission: boolean;
+  /** Notify on PR-watch alerts (new CI failure, review comments, needs-human). Default true. */
+  notifyOnPrAlert: boolean;
+  /** Flash the taskbar button alongside a notification. Default true. */
+  notifyTaskbarFlash: boolean;
 
   // Privacy
   /** Enable anonymous usage analytics (PostHog). Off by default. */
@@ -779,6 +806,8 @@ export const IPC = {
   SESSION_STATUS: 'session:status',
   APP_CLOSING: 'app:closing',
   POWER_RESUME: 'power:resume',
+  NOTIFY_SHOW: 'notify:show',
+  NOTIFY_FOCUS_SESSION: 'notify:focusSession',
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',
   AGENT_SET_MODE: 'agent:setMode',

@@ -2,6 +2,7 @@ import type { AgentEvent, McpServerInfo, PermissionDecision, PermissionMode, Thi
 import { THINKING_LEVELS } from '../../shared/types.js';
 import { settingsStore } from './settings.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
@@ -1166,6 +1167,18 @@ class MessageStore {
     // Drop stale permission requests from a dying query after the user
     // clicked Stop. The new query will re-request if needed.
     if (this.stoppingSession[sessionId]) return;
+
+    // Desktop notification for live requests only — replayed history must not
+    // re-notify. Main gates on window focus and settings.
+    if (this._replayBuffer === null) {
+      notifyOs(
+        'permission_request',
+        sessionId,
+        event.toolCategory === 'question'
+          ? 'Agent is waiting for an answer'
+          : `${event.toolName} is waiting for permission`,
+      );
+    }
 
     this.flushStreamingText(sessionId);
     // Mark the matching tool_call as awaiting permission so it doesn't

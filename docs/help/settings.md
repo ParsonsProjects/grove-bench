@@ -25,6 +25,7 @@ Configure agent behavior:
 - **Always on Top** — Keep the Grove Bench window above other windows
 - **Spell Check** — Enable or disable spell checking in the prompt editor
 - **Default Diff View** — Choose between unified or side-by-side diffs
+- **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the session. The taskbar-flash toggle controls whether the taskbar button also flashes; it stops as soon as the window regains focus
 - **Auto-install Dependencies** — Automatically run dependency installation in new worktrees
 
 ## MCP

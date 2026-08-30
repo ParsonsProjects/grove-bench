@@ -8,6 +8,7 @@
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { deriveSessionName } from './lib/session-name.js';
+  import { notifyOs } from './lib/os-notify.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -81,6 +82,9 @@
         if (store.activeSessionId !== session.id) {
           store.markNeedsAttention(session.id);
         }
+        // Main only shows this while the window is unfocused, so it also
+        // covers the active session when the user is in another app.
+        notifyOs('turn_complete', session.id, 'Agent finished a turn');
         maybeAutoNameSession(session);
       }
       prevRunningState[session.id] = running;
@@ -263,12 +267,21 @@
       }
     });
 
+    // Clicking an OS notification jumps to the session it was about.
+    const unsubFocus = window.groveBench.onFocusSession((sessionId) => {
+      if (store.sessions.find((s) => s.id === sessionId)) {
+        store.activeSessionId = sessionId;
+        store.clearNeedsAttention(sessionId);
+      }
+    });
+
     // Auto-close idle sessions to reclaim their PTY + agent processes.
     const stopIdleManager = startIdleManager();
 
     return () => {
       unsub();
       unsubPower();
+      unsubFocus();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };

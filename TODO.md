@@ -30,9 +30,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Rebase / cherry-pick / squash between agent branches (DESIGN.md §14 "Git operations UI")
 
 ### OS Notifications
-- [ ] Native notification when an agent finishes a turn while the window is unfocused
-- [ ] Native notification when an agent is blocked on a permission prompt, and for PR-watch alerts (new CI failure / review comment)
-- [ ] Taskbar flash / overlay badge for sessions needing attention
+- [x] Native notification when an agent finishes a turn while the window is unfocused
+- [x] Native notification when an agent is blocked on a permission prompt or question, and for PR-watch alerts (new CI failure / review comments / needs-human)
+- [x] Taskbar flash while a notification is pending (cleared on focus); clicking a notification jumps to the session
+- [x] Sidebar attention flash extended to PR alerts (previously only status-bar chips)
+- [ ] Overlay badge on the taskbar icon showing the count of sessions needing attention
 
 ### Robustness
 - [ ] Global error handling — `uncaughtException` handler in main; `window.onerror` / `unhandledrejection` + error boundary in renderer

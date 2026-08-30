@@ -539,6 +539,32 @@
 
           <Separator />
 
+          <!-- Desktop Notifications -->
+          <div>
+            <Label class="mb-1 block">Desktop Notifications</Label>
+            <p class="text-xs text-muted-foreground mb-2">Shown only while the Grove Bench window is unfocused. Clicking a notification jumps to the session.</p>
+            <div class="space-y-2">
+              <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox bind:checked={settingsStore.draft.notifyOnTurnComplete} />
+                Agent finishes a turn
+              </label>
+              <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox bind:checked={settingsStore.draft.notifyOnPermission} />
+                Agent is waiting on a permission or question
+              </label>
+              <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox bind:checked={settingsStore.draft.notifyOnPrAlert} />
+                PR activity (new CI failures, review comments)
+              </label>
+              <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox bind:checked={settingsStore.draft.notifyTaskbarFlash} />
+                Flash the taskbar button
+              </label>
+            </div>
+          </div>
+
+          <Separator />
+
           <!-- Diff View Mode -->
           <div>
             <Label class="mb-1 block">Default Diff View</Label>

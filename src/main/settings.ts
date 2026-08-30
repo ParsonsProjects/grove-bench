@@ -39,6 +39,12 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   diffViewMode: 'unified',
   spellcheck: true,
 
+  // Notifications
+  notifyOnTurnComplete: true,
+  notifyOnPermission: true,
+  notifyOnPrAlert: true,
+  notifyTaskbarFlash: true,
+
   // Privacy
   analyticsEnabled: false,
   analyticsPrompted: false,
