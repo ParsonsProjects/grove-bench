@@ -224,29 +224,6 @@ export interface ImageDiffContent {
   head: string | null;
 }
 
-// ─── Merge to base ───
-
-/** Preflight facts for merging a session's branch into the repo's checked-out branch.
- *  Raw facts only — the dialog derives what blocks the merge. */
-export interface MergePreflight {
-  sessionBranch: string;
-  /** Branch checked out in the main repo (the merge target); 'HEAD' when detached. */
-  baseBranch: string;
-  /** Uncommitted changes in the main repo checkout — blocks merging. */
-  repoDirty: boolean;
-  /** Uncommitted changes in the session worktree — allowed, but they won't be in the merge. */
-  worktreeDirty: boolean;
-  /** Commits on the session branch that the base branch doesn't have. */
-  ahead: number;
-  /** Commits on the base branch that the session branch doesn't have. */
-  behind: number;
-}
-
-/** On conflict the merge has already been aborted — the base checkout is left untouched. */
-export type MergeResult =
-  | { success: true; baseBranch: string }
-  | { success: false; baseBranch: string; conflicts: string[] };
-
 export interface CheckpointListItem {
   uuid: string;
   turn: number;
@@ -535,10 +512,6 @@ export interface GroveBenchAPI {
   // Git status
   getGitStatus(sessionId: string): Promise<GitStatusResult>;
 
-  // Merge to base
-  mergePreflight(sessionId: string): Promise<MergePreflight>;
-  mergeToBase(sessionId: string): Promise<MergeResult>;
-
   // PR info
   getPrInfo(sessionId: string): Promise<PrInfo | null>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
@@ -817,8 +790,6 @@ export const IPC = {
   FILE_UNSTAGE: 'file:unstage',
   GIT_STATUS: 'git:status',
   GIT_COMMIT: 'git:commit',
-  MERGE_PREFLIGHT: 'merge:preflight',
-  MERGE_TO_BASE: 'merge:toBase',
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',

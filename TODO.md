@@ -26,8 +26,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Configurable UI layouts (full-featured to minimal)
 
 ### Merge-Back Workflow
-- [x] Wire up existing `mergeNoCommit()` / `abortMerge()` (`git.ts`) to IPC and UI
-- [x] Merge a session's worktree branch back into the base branch from within the app, with conflict detection and abort (Changes tab clean state + session context menu; conflicts auto-abort)
+- ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
 - [ ] Rebase / cherry-pick / squash between agent branches (DESIGN.md §14 "Git operations UI")
 
 ### OS Notifications

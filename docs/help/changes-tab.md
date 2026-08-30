@@ -28,15 +28,3 @@ When viewing a file that was modified by the agent during the current turn, an *
 ## Reverting Changes
 
 Each modified file has a **revert** button that restores it to its original state. Use this if the agent made an unwanted change to a specific file.
-
-## Merging into the Base Branch
-
-Once the working tree is clean (all changes committed), the Changes tab offers a **Merge into base…** button. It merges the session's branch into whichever branch is checked out in the main repository, creating a merge commit. The same action is available from the session's right-click menu in the sidebar.
-
-Before merging, Grove Bench checks that:
-
-- The repository checkout has no uncommitted changes
-- The session branch has commits the base branch doesn't already contain
-- The repository isn't in a detached HEAD state
-
-If the merge hits conflicts, it is automatically aborted — the base branch is left untouched, and the conflicting files are listed. To resolve, ask the agent to merge the base branch into its session branch, fix the conflicts there, and then merge again.

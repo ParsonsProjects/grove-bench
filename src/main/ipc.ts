@@ -8,10 +8,10 @@ import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, mergeNoCommit, abortMerge, currentBranch, isWorkingTreeDirty, aheadBehind } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
 import { prStatus, prCreate, prReviewComments } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
-import type { FileDiffResult, ImageDiffContent, PrCreateOpts, MergePreflight, MergeResult } from '../shared/types.js';
+import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
@@ -739,61 +739,6 @@ export function registerHandlers() {
       logger.warn(`git status failed for session ${sessionId}:`, e);
       return { entries: [] };
     }
-  });
-
-  // ─── Merge to base ───
-
-  ipcMain.handle(IPC.MERGE_PREFLIGHT, async (_event, sessionId: string): Promise<MergePreflight> => {
-    const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
-    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-
-    const baseBranch = await currentBranch(worktree.repoPath);
-    const [repoDirty, worktreeDirty] = await Promise.all([
-      isWorkingTreeDirty(worktree.repoPath),
-      isWorkingTreeDirty(worktree.path),
-    ]);
-
-    let ahead = 0;
-    let behind = 0;
-    if (baseBranch !== 'HEAD' && baseBranch !== worktree.branch) {
-      try {
-        ({ ahead, behind } = await aheadBehind(worktree.repoPath, baseBranch, worktree.branch));
-      } catch (e) {
-        logger.warn(`Merge preflight ahead/behind failed for session ${sessionId}:`, e);
-      }
-    }
-
-    return { sessionBranch: worktree.branch, baseBranch, repoDirty, worktreeDirty, ahead, behind };
-  });
-
-  ipcMain.handle(IPC.MERGE_TO_BASE, async (_event, sessionId: string): Promise<MergeResult> => {
-    const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
-    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-
-    // Re-validate — the preflight the dialog showed may be stale by the time
-    // the user confirms.
-    const baseBranch = await currentBranch(worktree.repoPath);
-    if (baseBranch === 'HEAD') {
-      throw new Error('The repository is in a detached HEAD state — check out a branch to merge into');
-    }
-    if (baseBranch === worktree.branch) {
-      throw new Error(`Branch "${worktree.branch}" is already checked out in the repository — nothing to merge`);
-    }
-    if (await isWorkingTreeDirty(worktree.repoPath)) {
-      throw new Error('The repository checkout has uncommitted changes — commit or stash them before merging');
-    }
-
-    logger.info(`Merging ${worktree.branch} into ${baseBranch} (repo: ${worktree.repoPath}, session: ${sessionId})`);
-    const result = await mergeNoCommit(worktree.repoPath, worktree.branch);
-    if (result.success) {
-      logger.info(`Merged ${worktree.branch} into ${baseBranch}`);
-      return { success: true, baseBranch };
-    }
-
-    // Never leave the repo mid-merge: abort so the base checkout stays clean.
-    await abortMerge(worktree.repoPath);
-    logger.warn(`Merge of ${worktree.branch} into ${baseBranch} aborted with ${result.conflicts?.length ?? 0} conflict(s)`);
-    return { success: false, baseBranch, conflicts: result.conflicts ?? [] };
   });
 
   // ─── PR info ───

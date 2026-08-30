@@ -17,7 +17,6 @@
   import SettingsPanel from './SettingsPanel.svelte';
   import MemoryPanel from './MemoryPanel.svelte';
   import SessionContextMenu from './SessionContextMenu.svelte';
-  import MergeDialog from './MergeDialog.svelte';
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor, DEFAULT_SORT } from '../lib/session-sort.js';
@@ -125,7 +124,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'add' | 'rename' | 'folder' | 'merge' | 'stop' | 'destroy';
+    icon: 'add' | 'rename' | 'folder' | 'stop' | 'destroy';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -138,7 +137,6 @@
       { label: 'New Session', icon: 'add', action: () => store.createAttachedSession(session.id, session.repoPath) },
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
-      { label: 'Merge into Base…', icon: 'merge', action: () => mergeSessionId = sessionId },
     ];
     // Stop disconnects a live session (keeps it resumable); not shown for already-stopped ones.
     if (session.status !== 'stopped') {
@@ -153,7 +151,6 @@
   let showMemory = $state(false);
   let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
-  let mergeSessionId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
   let deleteBranchOnDestroy = $state(false);
@@ -739,11 +736,6 @@
     items={getContextMenuItems(contextMenu.sessionId)}
     onclose={() => contextMenu = null}
   />
-{/if}
-
-<!-- Merge-to-base dialog (conditional mount so each open starts a fresh preflight) -->
-{#if mergeSessionId}
-  <MergeDialog sessionId={mergeSessionId} open={true} onclose={() => mergeSessionId = null} />
 {/if}
 
 <!-- Rename dialog -->
