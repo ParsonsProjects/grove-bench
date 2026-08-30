@@ -40,6 +40,10 @@ const SETTINGS = {
   repoColors: {},
   diffViewMode: 'unified',
   spellcheck: true,
+  notifyOnTurnComplete: true,
+  notifyOnPermission: true,
+  notifyOnPrAlert: true,
+  notifyTaskbarFlash: true,
   analyticsEnabled: false,
   analyticsPrompted: true,
 };
