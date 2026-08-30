@@ -127,10 +127,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
 
 ### Markdown Preview Panel
-- [ ] Slide-out panel rendering markdown documents (reuse the marked + highlight.js + DOMPurify pipeline already used for chat)
-- [ ] When a turn produces or edits a `.md` file (Write/Edit tool on `*.md`), show an "Open preview" affordance on the file-op block and turn summary
-- [ ] Optional setting to auto-open the panel when a turn's deliverable is a markdown document
-- [ ] Open any `.md` rendered from the Changes tab and @ file picker (not just raw diff/text)
+- [ ] Slide-out panel rendering markdown full-width (reuse the marked + highlight.js + DOMPurify pipeline already used for chat)
+- [ ] "Open preview" button on in-turn assistant responses with substantial markdown (planning updates, reports, status write-ups) — read them as a document instead of in the chat column
+- [ ] Same preview affordance in the activity feed's Summary view mode, where long responses are most condensed
+- [ ] Preview for plan-approval text (`planText` on permission blocks) so a proposed plan can be reviewed full-width before approving
+- [ ] Secondary: preview `.md` files the agent writes (file-op blocks, Changes tab, @ file picker)
 
 ### Agent Capabilities
 - [x] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`
