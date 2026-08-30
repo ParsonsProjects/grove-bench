@@ -12,6 +12,7 @@ import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, g
 import { prStatus, prCreate, prReviewComments } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
+import { showOsNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
@@ -1016,6 +1017,14 @@ export function registerHandlers() {
     if (typeof width === 'number' && Number.isFinite(width)) {
       saveSidebarWidth(Math.round(width));
     }
+  });
+
+  // ─── OS notifications ───
+
+  ipcMain.on(IPC.NOTIFY_SHOW, (event, req: import('../shared/types.js').OsNotificationRequest) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    showOsNotification(win, req, settings.getSettings());
   });
 
   // ─── Window controls ───

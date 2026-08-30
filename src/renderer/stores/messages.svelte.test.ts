@@ -359,6 +359,55 @@ describe('ingestEvent — permission_request', () => {
   });
 });
 
+describe('OS notification triggers', () => {
+  it('notifies turn completion from the result event', () => {
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'turn_complete', sessionId: SID, body: 'Agent finished a turn' }),
+    );
+  });
+
+  it('uses error wording when the turn ended with an error', () => {
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'error_during_execution', isError: true } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'turn_complete', body: 'Agent turn ended with an error' }),
+    );
+  });
+
+  it('notifies permission requests with the tool name', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
+    } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'permission_request', body: 'Bash is waiting for permission' }),
+    );
+  });
+
+  it('uses plain language for plan approvals and questions', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'ExitPlanMode', toolInput: {}, toolUseId: 't2', requestId: 'r2', isPlanExecution: true,
+    } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'A plan is ready for review' }),
+    );
+
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'AskUserQuestion', toolInput: { questions: [] }, toolUseId: 't3', requestId: 'r3', toolCategory: 'question',
+    } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Agent is waiting for an answer' }),
+    );
+  });
+
+  it('never notifies from replayed history', () => {
+    messageStore.replayEvents(SID, [
+      { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't4', requestId: 'r4' } as AgentEvent,
+      { type: 'result', subtype: 'success', isError: false } as AgentEvent,
+    ]);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+});
+
 describe('ingestEvent — result', () => {
   it('marks session as not running and idle', () => {
     messageStore.setIsRunning(SID, true);

@@ -1,6 +1,6 @@
 # Grove Bench — Gap Analysis
 
-Feature gaps identified by comparing against [Toad](https://github.com/batrachianai/toad) and [T3 Code](https://github.com/pingdotgg/t3code).
+Feature gaps identified by comparing against [Toad](https://github.com/batrachianai/toad) and [T3 Code](https://github.com/pingdotgg/t3code), plus gaps found by auditing the codebase against DESIGN.md and docs/user-stories.md.
 
 ## Priority 1 — High Impact
 
@@ -25,6 +25,22 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] GUI-based settings panel (no manual JSON editing)
 - [x] Configurable UI layouts (full-featured to minimal)
 
+### Merge-Back Workflow
+- ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
+- [ ] Rebase / cherry-pick / squash between agent branches (DESIGN.md §14 "Git operations UI")
+
+### OS Notifications
+- [x] Native notification when an agent finishes a turn while the window is unfocused
+- [x] Native notification when an agent is blocked on a permission prompt or question, and for PR-watch alerts (new CI failure / review comments / needs-human)
+- [x] Taskbar flash while a notification is pending (cleared on focus); clicking a notification jumps to the session
+- [x] Sidebar attention flash extended to PR alerts (previously only status-bar chips)
+- [ ] Overlay badge on the taskbar icon showing the count of sessions needing attention
+
+### Robustness
+- [ ] Global error handling — `uncaughtException` handler in main; `window.onerror` / `unhandledrejection` + error boundary in renderer
+- [ ] Opt-in crash reporting (exception capture alongside existing PostHog analytics)
+- [ ] Schema versioning + migration for persisted state (`settings.ts` `validate()` is an empty stub; `app-state.ts` raw-parses JSON with no upgrade path)
+
 ## Priority 2 — Notable Gaps
 
 ### Diff Viewer
@@ -48,8 +64,23 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Filter/search within message history (Ctrl+F with highlighting)
 
 ### Help System
-- [ ] Keybinding documentation (F1 or similar)
+- [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md` and HelpPanel is mounted; missing piece is the F1 shortcut
 - [ ] Context-aware footer showing relevant keyboard shortcuts
+
+### Cost & Usage Dashboard
+- [ ] Per-session and cumulative token/cost view — data is already captured per message (`adapters/claude-code.ts`) but only lands in memory notes
+
+### Session Export
+- [ ] Export conversation transcript (Markdown / JSON)
+- [ ] Session export/import between machines
+
+### Security Hardening
+- [ ] Validate IPC inputs at the boundary with Zod (already a dependency, unused for IPC)
+- [ ] Enable Electron `sandbox: true` in webPreferences
+- [ ] Add a Content-Security-Policy for the renderer
+
+### Onboarding
+- [ ] First-launch welcome/tour surfacing the existing `docs/help/` content (currently only prerequisite checks + analytics consent)
 
 ## Priority 3 — Nice to Have
 
@@ -64,6 +95,28 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Clipboard
 - [x] Copy buttons on code blocks, bash output, diffs, file ops, thinking blocks
 
+### Accessibility & i18n
+- [ ] ARIA roles/labels on app components (currently only the vendored bits-ui primitives have them)
+- [ ] `prefers-reduced-motion` support
+- [ ] i18n framework (all UI strings hardcoded English; spellchecker pinned to `en-US`)
+
+### Maintenance & Hygiene
+- [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
+- [ ] Tests for the IPC layer (`ipc.ts` currently has zero coverage)
+- [ ] Component tests (5 of 42 Svelte components covered) and E2E tests (Playwright)
+- [ ] In-app log viewer or "open logs folder" action; configurable log level
+- [ ] Worktree disk-usage reporting and a "reclaim space" tool
+- [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
+- [ ] CHANGELOG.md and SECURITY.md
+- [ ] Fetch Claude model list dynamically instead of hardcoding (`adapters/claude-code.ts` TODO)
+
+### From DESIGN.md v2 (documented but previously untracked)
+- [ ] Docker-based sandboxing of agent sessions
+- [ ] Shared CLAUDE.md / agent instructions per worktree
+- [ ] Agent-to-agent communication (one agent's output feeds another)
+- [ ] Orchestration engine (goal decomposition → parallel tasks → integration merge agent) — prototyped and removed; see user stories 20–28 in `docs/user-stories.md`
+- [ ] Worktree dependency optimizations: pnpm-store sharing, `node_modules` symlinking from main checkout (DESIGN.md §6.1)
+
 ## Feature Requests
 
 ### Input & UX
@@ -72,6 +125,12 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Context length indicator (token usage / remaining)
 - [x] Drag and drop (files, images into prompt)
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
+
+### Markdown Preview Panel
+- [x] Slide-out panel rendering markdown full-width (reuses the marked + highlight.js + DOMPurify pipeline; Esc / backdrop click to close, copy button)
+- [x] Hover "Focus" button on in-turn assistant responses with document-like markdown (≥2 headings, a table, ≥3 code fences, or structure + length) — works in both Detailed and Summary view modes
+- [x] "Focus" on plan-approval blocks so a proposed plan can be read full-width before approving
+- [ ] Secondary: preview `.md` files the agent writes (file-op blocks, Changes tab, @ file picker)
 
 ### Agent Capabilities
 - [x] `/rewind` — Roll back to a previous message checkpoint, restoring files on disk (SDK: `query.rewindFiles()`). See `docs/rewind-plan.md`

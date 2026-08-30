@@ -16,6 +16,7 @@
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
+  import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
 
   let showAnalyticsConsent = $state(false);
@@ -263,12 +264,21 @@
       }
     });
 
+    // Clicking an OS notification jumps to the session it was about. (The
+    // activeSessionId effect above clears its needs-attention flash.)
+    const unsubFocus = window.groveBench.onFocusSession((sessionId) => {
+      if (store.sessions.find((s) => s.id === sessionId)) {
+        store.activeSessionId = sessionId;
+      }
+    });
+
     // Auto-close idle sessions to reclaim their PTY + agent processes.
     const stopIdleManager = startIdleManager();
 
     return () => {
       unsub();
       unsubPower();
+      unsubFocus();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
@@ -341,5 +351,6 @@
 <ErrorToast />
 
 <BookmarksDrawer />
+<MarkdownPreviewPanel />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />

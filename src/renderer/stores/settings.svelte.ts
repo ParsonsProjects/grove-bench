@@ -20,6 +20,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   repoColors: {},
   diffViewMode: 'unified',
   spellcheck: true,
+  notifyOnTurnComplete: true,
+  notifyOnPermission: true,
+  notifyOnPrAlert: true,
+  notifyTaskbarFlash: true,
   analyticsEnabled: false,
   analyticsPrompted: false,
 };

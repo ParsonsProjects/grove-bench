@@ -101,6 +101,11 @@ function createWindow() {
     mainWindow?.show();
   });
 
+  // Stop the taskbar flash (started by OS notifications) once the user returns.
+  mainWindow.on('focus', () => {
+    mainWindow?.flashFrame(false);
+  });
+
   initAutoUpdater(mainWindow);
 
   mainWindow.on('closed', () => {

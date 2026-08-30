@@ -287,6 +287,17 @@ const api: GroveBenchAPI = {
     };
   },
 
+  // OS notifications
+  notify: (req: import('../shared/types.js').OsNotificationRequest) =>
+    ipcRenderer.send(IPC.NOTIFY_SHOW, req),
+  onFocusSession: (callback: (sessionId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId);
+    ipcRenderer.on(IPC.NOTIFY_FOCUS_SESSION, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.NOTIFY_FOCUS_SESSION, handler);
+    };
+  },
+
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),
   winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
