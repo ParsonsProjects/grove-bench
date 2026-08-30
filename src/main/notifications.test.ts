@@ -102,6 +102,15 @@ describe('showOsNotification()', () => {
     expect(win.flashFrame).not.toHaveBeenCalled();
   });
 
+  it('registers release handlers so the instance stays referenced until dismissed', () => {
+    const win = makeWin();
+    showOsNotification(win, REQ, makeSettings());
+    const instance = mockNotification.mock.instances[0] as unknown as { on: ReturnType<typeof vi.fn> };
+    const events = instance.on.mock.calls.map((c: unknown[]) => c[0]);
+    expect(events).toContain('close');
+    expect(events).toContain('failed');
+  });
+
   it('click restores + focuses the window and tells the renderer which session', () => {
     const win = makeWin({ isMinimized: vi.fn(() => true) });
     showOsNotification(win, REQ, makeSettings());

@@ -1171,13 +1171,7 @@ class MessageStore {
     // Desktop notification for live requests only — replayed history must not
     // re-notify. Main gates on window focus and settings.
     if (this._replayBuffer === null) {
-      notifyOs(
-        'permission_request',
-        sessionId,
-        event.toolCategory === 'question'
-          ? 'Agent is waiting for an answer'
-          : `${event.toolName} is waiting for permission`,
-      );
+      notifyOs('permission_request', sessionId, permissionNotificationBody(event));
     }
 
     this.flushStreamingText(sessionId);
@@ -1249,6 +1243,18 @@ class MessageStore {
   }
 
   private onResult(sessionId: string, event: Extract<AgentEvent, { type: 'result' }>) {
+    // Desktop notification anchored to the SDK's authoritative end-of-turn
+    // event (live only) — a crashed or stopped session never produces one, so
+    // it can't claim a turn "finished" that actually died. Main gates on
+    // window focus and settings.
+    if (this._replayBuffer === null) {
+      notifyOs(
+        'turn_complete',
+        sessionId,
+        event.isError ? 'Agent turn ended with an error' : 'Agent finished a turn',
+      );
+    }
+
     this.flushStreamingText(sessionId);
     this.setIsRunning(sessionId, false);
     delete this.awaitingResponse[sessionId];
@@ -1705,6 +1711,14 @@ class MessageStore {
     }
   }
 
+}
+
+/** User-facing body for a blocked-agent notification — plan approvals and
+ *  questions get plain language instead of internal tool names. */
+function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
+  if (event.isPlanExecution) return 'A plan is ready for review';
+  if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
+  return `${event.toolName} is waiting for permission`;
 }
 
 export const messageStore = new MessageStore();

@@ -50,6 +50,7 @@ const mockGroveBench = {
   getSessionPreviews: vi.fn(() => Promise.resolve({} as Record<string, import('../../shared/types.js').SessionPreview>)),
   getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
   sendMessage: vi.fn(),
+  notify: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
   listSessions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SessionInfo[])),

@@ -3,6 +3,10 @@ import { IPC } from '../shared/types.js';
 import type { GroveBenchSettings, OsNotificationRequest } from '../shared/types.js';
 import { logger } from './logger.js';
 
+/** References to notifications that may still be on screen — see the GC note
+ *  in showOsNotification. */
+const liveNotifications = new Set<Notification>();
+
 /** Which settings flag gates each notification kind. */
 export function kindEnabled(settings: GroveBenchSettings, kind: OsNotificationRequest['kind']): boolean {
   switch (kind) {
@@ -35,13 +39,21 @@ export function showOsNotification(
 
   try {
     const notification = new Notification({ title: req.title, body: req.body });
+    // Keep a reference until the toast is dismissed — an unreferenced
+    // Notification can be garbage-collected while still visible, which
+    // silently drops its click handler.
+    liveNotifications.add(notification);
+    const release = () => liveNotifications.delete(notification);
     notification.on('click', () => {
+      release();
       if (win.isDestroyed()) return;
       if (win.isMinimized()) win.restore();
       win.show();
       win.focus();
       win.webContents.send(IPC.NOTIFY_FOCUS_SESSION, req.sessionId);
     });
+    notification.on('close', release);
+    notification.on('failed', release);
     notification.show();
   } catch (e) {
     logger.warn('Failed to show OS notification:', e);
