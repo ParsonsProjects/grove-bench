@@ -4,6 +4,9 @@ import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, Thinki
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
+import { computeSkillsFilter } from './skills.js';
+import { analyzeRepo as analyzeSkillSuggestions } from './skill-suggestions.js';
+import { loadKnownSkills, saveKnownSkills } from './app-state.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import * as fs from 'node:fs';
@@ -111,7 +114,7 @@ export interface SessionCompletionResult {
   durationMs?: number;
 }
 
-const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
+export const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
 
 // Suppress unhandled rejections that the agent SDK throws while a query is
 // being torn down.  When we stop/destroy a session we close the SDK transport
@@ -150,6 +153,97 @@ class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
+
+  /** Union of skill names each repo's sessions have reported via system_init.
+   *  Backed by persisted app state so plugin-provided skills (invisible to the
+   *  on-disk scan) survive app restarts and stay in the allowlist when the
+   *  user has disabled other skills. */
+  private knownSkillsByRepo = new Map<string, Set<string>>();
+
+  /** Worktree path for a managed session, if it exists. */
+  getWorktreePath(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.worktreePath ?? null;
+  }
+
+  private getKnownSkills(repoPath: string): Set<string> {
+    let known = this.knownSkillsByRepo.get(repoPath);
+    if (!known) {
+      known = new Set(loadKnownSkills(repoPath));
+      this.knownSkillsByRepo.set(repoPath, known);
+    }
+    return known;
+  }
+
+  private recordKnownSkills(repoPath: string, names: string[]): void {
+    const known = this.getKnownSkills(repoPath);
+    const before = known.size;
+    for (const name of names) known.add(name);
+    if (known.size !== before) {
+      saveKnownSkills(repoPath, [...known].sort());
+    }
+  }
+
+  /** Adapter for a managed session, if it exists (used by IPC to route
+   *  provider-specific operations like skill discovery). */
+  getSessionAdapter(sessionId: string): AgentAdapter | null {
+    return this.sessions.get(sessionId)?.adapter ?? null;
+  }
+
+  // ─── Skill suggestions ───
+
+  /** Per-repo debounce for post-turn suggestion analysis. */
+  private suggestionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Schedule a suggestion analysis for the session's repo, debounced so a
+   *  burst of finishing turns produces one run. */
+  private scheduleSuggestionAnalysis(session: ManagedSession): void {
+    if (!settings.getSettings().skillSuggestions) return;
+    if (session.adapter.capabilities.skills !== true) return;
+    const { repoPath } = session;
+    const pending = this.suggestionTimers.get(repoPath);
+    if (pending) clearTimeout(pending);
+    this.suggestionTimers.set(repoPath, setTimeout(() => {
+      this.suggestionTimers.delete(repoPath);
+      this.analyzeSkillSuggestionsForRepo(repoPath).catch((err) => {
+        logger.warn(`[skill-suggestions] analysis failed for ${repoPath}:`, err);
+      });
+    }, 30_000));
+  }
+
+  /** Mine the repo's session logs for recurring workflows and refresh the
+   *  cached skill suggestions. Uses a live session's adapter when one exists,
+   *  falling back to the registry default. */
+  async analyzeSkillSuggestionsForRepo(repoPath: string) {
+    const adapter = [...this.sessions.values()].find((s) => s.repoPath === repoPath)?.adapter
+      ?? adapterRegistry.getDefault();
+    const worktrees = await worktreeManager.list(repoPath);
+    const sessionIds = worktrees
+      .sort((a, b) => (a.lastActiveAt ?? a.createdAt) - (b.lastActiveAt ?? b.createdAt))
+      .map((w) => w.id);
+    const existingSkills = adapter.listSkills
+      ? await adapter.listSkills(repoPath).catch(() => [])
+      : [];
+    return analyzeSkillSuggestions({
+      repoPath,
+      sessionIds,
+      eventsDir: getEventsDir(),
+      existingSkills,
+      generateText: adapter.generateText ? adapter.generateText.bind(adapter) : null,
+    });
+  }
+
+  /** Skill allowlist for a session, honoring settings.disabledSkills.
+   *  Undefined when nothing is disabled or the provider has no skill support —
+   *  the adapter option is then omitted so provider defaults apply. */
+  private async skillsFilterFor(session: ManagedSession, disabledSkills: string[]): Promise<string[] | undefined> {
+    if (disabledSkills.length === 0 || session.adapter.capabilities.skills !== true) return undefined;
+    const onDisk = session.adapter.listSkills
+      ? await session.adapter.listSkills(session.worktreePath).catch(() => [])
+      : [];
+    const known = new Set(onDisk.map((s) => s.name));
+    for (const name of this.getKnownSkills(session.repoPath)) known.add(name);
+    return computeSkillsFilter(known, disabledSkills);
+  }
 
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
@@ -374,6 +468,8 @@ class AgentSessionManager {
     // lands mid-startup (restartRequested) retries the same truncated resume.
     const resumeAtUuid = session.pendingResumeAt;
 
+    const skillsFilter = await this.skillsFilterFor(session, currentSettings.disabledSkills ?? []);
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -386,6 +482,7 @@ class AgentSessionManager {
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
+      skills: skillsFilter ?? null,
       outputFormat: session.outputFormat,
       sandbox: session.sandbox,
       memoryOperations: {
@@ -512,6 +609,11 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          // Remember reported skills so the disabled-skills allowlist can
+          // include plugin skills the on-disk scan can't see.
+          if (event.skills && event.skills.length > 0) {
+            this.recordKnownSkills(session.repoPath, event.skills);
+          }
           // Record the model the provider resolved, normalised back to a known
           // picker id. The SDK reports a dated alias (e.g. "claude-opus-4-8-
           // 20260101") which must not leak into session.model, or it would
@@ -587,6 +689,9 @@ class AgentSessionManager {
             totalCostUsd: event.totalCostUsd,
             durationMs: event.durationMs,
           };
+
+          // A finished turn is new history — refresh skill suggestions soon.
+          if (!event.isError) this.scheduleSuggestionAnalysis(session);
 
           // A turn ended by a user interrupt reports abort/teardown errors
           // (e.g. "Request was aborted", in-flight tool failures). The user

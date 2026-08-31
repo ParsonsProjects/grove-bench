@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, ThinkingLevel, ToolCategory } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, ThinkingLevel, ToolCategory } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -14,6 +14,7 @@ import type {
 } from './types.js';
 import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
+import * as skillsModule from '../skills.js';
 import { logger } from '../logger.js';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -610,6 +611,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     thinking: true,
     mcpControl: true,
     plugins: true,
+    skills: true,
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
@@ -799,6 +801,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permissionMode: config.permissionMode,
         ...(config.model ? { model: config.model } : {}),
         ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
+        ...(config.skills ? { skills: config.skills } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(thinking ? { thinking } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
@@ -936,6 +939,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     return handle;
+  }
+
+  // ─── Skill management (native format: .claude/skills/<name>/SKILL.md) ───
+
+  async listSkills(worktreePath: string) {
+    return skillsModule.listSkills(worktreePath);
+  }
+
+  async addSkill(worktreePath: string, def: SkillDefinition) {
+    return skillsModule.writeSkill(worktreePath, def);
   }
 
   // ─── MCP server configuration (delegates to `claude mcp` CLI) ───

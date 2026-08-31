@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -23,6 +23,9 @@ export interface AgentCapabilities {
   mcpControl?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
+  /** Supports packaged skill instructions (discovery via listSkills, authoring
+   *  via addSkill, and the AdapterConfig.skills allowlist filter). */
+  skills?: boolean;
   /** Supports image attachments in messages */
   imageAttachments: boolean;
   /** Supports structured JSON output */
@@ -93,6 +96,10 @@ export interface AdapterConfig {
   appendSystemPrompt?: string | null;
   customSystemPrompt?: string | null;
   allowedTools?: Set<string> | null;
+  /** Skill allowlist for the session. When unset, the provider's own defaults
+   *  apply (all discovered skills enabled). An array enables only the listed
+   *  skills — used to honor the user's disabled-skills setting. */
+  skills?: string[] | null;
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;
@@ -215,6 +222,19 @@ export interface AgentAdapter {
   enablePlugin?(pluginId: string): Promise<void>;
   /** Disable an installed plugin. */
   disablePlugin?(pluginId: string): Promise<void>;
+
+  // ─── Optional skill management ───
+
+  /** Skills visible to a session rooted at `worktreePath`, in whatever native
+   *  format the provider uses, mapped to neutral SkillInfo entries. Only
+   *  implement if capabilities.skills is true. */
+  listSkills?(worktreePath: string): Promise<SkillInfo[]>;
+  /** Author a new skill from the neutral definition, serialized into the
+   *  provider's native format (e.g. Claude Code writes
+   *  `.claude/skills/<name>/SKILL.md`). Project scope writes into the
+   *  worktree so the skill travels with the branch; user scope writes to the
+   *  provider's global location. Rejects if the skill already exists. */
+  addSkill?(worktreePath: string, def: SkillDefinition): Promise<SkillInfo>;
 
   // ─── Optional text generation (used by memory auto-save) ───
 

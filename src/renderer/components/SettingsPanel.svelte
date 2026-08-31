@@ -605,6 +605,15 @@
 
           <Separator />
 
+          <!-- Skill Suggestions -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.skillSuggestions} />
+            Suggest skills from session patterns
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">After sessions finish, mine their history for recurring requests and commands and surface skill suggestions in the status bar's Skills popover. Manual "Suggest" stays available when off. On by default.</p>
+
+          <Separator />
+
           <!-- Idle Auto-Stop -->
           <div>
             <Label class="mb-1 block">Auto-stop idle sessions</Label>

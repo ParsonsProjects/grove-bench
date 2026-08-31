@@ -93,6 +93,18 @@ const api: GroveBenchAPI = {
   setMcpServerEnabled: (sessionId: string, serverName: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
 
+  // Skills
+  listSkills: (sessionId: string, fallbackPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_LIST, sessionId, fallbackPath),
+  addSkill: (sessionId: string, fallbackPath: string, def: unknown) =>
+    ipcRenderer.invoke(IPC.SKILLS_ADD, sessionId, fallbackPath, def),
+  getSkillSuggestions: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SUGGESTIONS_GET, repoPath),
+  analyzeSkillSuggestions: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SUGGESTIONS_ANALYZE, repoPath),
+  dismissSkillSuggestion: (repoPath: string, suggestionId: string) =>
+    ipcRenderer.invoke(IPC.SKILLS_SUGGESTION_DISMISS, repoPath, suggestionId),
+
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),

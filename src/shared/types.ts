@@ -321,6 +321,55 @@ export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
 /** Cycle order for the status-bar control and Alt+T shortcut. */
 export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'adaptive'];
 
+// ─── Skills ───
+
+/** A skill discovered on disk or reported by a running session. */
+export interface SkillInfo {
+  /** Skill name (SKILL.md frontmatter `name`, falling back to the directory name). */
+  name: string;
+  /** Frontmatter `description` — empty when the manifest has none or the skill
+   *  is only known from a session's init report. */
+  description: string;
+  /** Where the skill was found: the worktree's `.claude/skills`, the user's
+   *  `~/.claude/skills`, or only reported by the running session (e.g. a
+   *  plugin-provided skill with no scannable location). */
+  source: 'project' | 'user' | 'session';
+  /** Absolute path to SKILL.md for on-disk skills. */
+  path?: string;
+}
+
+/** Provider-neutral definition for authoring a new skill. Each adapter
+ *  serializes this into its native packaged-instructions format. */
+export interface SkillDefinition {
+  /** Kebab-case identifier, e.g. "release-notes". */
+  name: string;
+  /** When the agent should invoke the skill. */
+  description: string;
+  /** Markdown instruction body. */
+  instructions: string;
+  /** 'project' writes into the session's worktree (ships with the branch);
+   *  'user' writes to the provider's global location (all repos). */
+  scope: 'project' | 'user';
+}
+
+/** A proposed skill mined from recurring session patterns. */
+export interface SkillSuggestion {
+  /** Stable id derived from the underlying pattern — dismissals key on it. */
+  id: string;
+  /** Proposed kebab-case skill name. */
+  name: string;
+  /** Proposed trigger description. */
+  description: string;
+  /** Draft instruction body to prefill the Add Skill dialog with. */
+  draftInstructions: string;
+  /** One-line human-readable why (e.g. "Similar requests in 4 sessions"). */
+  rationale: string;
+  /** Example prompt/command excerpts the pattern was mined from. */
+  evidence: string[];
+  /** Distinct sessions the pattern appeared in. */
+  sessionCount: number;
+}
+
 // ─── MCP Servers ───
 
 /** Provider-agnostic snapshot of an agent's MCP server connection. */
@@ -490,6 +539,19 @@ export interface GroveBenchAPI {
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
+  /** Skills visible to a session (project + user `.claude/skills` scan).
+   *  Resolves the session's worktree when it is running; `fallbackPath`
+   *  (typically the repo path) covers stopped sessions. */
+  listSkills(sessionId: string, fallbackPath: string): Promise<SkillInfo[]>;
+  /** Author a new skill for the session's agent provider. Project scope
+   *  writes into the session's worktree; user scope applies to all repos. */
+  addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
+  /** Cached skill suggestions for a repo (last analysis result). */
+  getSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
+  /** Mine the repo's session history for patterns and refresh suggestions. */
+  analyzeSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
+  /** Permanently dismiss one suggestion for a repo. */
+  dismissSkillSuggestion(repoPath: string, suggestionId: string): Promise<void>;
   reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
 
@@ -634,6 +696,14 @@ export interface GroveBenchSettings {
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
   disableBypassMode: boolean;
+  /** Skill names hidden from agent sessions. Applied when a session's query
+   *  (re)starts — the SDK receives an allowlist of every known skill minus
+   *  these. Empty = all skills enabled (the CLI default). */
+  disabledSkills: string[];
+  /** Auto-analyze finished sessions for recurring workflows and surface skill
+   *  suggestions in the status bar. Manual analysis stays available when off.
+   *  Default true. */
+  skillSuggestions: boolean;
 
   // Agent Defaults
   defaultModel: string;
@@ -829,6 +899,11 @@ export const IPC = {
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_THINKING: 'agent:setThinking',
   AGENT_MCP_LIST: 'agent:mcpList',
+  SKILLS_LIST: 'skills:list',
+  SKILLS_ADD: 'skills:add',
+  SKILLS_SUGGESTIONS_GET: 'skills:suggestionsGet',
+  SKILLS_SUGGESTIONS_ANALYZE: 'skills:suggestionsAnalyze',
+  SKILLS_SUGGESTION_DISMISS: 'skills:suggestionDismiss',
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   MCP_CONFIG_LIST: 'mcpConfig:list',

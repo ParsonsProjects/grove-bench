@@ -25,6 +25,8 @@ const SETTINGS = {
   toolAllowRules: [],
   toolDenyRules: [],
   disableBypassMode: false,
+  disabledSkills: ['legacy-deploy'] as string[],
+  skillSuggestions: true,
   defaultModel: '',
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
@@ -77,6 +79,35 @@ const GIT_STATUS: Record<string, { entries: { filePath: string; status: string; 
     { filePath: 'src/db/query-plan.md', status: 'added', staged: false, additions: 54, deletions: 0 },
   ] },
 };
+
+const DEMO_SKILLS = [
+  { name: 'code-review', description: 'Review the current diff for correctness bugs and cleanups at a given effort level', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/code-review/SKILL.md' },
+  { name: 'deploy-preview', description: 'Build the app and publish a preview channel for this branch', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/deploy-preview/SKILL.md' },
+  { name: 'legacy-deploy', description: 'Old NSIS deploy pipeline — superseded by deploy-preview', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/legacy-deploy/SKILL.md' },
+  { name: 'release-notes', description: 'Draft release notes from merged PRs since the last tag', source: 'user', path: 'C:/Users/demo/.claude/skills/release-notes/SKILL.md' },
+  { name: 'worktree-doctor', description: 'Diagnose and repair broken git worktrees and stale locks', source: 'user', path: 'C:/Users/demo/.claude/skills/worktree-doctor/SKILL.md' },
+];
+
+let DEMO_SUGGESTIONS = [
+  {
+    id: 'a1b2c3',
+    name: 'nsis-smoke-test',
+    description: 'Use after packaging changes to build the NSIS installer and smoke-test it',
+    draftInstructions: 'This command ran in 5 sessions (11 times total):\n\n```\nnpm run dist && start dist/grove-bench-setup.exe /S\n```\n\nDocument when to run it, what to check first, and how to verify the result.',
+    rationale: 'Same command run in 5 sessions (11 times)',
+    evidence: ['npm run dist && start dist/grove-bench-setup.exe /S'],
+    sessionCount: 5,
+  },
+  {
+    id: 'd4e5f6',
+    name: 'changelog-update',
+    description: 'Use when asked to update the changelog from merged PRs since the last tag',
+    draftInstructions: 'Recurring request across 4 sessions. Examples:\n- Update CHANGELOG.md with everything merged since v0.3\n- Add the worktree fixes to the changelog\n\nDocument the proven steps for this task here.',
+    rationale: 'Similar requests in 4 sessions (6 prompts)',
+    evidence: ['Update CHANGELOG.md with everything merged since v0.3', 'Add the worktree fixes to the changelog'],
+    sessionCount: 4,
+  },
+];
 
 const CONTENT_HITS = [
   { sessionId: 's-oauth', eventIndex: 14, kind: 'assistant', snippet: '…the OAuth refresh token was being rotated twice per request, which invalidated the second…' },
@@ -178,6 +209,26 @@ const api: Record<string, unknown> = {
     memoryFiles.find(f => f.relativePath === p)?.content
       ?? `---\ntitle: "Tech Stack"\n---\n\nArchived copy from before the last compaction.\n`,
   getSettings: async () => SETTINGS,
+  saveSettings: async (next: typeof SETTINGS) => {
+    Object.assign(SETTINGS, next);
+  },
+  listSkills: async () => DEMO_SKILLS,
+  addSkill: async (_sid: string, _fallback: string, def: { name: string; description: string; scope: string }) => {
+    const root = def.scope === 'project' ? 'C:/dev/grove-bench' : 'C:/Users/demo';
+    const skill = {
+      name: def.name,
+      description: def.description,
+      source: def.scope,
+      path: `${root}/.claude/skills/${def.name}/SKILL.md`,
+    };
+    DEMO_SKILLS.push(skill);
+    return skill;
+  },
+  getSkillSuggestions: async () => DEMO_SUGGESTIONS,
+  analyzeSkillSuggestions: async () => DEMO_SUGGESTIONS,
+  dismissSkillSuggestion: async (_repo: string, id: string) => {
+    DEMO_SUGGESTIONS = DEMO_SUGGESTIONS.filter((s) => s.id !== id);
+  },
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
     agent: { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
@@ -295,6 +346,23 @@ async function seedConversations() {
     's-sidebar': { activity: 'tool_starting', toolName: 'Bash', toolSummary: 'npm test' },
   };
   messageStore.modelBySession = { ...messageStore.modelBySession, 's-sidebar': 'claude-fable-5' };
+  // System init snapshot for the active session — includes a plugin-provided
+  // skill the on-disk scan can't see, so the Skills popover shows all sources.
+  messageStore.systemInfoBySession = {
+    ...messageStore.systemInfoBySession,
+    's-sidebar': {
+      tools: ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'Agent', 'WebFetch'],
+      agents: ['Explore', 'Plan', 'general-purpose'],
+      skills: ['code-review', 'deploy-preview', 'release-notes', 'worktree-doctor', 'changelog-bot'],
+      slashCommands: ['compact', 'clear', 'code-review', 'release-notes'],
+      mcpServers: [{ name: 'grove-memory', status: 'connected' }],
+    },
+  };
+  messageStore.usageBySession = {
+    ...messageStore.usageBySession,
+    's-sidebar': { inputTokens: 24_312, outputTokens: 8_120, cacheReadTokens: 210_450, cacheCreationTokens: 12_300 },
+  };
+  messageStore.contextWindowBySession = { ...messageStore.contextWindowBySession, 's-sidebar': 1_000_000 };
   messageStore.setIsRunning('s-sidebar', true);
   messageStore.setIsReady('s-sidebar', true);
   messageStore.setIsRunning('s-oauth', true);

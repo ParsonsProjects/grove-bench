@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, ThinkingLevel } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, ThinkingLevel } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
@@ -18,6 +18,7 @@ import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
+import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
@@ -388,6 +389,35 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_MCP_TOGGLE, (_event, sessionId: string, serverName: string, enabled: boolean) => {
     return sessionManager.setMcpServerEnabled(sessionId, serverName, enabled);
+  });
+
+  ipcMain.handle(IPC.SKILLS_LIST, (_event, sessionId: string, fallbackPath: string) => {
+    const adapter = sessionManager.getSessionAdapter(sessionId) ?? adapterRegistry.getDefault();
+    const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
+    if (!root || !adapter.listSkills) return [];
+    return adapter.listSkills(root);
+  });
+
+  ipcMain.handle(IPC.SKILLS_ADD, (_event, sessionId: string, fallbackPath: string, def: SkillDefinition) => {
+    const adapter = sessionManager.getSessionAdapter(sessionId) ?? adapterRegistry.getDefault();
+    if (!adapter.addSkill) {
+      throw new Error(`${adapter.displayName} does not support adding skills`);
+    }
+    const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
+    if (!root) throw new Error('No project root available for this session');
+    return adapter.addSkill(root, def);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SUGGESTIONS_GET, (_event, repoPath: string) => {
+    return skillSuggestions.getCachedSuggestions(repoPath);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SUGGESTIONS_ANALYZE, (_event, repoPath: string) => {
+    return sessionManager.analyzeSkillSuggestionsForRepo(repoPath);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SUGGESTION_DISMISS, (_event, repoPath: string, suggestionId: string) => {
+    skillSuggestions.dismissSuggestion(repoPath, suggestionId);
   });
 
   ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
