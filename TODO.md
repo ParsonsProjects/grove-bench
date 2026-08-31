@@ -5,9 +5,9 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ## Priority 1 — High Impact
 
 ### Multi-Agent Support
-- [ ] Support multiple agent backends (Gemini, Codex, OpenHand) beyond Claude
+- [x] Support multiple agent backends beyond Claude — Mistral (Vibe CLI over ACP) shipped; Gemini, Codex, OpenHand still open
 - [ ] Agent discovery/install marketplace ("app store")
-- [ ] Agent Client Protocol for custom agent integration
+- [x] Agent Client Protocol for custom agent integration (`adapters/acp-client.ts`)
 
 ### Embedded Terminal
 - [x] Full working shell with color support and interactive command execution
@@ -108,7 +108,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
-- [ ] Fetch Claude model list dynamically instead of hardcoding (`adapters/claude-code.ts` TODO)
+- [ ] Fetch model lists dynamically instead of hardcoding (`adapters/claude-code.ts`, `adapters/mistral-vibe.ts` TODOs)
 
 ### From DESIGN.md v2 (documented but previously untracked)
 - [ ] Docker-based sandboxing of agent sessions

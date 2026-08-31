@@ -3,6 +3,12 @@
 Add [Mistral](https://mistral.ai/) as a second agent provider alongside Claude Code, selectable
 per-session, using the existing `AgentAdapter` abstraction in `src/main/adapters/`.
 
+> **Status:** Phases 1–3 are implemented on this branch (`adapters/acp-client.ts`,
+> `adapters/mistral-vibe.ts`, plus the wiring-gap fixes below). **Phase 0 — the manual
+> Windows spike validating `vibe-acp` end-to-end — has NOT been run** and remains the
+> go/no-go gate before shipping: install vibe on a Windows box, create a Mistral session,
+> and exercise a tool-permission prompt, an interrupt, and a resume.
+
 ## Summary of the approach
 
 Integrate **Mistral Vibe** — Mistral's open-source CLI coding agent

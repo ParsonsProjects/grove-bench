@@ -682,7 +682,7 @@ All errors log to a file at `%APPDATA%/grove-bench/logs/`. Useful for debugging 
 
 ## 14. v2 Considerations (Out of Scope, Documented for Later)
 
-- Support for Codex, Gemini CLI, Aider, and other agents (adapter pattern is in place)
+- Support for Codex, Gemini CLI, Aider, and other agents (adapter pattern is in place; Mistral shipped via the ACP client in `adapters/acp-client.ts`, which future ACP-capable agents can reuse)
 - Docker-based sandboxing
 - Cross-platform support (macOS, Linux)
 - Shared CLAUDE.md / agent instructions per worktree

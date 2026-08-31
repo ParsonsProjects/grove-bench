@@ -477,9 +477,21 @@
     });
   });
 
+  // Provider badge — shown only for sessions on a non-default adapter, so
+  // single-provider setups stay uncluttered.
+  let registeredAdapters = $state<Array<{ id: string; displayName: string }>>([]);
+  let providerLabel = $derived.by(() => {
+    if (!sessionAgentType || registeredAdapters.length === 0) return '';
+    if (sessionAgentType === registeredAdapters[0].id) return '';
+    return registeredAdapters.find((a) => a.id === sessionAgentType)?.displayName ?? sessionAgentType;
+  });
+
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('click', handleClickOutside);
+    window.groveBench.listAdapters().then((list) => {
+      registeredAdapters = list.map((a) => ({ id: a.id, displayName: a.displayName }));
+    }).catch(() => { /* badge stays hidden */ });
     // Populate the Skills item up front — the collapsed count and suggestion
     // badge shouldn't wait for the popover to be opened.
     refreshSkills();
@@ -493,6 +505,9 @@
 </script>
 
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+  {#if providerLabel}
+    <span class="text-muted-foreground/80" title="Agent provider">{providerLabel}</span>
+  {/if}
   {#if model}
     <div class="relative" bind:this={modelPickerRef}>
       <button
