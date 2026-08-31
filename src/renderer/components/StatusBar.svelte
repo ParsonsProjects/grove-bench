@@ -11,7 +11,9 @@
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import CreatePrDialog from './CreatePrDialog.svelte';
-  import type { McpServerInfo, ThinkingLevel } from '../../shared/types.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { mergeSkills } from '../lib/skills-merge.js';
+  import type { McpServerInfo, SkillInfo, ThinkingLevel } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -283,6 +285,46 @@
     }
   }
 
+  // ─── Skills management ───
+
+  let skillsExpanded = $state(false);
+  let skillsRef = $state<HTMLDivElement | null>(null);
+  let diskSkills = $state<SkillInfo[]>([]);
+  let skillsBusy = $state<Record<string, boolean>>({});
+  /** On-disk scan merged with the session's init report (plugin skills). */
+  let allSkills = $derived(mergeSkills(diskSkills, systemInfo.skills));
+  let disabledSkills = $derived(settingsStore.current.disabledSkills ?? []);
+  let enabledSkillCount = $derived(allSkills.filter((s) => !disabledSkills.includes(s.name)).length);
+  let disabledSkillCount = $derived(allSkills.length - enabledSkillCount);
+
+  const skillSourceLabels: Record<SkillInfo['source'], string> = {
+    project: 'project',
+    user: 'user',
+    session: 'plugin',
+  };
+
+  async function refreshSkills() {
+    try {
+      const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
+      diskSkills = await window.groveBench.listSkills(sessionId, repoPath) ?? [];
+    } catch { /* keep the last snapshot */ }
+  }
+
+  function toggleSkillsPopover() {
+    skillsExpanded = !skillsExpanded;
+    if (skillsExpanded) refreshSkills();
+  }
+
+  async function setSkillEnabled(name: string, enabled: boolean) {
+    skillsBusy = { ...skillsBusy, [name]: true };
+    try {
+      await settingsStore.setSkillDisabled(name, !enabled);
+    } catch { /* settingsStore.error carries the message */ }
+    finally {
+      skillsBusy = { ...skillsBusy, [name]: false };
+    }
+  }
+
   let lastResult = $derived.by(() => {
     const msgs = messageStore.getMessages(sessionId);
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -350,6 +392,12 @@
     if (mcpExpanded && mcpRef && !mcpRef.contains(target)) {
       mcpExpanded = false;
     }
+    // isConnected guard: toggling a skill swaps its Enable/Disable button out
+    // of the DOM before the click bubbles here, which would otherwise read as
+    // an outside click and close the popover mid-interaction.
+    if (skillsExpanded && skillsRef && target.isConnected && !skillsRef.contains(target)) {
+      skillsExpanded = false;
+    }
     if (createPrMenuOpen && createPrRef && !createPrRef.contains(target)) {
       createPrMenuOpen = false;
     }
@@ -364,6 +412,9 @@
     window.groveBench.getModels().then((models) => {
       modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
     });
+    // Populate the Skills item up front — the collapsed count shouldn't wait
+    // for the popover to be opened.
+    refreshSkills();
   });
 
   onDestroy(() => {
@@ -647,6 +698,91 @@
                 {/if}
               </div>
             {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if allSkills.length > 0}
+    <div class="relative" bind:this={skillsRef}>
+      <button
+        onclick={toggleSkillsPopover}
+        class="flex items-center gap-1 transition-colors
+          {enabledSkillCount === 0 ? 'text-red-400 hover:text-red-300'
+            : disabledSkillCount > 0 ? 'text-orange-400 hover:text-orange-300'
+            : 'text-muted-foreground hover:text-foreground'}"
+        title="Skills — click to manage{disabledSkillCount > 0 ? ` (${disabledSkillCount} disabled)` : ''}"
+      >
+        <span class="w-1.5 h-1.5
+          {enabledSkillCount === 0 ? 'bg-red-500'
+            : disabledSkillCount > 0 ? 'bg-orange-400'
+            : 'bg-green-500'}"></span>
+        Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
+      </button>
+
+      {#if skillsExpanded}
+        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-medium text-foreground">Skills</span>
+            <button
+              onclick={refreshSkills}
+              class="text-muted-foreground/60 hover:text-foreground transition-colors"
+              title="Re-scan skill directories"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {#if settingsStore.error}
+            <div class="text-destructive mb-2 break-words">{settingsStore.error}</div>
+          {/if}
+
+          <div class="space-y-1.5 max-h-64 overflow-y-auto">
+            {#each allSkills as skill (skill.name)}
+              {@const disabled = disabledSkills.includes(skill.name)}
+              <div class="flex items-center gap-2 group">
+                <span class="w-1.5 h-1.5 shrink-0 {disabled ? 'bg-muted-foreground/40' : 'bg-green-500'}"></span>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-mono truncate {disabled ? 'text-muted-foreground line-through' : 'text-foreground'}" title={skill.path ?? skill.name}>
+                      {skill.name}
+                    </span>
+                    <span class="text-[10px] px-1 border border-border text-muted-foreground/60 shrink-0">
+                      {skillSourceLabels[skill.source]}
+                    </span>
+                  </div>
+                  {#if skill.description}
+                    <div class="text-muted-foreground/60 text-[10px] truncate" title={skill.description}>
+                      {skill.description}
+                    </div>
+                  {/if}
+                </div>
+                {#if disabled}
+                  <button
+                    onclick={() => setSkillEnabled(skill.name, true)}
+                    disabled={skillsBusy[skill.name]}
+                    class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0 disabled:opacity-50"
+                    title="Re-enable this skill"
+                  >
+                    Enable
+                  </button>
+                {:else}
+                  <button
+                    onclick={() => setSkillEnabled(skill.name, false)}
+                    disabled={skillsBusy[skill.name]}
+                    class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
+                    title="Hide this skill from agents"
+                  >
+                    Disable
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+
+          <div class="text-muted-foreground/50 text-[10px] mt-2 pt-2 border-t border-border">
+            Applies to all repos, when a session's agent (re)starts — running turns keep their current skills.
           </div>
         </div>
       {/if}

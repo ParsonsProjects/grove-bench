@@ -321,6 +321,23 @@ export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
 /** Cycle order for the status-bar control and Alt+T shortcut. */
 export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'adaptive'];
 
+// ─── Skills ───
+
+/** A skill discovered on disk or reported by a running session. */
+export interface SkillInfo {
+  /** Skill name (SKILL.md frontmatter `name`, falling back to the directory name). */
+  name: string;
+  /** Frontmatter `description` — empty when the manifest has none or the skill
+   *  is only known from a session's init report. */
+  description: string;
+  /** Where the skill was found: the worktree's `.claude/skills`, the user's
+   *  `~/.claude/skills`, or only reported by the running session (e.g. a
+   *  plugin-provided skill with no scannable location). */
+  source: 'project' | 'user' | 'session';
+  /** Absolute path to SKILL.md for on-disk skills. */
+  path?: string;
+}
+
 // ─── MCP Servers ───
 
 /** Provider-agnostic snapshot of an agent's MCP server connection. */
@@ -490,6 +507,10 @@ export interface GroveBenchAPI {
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
+  /** Skills visible to a session (project + user `.claude/skills` scan).
+   *  Resolves the session's worktree when it is running; `fallbackPath`
+   *  (typically the repo path) covers stopped sessions. */
+  listSkills(sessionId: string, fallbackPath: string): Promise<SkillInfo[]>;
   reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
 
@@ -634,6 +655,10 @@ export interface GroveBenchSettings {
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
   disableBypassMode: boolean;
+  /** Skill names hidden from agent sessions. Applied when a session's query
+   *  (re)starts — the SDK receives an allowlist of every known skill minus
+   *  these. Empty = all skills enabled (the CLI default). */
+  disabledSkills: string[];
 
   // Agent Defaults
   defaultModel: string;
@@ -829,6 +854,7 @@ export const IPC = {
   AGENT_SET_MODEL: 'agent:setModel',
   AGENT_SET_THINKING: 'agent:setThinking',
   AGENT_MCP_LIST: 'agent:mcpList',
+  SKILLS_LIST: 'skills:list',
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   MCP_CONFIG_LIST: 'mcpConfig:list',

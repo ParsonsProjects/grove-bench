@@ -93,6 +93,10 @@ export interface AdapterConfig {
   appendSystemPrompt?: string | null;
   customSystemPrompt?: string | null;
   allowedTools?: Set<string> | null;
+  /** Skill allowlist for the session. When unset, the provider's own defaults
+   *  apply (all discovered skills enabled). An array enables only the listed
+   *  skills — used to honor the user's disabled-skills setting. */
+  skills?: string[] | null;
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;

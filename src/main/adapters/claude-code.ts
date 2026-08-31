@@ -799,6 +799,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permissionMode: config.permissionMode,
         ...(config.model ? { model: config.model } : {}),
         ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
+        ...(config.skills ? { skills: config.skills } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(thinking ? { thinking } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),

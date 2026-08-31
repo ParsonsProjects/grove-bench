@@ -18,6 +18,7 @@ import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
+import * as skills from './skills.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
@@ -388,6 +389,12 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_MCP_TOGGLE, (_event, sessionId: string, serverName: string, enabled: boolean) => {
     return sessionManager.setMcpServerEnabled(sessionId, serverName, enabled);
+  });
+
+  ipcMain.handle(IPC.SKILLS_LIST, (_event, sessionId: string, fallbackPath: string) => {
+    const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
+    if (!root) return [];
+    return skills.listSkills(root);
   });
 
   ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {

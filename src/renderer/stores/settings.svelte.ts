@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolAllowRules: [],
   toolDenyRules: [],
   disableBypassMode: false,
+  disabledSkills: [],
   defaultModel: '',
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
@@ -69,6 +70,30 @@ class SettingsStore {
   reset() {
     this.draft = $state.snapshot(this.current) as GroveBenchSettings;
     this.error = null;
+  }
+
+  /** Persist a partial change immediately (status-bar toggles), keeping any
+   *  unrelated unsaved Settings-panel edits in the draft intact. */
+  async updateNow(patch: Partial<GroveBenchSettings>) {
+    const next = { ...($state.snapshot(this.current) as GroveBenchSettings), ...patch };
+    this.error = null;
+    try {
+      await window.groveBench.saveSettings(next);
+      this.current = next;
+      this.draft = { ...($state.snapshot(this.draft) as GroveBenchSettings), ...patch };
+    } catch (e: any) {
+      this.error = e.message || String(e);
+      throw e;
+    }
+  }
+
+  /** Toggle one skill's disabled state and persist right away. */
+  async setSkillDisabled(name: string, disabled: boolean) {
+    const list = this.current.disabledSkills ?? [];
+    const next = disabled
+      ? (list.includes(name) ? list : [...list, name])
+      : list.filter((n) => n !== name);
+    await this.updateNow({ disabledSkills: next });
   }
 
   // ─── List helpers ───

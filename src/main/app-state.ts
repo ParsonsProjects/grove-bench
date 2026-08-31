@@ -11,6 +11,11 @@ interface AppState {
   sessionSort: SessionSortState;
   /** Sidebar width in px (user-resizable). Null/absent = renderer default. */
   sidebarWidth?: number | null;
+  /** Skill names each repo's sessions have ever reported (union, per repo
+   *  path). Lets the disabled-skills allowlist include plugin-provided skills
+   *  that the on-disk scan can't discover, even on the first query after an
+   *  app restart. */
+  knownSkills?: Record<string, string[]>;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -143,6 +148,19 @@ function writePendingSidebarWidth(): void {
   } catch { /* ignore */ }
   pendingSidebarWidth = null;
   sidebarWidthTimer = null;
+}
+
+export function loadKnownSkills(repoPath: string): string[] {
+  return loadAppState().knownSkills?.[repoPath] ?? [];
+}
+
+/** Write-through (no debounce) — system_init events are rare. */
+export function saveKnownSkills(repoPath: string, skills: string[]): void {
+  try {
+    const state = loadAppState();
+    state.knownSkills = { ...(state.knownSkills ?? {}), [repoPath]: skills };
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
 }
 
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */

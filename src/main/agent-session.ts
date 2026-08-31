@@ -4,6 +4,8 @@ import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, Thinki
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
+import * as skills from './skills.js';
+import { loadKnownSkills, saveKnownSkills } from './app-state.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import * as fs from 'node:fs';
@@ -150,6 +152,45 @@ class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
+
+  /** Union of skill names each repo's sessions have reported via system_init.
+   *  Backed by persisted app state so plugin-provided skills (invisible to the
+   *  on-disk scan) survive app restarts and stay in the allowlist when the
+   *  user has disabled other skills. */
+  private knownSkillsByRepo = new Map<string, Set<string>>();
+
+  /** Worktree path for a managed session, if it exists. */
+  getWorktreePath(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.worktreePath ?? null;
+  }
+
+  private getKnownSkills(repoPath: string): Set<string> {
+    let known = this.knownSkillsByRepo.get(repoPath);
+    if (!known) {
+      known = new Set(loadKnownSkills(repoPath));
+      this.knownSkillsByRepo.set(repoPath, known);
+    }
+    return known;
+  }
+
+  private recordKnownSkills(repoPath: string, names: string[]): void {
+    const known = this.getKnownSkills(repoPath);
+    const before = known.size;
+    for (const name of names) known.add(name);
+    if (known.size !== before) {
+      saveKnownSkills(repoPath, [...known].sort());
+    }
+  }
+
+  /** Skill allowlist for a session, honoring settings.disabledSkills.
+   *  Undefined when nothing is disabled — the SDK option is then omitted so
+   *  every skill loads (the CLI default). */
+  private skillsFilterFor(session: ManagedSession, disabledSkills: string[]): string[] | undefined {
+    if (disabledSkills.length === 0) return undefined;
+    const known = new Set(skills.listSkills(session.worktreePath).map((s) => s.name));
+    for (const name of this.getKnownSkills(session.repoPath)) known.add(name);
+    return skills.computeSkillsFilter(known, disabledSkills);
+  }
 
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
@@ -386,6 +427,7 @@ class AgentSessionManager {
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
+      skills: this.skillsFilterFor(session, currentSettings.disabledSkills ?? []) ?? null,
       outputFormat: session.outputFormat,
       sandbox: session.sandbox,
       memoryOperations: {
@@ -512,6 +554,11 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          // Remember reported skills so the disabled-skills allowlist can
+          // include plugin skills the on-disk scan can't see.
+          if (event.skills && event.skills.length > 0) {
+            this.recordKnownSkills(session.repoPath, event.skills);
+          }
           // Record the model the provider resolved, normalised back to a known
           // picker id. The SDK reports a dated alias (e.g. "claude-opus-4-8-
           // 20260101") which must not leak into session.model, or it would
