@@ -730,6 +730,12 @@ export interface GroveBenchSettings {
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
 
+  // Providers
+  /** Mistral API key for the Mistral adapter (https://console.mistral.ai/).
+   *  Empty = fall back to the MISTRAL_API_KEY env var or vibe's own
+   *  ~/.vibe/.env credential file. */
+  mistralApiKey: string;
+
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;

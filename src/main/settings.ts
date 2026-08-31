@@ -19,6 +19,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
 
+  // Providers
+  mistralApiKey: '',
+
   // Memory
   memoryAutoSave: true,
   memoryAutoCompact: true,

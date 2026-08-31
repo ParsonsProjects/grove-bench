@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  mistralApiKey: '',
   memoryAutoSave: true,
   memoryAutoCompact: true,
   autoInstallDeps: false,

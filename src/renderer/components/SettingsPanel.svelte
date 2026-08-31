@@ -463,6 +463,24 @@
 
           <Separator />
 
+          <!-- Mistral API Key -->
+          <div>
+            <Label for="settings-mistral-key" class="mb-1 block">Mistral API Key</Label>
+            <input
+              id="settings-mistral-key"
+              type="password"
+              autocomplete="off"
+              bind:value={settingsStore.draft.mistralApiKey}
+              placeholder="Used by the Mistral agent"
+              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Get a key at console.mistral.ai. Leave empty to use the MISTRAL_API_KEY environment variable or vibe's own login.
+            </p>
+          </div>
+
+          <Separator />
+
           <!-- Working Directories -->
           <div>
             <Label class="mb-1 block">Additional Working Directories</Label>

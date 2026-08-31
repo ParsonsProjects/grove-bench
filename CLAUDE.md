@@ -33,10 +33,12 @@ src/
     logger.ts          # File-based logging
     git-status-parser.ts
     adapters/          # Agent adapter pattern
-      index.ts         # Adapter exports
+      index.ts         # Adapter exports + registration
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      acp-client.ts    # Agent Client Protocol (ACP) JSON-RPC client
+      mistral-vibe.ts  # Mistral adapter (Mistral Vibe CLI over ACP)
   renderer/            # Electron renderer (Svelte UI)
     App.svelte         # Root component
     main.ts            # Renderer entry
