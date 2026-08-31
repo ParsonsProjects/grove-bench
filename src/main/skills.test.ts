@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter } from './skills.js';
+import { parseSkillFrontmatter, scanSkillsDir, computeSkillsFilter, validateSkillName, skillManifestContent, writeSkill } from './skills.js';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name and description from a frontmatter block', () => {
@@ -76,6 +76,89 @@ describe('scanSkillsDir', () => {
     fs.writeFileSync(path.join(dir, 'stray.md'), 'x');
     addSkill('real', '---\nname: real\n---\n');
     expect(scanSkillsDir(dir, 'project').map((s) => s.name)).toEqual(['real']);
+  });
+});
+
+describe('validateSkillName', () => {
+  it('accepts kebab-case names', () => {
+    expect(() => validateSkillName('release-notes')).not.toThrow();
+    expect(() => validateSkillName('pdf2')).not.toThrow();
+  });
+
+  it('rejects uppercase, spaces, leading dashes, and path characters', () => {
+    for (const bad of ['Release', 'my skill', '-lead', '../escape', 'a/b', '']) {
+      expect(() => validateSkillName(bad)).toThrow();
+    }
+  });
+});
+
+describe('skillManifestContent', () => {
+  it('round-trips through the frontmatter parser, colons included', () => {
+    const md = skillManifestContent({
+      name: 'deploy',
+      description: 'Use when: shipping fixes',
+      instructions: '# Steps\n\n1. Build',
+      scope: 'project',
+    });
+    expect(parseSkillFrontmatter(md)).toEqual({
+      name: 'deploy',
+      description: 'Use when: shipping fixes',
+    });
+    expect(md).toContain('# Steps');
+    expect(md.startsWith('---\nname: deploy\n')).toBe(true);
+  });
+
+  it('quotes the description so YAML-significant characters survive', () => {
+    const md = skillManifestContent({
+      name: 'x', description: 'He said "go"', instructions: 'i', scope: 'user',
+    });
+    expect(md).toContain('description: "He said \\"go\\""');
+  });
+});
+
+describe('writeSkill', () => {
+  let worktree: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-wt-'));
+    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-home-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(worktree, { recursive: true, force: true });
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  const def = { name: 'release-notes', description: 'Draft notes', instructions: 'Do the thing', scope: 'project' as const };
+
+  it('writes a project skill into the worktree and returns its info', () => {
+    const info = writeSkill(worktree, def);
+    const manifestPath = path.join(worktree, '.claude', 'skills', 'release-notes', 'SKILL.md');
+    expect(info).toEqual({ name: 'release-notes', description: 'Draft notes', source: 'project', path: manifestPath });
+    expect(scanSkillsDir(path.join(worktree, '.claude', 'skills'), 'project')[0]).toMatchObject({
+      name: 'release-notes',
+      description: 'Draft notes',
+    });
+  });
+
+  it('writes a user skill under the home directory', () => {
+    const info = writeSkill(worktree, { ...def, scope: 'user' });
+    expect(info.path).toBe(path.join(fakeHome, '.claude', 'skills', 'release-notes', 'SKILL.md'));
+    expect(info.source).toBe('user');
+  });
+
+  it('refuses to overwrite an existing skill at the same scope', () => {
+    writeSkill(worktree, def);
+    expect(() => writeSkill(worktree, def)).toThrow(/already exists/);
+  });
+
+  it('rejects invalid names and blank description or instructions', () => {
+    expect(() => writeSkill(worktree, { ...def, name: 'Bad Name' })).toThrow();
+    expect(() => writeSkill(worktree, { ...def, description: '  ' })).toThrow(/description/);
+    expect(() => writeSkill(worktree, { ...def, instructions: '' })).toThrow(/instructions/);
   });
 });
 

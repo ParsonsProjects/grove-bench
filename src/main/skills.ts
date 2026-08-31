@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { SkillInfo } from '../shared/types.js';
+import type { SkillDefinition, SkillInfo } from '../shared/types.js';
 
 /**
  * Extract `name` and `description` from a SKILL.md YAML frontmatter block.
@@ -79,6 +79,59 @@ export function listSkills(worktreePath: string): SkillInfo[] {
     byName.set(skill.name, skill); // project entries overwrite user entries
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Kebab-case identifier the CLI accepts as a skill directory name. */
+export function validateSkillName(name: string): void {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+    throw new Error('Skill name must be kebab-case: lowercase letters, digits, and dashes (e.g. "release-notes")');
+  }
+  if (name.length > 64) {
+    throw new Error('Skill name must be 64 characters or fewer');
+  }
+}
+
+/** Serialize a neutral SkillDefinition into SKILL.md content. The description
+ *  is double-quoted so colons and other YAML-significant characters survive
+ *  a real YAML parser, not just our line-based reader. */
+export function skillManifestContent(def: SkillDefinition): string {
+  const description = `"${def.description.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  return [
+    '---',
+    `name: ${def.name}`,
+    `description: ${description}`,
+    '---',
+    '',
+    def.instructions.trim(),
+    '',
+  ].join('\n');
+}
+
+/**
+ * Write a new skill in Claude Code's native format. Project scope writes into
+ * the worktree (`<worktree>/.claude/skills`); user scope writes to
+ * `~/.claude/skills`. Rejects names that collide with an existing skill at
+ * the same scope — overwriting someone's manifest silently would be data loss.
+ */
+export function writeSkill(worktreePath: string, def: SkillDefinition): SkillInfo {
+  validateSkillName(def.name);
+  if (!def.description.trim()) throw new Error('Skill description is required');
+  if (!def.instructions.trim()) throw new Error('Skill instructions are required');
+
+  const root = def.scope === 'project' ? worktreePath : os.homedir();
+  const skillDir = path.join(root, '.claude', 'skills', def.name);
+  const manifestPath = path.join(skillDir, 'SKILL.md');
+  if (fs.existsSync(manifestPath)) {
+    throw new Error(`A ${def.scope} skill named "${def.name}" already exists`);
+  }
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(manifestPath, skillManifestContent(def));
+  return {
+    name: def.name,
+    description: def.description,
+    source: def.scope,
+    path: manifestPath,
+  };
 }
 
 /**

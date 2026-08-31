@@ -191,6 +191,17 @@ const api: Record<string, unknown> = {
     Object.assign(SETTINGS, next);
   },
   listSkills: async () => DEMO_SKILLS,
+  addSkill: async (_sid: string, _fallback: string, def: { name: string; description: string; scope: string }) => {
+    const root = def.scope === 'project' ? 'C:/dev/grove-bench' : 'C:/Users/demo';
+    const skill = {
+      name: def.name,
+      description: def.description,
+      source: def.scope,
+      path: `${root}/.claude/skills/${def.name}/SKILL.md`,
+    };
+    DEMO_SKILLS.push(skill);
+    return skill;
+  },
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
     agent: { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },

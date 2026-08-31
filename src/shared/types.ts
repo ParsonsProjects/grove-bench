@@ -338,6 +338,20 @@ export interface SkillInfo {
   path?: string;
 }
 
+/** Provider-neutral definition for authoring a new skill. Each adapter
+ *  serializes this into its native packaged-instructions format. */
+export interface SkillDefinition {
+  /** Kebab-case identifier, e.g. "release-notes". */
+  name: string;
+  /** When the agent should invoke the skill. */
+  description: string;
+  /** Markdown instruction body. */
+  instructions: string;
+  /** 'project' writes into the session's worktree (ships with the branch);
+   *  'user' writes to the provider's global location (all repos). */
+  scope: 'project' | 'user';
+}
+
 // ─── MCP Servers ───
 
 /** Provider-agnostic snapshot of an agent's MCP server connection. */
@@ -511,6 +525,9 @@ export interface GroveBenchAPI {
    *  Resolves the session's worktree when it is running; `fallbackPath`
    *  (typically the repo path) covers stopped sessions. */
   listSkills(sessionId: string, fallbackPath: string): Promise<SkillInfo[]>;
+  /** Author a new skill for the session's agent provider. Project scope
+   *  writes into the session's worktree; user scope applies to all repos. */
+  addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
   reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
 
@@ -855,6 +872,7 @@ export const IPC = {
   AGENT_SET_THINKING: 'agent:setThinking',
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',
+  SKILLS_ADD: 'skills:add',
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   MCP_CONFIG_LIST: 'mcpConfig:list',

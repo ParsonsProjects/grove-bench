@@ -4,7 +4,7 @@ import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, Thinki
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
-import * as skills from './skills.js';
+import { computeSkillsFilter } from './skills.js';
 import { loadKnownSkills, saveKnownSkills } from './app-state.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
@@ -182,14 +182,23 @@ class AgentSessionManager {
     }
   }
 
+  /** Adapter for a managed session, if it exists (used by IPC to route
+   *  provider-specific operations like skill discovery). */
+  getSessionAdapter(sessionId: string): AgentAdapter | null {
+    return this.sessions.get(sessionId)?.adapter ?? null;
+  }
+
   /** Skill allowlist for a session, honoring settings.disabledSkills.
-   *  Undefined when nothing is disabled — the SDK option is then omitted so
-   *  every skill loads (the CLI default). */
-  private skillsFilterFor(session: ManagedSession, disabledSkills: string[]): string[] | undefined {
-    if (disabledSkills.length === 0) return undefined;
-    const known = new Set(skills.listSkills(session.worktreePath).map((s) => s.name));
+   *  Undefined when nothing is disabled or the provider has no skill support —
+   *  the adapter option is then omitted so provider defaults apply. */
+  private async skillsFilterFor(session: ManagedSession, disabledSkills: string[]): Promise<string[] | undefined> {
+    if (disabledSkills.length === 0 || session.adapter.capabilities.skills !== true) return undefined;
+    const onDisk = session.adapter.listSkills
+      ? await session.adapter.listSkills(session.worktreePath).catch(() => [])
+      : [];
+    const known = new Set(onDisk.map((s) => s.name));
     for (const name of this.getKnownSkills(session.repoPath)) known.add(name);
-    return skills.computeSkillsFilter(known, disabledSkills);
+    return computeSkillsFilter(known, disabledSkills);
   }
 
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
@@ -415,6 +424,8 @@ class AgentSessionManager {
     // lands mid-startup (restartRequested) retries the same truncated resume.
     const resumeAtUuid = session.pendingResumeAt;
 
+    const skillsFilter = await this.skillsFilterFor(session, currentSettings.disabledSkills ?? []);
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -427,7 +438,7 @@ class AgentSessionManager {
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
-      skills: this.skillsFilterFor(session, currentSettings.disabledSkills ?? []) ?? null,
+      skills: skillsFilter ?? null,
       outputFormat: session.outputFormat,
       sandbox: session.sandbox,
       memoryOperations: {

@@ -96,6 +96,8 @@ const api: GroveBenchAPI = {
   // Skills
   listSkills: (sessionId: string, fallbackPath: string) =>
     ipcRenderer.invoke(IPC.SKILLS_LIST, sessionId, fallbackPath),
+  addSkill: (sessionId: string, fallbackPath: string, def: unknown) =>
+    ipcRenderer.invoke(IPC.SKILLS_ADD, sessionId, fallbackPath, def),
 
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),

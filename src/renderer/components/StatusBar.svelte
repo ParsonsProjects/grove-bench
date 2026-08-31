@@ -11,6 +11,7 @@
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import CreatePrDialog from './CreatePrDialog.svelte';
+  import AddSkillDialog from './AddSkillDialog.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import type { McpServerInfo, SkillInfo, ThinkingLevel } from '../../shared/types.js';
@@ -288,6 +289,7 @@
   // ─── Skills management ───
 
   let skillsExpanded = $state(false);
+  let addSkillOpen = $state(false);
   let skillsRef = $state<HTMLDivElement | null>(null);
   let diskSkills = $state<SkillInfo[]>([]);
   let skillsBusy = $state<Record<string, boolean>>({});
@@ -781,8 +783,17 @@
             {/each}
           </div>
 
-          <div class="text-muted-foreground/50 text-[10px] mt-2 pt-2 border-t border-border">
-            Applies to all repos, when a session's agent (re)starts — running turns keep their current skills.
+          <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
+            <span class="text-muted-foreground/50 text-[10px] flex-1">
+              Applies to all repos, when a session's agent (re)starts — running turns keep their current skills.
+            </span>
+            <button
+              onclick={() => { skillsExpanded = false; addSkillOpen = true; }}
+              class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0"
+              title="Author a new skill — write it yourself or hand it to the agent"
+            >
+              + Add skill
+            </button>
           </div>
         </div>
       {/if}
@@ -1236,4 +1247,12 @@
 
 {#if createPrOpen}
   <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+{/if}
+
+{#if addSkillOpen}
+  <AddSkillDialog
+    {sessionId}
+    onclose={() => addSkillOpen = false}
+    oncreated={() => { refreshSkills(); skillsExpanded = true; }}
+  />
 {/if}
