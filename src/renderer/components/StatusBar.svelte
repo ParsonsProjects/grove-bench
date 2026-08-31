@@ -14,7 +14,8 @@
   import AddSkillDialog from './AddSkillDialog.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
-  import type { McpServerInfo, SkillInfo, ThinkingLevel } from '../../shared/types.js';
+  import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
+  import type { McpServerInfo, SkillInfo, SkillSuggestion, ThinkingLevel } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -314,7 +315,10 @@
 
   function toggleSkillsPopover() {
     skillsExpanded = !skillsExpanded;
-    if (skillsExpanded) refreshSkills();
+    if (skillsExpanded) {
+      refreshSkills();
+      refreshSuggestions();
+    }
   }
 
   async function setSkillEnabled(name: string, enabled: boolean) {
@@ -325,6 +329,61 @@
     finally {
       skillsBusy = { ...skillsBusy, [name]: false };
     }
+  }
+
+  // ─── Skill suggestions (mined from session history) ───
+
+  let suggestions = $state<SkillSuggestion[]>([]);
+  let analyzingSuggestions = $state(false);
+  let addSkillInitial = $state<{ name: string; description: string; instructions: string } | null>(null);
+  let sessionRepoPath = $derived(store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '');
+  let canAskAgent = $derived(sessionStatus === 'running' && !isRunning);
+
+  async function refreshSuggestions() {
+    if (!sessionRepoPath) return;
+    try {
+      suggestions = await window.groveBench.getSkillSuggestions(sessionRepoPath) ?? [];
+    } catch { /* keep the last snapshot */ }
+  }
+
+  async function analyzeSuggestions() {
+    if (analyzingSuggestions || !sessionRepoPath) return;
+    analyzingSuggestions = true;
+    try {
+      suggestions = await window.groveBench.analyzeSkillSuggestions(sessionRepoPath) ?? [];
+    } catch { /* analysis is best-effort */ }
+    finally {
+      analyzingSuggestions = false;
+    }
+  }
+
+  async function dismissSkillSuggestion(id: string) {
+    suggestions = suggestions.filter((s) => s.id !== id);
+    try {
+      await window.groveBench.dismissSkillSuggestion(sessionRepoPath, id);
+    } catch { /* worst case it reappears on the next analysis */ }
+  }
+
+  function createFromSuggestion(s: SkillSuggestion) {
+    addSkillInitial = { name: s.name, description: s.description, instructions: s.draftInstructions };
+    skillsExpanded = false;
+    addSkillOpen = true;
+  }
+
+  /** Hand the suggestion to the agent with the mined evidence as draft notes. */
+  function askAgentFromSuggestion(s: SkillSuggestion) {
+    if (!canAskAgent) return;
+    const prompt = buildCreateSkillPrompt({
+      name: s.name,
+      description: s.description,
+      scope: 'project',
+      notes: `${s.draftInstructions}\n\nEvidence from past sessions (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
+    });
+    messageStore.addUserMessage(sessionId, prompt);
+    window.groveBench.sendMessage(sessionId, prompt);
+    store.updateLastActive(sessionId);
+    skillsExpanded = false;
+    dismissSkillSuggestion(s.id);
   }
 
   let lastResult = $derived.by(() => {
@@ -414,9 +473,10 @@
     window.groveBench.getModels().then((models) => {
       modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
     });
-    // Populate the Skills item up front — the collapsed count shouldn't wait
-    // for the popover to be opened.
+    // Populate the Skills item up front — the collapsed count and suggestion
+    // badge shouldn't wait for the popover to be opened.
     refreshSkills();
+    refreshSuggestions();
   });
 
   onDestroy(() => {
@@ -721,23 +781,83 @@
             : disabledSkillCount > 0 ? 'bg-orange-400'
             : 'bg-green-500'}"></span>
         Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
+        {#if suggestions.length > 0}
+          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your sessions">+{suggestions.length}</span>
+        {/if}
       </button>
 
       {#if skillsExpanded}
         <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
           <div class="flex items-center justify-between mb-2">
             <span class="font-medium text-foreground">Skills</span>
-            <button
-              onclick={refreshSkills}
-              class="text-muted-foreground/60 hover:text-foreground transition-colors"
-              title="Re-scan skill directories"
-            >
-              Refresh
-            </button>
+            <div class="flex items-center gap-2.5">
+              <button
+                onclick={analyzeSuggestions}
+                disabled={analyzingSuggestions}
+                class="text-blue-400/80 hover:text-blue-300 transition-colors disabled:opacity-50"
+                title="Mine this repo's session history for recurring workflows and suggest skills"
+              >
+                {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
+              </button>
+              <button
+                onclick={refreshSkills}
+                class="text-muted-foreground/60 hover:text-foreground transition-colors"
+                title="Re-scan skill directories"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
 
           {#if settingsStore.error}
             <div class="text-destructive mb-2 break-words">{settingsStore.error}</div>
+          {/if}
+
+          {#if suggestions.length > 0}
+            <div class="mb-2 pb-2 border-b border-border">
+              <div class="text-[10px] uppercase tracking-wide text-blue-400/80 mb-1.5">
+                Suggested from your sessions
+              </div>
+              <div class="space-y-1.5">
+                {#each suggestions as suggestion (suggestion.id)}
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="w-1.5 h-1.5 bg-blue-400 shrink-0"></span>
+                      <span class="font-mono truncate text-foreground flex-1 min-w-0" title={suggestion.description}>
+                        {suggestion.name}
+                      </span>
+                      <button
+                        onclick={() => createFromSuggestion(suggestion)}
+                        class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0"
+                        title="Open the Add Skill dialog prefilled with this suggestion"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onclick={() => askAgentFromSuggestion(suggestion)}
+                        disabled={!canAskAgent}
+                        class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
+                        title={canAskAgent
+                          ? 'Ask the agent to write this skill, with the mined evidence as notes'
+                          : 'Needs a running, idle agent session'}
+                      >
+                        Agent
+                      </button>
+                      <button
+                        onclick={() => dismissSkillSuggestion(suggestion.id)}
+                        class="px-1.5 py-0.5 border border-border text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                        title="Dismiss — this suggestion won't come back"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div class="text-muted-foreground/60 text-[10px] truncate ml-3" title={suggestion.evidence.join('\n')}>
+                      {suggestion.rationale}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </div>
           {/if}
 
           <div class="space-y-1.5 max-h-64 overflow-y-auto">
@@ -1252,7 +1372,14 @@
 {#if addSkillOpen}
   <AddSkillDialog
     {sessionId}
-    onclose={() => addSkillOpen = false}
-    oncreated={() => { refreshSkills(); skillsExpanded = true; }}
+    initial={addSkillInitial}
+    onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
+    oncreated={(skill) => {
+      refreshSkills();
+      skillsExpanded = true;
+      // A created suggestion is resolved — drop it from the list for good.
+      const created = suggestions.find((s) => s.name === skill.name);
+      if (created) dismissSkillSuggestion(created.id);
+    }}
   />
 {/if}

@@ -18,6 +18,7 @@ import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
+import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
@@ -405,6 +406,18 @@ export function registerHandlers() {
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
     if (!root) throw new Error('No project root available for this session');
     return adapter.addSkill(root, def);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SUGGESTIONS_GET, (_event, repoPath: string) => {
+    return skillSuggestions.getCachedSuggestions(repoPath);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SUGGESTIONS_ANALYZE, (_event, repoPath: string) => {
+    return sessionManager.analyzeSkillSuggestionsForRepo(repoPath);
+  });
+
+  ipcMain.handle(IPC.SKILLS_SUGGESTION_DISMISS, (_event, repoPath: string, suggestionId: string) => {
+    skillSuggestions.dismissSuggestion(repoPath, suggestionId);
   });
 
   ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {

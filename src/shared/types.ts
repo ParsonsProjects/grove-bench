@@ -352,6 +352,24 @@ export interface SkillDefinition {
   scope: 'project' | 'user';
 }
 
+/** A proposed skill mined from recurring session patterns. */
+export interface SkillSuggestion {
+  /** Stable id derived from the underlying pattern — dismissals key on it. */
+  id: string;
+  /** Proposed kebab-case skill name. */
+  name: string;
+  /** Proposed trigger description. */
+  description: string;
+  /** Draft instruction body to prefill the Add Skill dialog with. */
+  draftInstructions: string;
+  /** One-line human-readable why (e.g. "Similar requests in 4 sessions"). */
+  rationale: string;
+  /** Example prompt/command excerpts the pattern was mined from. */
+  evidence: string[];
+  /** Distinct sessions the pattern appeared in. */
+  sessionCount: number;
+}
+
 // ─── MCP Servers ───
 
 /** Provider-agnostic snapshot of an agent's MCP server connection. */
@@ -528,6 +546,12 @@ export interface GroveBenchAPI {
   /** Author a new skill for the session's agent provider. Project scope
    *  writes into the session's worktree; user scope applies to all repos. */
   addSkill(sessionId: string, fallbackPath: string, def: SkillDefinition): Promise<SkillInfo>;
+  /** Cached skill suggestions for a repo (last analysis result). */
+  getSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
+  /** Mine the repo's session history for patterns and refresh suggestions. */
+  analyzeSkillSuggestions(repoPath: string): Promise<SkillSuggestion[]>;
+  /** Permanently dismiss one suggestion for a repo. */
+  dismissSkillSuggestion(repoPath: string, suggestionId: string): Promise<void>;
   reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
 
@@ -676,6 +700,10 @@ export interface GroveBenchSettings {
    *  (re)starts — the SDK receives an allowlist of every known skill minus
    *  these. Empty = all skills enabled (the CLI default). */
   disabledSkills: string[];
+  /** Auto-analyze finished sessions for recurring workflows and surface skill
+   *  suggestions in the status bar. Manual analysis stays available when off.
+   *  Default true. */
+  skillSuggestions: boolean;
 
   // Agent Defaults
   defaultModel: string;
@@ -873,6 +901,9 @@ export const IPC = {
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',
   SKILLS_ADD: 'skills:add',
+  SKILLS_SUGGESTIONS_GET: 'skills:suggestionsGet',
+  SKILLS_SUGGESTIONS_ANALYZE: 'skills:suggestionsAnalyze',
+  SKILLS_SUGGESTION_DISMISS: 'skills:suggestionDismiss',
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   MCP_CONFIG_LIST: 'mcpConfig:list',

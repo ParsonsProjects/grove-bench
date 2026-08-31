@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disableBypassMode: false,
   disabledSkills: [],
+  skillSuggestions: true,
 
   // Agent Defaults
   defaultModel: '',

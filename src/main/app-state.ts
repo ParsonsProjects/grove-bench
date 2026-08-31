@@ -2,7 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 
-import type { SessionSortState } from '../shared/types.js';
+import type { SessionSortState, SkillSuggestion } from '../shared/types.js';
+
+export interface SkillSuggestionCache {
+  suggestions: SkillSuggestion[];
+  /** Suggestion ids the user dismissed — never resurface these. */
+  dismissedIds: string[];
+  analyzedAt: number;
+}
 
 interface AppState {
   activeTabId: string | null;
@@ -16,6 +23,8 @@ interface AppState {
    *  that the on-disk scan can't discover, even on the first query after an
    *  app restart. */
   knownSkills?: Record<string, string[]>;
+  /** Last skill-suggestion analysis per repo path, including dismissals. */
+  skillSuggestions?: Record<string, SkillSuggestionCache>;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -159,6 +168,19 @@ export function saveKnownSkills(repoPath: string, skills: string[]): void {
   try {
     const state = loadAppState();
     state.knownSkills = { ...(state.knownSkills ?? {}), [repoPath]: skills };
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+}
+
+export function loadSkillSuggestionCache(repoPath: string): SkillSuggestionCache | null {
+  return loadAppState().skillSuggestions?.[repoPath] ?? null;
+}
+
+/** Write-through (no debounce) — analysis runs are rare. */
+export function saveSkillSuggestionCache(repoPath: string, cache: SkillSuggestionCache): void {
+  try {
+    const state = loadAppState();
+    state.skillSuggestions = { ...(state.skillSuggestions ?? {}), [repoPath]: cache };
     fs.writeFileSync(getStatePath(), JSON.stringify(state));
   } catch { /* ignore */ }
 }

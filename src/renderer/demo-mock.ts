@@ -26,6 +26,7 @@ const SETTINGS = {
   toolDenyRules: [],
   disableBypassMode: false,
   disabledSkills: ['legacy-deploy'] as string[],
+  skillSuggestions: true,
   defaultModel: '',
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
@@ -85,6 +86,27 @@ const DEMO_SKILLS = [
   { name: 'legacy-deploy', description: 'Old NSIS deploy pipeline — superseded by deploy-preview', source: 'project', path: 'C:/dev/grove-bench/.claude/skills/legacy-deploy/SKILL.md' },
   { name: 'release-notes', description: 'Draft release notes from merged PRs since the last tag', source: 'user', path: 'C:/Users/demo/.claude/skills/release-notes/SKILL.md' },
   { name: 'worktree-doctor', description: 'Diagnose and repair broken git worktrees and stale locks', source: 'user', path: 'C:/Users/demo/.claude/skills/worktree-doctor/SKILL.md' },
+];
+
+let DEMO_SUGGESTIONS = [
+  {
+    id: 'a1b2c3',
+    name: 'nsis-smoke-test',
+    description: 'Use after packaging changes to build the NSIS installer and smoke-test it',
+    draftInstructions: 'This command ran in 5 sessions (11 times total):\n\n```\nnpm run dist && start dist/grove-bench-setup.exe /S\n```\n\nDocument when to run it, what to check first, and how to verify the result.',
+    rationale: 'Same command run in 5 sessions (11 times)',
+    evidence: ['npm run dist && start dist/grove-bench-setup.exe /S'],
+    sessionCount: 5,
+  },
+  {
+    id: 'd4e5f6',
+    name: 'changelog-update',
+    description: 'Use when asked to update the changelog from merged PRs since the last tag',
+    draftInstructions: 'Recurring request across 4 sessions. Examples:\n- Update CHANGELOG.md with everything merged since v0.3\n- Add the worktree fixes to the changelog\n\nDocument the proven steps for this task here.',
+    rationale: 'Similar requests in 4 sessions (6 prompts)',
+    evidence: ['Update CHANGELOG.md with everything merged since v0.3', 'Add the worktree fixes to the changelog'],
+    sessionCount: 4,
+  },
 ];
 
 const CONTENT_HITS = [
@@ -201,6 +223,11 @@ const api: Record<string, unknown> = {
     };
     DEMO_SKILLS.push(skill);
     return skill;
+  },
+  getSkillSuggestions: async () => DEMO_SUGGESTIONS,
+  analyzeSkillSuggestions: async () => DEMO_SUGGESTIONS,
+  dismissSkillSuggestion: async (_repo: string, id: string) => {
+    DEMO_SUGGESTIONS = DEMO_SUGGESTIONS.filter((s) => s.id !== id);
   },
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },

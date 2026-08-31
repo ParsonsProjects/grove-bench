@@ -12,18 +12,21 @@
     sessionId,
     onclose,
     oncreated,
+    initial = null,
   }: {
     sessionId: string;
     onclose: () => void;
     /** Fired after a manual create succeeds so the caller can refresh its list. */
     oncreated: (skill: SkillInfo) => void;
+    /** Prefill (e.g. from a skill suggestion) — editable before creating. */
+    initial?: { name?: string; description?: string; instructions?: string } | null;
   } = $props();
 
   let open = $state(true);
-  let name = $state('');
-  let description = $state('');
+  let name = $state(initial?.name ?? '');
+  let description = $state(initial?.description ?? '');
   let scope = $state<'project' | 'user'>('project');
-  let instructions = $state('');
+  let instructions = $state(initial?.instructions ?? '');
   let creating = $state(false);
   let dialogError = $state('');
 
