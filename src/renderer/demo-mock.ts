@@ -27,7 +27,7 @@ const SETTINGS = {
   disableBypassMode: false,
   disabledSkills: ['legacy-deploy'] as string[],
   skillSuggestions: true,
-  defaultModel: '',
+  defaultModelByAdapter: {} as Record<string, string>,
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
   workingDirectories: [],
@@ -231,7 +231,9 @@ const api: Record<string, unknown> = {
   },
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
-    agent: { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+    agents: {
+      'claude-code': { displayName: 'Claude Code', isDefault: true, available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+    },
   }),
   listRepos: async () => [],
   listSessions: async () => [],
@@ -262,7 +264,7 @@ const api: Record<string, unknown> = {
   getPrInfo: async () => null,
   listCheckpoints: async () => [],
   listMcpServers: async () => [],
-  listAdapters: async () => [],
+  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
   getModels: async () => [],
   pluginList: async () => ({ installed: [], available: [] }),
   checkForUpdate: async () => null,

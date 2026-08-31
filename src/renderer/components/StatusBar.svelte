@@ -116,6 +116,7 @@
   }
 
   let sessionBranch = $derived(store.sessions.find(s => s.id === sessionId)?.branch ?? '');
+  let sessionAgentType = $derived(store.sessions.find(s => s.id === sessionId)?.agentType);
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let mode = $derived(messageStore.getMode(sessionId));
@@ -467,12 +468,18 @@
     }
   }
 
+  // Load the model list for this session's adapter (undefined = the default
+  // adapter). Re-runs if the session entry's agentType resolves after mount.
+  $effect(() => {
+    const adapterType = sessionAgentType;
+    window.groveBench.getModels(adapterType).then((models) => {
+      modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
+    });
+  });
+
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('click', handleClickOutside);
-    window.groveBench.getModels().then((models) => {
-      modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
-    });
     // Populate the Skills item up front — the collapsed count and suggestion
     // badge shouldn't wait for the popover to be opened.
     refreshSkills();

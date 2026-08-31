@@ -18,10 +18,20 @@
       errs.push(`Git version too old (${status.git.version}). Need 2.17+.`);
     }
 
-    if (!status.agent.available) {
-      errs.push(status.agent.errorMessage ?? 'Agent CLI not found.');
-    } else if (!status.agent.authenticated) {
-      errs.push(status.agent.authErrorMessage ?? 'Agent is not authenticated.');
+    // Block only when NO agent adapter is usable — a missing optional
+    // provider just drops out of the new-session picker.
+    const agents = Object.values(status.agents ?? {});
+    const usable = agents.filter((a) => a.available && a.authenticated !== false);
+    if (usable.length === 0) {
+      if (agents.length === 0) {
+        errs.push('No agent adapters registered.');
+      }
+      for (const a of agents) {
+        const problem = !a.available
+          ? (a.errorMessage ?? 'Agent CLI not found.')
+          : (a.authErrorMessage ?? 'Agent is not authenticated.');
+        errs.push(agents.length > 1 ? `${a.displayName}: ${problem}` : problem);
+      }
     }
 
     errors = errs;

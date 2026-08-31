@@ -23,6 +23,9 @@ export interface WorktreeInfo {
   direct?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
+  /** Adapter this worktree's sessions run with (persisted in the manifest).
+   *  Absent for worktrees created before multi-provider support. */
+  adapterType?: string;
 }
 
 export interface WorktreeRepoConfig {
@@ -62,23 +65,33 @@ export interface SessionInfo {
 
 // ─── Prerequisites ───
 
+/** Prerequisite status for one registered agent adapter. */
+export interface AgentPrerequisiteStatus {
+  /** Adapter's human-readable name, for prerequisite/picker UI. */
+  displayName: string;
+  /** True for the registry's default adapter. */
+  isDefault: boolean;
+  available: boolean;
+  path?: string;
+  authenticated?: boolean;
+  authMethod?: string;
+  email?: string;
+  /** Adapter-provided error message when not available (e.g. install instructions). */
+  errorMessage?: string;
+  /** Adapter-provided message when not authenticated. */
+  authErrorMessage?: string;
+}
+
 export interface PrerequisiteStatus {
   git: {
     available: boolean;
     version?: string;
     meetsMinimum?: boolean;
   };
-  agent: {
-    available: boolean;
-    path?: string;
-    authenticated?: boolean;
-    authMethod?: string;
-    email?: string;
-    /** Adapter-provided error message when not available (e.g. install instructions). */
-    errorMessage?: string;
-    /** Adapter-provided message when not authenticated. */
-    authErrorMessage?: string;
-  };
+  /** Per-adapter agent status, keyed by adapter id. The app only blocks when
+   *  NO adapter is usable — a missing optional provider just drops out of the
+   *  new-session picker. */
+  agents: Record<string, AgentPrerequisiteStatus>;
   /** GitHub CLI — optional; only gates PR automation, never blocks the app. */
   gh?: {
     available: boolean;
@@ -706,7 +719,10 @@ export interface GroveBenchSettings {
   skillSuggestions: boolean;
 
   // Agent Defaults
-  defaultModel: string;
+  /** Default model per adapter id (e.g. { 'claude-code': 'claude-opus-5' }).
+   *  Missing/empty entry = the provider's own default. Replaces the legacy
+   *  global `defaultModel` string, which is migrated on load. */
+  defaultModelByAdapter: Record<string, string>;
   /** Default thinking level for new sessions. 'high' = provider default. */
   defaultThinkingLevel: ThinkingLevel;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */

@@ -14,8 +14,31 @@
   let open = $state(true);
   let selectedRepo = $state(store.repos[0] || '');
 
+  // Agent adapters (providers). The picker only shows when more than one is
+  // registered; adapters whose prerequisites fail are disabled with a hint.
+  let adapters = $state<Array<{ id: string; displayName: string }>>([]);
+  let selectedAdapter = $state('');
+
+  function adapterUsable(id: string): boolean {
+    const a = store.prerequisites?.agents?.[id];
+    // No prerequisite info (e.g. check still running) → don't block the picker.
+    if (!a) return true;
+    return a.available && a.authenticated !== false;
+  }
+
+  function adapterHint(id: string): string {
+    const a = store.prerequisites?.agents?.[id];
+    if (!a || adapterUsable(id)) return '';
+    return !a.available ? (a.errorMessage ?? 'Not installed') : (a.authErrorMessage ?? 'Not authenticated');
+  }
+
   onMount(() => {
     if (defaultRepo) selectedRepo = defaultRepo;
+    window.groveBench.listAdapters().then((list) => {
+      adapters = list.map((a) => ({ id: a.id, displayName: a.displayName }));
+      // Default to the first usable adapter (the registry default is first).
+      selectedAdapter = (adapters.find((a) => adapterUsable(a.id)) ?? adapters[0])?.id ?? '';
+    }).catch(() => { /* picker stays hidden; main falls back to the default adapter */ });
   });
   let branchName = $state('');
   let baseBranch = $state('');
@@ -140,18 +163,19 @@
     dialogError = '';
 
     try {
+      const adapterType = selectedAdapter || undefined;
       const opts = mode === 'direct'
-        ? { repoPath: selectedRepo, branchName: '', direct: true as const }
+        ? { repoPath: selectedRepo, branchName: '', direct: true as const, adapterType }
         : mode === 'existing'
-        ? { repoPath: selectedRepo, branchName: selectedBranch, useExisting: true as const }
-        : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
+        ? { repoPath: selectedRepo, branchName: selectedBranch, useExisting: true as const, adapterType }
+        : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined, adapterType };
 
       const result = await window.groveBench.createSession(opts);
       trackEvent('session_created', { mode });
       // Direct sessions are ready immediately; worktree sessions go through
       // starting → installing → running, so start with the correct initial status.
       const initialStatus = mode === 'direct' ? 'running' : 'starting';
-      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: initialStatus, createdAt: Date.now(), ...(mode === 'direct' ? { direct: true } : {}) });
+      store.addSession({ id: result.id, branch: result.branch, repoPath: selectedRepo, status: initialStatus, createdAt: Date.now(), agentType: adapterType, ...(mode === 'direct' ? { direct: true } : {}) });
       open = false;
       onclose();
     } catch (e: any) {
@@ -205,6 +229,26 @@
           </Select.Root>
         {/if}
       </div>
+
+      {#if adapters.length > 1}
+        <div>
+          <Label class="mb-1 block">Agent</Label>
+          <Select.Root type="single" value={selectedAdapter} onValueChange={(v) => { if (v) selectedAdapter = v; }}>
+            <Select.Trigger class="w-full">
+              {adapters.find((a) => a.id === selectedAdapter)?.displayName || 'Select agent'}
+            </Select.Trigger>
+            <Select.Content>
+              {#each adapters as adapter (adapter.id)}
+                <Select.Item
+                  value={adapter.id}
+                  label={adapterUsable(adapter.id) ? adapter.displayName : `${adapter.displayName} — ${adapterHint(adapter.id)}`}
+                  disabled={!adapterUsable(adapter.id)}
+                />
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
+      {/if}
 
       <!-- Mode toggle -->
       <div>

@@ -35,36 +35,48 @@ export async function checkGh(): Promise<NonNullable<PrerequisiteStatus['gh']>> 
 }
 
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
-  const adapter = adapterRegistry.getDefault();
-  const [gitStatus, agentStatus, ghStatus] = await Promise.all([
+  const adapters = adapterRegistry.list();
+  const defaultId = adapterRegistry.getDefault().id;
+  const [gitStatus, ghStatus, ...agentStatuses] = await Promise.all([
     checkGit(),
-    adapter.checkPrerequisites(),
     checkGh(),
+    ...adapters.map((a) => a.checkPrerequisites().catch((e): Awaited<ReturnType<typeof a.checkPrerequisites>> => ({
+      available: false,
+      errorMessage: e?.message ?? String(e),
+    }))),
   ]);
-  // Build error/auth message from adapter when not available or not authenticated
-  let errorMessage: string | undefined;
-  let authErrorMessage: string | undefined;
-  if (!agentStatus.available) {
-    errorMessage = agentStatus.errorMessage
-      ?? (agentStatus.installInstructions
-        ? `Agent not found. ${agentStatus.installInstructions}`
-        : 'Agent CLI not found.');
-  }
-  if (agentStatus.available && !agentStatus.authenticated) {
-    authErrorMessage = adapter.authErrorMessage;
-  }
+
+  const agents: PrerequisiteStatus['agents'] = {};
+  adapters.forEach((adapter, i) => {
+    const status = agentStatuses[i];
+    // Build error/auth message from adapter when not available or not authenticated
+    let errorMessage: string | undefined;
+    let authErrorMessage: string | undefined;
+    if (!status.available) {
+      errorMessage = status.errorMessage
+        ?? (status.installInstructions
+          ? `Agent not found. ${status.installInstructions}`
+          : 'Agent CLI not found.');
+    }
+    if (status.available && !status.authenticated) {
+      authErrorMessage = adapter.authErrorMessage;
+    }
+    agents[adapter.id] = {
+      displayName: adapter.displayName,
+      isDefault: adapter.id === defaultId,
+      available: status.available,
+      path: status.path,
+      authenticated: status.authenticated,
+      authMethod: status.authMethod,
+      email: status.email,
+      errorMessage,
+      authErrorMessage,
+    };
+  });
 
   return {
     git: gitStatus,
-    agent: {
-      available: agentStatus.available,
-      path: agentStatus.path,
-      authenticated: agentStatus.authenticated,
-      authMethod: agentStatus.authMethod,
-      email: agentStatus.email,
-      errorMessage,
-      authErrorMessage,
-    },
+    agents,
     gh: ghStatus,
   };
 }

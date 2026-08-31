@@ -115,17 +115,22 @@ export function registerHandlers() {
       // worktree + branch; otherwise it runs on the repo's current checkout.
       let branch: string;
       let checkoutPath = opts.repoPath;
+      let adapterType = opts.adapterType;
       if (opts.attachToSessionId) {
         const src = await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId);
         if (!src) throw new Error(`Session ${opts.attachToSessionId} not found`);
         branch = src.branch;
         checkoutPath = src.path;
+        // Attached sessions inherit the source session's adapter unless one
+        // was explicitly requested.
+        adapterType ??= sessionManager.getSession(opts.attachToSessionId)?.agentType
+          ?? await worktreeManager.getAdapterType(opts.attachToSessionId);
       } else {
         branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
       }
-      logger.info(`Creating direct session: branch=${branch}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
+      logger.info(`Creating direct session: branch=${branch}, cwd=${checkoutPath}, repo=${opts.repoPath}, adapter=${adapterType ?? 'default'}`);
 
-      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath);
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath, adapterType);
 
       const session = await sessionManager.createSession({
         id: entry.id,
@@ -133,7 +138,7 @@ export function registerHandlers() {
         cwd: checkoutPath,
         repoPath: opts.repoPath,
         window: win,
-        adapterType: opts.adapterType,
+        adapterType,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
@@ -276,7 +281,11 @@ export function registerHandlers() {
     const providerSessionId = await worktreeManager.getProviderSessionId(id);
     // Restore the model the session last ran with (falls back to default if unset)
     const savedModel = await worktreeManager.getModel(id);
-    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
+    // Restore the adapter the session was created with, so a resume never
+    // silently switches provider (falls back to the registry default when
+    // the manifest predates multi-provider support).
+    const savedAdapterType = await worktreeManager.getAdapterType(id);
+    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}, adapter=${savedAdapterType ?? 'default'}`);
 
     const session = await sessionManager.createSession({
       id: worktree.id,
@@ -286,6 +295,7 @@ export function registerHandlers() {
       window: win,
       resumeSessionId: providerSessionId,
       model: savedModel,
+      adapterType: savedAdapterType,
     });
 
     logger.info(`Session resumed: id=${session.id}`);

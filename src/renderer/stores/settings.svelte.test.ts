@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disableBypassMode: false,
   disabledSkills: [],
   skillSuggestions: true,
-  defaultModel: '',
+  defaultModelByAdapter: {},
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
   workingDirectories: [],

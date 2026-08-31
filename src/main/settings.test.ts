@@ -60,6 +60,28 @@ describe('loadSettings', () => {
     const s = loadSettings();
     expect(s.defaultPermissionMode).toBe('default');
   });
+
+  it('migrates the legacy defaultModel string into the per-adapter map', () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({ defaultModel: 'claude-opus-5' }));
+    const s = loadSettings();
+    expect(s.defaultModelByAdapter).toEqual({ 'claude-code': 'claude-opus-5' });
+    expect((s as any).defaultModel).toBeUndefined();
+  });
+
+  it('does not overwrite an existing per-adapter entry with the legacy string', () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      defaultModel: 'claude-old',
+      defaultModelByAdapter: { 'claude-code': 'claude-new', 'mistral-vibe': 'devstral-2512' },
+    }));
+    const s = loadSettings();
+    expect(s.defaultModelByAdapter).toEqual({ 'claude-code': 'claude-new', 'mistral-vibe': 'devstral-2512' });
+  });
+
+  it('drops an empty legacy defaultModel without creating an entry', () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({ defaultModel: '' }));
+    const s = loadSettings();
+    expect(s.defaultModelByAdapter).toEqual({});
+  });
 });
 
 describe('getSettings', () => {

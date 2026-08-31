@@ -29,6 +29,9 @@ interface ManifestEntry {
   path?: string;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string;
+  /** Adapter the session runs with, so resume restores the same provider.
+   *  Absent in pre-multi-provider manifests (treated as the registry default). */
+  adapterType?: string;
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -184,6 +187,7 @@ export class WorktreeManager {
         repoPath,
         branch: branchName,
         createdAt: info.createdAt,
+        ...(config.adapterType ? { adapterType: config.adapterType } : {}),
       };
     });
 
@@ -196,7 +200,7 @@ export class WorktreeManager {
    * attach the session to another session's worktree (sharing its branch).
    * Still tracked in the manifest for session ID persistence.
    */
-  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath): Promise<WorktreeInfo> {
+  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath, adapterType?: string): Promise<WorktreeInfo> {
     const id = crypto.randomUUID().slice(0, 8);
     const attached = checkoutPath !== repoPath;
 
@@ -220,6 +224,7 @@ export class WorktreeManager {
         // Persist the path only for attached sessions; plain direct sessions
         // derive it from repoPath, so storing it would be redundant.
         ...(attached ? { path: checkoutPath } : {}),
+        ...(adapterType ? { adapterType } : {}),
       };
     });
 
@@ -268,6 +273,13 @@ export class WorktreeManager {
   async getModel(worktreeId: string): Promise<string | undefined> {
     const manifest = await this.loadManifest();
     return manifest[worktreeId]?.model;
+  }
+
+  /** Retrieve the adapter a worktree's sessions run with. Undefined for
+   *  pre-multi-provider manifests (callers fall back to the registry default). */
+  async getAdapterType(worktreeId: string): Promise<string | undefined> {
+    const manifest = await this.loadManifest();
+    return manifest[worktreeId]?.adapterType;
   }
 
   /** Persist a session's display name so it survives app restart. Passing an
@@ -395,6 +407,7 @@ export class WorktreeManager {
             lastActiveAt: entry.lastActiveAt,
             direct: true,
             displayName: entry.displayName ?? null,
+            adapterType: entry.adapterType,
           });
           continue;
         }
@@ -418,6 +431,7 @@ export class WorktreeManager {
           createdAt: entry.createdAt,
           lastActiveAt: entry.lastActiveAt,
           displayName: entry.displayName ?? null,
+          adapterType: entry.adapterType,
         });
       }
 

@@ -6,6 +6,9 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Adapter id the session runs with (e.g. 'claude-code'). Undefined for
+   *  sessions created before multi-provider support = the default adapter. */
+  agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
   /** Timestamp (ms) when the worktree was created. */

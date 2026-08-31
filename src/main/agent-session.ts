@@ -341,7 +341,7 @@ class AgentSessionManager {
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
       pendingResumeAt: null,
-      model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
+      model: opts.model ?? (appSettings.defaultModelByAdapter?.[adapterType] || adapter.getModels()[0]?.id || null),
       window: win,
       eventHistory: this.loadEventHistory(id),
       toolUseMap: new Map(),

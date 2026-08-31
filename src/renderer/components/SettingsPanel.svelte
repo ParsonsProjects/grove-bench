@@ -54,10 +54,42 @@
     return pluginStore.available.find((a) => a.pluginId === installedId);
   }
 
+  // Registered agent adapters + their model lists, for the per-adapter
+  // default-model pickers (and the MCP tab's provider name).
+  let adapterInfos = $state<Array<{ id: string; displayName: string }>>([]);
+  let modelsByAdapter = $state<Record<string, Array<{ id: string; label: string }>>>({});
+  const defaultAdapterName = $derived(adapterInfos[0]?.displayName ?? 'your agent CLI');
+
+  const PROVIDER_DEFAULT = '__provider_default__';
+
+  async function loadAdapterModels() {
+    try {
+      const list = await window.groveBench.listAdapters();
+      adapterInfos = list.map((a) => ({ id: a.id, displayName: a.displayName }));
+      const models: Record<string, Array<{ id: string; label: string }>> = {};
+      await Promise.all(adapterInfos.map(async (a) => {
+        models[a.id] = (await window.groveBench.getModels(a.id)).map((m) => ({ id: m.id, label: m.label }));
+      }));
+      modelsByAdapter = models;
+    } catch { /* pickers just render empty */ }
+  }
+
+  function defaultModelFor(adapterId: string): string {
+    return settingsStore.draft.defaultModelByAdapter?.[adapterId] ?? '';
+  }
+
+  function setDefaultModel(adapterId: string, modelId: string) {
+    const next = { ...settingsStore.draft.defaultModelByAdapter };
+    if (modelId && modelId !== PROVIDER_DEFAULT) next[adapterId] = modelId;
+    else delete next[adapterId];
+    settingsStore.draft.defaultModelByAdapter = next;
+  }
+
   $effect(() => {
     if (open) {
       settingsStore.load();
       pluginStore.refresh();
+      loadAdapterModels();
     }
   });
 
@@ -347,17 +379,31 @@
 
       {:else if tab === 'agent'}
         <div class="flex flex-col gap-4">
-          <!-- Default Model -->
+          <!-- Default Model (per adapter) -->
           <div>
-            <Label for="settings-model" class="mb-1 block">Default Model</Label>
-            <input
-              id="settings-model"
-              type="text"
-              bind:value={settingsStore.draft.defaultModel}
-              placeholder="e.g. model-id"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
+            <Label class="mb-1 block">Default Model</Label>
+            <div class="flex flex-col gap-2">
+              {#each adapterInfos as adapter (adapter.id)}
+                <div class="flex items-center gap-3">
+                  {#if adapterInfos.length > 1}
+                    <span class="text-sm text-muted-foreground w-28 shrink-0">{adapter.displayName}</span>
+                  {/if}
+                  <Select.Root type="single" value={defaultModelFor(adapter.id) || PROVIDER_DEFAULT} onValueChange={(v) => { if (v) setDefaultModel(adapter.id, v); }}>
+                    <Select.Trigger class="w-48">
+                      {modelsByAdapter[adapter.id]?.find((m) => m.id === defaultModelFor(adapter.id))?.label
+                        ?? (defaultModelFor(adapter.id) || 'Provider default')}
+                    </Select.Trigger>
+                    <Select.Content>
+                      <Select.Item value={PROVIDER_DEFAULT} label="Provider default" />
+                      {#each modelsByAdapter[adapter.id] ?? [] as model (model.id)}
+                        <Select.Item value={model.id} label={model.label} />
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                </div>
+              {/each}
+            </div>
+            <p class="text-xs text-muted-foreground mt-1">Model used for new sessions. "Provider default" lets each agent pick its own.</p>
           </div>
 
           <!-- Thinking Level -->
@@ -645,7 +691,7 @@
           <div>
             <div class="text-sm font-medium text-foreground">MCP Servers</div>
             <p class="text-xs text-muted-foreground mt-0.5">
-              Servers from your Claude Code configuration. New and restarted sessions pick them up automatically.
+              Servers from your {defaultAdapterName} configuration. New and restarted sessions pick them up automatically.
             </p>
           </div>
           <Button variant="ghost" size="sm" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading} class="text-xs shrink-0">

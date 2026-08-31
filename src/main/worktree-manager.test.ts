@@ -353,3 +353,33 @@ describe('registerDirect (direct + attached sessions)', () => {
     expect(info?.direct).toBe(true);
   });
 });
+
+describe('adapterType persistence', () => {
+  it('persists the adapter for a direct session', async () => {
+    const info = await manager.registerDirect('/repo', 'main', '/repo', 'mistral-vibe');
+
+    expect((savedManifest[info.id] as any).adapterType).toBe('mistral-vibe');
+  });
+
+  it('omits the adapterType key when none is given (registry default)', async () => {
+    const info = await manager.registerDirect('/repo', 'main');
+
+    expect(savedManifest[info.id]).not.toHaveProperty('adapterType');
+  });
+
+  it('retrieves the persisted adapter for resume', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, adapterType: 'mistral-vibe' },
+    }));
+
+    expect(await manager.getAdapterType('wt-123')).toBe('mistral-vibe');
+  });
+
+  it('returns undefined for pre-multi-provider manifest entries', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    expect(await manager.getAdapterType('wt-123')).toBeUndefined();
+  });
+});

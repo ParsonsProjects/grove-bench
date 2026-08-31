@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   skillSuggestions: true,
 
   // Agent Defaults
-  defaultModel: '',
+  defaultModelByAdapter: {},
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
   workingDirectories: [],
@@ -62,8 +62,14 @@ function getSettingsPath(): string {
 function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettings {
   // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel)
   // and `devCommand` (the host-managed dev server feature was removed).
-  const { extendedThinking: _legacy, devCommand: _devCommand, ...rest } =
-    saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string };
+  const { extendedThinking: _legacy, devCommand: _devCommand, defaultModel: legacyDefaultModel, ...rest } =
+    saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string; defaultModel?: string };
+  // The global `defaultModel` string predates multi-provider support. It could
+  // only ever name a Claude Code model (the sole adapter at the time), so
+  // migrate it into the per-adapter map under that id.
+  if (legacyDefaultModel && !rest.defaultModelByAdapter?.['claude-code']) {
+    rest.defaultModelByAdapter = { ...rest.defaultModelByAdapter, 'claude-code': legacyDefaultModel };
+  }
   // 'main' was the old shipped default for defaultBaseBranch; the field is now
   // an explicit override (empty = auto-detect the repo's default branch), so
   // treat the legacy default value as unset. Auto-detect still resolves to
