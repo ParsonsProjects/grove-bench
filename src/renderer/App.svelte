@@ -227,8 +227,11 @@
     });
     window.addEventListener('keydown', handleGlobalKeydown);
 
-    // Watch every session's PR (checks, reviews) — not just the focused tab
-    prStore.startGlobalPolling(() => store.sessions.map((s) => s.id));
+    // Watch every open session's PR (checks, reviews) — not just the focused
+    // tab. Stopped sessions are excluded: their alerts have no agent to act,
+    // and a pile of old worktrees shouldn't each spawn a gh poll per sweep.
+    prStore.startGlobalPolling(() =>
+      store.sessions.filter((s) => s.status !== 'stopped').map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);

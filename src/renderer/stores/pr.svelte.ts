@@ -97,7 +97,7 @@ class PrStore {
     }
   }
 
-  /** Poll every session (open tab or not) — started once from App.
+  /** Poll every open session (focused or not) — started once from App.
    *  Self-scheduling so a slow sweep never overlaps the next one. */
   startGlobalPolling(getSessionIds: () => string[]): void {
     if (this.globalTimer) return;
@@ -163,6 +163,14 @@ class PrStore {
   // ── Detection + auto policy ──
 
   private handleDetection(sessionId: string): void {
+    // Alerts are only raised for sessions with a live agent — an old/stopped
+    // session has nothing actionable behind the alert. Detection is skipped
+    // entirely (not run-and-suppressed) so the watch state doesn't advance:
+    // feedback that arrives while a session is stopped still flags the next
+    // time the session is running.
+    const status = sessionStore.sessions.find((s) => s.id === sessionId)?.status;
+    if (status !== 'running') return;
+
     let state = this.watchStates.get(sessionId);
     if (!state) {
       state = newPrWatchState();
