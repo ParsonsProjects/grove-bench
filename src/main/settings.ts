@@ -10,7 +10,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disableBypassMode: false,
   disabledSkills: [],
-  skillSuggestions: true,
+  autoSkillSuggestions: false,
 
   // Agent Defaults
   defaultModel: '',
@@ -61,10 +61,13 @@ function getSettingsPath(): string {
 
 /** Deep-merge saved data with defaults so new fields are always present. */
 function mergeWithDefaults(saved: Partial<GroveBenchSettings>): GroveBenchSettings {
-  // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel)
-  // and `devCommand` (the host-managed dev server feature was removed).
-  const { extendedThinking: _legacy, devCommand: _devCommand, ...rest } =
-    saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string };
+  // Drop the legacy boolean `extendedThinking` (replaced by defaultThinkingLevel),
+  // `devCommand` (the host-managed dev server feature was removed), and
+  // `skillSuggestions` (renamed to autoSkillSuggestions when the default
+  // flipped to off — the old saved `true` was the shipped default, not an
+  // opt-in, so it is not carried over).
+  const { extendedThinking: _legacy, devCommand: _devCommand, skillSuggestions: _skillSuggestions, ...rest } =
+    saved as Partial<GroveBenchSettings> & { extendedThinking?: boolean; devCommand?: string; skillSuggestions?: boolean };
   // 'main' was the old shipped default for defaultBaseBranch; the field is now
   // an explicit override (empty = auto-detect the repo's default branch), so
   // treat the legacy default value as unset. Auto-detect still resolves to

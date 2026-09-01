@@ -26,7 +26,7 @@ const SETTINGS = {
   toolDenyRules: [],
   disableBypassMode: false,
   disabledSkills: ['legacy-deploy'] as string[],
-  skillSuggestions: true,
+  autoSkillSuggestions: false,
   defaultModel: '',
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',

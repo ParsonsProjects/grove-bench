@@ -622,10 +622,10 @@
 
           <!-- Skill Suggestions -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <Checkbox bind:checked={settingsStore.draft.skillSuggestions} />
-            Suggest skills from session patterns
+            <Checkbox bind:checked={settingsStore.draft.autoSkillSuggestions} />
+            Automatically suggest skills from session patterns
           </label>
-          <p class="text-xs text-muted-foreground -mt-2 ml-6">After sessions finish, mine their history for recurring requests and commands and surface skill suggestions in the status bar's Skills popover. Manual "Suggest" stays available when off. On by default.</p>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">After each finished turn, mine session history for recurring requests and commands and refresh skill suggestions — a background model call per run. Off by default; the "Suggest" button in the status bar's Skills popover runs the same analysis on demand.</p>
 
           <Separator />
 

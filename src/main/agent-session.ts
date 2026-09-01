@@ -197,7 +197,7 @@ class AgentSessionManager {
   /** Schedule a suggestion analysis for the session's repo, debounced so a
    *  burst of finishing turns produces one run. */
   private scheduleSuggestionAnalysis(session: ManagedSession): void {
-    if (!settings.getSettings().skillSuggestions) return;
+    if (!settings.getSettings().autoSkillSuggestions) return;
     if (session.adapter.capabilities.skills !== true) return;
     const { repoPath } = session;
     const pending = this.suggestionTimers.get(repoPath);
