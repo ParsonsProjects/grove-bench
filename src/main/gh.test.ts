@@ -4,12 +4,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, summarizeChecks, failingCheckNames, commentSignature, prStatus, prCreate, prReviewComments } from './gh.js';
+import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, summarizeChecks, failingCheckNames, commentSignature, prStatus, prCreate, prReviewComments } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetGhLoginCacheForTests();
 });
 
 describe('ghVersion()', () => {
@@ -35,6 +36,22 @@ describe('ghAuthenticated()', () => {
   it('returns false when gh auth status fails', async () => {
     mockExeca.mockRejectedValue(new Error('not logged in'));
     expect(await ghAuthenticated()).toBe(false);
+  });
+});
+
+describe('ghLogin()', () => {
+  it('returns and caches the authenticated login', async () => {
+    mockExeca.mockResolvedValue({ stdout: JSON.stringify({ login: 'alan' }) } as any);
+    expect(await ghLogin()).toBe('alan');
+    expect(await ghLogin()).toBe('alan');
+    expect(mockExeca).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null without caching when gh fails, then succeeds later', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('not logged in'));
+    expect(await ghLogin()).toBeNull();
+    mockExeca.mockResolvedValueOnce({ stdout: JSON.stringify({ login: 'alan' }) } as any);
+    expect(await ghLogin()).toBe('alan');
   });
 });
 
@@ -134,6 +151,21 @@ describe('prStatus()', () => {
   });
 });
 
+describe('commentSignature()', () => {
+  it('excludes the ignored user\'s own comments and reviews', () => {
+    const comments = [
+      { id: 'C1', author: { login: 'alan' } },
+      { id: 'C2', author: { login: 'alice' } },
+    ];
+    const reviews = [
+      { id: 'R1', state: 'COMMENTED', author: { login: 'alan' } },
+      { id: 'R2', state: 'APPROVED', author: { login: 'bob' } },
+    ];
+    expect(commentSignature(comments, reviews, 'alan')).toEqual(['c:C2', 'r:R2']);
+    expect(commentSignature(comments, reviews)).toEqual(['c:C1', 'c:C2', 'r:R1', 'r:R2']);
+  });
+});
+
 describe('failingCheckNames()', () => {
   it('extracts names of failed checks only', () => {
     expect(failingCheckNames([
@@ -150,7 +182,7 @@ describe('failingCheckNames()', () => {
 });
 
 describe('prReviewComments()', () => {
-  it('merges review bodies and inline comments', async () => {
+  it('merges review bodies, inline comments, and conversation comments', async () => {
     mockExeca
       .mockResolvedValueOnce({
         stdout: JSON.stringify([
@@ -163,17 +195,40 @@ describe('prReviewComments()', () => {
           { id: 5, body: 'Looks mostly good, two nits', state: 'CHANGES_REQUESTED', user: { login: 'alice' }, author_association: 'MEMBER' },
           { id: 6, body: 'wip', state: 'PENDING', user: { login: 'carol' } },
         ]),
-      } as any); // pulls/N/reviews
+      } as any) // pulls/N/reviews
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { id: 21, body: 'Please also update the changelog', user: { login: 'dave' }, author_association: 'OWNER' },
+          { id: 22, body: '  ' },
+        ]),
+      } as any); // issues/N/comments
 
     const result = await prReviewComments('/repo', 42);
     expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/pulls/42/comments?per_page=100'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/issues/42/comments?per_page=100'], { cwd: '/repo' });
     expect(result).toEqual([
       { id: 'review-5', author: 'alice', authorAssociation: 'MEMBER', body: 'Looks mostly good, two nits' },
       { id: 'comment-9', author: 'bob', authorAssociation: 'COLLABORATOR', path: 'src/a.ts', line: 12, body: 'Rename this variable' },
+      { id: 'discussion-21', author: 'dave', authorAssociation: 'OWNER', body: 'Please also update the changelog' },
     ]);
   });
 
-  it('returns empty when both api calls fail', async () => {
+  it('returns conversation comments even when a review never happened', async () => {
+    mockExeca
+      .mockResolvedValueOnce({ stdout: '[]' } as any) // pulls/N/comments
+      .mockResolvedValueOnce({ stdout: '[]' } as any) // pulls/N/reviews
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { id: 30, body: 'Can you split this PR?', user: { login: 'erin' }, author_association: 'MEMBER' },
+        ]),
+      } as any); // issues/N/comments
+
+    expect(await prReviewComments('/repo', 42)).toEqual([
+      { id: 'discussion-30', author: 'erin', authorAssociation: 'MEMBER', body: 'Can you split this PR?' },
+    ]);
+  });
+
+  it('returns empty when all api calls fail', async () => {
     mockExeca.mockRejectedValue(new Error('gh api failed'));
     expect(await prReviewComments('/repo', 42)).toEqual([]);
   });

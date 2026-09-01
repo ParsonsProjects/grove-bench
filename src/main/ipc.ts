@@ -9,7 +9,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkAllPrerequisites } from './prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
-import { prStatus, prCreate, prReviewComments } from './gh.js';
+import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
@@ -777,7 +777,11 @@ export function registerHandlers() {
   ipcMain.handle(IPC.PR_INFO, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return null;
-    return prStatus(worktree.repoPath, worktree.branch);
+    // Own comments are excluded from the feedback signature so the agent
+    // replying on the PR doesn't trigger (and then auto-answer) a "new
+    // comments" event about itself.
+    const selfLogin = await ghLogin();
+    return prStatus(worktree.repoPath, worktree.branch, selfLogin);
   });
 
   ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {
