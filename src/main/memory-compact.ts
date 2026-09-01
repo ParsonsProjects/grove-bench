@@ -32,6 +32,8 @@ export interface CompactionStatus {
   compacted: boolean;
   /** Why compaction was skipped, when it was. */
   skippedReason?: string;
+  /** The pass was attempted but failed (timeout, adapter error) — not a no-op. */
+  error?: string;
   /** Paths written, rewritten, or deleted. */
   filesChanged: string[];
   /** Per-file summary of what the compaction pass did. */
@@ -87,6 +89,23 @@ const MAX_SESSION_NOTES = 20;
 
 /** Minimum time between LLM compaction passes per repo. */
 const COMPACT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+/** Default safety timeout for the LLM compaction call, overridable via the
+ *  memoryCompactTimeoutSeconds setting. Rewriting every memory file as JSON
+ *  through a spawned CLI process is slow — 90s aborted real passes. */
+const DEFAULT_COMPACT_TIMEOUT_SECONDS = 300;
+
+/** Floor for the configurable timeout — below this no pass could ever finish. */
+const MIN_COMPACT_TIMEOUT_SECONDS = 30;
+
+/** The configured compaction timeout in seconds, clamped to the minimum. */
+function compactTimeoutSeconds(): number {
+  const configured = settings.getSettings().memoryCompactTimeoutSeconds;
+  const seconds = Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_COMPACT_TIMEOUT_SECONDS;
+  return Math.max(MIN_COMPACT_TIMEOUT_SECONDS, seconds);
+}
 
 /** Defensive hard cap applied to any single compacted file. */
 const MAX_COMPACTED_FILE_BYTES = 16 * 1024;
@@ -550,6 +569,43 @@ function applyCompaction(repoPath: string, result: CompactionResult): string[] {
   return changed;
 }
 
+// ─── Progress events & cancellation ───
+
+export type CompactionStage = 'pruning' | 'generating' | 'validating' | 'applying';
+
+export type CompactionEvent =
+  | { kind: 'stage'; repoPath: string; auto: boolean; stage: CompactionStage }
+  | { kind: 'done'; repoPath: string; auto: boolean; status: CompactionStatus };
+
+const eventListeners = new Set<(event: CompactionEvent) => void>();
+
+/** Subscribe to compaction progress (stage transitions and completion). Returns an unsubscribe. */
+export function onCompactionEvent(listener: (event: CompactionEvent) => void): () => void {
+  eventListeners.add(listener);
+  return () => eventListeners.delete(listener);
+}
+
+function emitEvent(event: CompactionEvent): void {
+  for (const listener of eventListeners) {
+    try {
+      listener(event);
+    } catch (err) {
+      logger.warn(`[memory-compact] Compaction event listener failed: ${err}`);
+    }
+  }
+}
+
+/** Abort controllers for running passes, keyed by repo path — the Cancel button's handle. */
+const activeControllers = new Map<string, AbortController>();
+
+/** Cancel the compaction pass running for a repo. Returns false when none is running. */
+export function cancelCompaction(repoPath: string): boolean {
+  const controller = activeControllers.get(repoPath);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
 // ─── Public API ───
 
 /**
@@ -558,96 +614,144 @@ function applyCompaction(repoPath: string, result: CompactionResult): string[] {
  * contradictions, and condense the non-session memory files.
  */
 export async function compactMemory(opts: CompactOptions): Promise<CompactionStatus> {
-  const { repoPath, adapterType, force } = opts;
+  const { repoPath } = opts;
+  const auto = opts.auto === true;
 
   if (inProgress.has(repoPath)) {
     return { compacted: false, skippedReason: 'already in progress', filesChanged: [] };
   }
   inProgress.add(repoPath);
 
+  const abortController = new AbortController();
+  activeControllers.set(repoPath, abortController);
+
+  // Auto passes stay silent until real work starts (the LLM stage) — the
+  // frequent below-threshold skips must not flash progress UI in the renderer.
+  let emittedAny = false;
+  const emitStage = (stage: CompactionStage) => {
+    if (auto && stage === 'pruning') return;
+    emittedAny = true;
+    emitEvent({ kind: 'stage', repoPath, auto, stage });
+  };
+
+  let status: CompactionStatus;
   try {
-    const filesChanged = pruneSessionNotes(repoPath);
-
-    if (!force) {
-      const { needed } = needsCompaction(repoPath);
-      if (!needed) {
-        return { compacted: false, skippedReason: 'below threshold', filesChanged };
-      }
-      if (Date.now() - getLastCompactedAt(repoPath) < COMPACT_COOLDOWN_MS) {
-        return { compacted: false, skippedReason: 'cooldown', filesChanged };
-      }
-    }
-
-    const adapter = adapterType
-      ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault())
-      : adapterRegistry.getDefault();
-
-    if (!adapter.generateText) {
-      logger.info(`[memory-compact] Adapter "${adapter.id}" does not support generateText — skipping LLM compaction`);
-      return { compacted: false, skippedReason: 'adapter cannot generate text', filesChanged };
-    }
-
-    const contents = readNonSessionContents(repoPath);
-    if (Object.keys(contents).length === 0) {
-      return { compacted: false, skippedReason: 'no memory files', filesChanged };
-    }
-
-    logger.info(`[memory-compact] Running compaction for ${repoPath} (${Object.keys(contents).length} files, ${totalBytes(contents)} bytes)`);
-
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 90_000);
-
-    let resultText: string;
-    try {
-      resultText = await adapter.generateText(
-        buildCompactionPrompt(contents),
-        'Compact the memory files above. Respond with JSON only.',
-        { cwd: opts.cwd ?? repoPath, abortSignal: abortController.signal },
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    const cleaned = resultText
-      .replace(/^```(?:json)?\s*/m, '')
-      .replace(/\s*```\s*$/m, '')
-      .trim();
-
-    let result: CompactionResult;
-    try {
-      result = CompactionResultSchema.parse(JSON.parse(cleaned));
-    } catch (err) {
-      logger.warn(`[memory-compact] Could not parse compaction result: ${err}`);
-      return { compacted: false, skippedReason: 'unparseable result', filesChanged };
-    }
-
-    const invalid = validateCompactionResult(result, contents);
-    if (invalid) {
-      logger.warn(`[memory-compact] Rejected compaction result: ${invalid}`);
-      return { compacted: false, skippedReason: invalid, filesChanged };
-    }
-
-    const backupId = backupMemory(repoPath, contents) ?? undefined;
-    const compactedFiles = applyCompaction(repoPath, result);
-    setLastCompactedAt(repoPath, Date.now(), opts.auto === true, compactedFiles.length);
-
-    const changes: CompactionChange[] = result.files
-      .filter((f): f is typeof f & { action: 'update' | 'delete' } => f.action !== 'keep')
-      .map(f => ({ action: f.action, path: f.path, reason: f.reason }));
-
-    logger.info(`[memory-compact] Compacted ${repoPath}: ${compactedFiles.length} files changed`);
-    return {
-      compacted: compactedFiles.length > 0,
-      filesChanged: [...filesChanged, ...compactedFiles],
-      changes,
-      backupId,
-    };
+    status = await runCompaction(opts, abortController, emitStage);
   } catch (err) {
     logger.error(`[memory-compact] Compaction failed for ${repoPath}: ${err}`);
-    return { compacted: false, skippedReason: String(err), filesChanged: [] };
+    status = { compacted: false, error: String(err), filesChanged: [] };
   } finally {
     inProgress.delete(repoPath);
+    activeControllers.delete(repoPath);
   }
+
+  if (!auto || emittedAny) {
+    emitEvent({ kind: 'done', repoPath, auto, status });
+  }
+  return status;
+}
+
+async function runCompaction(
+  opts: CompactOptions,
+  abortController: AbortController,
+  emitStage: (stage: CompactionStage) => void,
+): Promise<CompactionStatus> {
+  const { repoPath, adapterType, force } = opts;
+
+  emitStage('pruning');
+  const filesChanged = pruneSessionNotes(repoPath);
+
+  if (!force) {
+    const { needed } = needsCompaction(repoPath);
+    if (!needed) {
+      return { compacted: false, skippedReason: 'below threshold', filesChanged };
+    }
+    if (Date.now() - getLastCompactedAt(repoPath) < COMPACT_COOLDOWN_MS) {
+      return { compacted: false, skippedReason: 'cooldown', filesChanged };
+    }
+  }
+
+  const adapter = adapterType
+    ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault())
+    : adapterRegistry.getDefault();
+
+  if (!adapter.generateText) {
+    logger.info(`[memory-compact] Adapter "${adapter.id}" does not support generateText — skipping LLM compaction`);
+    return { compacted: false, skippedReason: 'adapter cannot generate text', filesChanged };
+  }
+
+  const contents = readNonSessionContents(repoPath);
+  if (Object.keys(contents).length === 0) {
+    return { compacted: false, skippedReason: 'no memory files', filesChanged };
+  }
+
+  logger.info(`[memory-compact] Running compaction for ${repoPath} (${Object.keys(contents).length} files, ${totalBytes(contents)} bytes)`);
+
+  emitStage('generating');
+  const timeoutSeconds = compactTimeoutSeconds();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeoutSeconds * 1000);
+
+  let resultText: string;
+  try {
+    resultText = await adapter.generateText(
+      buildCompactionPrompt(contents),
+      'Compact the memory files above. Respond with JSON only.',
+      { cwd: opts.cwd ?? repoPath, abortSignal: abortController.signal },
+    );
+  } catch (err) {
+    if (timedOut) {
+      logger.warn(`[memory-compact] Compaction timed out after ${timeoutSeconds}s for ${repoPath}`);
+      return { compacted: false, error: `compaction timed out after ${timeoutSeconds}s`, filesChanged };
+    }
+    if (abortController.signal.aborted) {
+      logger.info(`[memory-compact] Compaction cancelled for ${repoPath}`);
+      return { compacted: false, skippedReason: 'cancelled', filesChanged };
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  emitStage('validating');
+  const cleaned = resultText
+    .replace(/^```(?:json)?\s*/m, '')
+    .replace(/\s*```\s*$/m, '')
+    .trim();
+
+  let result: CompactionResult;
+  try {
+    result = CompactionResultSchema.parse(JSON.parse(cleaned));
+  } catch (err) {
+    logger.warn(`[memory-compact] Could not parse compaction result: ${err}`);
+    return { compacted: false, skippedReason: 'unparseable result', filesChanged };
+  }
+
+  const invalid = validateCompactionResult(result, contents);
+  if (invalid) {
+    logger.warn(`[memory-compact] Rejected compaction result: ${invalid}`);
+    return { compacted: false, skippedReason: invalid, filesChanged };
+  }
+
+  emitStage('applying');
+  const backupId = backupMemory(repoPath, contents) ?? undefined;
+  const compactedFiles = applyCompaction(repoPath, result);
+  setLastCompactedAt(repoPath, Date.now(), opts.auto === true, compactedFiles.length);
+
+  const changes: CompactionChange[] = result.files
+    .filter((f): f is typeof f & { action: 'update' | 'delete' } => f.action !== 'keep')
+    .map(f => ({ action: f.action, path: f.path, reason: f.reason }));
+
+  logger.info(`[memory-compact] Compacted ${repoPath}: ${compactedFiles.length} files changed`);
+  return {
+    compacted: compactedFiles.length > 0,
+    filesChanged: [...filesChanged, ...compactedFiles],
+    changes,
+    backupId,
+  };
 }
 
 /**

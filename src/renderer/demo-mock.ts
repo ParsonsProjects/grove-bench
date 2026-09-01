@@ -34,6 +34,7 @@ const SETTINGS = {
   defaultSystemPromptAppend: '',
   memoryAutoSave: true,
   memoryAutoCompact: true,
+  memoryCompactTimeoutSeconds: 300,
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',
@@ -159,6 +160,9 @@ const memoryBackups = [
   { id: '2026-08-27T18-40-11-102Z', createdAt: new Date(now - 2 * day).toISOString(), fileCount: 5 },
 ];
 
+const compactListeners = new Set<(e: unknown) => void>();
+let compactCancelled = false;
+
 const api: Record<string, unknown> = {
   memoryList: async () => memoryFiles.map(({ content: _c, ...entry }) => entry),
   memoryRead: async (_repo: string, p: string) => memoryFiles.find(f => f.relativePath === p)?.content ?? null,
@@ -171,10 +175,31 @@ const api: Record<string, unknown> = {
     memoryFiles = memoryFiles.filter(f => f.relativePath !== p);
     return true;
   },
-  memoryCompact: async () => {
-    // Simulate merging the duplicated tech-stack file into the overview
+  memoryCompact: async (repoPath: string) => {
+    // Simulate a real pass: staged progress events, cancellable, then the merge
+    compactCancelled = false;
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const stage = (s: string) => compactListeners.forEach(l => l({ kind: 'stage', repoPath, auto: false, stage: s }));
+    const finish = (status: Record<string, unknown>) => {
+      compactListeners.forEach(l => l({ kind: 'done', repoPath, auto: false, status }));
+      return status;
+    };
+
+    stage('pruning');
+    await sleep(600);
+    stage('generating');
+    for (let i = 0; i < 8; i++) {
+      await sleep(500);
+      if (compactCancelled) return finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+    }
+    stage('validating');
+    await sleep(500);
+    stage('applying');
+    await sleep(400);
+
+    // Merge the duplicated tech-stack file into the overview
     memoryFiles = memoryFiles.filter(f => f.relativePath !== 'repo/tech-stack.md');
-    return {
+    return finish({
       compacted: true,
       filesChanged: ['repo/overview.md', 'repo/tech-stack.md'],
       changes: [
@@ -182,7 +207,15 @@ const api: Record<string, unknown> = {
         { action: 'delete', path: 'repo/tech-stack.md', reason: 'Fully covered by repo/overview.md after the merge' },
       ],
       backupId: memoryBackups[0].id,
-    };
+    });
+  },
+  memoryCompactCancel: async () => {
+    compactCancelled = true;
+    return true;
+  },
+  onMemoryCompactEvent: (cb: (e: unknown) => void) => {
+    compactListeners.add(cb);
+    return () => compactListeners.delete(cb);
   },
   memoryListBackups: async () => memoryBackups,
   memoryRestoreBackup: async () => ({ restored: true, filesChanged: ['repo/overview.md', 'repo/tech-stack.md'] }),

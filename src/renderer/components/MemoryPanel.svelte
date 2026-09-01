@@ -1,6 +1,7 @@
 <script lang="ts">
   import { memoryStore } from '../stores/memory.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
@@ -27,6 +28,23 @@
   let confirmPrune = $state(false);
 
   const pruneDayPresets = [7, 30, 90, 180];
+
+  const compactStageLabels: Record<string, string> = {
+    pruning: 'Pruning old session notes',
+    generating: 'Asking the agent to consolidate memory',
+    validating: 'Validating the result',
+    applying: 'Applying changes',
+  };
+  let compactStageLabel = $derived(
+    compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
+  );
+  let compactTimeoutSeconds = $derived(Math.max(30, settingsStore.current.memoryCompactTimeoutSeconds || 300));
+
+  function formatElapsed(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
 
   const folders = ['repo', 'conventions', 'architecture', 'sessions'];
 
@@ -289,8 +307,22 @@
     {#if memoryStore.error}
       <p class="text-xs text-destructive mt-2">{memoryStore.error}</p>
     {:else if memoryStore.compacting}
-      <p class="text-xs text-muted-foreground mt-2 animate-pulse">
-        Analyzing {memoryStore.stats?.fileCount ?? ''} memory files with the agent — this can take up to a minute…
+      <div class="mt-2 flex items-center gap-3">
+        <span class="w-1.5 h-1.5 bg-primary animate-pulse shrink-0"></span>
+        <p class="text-xs text-muted-foreground flex-1">
+          {compactStageLabel} — {formatElapsed(memoryStore.compactElapsedSeconds)} elapsed
+          <span class="text-muted-foreground/60">(times out at {formatElapsed(compactTimeoutSeconds)})</span>
+        </p>
+        <button
+          onclick={() => memoryStore.cancelCompact()}
+          class="text-xs text-destructive hover:underline underline-offset-2 shrink-0"
+          title="Abort this compaction pass — nothing has been changed yet"
+        >
+          Cancel
+        </button>
+      </div>
+      <p class="text-xs text-muted-foreground/60 mt-1 ml-4.5">
+        You can close this panel — compaction continues in the background and the summary will appear when it finishes.
       </p>
     {:else if memoryStore.compactMessage}
       <p class="text-xs text-muted-foreground mt-2">{memoryStore.compactMessage}</p>

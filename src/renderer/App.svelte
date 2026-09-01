@@ -11,6 +11,8 @@
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
+  import MemoryToast from './components/MemoryToast.svelte';
+  import { memoryStore } from './stores/memory.svelte.js';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
   import TitleBar from './components/TitleBar.svelte';
@@ -219,6 +221,7 @@
   onMount(() => {
     settingsStore.load();
     bookmarkStore.load();
+    memoryStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });
@@ -349,6 +352,7 @@
 {/if}
 
 <ErrorToast />
+<MemoryToast />
 
 <BookmarksDrawer />
 <MarkdownPreviewPanel />

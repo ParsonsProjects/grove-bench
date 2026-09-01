@@ -13,6 +13,7 @@
   import CreatePrDialog from './CreatePrDialog.svelte';
   import AddSkillDialog from './AddSkillDialog.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { memoryStore } from '../stores/memory.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
   import type { McpServerInfo, SkillInfo, SkillSuggestion, ThinkingLevel } from '../../shared/types.js';
@@ -213,6 +214,13 @@
 
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
+  /** Memory compaction (manual or automatic) running for this session's repo. */
+  let memoryCompacting = $derived.by(() => {
+    const repo = store.sessions.find((s) => s.id === sessionId)?.repoPath;
+    if (!repo) return false;
+    return (memoryStore.compacting && memoryStore.activeRepo === repo)
+      || memoryStore.autoCompactingRepo === repo;
+  });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
 
@@ -673,6 +681,17 @@
         </div>
       {/if}
     </div>
+  {/if}
+
+  {#if memoryCompacting}
+    <button
+      onclick={() => memoryStore.panelOpen = true}
+      class="flex items-center gap-1 text-teal-400 hover:text-teal-300 transition-colors"
+      title="Project memory is being compacted — click to open the memory panel"
+    >
+      <span class="w-1.5 h-1.5 bg-teal-400 animate-pulse"></span>
+      compacting memory
+    </button>
   {/if}
 
   <span class="w-px h-3.5 bg-border"></span>

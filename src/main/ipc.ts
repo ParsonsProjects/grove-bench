@@ -936,6 +936,18 @@ export function registerHandlers() {
     return memoryCompact.compactMemory({ repoPath, force: true });
   });
 
+  ipcMain.handle(IPC.MEMORY_COMPACT_CANCEL, (_event, repoPath: string) => {
+    return memoryCompact.cancelCompaction(repoPath);
+  });
+
+  // Broadcast compaction progress (manual and auto passes) so the renderer can
+  // show status-bar/toast feedback without keeping the memory panel open.
+  memoryCompact.onCompactionEvent((evt) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC.MEMORY_COMPACT_EVENT, evt);
+    }
+  });
+
   ipcMain.handle(IPC.MEMORY_LIST_BACKUPS, (_event, repoPath: string) => {
     return memoryCompact.listBackups(repoPath);
   });

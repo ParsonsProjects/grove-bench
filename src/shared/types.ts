@@ -615,6 +615,8 @@ export interface GroveBenchAPI {
   memoryWrite(repoPath: string, relativePath: string, content: string): Promise<void>;
   memoryDelete(repoPath: string, relativePath: string): Promise<boolean>;
   memoryCompact(repoPath: string): Promise<MemoryCompactionStatus>;
+  memoryCompactCancel(repoPath: string): Promise<boolean>;
+  onMemoryCompactEvent(callback: (event: MemoryCompactionEvent) => void): () => void;
   memoryListBackups(repoPath: string): Promise<MemoryBackupInfo[]>;
   memoryRestoreBackup(repoPath: string, backupId: string): Promise<MemoryRestoreStatus>;
   memoryStats(repoPath: string): Promise<MemoryStatsResult>;
@@ -720,6 +722,9 @@ export interface GroveBenchSettings {
   /** Enable automatic memory compaction (dedupe, contradiction resolution,
    *  session-note pruning) when memory grows past its budget. Default true. */
   memoryAutoCompact: boolean;
+  /** Abort a memory compaction pass after this many seconds. Clamped to a
+   *  30-second minimum. Default 300 (5 minutes). */
+  memoryCompactTimeoutSeconds: number;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
@@ -776,12 +781,20 @@ export interface MemoryEntry {
 export interface MemoryCompactionStatus {
   compacted: boolean;
   skippedReason?: string;   // why compaction was skipped, when it was
+  error?: string;           // the pass was attempted but failed — not a no-op
   filesChanged: string[];   // paths written, rewritten, or deleted
   /** Per-file summary of what the pass did (action, path, model's reason). */
   changes?: Array<{ action: 'update' | 'delete'; path: string; reason: string }>;
   /** Snapshot taken before applying — restore it to undo the compaction. */
   backupId?: string;
 }
+
+export type MemoryCompactionStage = 'pruning' | 'generating' | 'validating' | 'applying';
+
+/** Pushed from main over MEMORY_COMPACT_EVENT while a compaction pass runs. */
+export type MemoryCompactionEvent =
+  | { kind: 'stage'; repoPath: string; auto: boolean; stage: MemoryCompactionStage }
+  | { kind: 'done'; repoPath: string; auto: boolean; status: MemoryCompactionStatus };
 
 export interface MemoryStatsResult {
   totalBytes: number;        // non-session memory bytes (frontmatter stripped)
@@ -941,6 +954,8 @@ export const IPC = {
   MEMORY_WRITE: 'memory:write',
   MEMORY_DELETE: 'memory:delete',
   MEMORY_COMPACT: 'memory:compact',
+  MEMORY_COMPACT_CANCEL: 'memory:compactCancel',
+  MEMORY_COMPACT_EVENT: 'memory:compactEvent',
   MEMORY_LIST_BACKUPS: 'memory:listBackups',
   MEMORY_RESTORE_BACKUP: 'memory:restoreBackup',
   MEMORY_STATS: 'memory:stats',
