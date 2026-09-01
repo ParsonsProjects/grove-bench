@@ -48,6 +48,9 @@
   let prAuto = $derived(prStore.getAuto(sessionId));
   let prPopoverOpen = $state(false);
   let addressingReviews = $state(false);
+  let addressReviewsNotice = $state<string | null>(null);
+  let fixCiNotice = $state<string | null>(null);
+  let prFetchFailed = $derived(prStore.fetchFailedBySession[sessionId] ?? false);
 
   // Alerts merge into their popover sections rather than rendering as separate rows
   let ciAlert = $derived(prAlerts.find((a) => a.kind === 'ci_failed') as Extract<PrAlert, { kind: 'ci_failed' }> | undefined);
@@ -67,16 +70,22 @@
   });
 
   function fixCi() {
-    prStore.fixCiWithAgent(sessionId);
-    prPopoverOpen = false;
+    fixCiNotice = null;
+    if (prStore.fixCiWithAgent(sessionId)) prPopoverOpen = false;
+    else fixCiNotice = 'The agent is busy — try again when it goes idle';
   }
 
   async function addressReviews() {
     if (addressingReviews) return;
     addressingReviews = true;
+    addressReviewsNotice = null;
     try {
-      const sent = await prStore.addressReviewsWithAgent(sessionId);
-      if (sent) prPopoverOpen = false;
+      const result = await prStore.addressReviewsWithAgent(sessionId);
+      if (result === 'sent') prPopoverOpen = false;
+      else if (result === 'empty') addressReviewsNotice = 'No review comments found on the PR';
+      else addressReviewsNotice = 'The agent is busy — try again when it goes idle';
+    } catch {
+      addressReviewsNotice = 'Could not fetch review comments — check gh auth';
     } finally {
       addressingReviews = false;
     }
@@ -955,7 +964,7 @@
       : 'text-blue-400 hover:text-blue-300'}
     <div class="relative" bind:this={prPopoverRef}>
       <button
-        onclick={() => prPopoverOpen = !prPopoverOpen}
+        onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { addressReviewsNotice = null; fixCiNotice = null; } }}
         class="flex items-center gap-1.5 {prColor} transition-colors"
         title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}: click for checks, reviews, and automation"
       >
@@ -986,6 +995,11 @@
           <div class="text-muted-foreground/70 mt-0.5">
             {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}
           </div>
+          {#if prFetchFailed}
+            <div class="text-orange-400/80 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
+              may be stale — the last GitHub fetch failed
+            </div>
+          {/if}
 
           <!-- Status: checks + reviews, alerts merged in as "new" pills -->
           <div class="border-t border-border pt-2 mt-2 space-y-1.5">
@@ -1023,6 +1037,11 @@
                   {prInfo.failingChecks.join(', ')}
                 </div>
               {/if}
+              {#if fixCiNotice}
+                <div class="text-orange-400/80 pl-16 truncate" title={fixCiNotice}>
+                  {fixCiNotice}
+                </div>
+              {/if}
             {/if}
 
             {#if prInfo.reviewDecision === 'APPROVED' || prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert}
@@ -1058,6 +1077,11 @@
                   </button>
                 {/if}
               </div>
+              {#if addressReviewsNotice}
+                <div class="text-orange-400/80 pl-16 truncate" title={addressReviewsNotice}>
+                  {addressReviewsNotice}
+                </div>
+              {/if}
             {/if}
 
             {#if humanAlert}

@@ -4,6 +4,9 @@ import type { PrInfo } from '../../shared/types.js';
 export interface PrWatchState {
   /** First poll seeds the baseline silently — no alerts for pre-existing feedback. */
   seeded: boolean;
+  /** PR the state was seeded for — a different number means a new PR whose
+   *  pre-existing feedback must not read as fresh events. */
+  prNumber?: number;
   /** Head SHA we last alerted a CI failure for (one alert per pushed commit). */
   alertedFailureSha?: string;
   /** Comment/review ids already seen. */
@@ -24,6 +27,15 @@ export type PrWatchEvent =
  */
 export function detectPrEvents(state: PrWatchState, pr: PrInfo | null): PrWatchEvent[] {
   if (!pr || pr.state !== 'OPEN') return [];
+
+  // A different PR on the same branch (old one closed, new one opened) starts
+  // from a fresh baseline — its existing comments and checks are not news.
+  if (state.prNumber !== pr.number) {
+    state.prNumber = pr.number;
+    state.seeded = false;
+    state.seenComments = new Set();
+    state.alertedFailureSha = undefined;
+  }
 
   const sig = pr.commentSignature ?? [];
   const failed = (pr.checks?.failed ?? 0) > 0;

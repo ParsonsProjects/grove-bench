@@ -33,11 +33,14 @@ class PrStore {
   syncBySession = $state<Record<string, GitSyncStatus>>({});
   alertsBySession = $state<Record<string, PrAlert[]>>({});
   autoBySession = $state<Record<string, PrAutoConfig>>({});
+  /** True after a fetch fails — the displayed PR data may be stale. */
+  fetchFailedBySession = $state<Record<string, boolean>>({});
 
   private lastFetch = new Map<string, number>();
   private watchStates = new Map<string, PrWatchState>();
-  private autoFixAttempts = new Map<string, Map<string, number>>();
-  private globalTimer: ReturnType<typeof setInterval> | null = null;
+  /** Auto-fix attempts on the current head commit, per session. */
+  private autoFixAttempts = new Map<string, { sha: string; attempts: number }>();
+  private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private nextAlertId = 1;
 
   getPr(sessionId: string): PrInfo | null {
@@ -83,27 +86,36 @@ class PrStore {
       ]);
       this.prBySession = { ...this.prBySession, [sessionId]: pr };
       this.syncBySession = { ...this.syncBySession, [sessionId]: sync };
+      if (this.fetchFailedBySession[sessionId]) {
+        this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: false };
+      }
       this.handleDetection(sessionId);
     } catch (e) {
+      // Keep the stale snapshot but flag it so the UI can say so
+      this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: true };
       console.error('Failed to fetch PR status:', e);
     }
   }
 
-  /** Poll every session (open tab or not) — started once from App. */
+  /** Poll every session (open tab or not) — started once from App.
+   *  Self-scheduling so a slow sweep never overlaps the next one. */
   startGlobalPolling(getSessionIds: () => string[]): void {
     if (this.globalTimer) return;
-    this.globalTimer = setInterval(async () => {
+    const sweep = async () => {
       // Sequential to avoid a burst of parallel gh processes
       for (const id of getSessionIds()) {
         await this.refresh(id, true);
       }
-    }, POLL_MS);
+      this.globalTimer = setTimeout(sweep, POLL_MS);
+    };
+    this.globalTimer = setTimeout(sweep, POLL_MS);
   }
 
-  /** Immediate fetch when a status bar mounts. Returns an unwatch fn (no-op —
+  /** Fetch when a status bar mounts — throttled, so rapid tab switching
+   *  doesn't spawn a gh process per switch. Returns an unwatch fn (no-op —
    *  ongoing polling is global). */
   watch(sessionId: string): () => void {
-    this.refresh(sessionId, true);
+    this.refresh(sessionId);
     return () => {};
   }
 
@@ -135,17 +147,17 @@ class PrStore {
 
   /** Fetch the PR's review feedback and send a turn asking the agent to address it.
    *  trustedOnly (used by auto mode) drops comments from non-collaborators.
-   *  Returns false when there was nothing to send or the session is busy. */
-  async addressReviewsWithAgent(sessionId: string, opts: { trustedOnly?: boolean } = {}): Promise<boolean> {
+   *  Returns why nothing was sent so callers can surface it instead of failing silently. */
+  async addressReviewsWithAgent(sessionId: string, opts: { trustedOnly?: boolean } = {}): Promise<'sent' | 'empty' | 'busy'> {
     const pr = this.getPr(sessionId);
-    if (!pr || !this.sessionIdle(sessionId)) return false;
+    if (!pr || !this.sessionIdle(sessionId)) return 'busy';
     const all = await window.groveBench.getPrReviewComments(sessionId, pr.number);
     const comments = opts.trustedOnly ? all.filter((c) => isTrustedAssociation(c.authorAssociation)) : all;
-    if (comments.length === 0) return false;
-    if (!this.sessionIdle(sessionId)) return false; // may have changed during the fetch
+    if (comments.length === 0) return 'empty';
+    if (!this.sessionIdle(sessionId)) return 'busy'; // may have changed during the fetch
     this.sendTurn(sessionId, buildAddressReviewsPrompt(pr.number, this.branchOf(sessionId), comments));
     this.clearAlerts(sessionId, 'new_comments');
-    return true;
+    return 'sent';
   }
 
   // ── Detection + auto policy ──
@@ -167,7 +179,8 @@ class PrStore {
     if (event.kind === 'ci_failed') {
       if (auto.fixCi) {
         const sha = this.getPr(sessionId)?.headSha ?? 'unknown';
-        const attempts = this.autoFixAttempts.get(sessionId)?.get(sha) ?? 0;
+        const prev = this.autoFixAttempts.get(sessionId);
+        const attempts = prev?.sha === sha ? prev.attempts : 0;
         if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
           this.addAlert(sessionId, {
             kind: 'needs_human',
@@ -176,9 +189,7 @@ class PrStore {
           return;
         }
         if (this.fixCiWithAgent(sessionId)) {
-          const per = this.autoFixAttempts.get(sessionId) ?? new Map<string, number>();
-          per.set(sha, attempts + 1);
-          this.autoFixAttempts.set(sessionId, per);
+          this.autoFixAttempts.set(sessionId, { sha, attempts: attempts + 1 });
           return;
         }
       }
@@ -188,9 +199,9 @@ class PrStore {
 
     if (event.kind === 'new_comments') {
       if (auto.addressReviews) {
-        this.addressReviewsWithAgent(sessionId, { trustedOnly: true }).then((sent) => {
+        this.addressReviewsWithAgent(sessionId, { trustedOnly: true }).then((result) => {
           // Nothing sent (busy, or all comments from non-collaborators) → surface it
-          if (!sent) this.addAlert(sessionId, { kind: 'new_comments', count: event.count });
+          if (result !== 'sent') this.addAlert(sessionId, { kind: 'new_comments', count: event.count });
         }).catch(() => {
           this.addAlert(sessionId, { kind: 'new_comments', count: event.count });
         });
@@ -249,6 +260,8 @@ class PrStore {
     this.alertsBySession = restAlerts;
     const { [sessionId]: _c, ...restAuto } = this.autoBySession;
     this.autoBySession = restAuto;
+    const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
+    this.fetchFailedBySession = restFailed;
   }
 }
 

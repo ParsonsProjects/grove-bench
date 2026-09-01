@@ -25,6 +25,26 @@ export async function ghAuthenticated(): Promise<boolean> {
   }
 }
 
+let cachedLogin: string | null = null;
+
+/** The gh-authenticated user's login, cached after the first success.
+ *  Failures (not authenticated, offline) return null without caching, so a
+ *  later login is picked up. */
+export async function ghLogin(): Promise<string | null> {
+  if (cachedLogin) return cachedLogin;
+  try {
+    const login = JSON.parse(await gh(['api', 'user']))?.login;
+    if (typeof login === 'string' && login) cachedLogin = login;
+  } catch {
+    return null;
+  }
+  return cachedLogin;
+}
+
+export function resetGhLoginCacheForTests(): void {
+  cachedLogin = null;
+}
+
 const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews';
 
 const PASSED_VERDICTS = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
@@ -42,17 +62,22 @@ export function failingCheckNames(rollup: unknown): string[] {
     .map((item) => String(item.name || item.context || 'check'));
 }
 
-/** Opaque ids for conversation comments + submitted reviews, for new-feedback detection. */
-export function commentSignature(comments: unknown, reviews: unknown): string[] {
+/** Opaque ids for conversation comments + submitted reviews, for new-feedback detection.
+ *  ignoreLogin drops entries authored by that user (the gh-authenticated account):
+ *  the agent replying on the PR must not read as new feedback, or auto
+ *  address-reviews mode would answer its own replies in a loop. */
+export function commentSignature(comments: unknown, reviews: unknown, ignoreLogin?: string | null): string[] {
   const sig: string[] = [];
   if (Array.isArray(comments)) {
     for (const c of comments as Array<Record<string, any>>) {
+      if (ignoreLogin && c.author?.login === ignoreLogin) continue;
       sig.push(`c:${c.id ?? `${c.author?.login}@${c.createdAt}`}`);
     }
   }
   if (Array.isArray(reviews)) {
     for (const r of reviews as Array<Record<string, any>>) {
       if (String(r.state).toUpperCase() === 'PENDING') continue;
+      if (ignoreLogin && r.author?.login === ignoreLogin) continue;
       sig.push(`r:${r.id ?? `${r.author?.login}@${r.submittedAt}`}`);
     }
   }
@@ -73,8 +98,10 @@ export function summarizeChecks(rollup: unknown): PrChecksSummary | null {
   return summary;
 }
 
-/** PR state for a branch; null when no PR exists or gh is unavailable. */
-export async function prStatus(repoPath: string, branch: string): Promise<PrInfo | null> {
+/** PR state for a branch; null when no PR exists or gh is unavailable.
+ *  selfLogin (when known) excludes that user's own comments/reviews from the
+ *  new-feedback signature — see commentSignature. */
+export async function prStatus(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo | null> {
   try {
     const stdout = await gh(['pr', 'view', branch, '--json', PR_VIEW_FIELDS], repoPath);
     const data = JSON.parse(stdout);
@@ -89,20 +116,27 @@ export async function prStatus(repoPath: string, branch: string): Promise<PrInfo
       checks: summarizeChecks(data.statusCheckRollup),
       headSha: data.headRefOid,
       failingChecks: failingCheckNames(data.statusCheckRollup),
-      commentSignature: commentSignature(data.comments, data.reviews),
+      commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
     };
   } catch {
     return null;
   }
 }
 
-/** Inline review comments + submitted review bodies for a PR, flattened for prompting.
+/** Inline review comments, submitted review bodies, and PR conversation comments,
+ *  flattened for prompting. Conversation comments must be included: new-feedback
+ *  detection (commentSignature) counts them, so an alert can fire for a plain PR
+ *  comment with no review activity at all.
+ *  Capped at the first 100 items per endpoint; the prompt tells the agent how to
+ *  fetch the rest when more exist.
  *  gh substitutes {owner}/{repo} from the repo's origin remote. */
 export async function prReviewComments(repoPath: string, prNumber: number): Promise<PrReviewComment[]> {
-  const [inline, reviews] = await Promise.all([
+  const [inline, reviews, conversation] = await Promise.all([
     gh(['api', `repos/{owner}/{repo}/pulls/${prNumber}/comments?per_page=100`], repoPath)
       .then((s) => JSON.parse(s)).catch(() => []),
     gh(['api', `repos/{owner}/{repo}/pulls/${prNumber}/reviews?per_page=100`], repoPath)
+      .then((s) => JSON.parse(s)).catch(() => []),
+    gh(['api', `repos/{owner}/{repo}/issues/${prNumber}/comments?per_page=100`], repoPath)
       .then((s) => JSON.parse(s)).catch(() => []),
   ]);
 
@@ -127,6 +161,17 @@ export async function prReviewComments(repoPath: string, prNumber: number): Prom
         authorAssociation: c.author_association ?? 'NONE',
         path: c.path,
         line: c.line ?? c.original_line ?? undefined,
+        body: c.body,
+      });
+    }
+  }
+  if (Array.isArray(conversation)) {
+    for (const c of conversation as Array<Record<string, any>>) {
+      if (!c.body?.trim()) continue;
+      result.push({
+        id: `discussion-${c.id}`,
+        author: c.user?.login ?? 'unknown',
+        authorAssociation: c.author_association ?? 'NONE',
         body: c.body,
       });
     }

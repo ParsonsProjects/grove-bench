@@ -15,6 +15,8 @@
   let title = $state('');
   let body = $state('');
   let base = $state('');
+  /** Detected default branch, kept as the fallback if the user clears the field. */
+  let resolvedBase = $state('');
   let draft = $state(false);
   let creating = $state(false);
   let dialogError = $state('');
@@ -51,7 +53,8 @@
 
   onMount(async () => {
     const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
-    base = await resolveBaseBranch(repoPath);
+    resolvedBase = await resolveBaseBranch(repoPath);
+    base = resolvedBase;
     await prefillFromCommits();
   });
 
@@ -63,7 +66,7 @@
       const pr = await prStore.createPr(sessionId, {
         title: title.trim(),
         body,
-        base: base.trim() || 'main',
+        base: base.trim() || resolvedBase || 'main',
         draft,
       });
       open = false;
@@ -123,7 +126,7 @@
       <div class="flex items-end gap-3">
         <div class="flex-1">
           <Label for="pr-base" class="mb-1 block">Base Branch</Label>
-          <Input id="pr-base" type="text" bind:value={base} placeholder="main" />
+          <Input id="pr-base" type="text" bind:value={base} placeholder={resolvedBase || 'main'} />
         </div>
         <label class="flex items-center gap-2 pb-2 text-sm text-muted-foreground cursor-pointer">
           <Checkbox bind:checked={draft} />

@@ -70,6 +70,23 @@ describe('detectPrEvents()', () => {
     expect(detectPrEvents(state, pr({ commentSignature: ['c:1', 'c:2', 'r:3'] }))).toEqual([]);
   });
 
+  it('reseeds when a different PR number appears on the branch', () => {
+    const state = newPrWatchState();
+    detectPrEvents(state, pr({ number: 10, commentSignature: ['c:1'] })); // seed PR #10
+    detectPrEvents(state, pr({ number: 10, state: 'CLOSED' }));           // closed → ignored
+    // New PR #12 with pre-existing comments and a failing check: not news
+    const events = detectPrEvents(state, pr({
+      number: 12,
+      commentSignature: ['c:5', 'r:6'],
+      checks: { total: 1, passed: 0, failed: 1, pending: 0 },
+      failingChecks: ['test'],
+    }));
+    expect(events).toEqual([]);
+    // ...but feedback arriving after that baseline is
+    expect(detectPrEvents(state, pr({ number: 12, commentSignature: ['c:5', 'r:6', 'c:7'] })))
+      .toEqual([{ kind: 'new_comments', count: 1 }]);
+  });
+
   it('is silent for null, merged, or closed PRs', () => {
     const state = newPrWatchState();
     expect(detectPrEvents(state, null)).toEqual([]);
