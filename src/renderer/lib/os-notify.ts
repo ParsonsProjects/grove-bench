@@ -8,9 +8,12 @@ export function sessionLabel(sessionId: string): string {
 }
 
 /** Fire-and-forget desktop notification request. Main gates on window focus
- *  and settings, so callers don't need any conditions of their own. */
+ *  and settings; this gates on the session still being open — a stopped or
+ *  removed session has nothing actionable behind the toast. */
 export function notifyOs(kind: OsNotificationRequest['kind'], sessionId: string, body: string): void {
+  const session = sessionStore.sessions.find((s) => s.id === sessionId);
+  if (!session || session.status === 'stopped') return;
   try {
-    window.groveBench.notify({ kind, sessionId, title: sessionLabel(sessionId), body });
+    window.groveBench.notify({ kind, sessionId, title: session.displayName || session.branch || sessionId, body });
   } catch { /* notifications are best-effort */ }
 }

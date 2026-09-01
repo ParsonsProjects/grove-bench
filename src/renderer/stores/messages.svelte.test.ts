@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
+import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
@@ -11,6 +12,7 @@ const SID = 'test-session';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStore.sessions = [];
   // Clear messages for our test session
   messageStore.messagesBySession = {};
   messageStore.streamingText = {};
@@ -360,6 +362,11 @@ describe('ingestEvent — permission_request', () => {
 });
 
 describe('OS notification triggers', () => {
+  // notifyOs only fires for sessions that are still open — register SID as one.
+  beforeEach(() => {
+    sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'running' }];
+  });
+
   it('notifies turn completion from the result event', () => {
     messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
@@ -404,6 +411,18 @@ describe('OS notification triggers', () => {
       { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't4', requestId: 'r4' } as AgentEvent,
       { type: 'result', subtype: 'success', isError: false } as AgentEvent,
     ]);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+
+  it('never notifies for a stopped session', () => {
+    sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'stopped' }];
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+
+  it('never notifies for a session no longer in the store', () => {
+    sessionStore.sessions = [];
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
     expect(mockGroveBench.notify).not.toHaveBeenCalled();
   });
 });
