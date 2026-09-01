@@ -2,9 +2,18 @@ import type {
   MemoryEntry,
   MemoryBackupInfo,
   MemoryBackupFile,
+  MemoryCompactionEvent,
+  MemoryCompactionStage,
   MemoryCompactionStatus,
   MemoryStatsResult,
 } from '../../shared/types.js';
+
+export interface MemoryToast {
+  kind: 'success' | 'info' | 'error';
+  message: string;
+  /** Offer a "View" action that opens the memory panel. */
+  showView?: boolean;
+}
 
 class MemoryStore {
   files = $state<MemoryEntry[]>([]);
@@ -24,6 +33,74 @@ class MemoryStore {
   backupPreviewId = $state<string | null>(null);
   backupPreviewFiles = $state<MemoryBackupFile[]>([]);
   backupPreviewFile = $state<{ path: string; content: string } | null>(null);
+
+  /** Whether the memory panel dialog is open — global so the status bar and toasts can open it. */
+  panelOpen = $state(false);
+  /** Current stage of the running compaction pass, from main-process events. */
+  compactStage = $state<MemoryCompactionStage | null>(null);
+  /** Seconds since the manual compaction started — the panel's "still alive" ticker. */
+  compactElapsedSeconds = $state(0);
+  /** Repo path of a running automatic (background) compaction, for the status-bar indicator. */
+  autoCompactingRepo = $state<string | null>(null);
+  /** Transient notification shown by MemoryToast — survives the panel being closed. */
+  toast = $state<MemoryToast | null>(null);
+
+  private elapsedTimer: ReturnType<typeof setInterval> | null = null;
+  private compactStartedAt: number | null = null;
+  private eventsSubscribed = false;
+
+  /** Subscribe to main-process compaction events. Call once at app startup. */
+  init() {
+    if (this.eventsSubscribed) return;
+    this.eventsSubscribed = true;
+    window.groveBench.onMemoryCompactEvent((e) => this.handleCompactionEvent(e));
+  }
+
+  private handleCompactionEvent(e: MemoryCompactionEvent) {
+    if (e.kind === 'stage') {
+      if (e.auto) {
+        this.autoCompactingRepo = e.repoPath;
+      } else if (e.repoPath === this.activeRepo) {
+        this.compactStage = e.stage;
+      }
+      return;
+    }
+    // done
+    if (e.auto) {
+      this.autoCompactingRepo = null;
+      if (e.status.compacted) {
+        const n = e.status.filesChanged.length;
+        this.toast = {
+          kind: 'success',
+          message: `Memory auto-compacted — ${n} ${n === 1 ? 'file' : 'files'} changed`,
+          showView: true,
+        };
+        // Keep an open panel in sync with what the background pass just rewrote
+        if (e.repoPath === this.activeRepo) {
+          window.groveBench.memoryList(e.repoPath).then((files) => { this.files = files; });
+          this.loadStats();
+        }
+      }
+    }
+    // Manual passes are finalized by the compact() promise itself.
+  }
+
+  private startElapsedTimer() {
+    this.compactStartedAt = Date.now();
+    this.compactElapsedSeconds = 0;
+    this.elapsedTimer = setInterval(() => {
+      if (this.compactStartedAt !== null) {
+        this.compactElapsedSeconds = Math.floor((Date.now() - this.compactStartedAt) / 1000);
+      }
+    }, 1000);
+  }
+
+  private stopElapsedTimer() {
+    if (this.elapsedTimer) clearInterval(this.elapsedTimer);
+    this.elapsedTimer = null;
+    this.compactStartedAt = null;
+    this.compactStage = null;
+  }
 
   /** Group files by folder for tree display */
   get filesByFolder(): Record<string, MemoryEntry[]> {
@@ -119,20 +196,44 @@ class MemoryStore {
     this.error = null;
     this.compactMessage = null;
     this.lastCompaction = null;
+    this.toast = null;
+    this.startElapsedTimer();
     try {
       const status = await window.groveBench.memoryCompact(this.activeRepo);
       if (status.compacted) {
         this.lastCompaction = status; // opens the change-summary dialog with Undo
+      } else if (status.error) {
+        const message = `Compaction failed: ${status.error}`;
+        if (this.panelOpen) this.error = message;
+        else this.toast = { kind: 'error', message };
+      } else if (status.skippedReason === 'cancelled') {
+        if (this.panelOpen) this.compactMessage = 'Compaction cancelled';
+        else this.toast = { kind: 'info', message: 'Compaction cancelled' };
       } else {
-        this.compactMessage = `Nothing to compact${status.skippedReason ? ` (${status.skippedReason})` : ''}`;
+        const message = `Nothing to compact${status.skippedReason ? ` (${status.skippedReason})` : ''}`;
+        if (this.panelOpen) this.compactMessage = message;
+        else this.toast = { kind: 'info', message };
       }
       this.selectedFile = null;
       this.files = await window.groveBench.memoryList(this.activeRepo);
       await this.loadStats();
     } catch (e: any) {
-      this.error = e.message || String(e);
+      if (this.panelOpen) this.error = e.message || String(e);
+      else this.toast = { kind: 'error', message: e.message || String(e) };
     } finally {
+      this.stopElapsedTimer();
       this.compacting = false;
+    }
+  }
+
+  /** Ask the main process to abort the running compaction pass. */
+  async cancelCompact() {
+    if (!this.activeRepo || !this.compacting) return;
+    try {
+      await window.groveBench.memoryCompactCancel(this.activeRepo);
+      // compact()'s pending promise resolves with the cancelled status
+    } catch (e: any) {
+      this.error = e.message || String(e);
     }
   }
 

@@ -603,6 +603,21 @@
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old session notes in the background. A backup is taken first. On by default.</p>
 
+          <div class="ml-6">
+            <Label class="mb-1 block">Compaction timeout</Label>
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                min="30"
+                step="30"
+                bind:value={settingsStore.draft.memoryCompactTimeoutSeconds}
+                class="w-20 text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
+              />
+              <span class="text-sm text-muted-foreground">seconds</span>
+            </div>
+            <p class="text-xs text-muted-foreground mt-1">Abort a compaction pass (manual or automatic) that runs longer than this. Minimum 30. Default 300 (5 minutes).</p>
+          </div>
+
           <Separator />
 
           <!-- Skill Suggestions -->

@@ -204,6 +204,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MEMORY_DELETE, repoPath, relativePath),
   memoryCompact: (repoPath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_COMPACT, repoPath),
+  memoryCompactCancel: (repoPath: string) =>
+    ipcRenderer.invoke(IPC.MEMORY_COMPACT_CANCEL, repoPath),
+  onMemoryCompactEvent: (callback: (event: import('../shared/types.js').MemoryCompactionEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').MemoryCompactionEvent) =>
+      callback(data);
+    ipcRenderer.on(IPC.MEMORY_COMPACT_EVENT, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.MEMORY_COMPACT_EVENT, handler);
+    };
+  },
   memoryListBackups: (repoPath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_LIST_BACKUPS, repoPath),
   memoryRestoreBackup: (repoPath: string, backupId: string) =>

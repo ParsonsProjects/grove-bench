@@ -25,6 +25,9 @@ beforeEach(() => {
   memoryStore.backupPreviewId = null;
   memoryStore.backupPreviewFiles = [];
   memoryStore.backupPreviewFile = null;
+  memoryStore.panelOpen = true;
+  memoryStore.toast = null;
+  memoryStore.autoCompactingRepo = null;
 });
 
 describe('sessionNotesOlderThan', () => {
@@ -116,6 +119,100 @@ describe('compact result and undo', () => {
 
     expect(memoryStore.lastCompaction).toBeNull();
     expect(memoryStore.compactMessage).toContain('below threshold');
+  });
+
+  it('shows an error, not "Nothing to compact", when the pass failed', async () => {
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
+      compacted: false, error: 'compaction timed out after 300s', filesChanged: [],
+    });
+
+    await memoryStore.compact();
+
+    expect(memoryStore.lastCompaction).toBeNull();
+    expect(memoryStore.compactMessage).toBeNull();
+    expect(memoryStore.error).toContain('timed out');
+  });
+
+  it('reports a cancelled pass as "Compaction cancelled", not as nothing-to-compact', async () => {
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
+      compacted: false, skippedReason: 'cancelled', filesChanged: [],
+    });
+
+    await memoryStore.compact();
+
+    expect(memoryStore.compactMessage).toBe('Compaction cancelled');
+    expect(memoryStore.error).toBeNull();
+  });
+
+  it('routes skip and failure feedback to a toast when the panel is closed', async () => {
+    memoryStore.panelOpen = false;
+
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
+      compacted: false, skippedReason: 'below threshold', filesChanged: [],
+    });
+    await memoryStore.compact();
+    expect(memoryStore.compactMessage).toBeNull();
+    expect(memoryStore.toast?.kind).toBe('info');
+    expect(memoryStore.toast?.message).toContain('below threshold');
+
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
+      compacted: false, error: 'compaction timed out after 300s', filesChanged: [],
+    });
+    await memoryStore.compact();
+    expect(memoryStore.error).toBeNull();
+    expect(memoryStore.toast?.kind).toBe('error');
+    expect(memoryStore.toast?.message).toContain('timed out');
+  });
+
+  it('cancelCompact forwards to the main process while a pass is running', async () => {
+    memoryStore.compacting = true;
+    await memoryStore.cancelCompact();
+    expect(mockGroveBench.memoryCompactCancel).toHaveBeenCalledWith('/repo');
+    memoryStore.compacting = false;
+  });
+
+  it('cancelCompact is a no-op when nothing is running', async () => {
+    memoryStore.compacting = false;
+    await memoryStore.cancelCompact();
+    expect(mockGroveBench.memoryCompactCancel).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an auto-compaction completion as a success toast with a View action', () => {
+    (memoryStore as any).handleCompactionEvent({
+      kind: 'stage', repoPath: '/repo', auto: true, stage: 'generating',
+    });
+    expect(memoryStore.autoCompactingRepo).toBe('/repo');
+
+    (memoryStore as any).handleCompactionEvent({
+      kind: 'done', repoPath: '/repo', auto: true,
+      status: { compacted: true, filesChanged: ['repo/a.md', 'repo/b.md'] },
+    });
+    expect(memoryStore.autoCompactingRepo).toBeNull();
+    expect(memoryStore.toast?.kind).toBe('success');
+    expect(memoryStore.toast?.message).toContain('2 files');
+    expect(memoryStore.toast?.showView).toBe(true);
+  });
+
+  it('stays silent when an auto pass finishes without compacting', () => {
+    (memoryStore as any).handleCompactionEvent({
+      kind: 'done', repoPath: '/repo', auto: true,
+      status: { compacted: false, skippedReason: 'cooldown', filesChanged: [] },
+    });
+    expect(memoryStore.toast).toBeNull();
+  });
+
+  it('tracks manual compaction stages for the active repo', () => {
+    (memoryStore as any).handleCompactionEvent({
+      kind: 'stage', repoPath: '/repo', auto: false, stage: 'generating',
+    });
+    expect(memoryStore.compactStage).toBe('generating');
+    memoryStore.compactStage = null;
+
+    // Stage events for a different repo are ignored
+    (memoryStore as any).handleCompactionEvent({
+      kind: 'stage', repoPath: '/other', auto: false, stage: 'applying',
+    });
+    expect(memoryStore.compactStage).toBeNull();
   });
 
   it('undoCompaction restores the recorded snapshot and clears the result', async () => {

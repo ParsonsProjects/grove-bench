@@ -75,6 +75,8 @@ const mockGroveBench = {
   memoryWrite: vi.fn(() => Promise.resolve()),
   memoryDelete: vi.fn(() => Promise.resolve(true)),
   memoryCompact: vi.fn(() => Promise.resolve({ compacted: false, filesChanged: [] } as import('../../shared/types.js').MemoryCompactionStatus)),
+  memoryCompactCancel: vi.fn(() => Promise.resolve(true)),
+  onMemoryCompactEvent: vi.fn(() => () => {}),
   memoryListBackups: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryBackupInfo[])),
   memoryRestoreBackup: vi.fn(() => Promise.resolve({ restored: false, filesChanged: [] } as import('../../shared/types.js').MemoryRestoreStatus)),
   memoryStats: vi.fn(() => Promise.resolve({

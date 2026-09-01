@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Memory
   memoryAutoSave: true,
   memoryAutoCompact: true,
+  memoryCompactTimeoutSeconds: 300,
 
   // Worktree
   autoInstallDeps: false,

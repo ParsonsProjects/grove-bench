@@ -27,16 +27,20 @@ vi.mock('./logger.js', () => ({
 }));
 
 import * as memory from './memory.js';
+import * as settings from './settings.js';
 import {
   needsCompaction,
   pruneSessionNotes,
   compactMemory,
+  cancelCompaction,
+  onCompactionEvent,
   validateCompactionResult,
   listBackups,
   restoreBackup,
   previewBackup,
   readBackupFile,
   getCompactionInfo,
+  type CompactionEvent,
 } from './memory-compact.js';
 
 // ─── Helpers ───
@@ -472,6 +476,129 @@ describe('compactMemory', () => {
     }
 
     expect(listBackups(REPO)).toHaveLength(5);
+  });
+
+  it('reports an adapter failure as an error, not a skip, and leaves memory untouched', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'important fact');
+    mockAdapter.generateText.mockRejectedValue(new Error('Operation aborted'));
+
+    const status = await compactMemory({ repoPath: REPO, force: true });
+
+    expect(status.compacted).toBe(false);
+    expect(status.error).toContain('Operation aborted');
+    expect(status.skippedReason).toBeUndefined();
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('important fact');
+  });
+
+  it('aborts a hung generation after the timeout and reports a timeout error', async () => {
+    vi.useFakeTimers();
+    try {
+      writeMemory('repo/overview.md', 'Overview', 'important fact');
+
+      // Hangs until the abort signal fires, like a real long-running generation
+      mockAdapter.generateText.mockImplementation((_sys, _user, opts) => {
+        const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
+        });
+      });
+
+      const pending = compactMemory({ repoPath: REPO, force: true });
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      const status = await pending;
+
+      expect(status.compacted).toBe(false);
+      expect(status.error).toContain('timed out');
+      expect(status.skippedReason).toBeUndefined();
+      expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('important fact');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('honors the memoryCompactTimeoutSeconds setting, clamped to the 30s floor', async () => {
+    vi.useFakeTimers();
+    try {
+      writeMemory('repo/overview.md', 'Overview', 'important fact');
+      vi.mocked(settings.getSettings).mockReturnValueOnce({
+        memoryAutoSave: true, memoryAutoCompact: true, memoryCompactTimeoutSeconds: 10, // below floor → 30s
+      } as ReturnType<typeof settings.getSettings>);
+
+      mockAdapter.generateText.mockImplementation((_sys, _user, opts) => {
+        const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
+        });
+      });
+
+      const pending = compactMemory({ repoPath: REPO, force: true });
+      await vi.advanceTimersByTimeAsync(30 * 1000);
+      const status = await pending;
+
+      expect(status.compacted).toBe(false);
+      expect(status.error).toContain('timed out after 30s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancelCompaction aborts a running pass, reported as cancelled with memory untouched', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'important fact');
+
+    mockAdapter.generateText.mockImplementation((_sys, _user, opts) => {
+      const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('Operation aborted')));
+      });
+    });
+
+    const pending = compactMemory({ repoPath: REPO, force: true });
+    // Give the pass a beat to reach the generate stage, then cancel
+    await new Promise(r => setTimeout(r, 10));
+    expect(cancelCompaction(REPO)).toBe(true);
+    const status = await pending;
+
+    expect(status.compacted).toBe(false);
+    expect(status.skippedReason).toBe('cancelled');
+    expect(status.error).toBeUndefined();
+    expect(memory.readMemoryFile(REPO, 'repo/overview.md')).toContain('important fact');
+    // Nothing left to cancel afterwards
+    expect(cancelCompaction(REPO)).toBe(false);
+  });
+
+  it('emits stage and done events for a manual pass', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'fact');
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [{ action: 'update', path: 'repo/overview.md', content: 'condensed fact', reason: '' }],
+    }));
+
+    const events: CompactionEvent[] = [];
+    const unsubscribe = onCompactionEvent(e => events.push(e));
+    try {
+      await compactMemory({ repoPath: REPO, force: true });
+    } finally {
+      unsubscribe();
+    }
+
+    const stages = events.filter(e => e.kind === 'stage').map(e => (e as Extract<CompactionEvent, { kind: 'stage' }>).stage);
+    expect(stages).toEqual(['pruning', 'generating', 'validating', 'applying']);
+    const done = events.find(e => e.kind === 'done') as Extract<CompactionEvent, { kind: 'done' }>;
+    expect(done.auto).toBe(false);
+    expect(done.status.compacted).toBe(true);
+  });
+
+  it('emits no events for an auto pass that skips below threshold', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'small');
+
+    const events: CompactionEvent[] = [];
+    const unsubscribe = onCompactionEvent(e => events.push(e));
+    try {
+      await compactMemory({ repoPath: REPO, auto: true });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(events).toEqual([]);
   });
 
   it('hard-truncates an oversized compacted file', async () => {
