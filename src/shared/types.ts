@@ -703,9 +703,9 @@ export interface GroveBenchSettings {
    *  these. Empty = all skills enabled (the CLI default). */
   disabledSkills: string[];
   /** Auto-analyze finished sessions for recurring workflows and surface skill
-   *  suggestions in the status bar. Manual analysis stays available when off.
-   *  Default true. */
-  skillSuggestions: boolean;
+   *  suggestions in the status bar. Off by default — each analysis is a model
+   *  call, so the status bar's manual "Suggest" button is the main route. */
+  autoSkillSuggestions: boolean;
 
   // Agent Defaults
   defaultModel: string;

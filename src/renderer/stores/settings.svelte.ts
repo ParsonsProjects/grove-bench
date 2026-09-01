@@ -6,7 +6,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disableBypassMode: false,
   disabledSkills: [],
-  skillSuggestions: true,
+  autoSkillSuggestions: false,
   defaultModel: '',
   defaultThinkingLevel: 'high',
   cavemanMode: 'off',
