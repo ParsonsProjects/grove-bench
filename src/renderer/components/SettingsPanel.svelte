@@ -187,6 +187,7 @@
     { value: 'default', label: 'Default' },
     { value: 'acceptEdits', label: 'Accept Edits' },
     { value: 'plan', label: 'Plan (read-only)' },
+    { value: 'auto', label: 'Auto (edits + read-only commands)' },
     { value: 'bypassPermissions', label: 'Bypass Permissions' },
   ];
 

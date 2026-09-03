@@ -690,7 +690,7 @@ export interface ToolRule {
   pattern: string; // e.g. "Bash(npm run *)", "Read(/src/**)", "mcp__*"
 }
 
-export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions';
 
 export interface GroveBenchSettings {
   // Permission & Security
@@ -862,7 +862,12 @@ export type UpdateStatus =
 
 // ─── IPC Channel Names ───
 
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits';
+/** Session permission modes. 'auto' is Grove Bench's own mode (not an SDK
+ *  mode): edits are auto-accepted like acceptEdits, and read-only tool calls
+ *  scoped to the worktree (git status/log/diff, ls, grep, …) run without
+ *  prompting — mutating, out-of-worktree, network-fetching, or unrecognized
+ *  calls prompt. Adapters map it to their closest native mode. */
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto';
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
