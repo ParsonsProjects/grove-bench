@@ -415,12 +415,14 @@
     default: 'Code',
     plan: 'Plan',
     acceptEdits: 'Edit',
+    auto: 'Auto',
   };
 
   const modeColors: Record<string, string> = {
     default: 'text-blue-400 border-blue-400/40',
     plan: 'text-yellow-400 border-yellow-400/40',
     acceptEdits: 'text-purple-400 border-purple-400/40',
+    auto: 'text-green-400 border-green-400/40',
   };
 
   const thinkingLabels: Record<ThinkingLevel, string> = {

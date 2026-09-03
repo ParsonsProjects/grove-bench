@@ -2,6 +2,20 @@
  * Pure utility functions shared between agent-session.ts and adapters.
  */
 
+import path from 'node:path';
+
+/**
+ * True if `child` resolves to a location inside (or equal to) `parent`.
+ * Uses path.relative rather than string-prefix matching, so "/repo/src-secret"
+ * is correctly treated as OUTSIDE "/repo/src". path.relative on win32 compares
+ * case-insensitively and returns an absolute path across drives, both of which
+ * this handles.
+ */
+export function isPathInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
 /**
  * Environment variable prefixes that leak noisy paths into the LLM context.
  */

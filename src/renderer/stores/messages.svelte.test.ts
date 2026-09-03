@@ -983,13 +983,16 @@ describe('markSessionStopped', () => {
 });
 
 describe('cycleMode', () => {
-  it('cycles default → plan → acceptEdits → default', () => {
+  it('cycles default → plan → acceptEdits → auto → default', () => {
     messageStore.modeBySession[SID] = 'default';
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('plan');
 
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
+
+    messageStore.cycleMode(SID);
+    expect(messageStore.getMode(SID)).toBe('auto');
 
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('default');

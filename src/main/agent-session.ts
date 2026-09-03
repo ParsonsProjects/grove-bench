@@ -16,7 +16,27 @@ import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapt
 import { getGitIdentity } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
 import { findRewindForkPoint } from './agent-utils.js';
+import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
+
+/**
+ * Sandbox settings for Auto-mode queries: OS-level enforcement layered under
+ * the read-only classifier (see read-only-tools.ts). Writes are confined to
+ * the worktree, Bash approval stays with the classifier (no blanket
+ * auto-allow), and the model cannot opt commands out of the sandbox. Degrades
+ * gracefully — with a warning, running unsandboxed — on machines where
+ * sandbox dependencies are unavailable; the classifier remains the approval
+ * gate either way.
+ */
+function autoModeSandbox(worktreePath: string): Record<string, unknown> {
+  return {
+    enabled: true,
+    failIfUnavailable: false,
+    autoAllowBashIfSandboxed: false,
+    allowUnsandboxedCommands: false,
+    filesystem: { allowWrite: [worktreePath] },
+  };
+}
 
 interface PendingPermission {
   requestId: string;
@@ -58,7 +78,7 @@ interface ManagedSession {
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
   /** Permission mode for the SDK query. */
-  permissionMode: 'default' | 'plan' | 'acceptEdits';
+  permissionMode: 'default' | 'plan' | 'acceptEdits' | 'auto';
   /** Extra system prompt appended to the adapter's default prompt. */
   appendSystemPrompt: string | null;
   /** Fully custom system prompt — overrides the adapter's default entirely. */
@@ -285,7 +305,7 @@ class AgentSessionManager {
     repoPath: string;
     window: BrowserWindow;
     resumeSessionId?: string;
-    permissionMode?: 'default' | 'plan' | 'acceptEdits';
+    permissionMode?: 'default' | 'plan' | 'acceptEdits' | 'auto';
     appendSystemPrompt?: string | null;
     customSystemPrompt?: string | null;
     allowedTools?: string[] | null;
@@ -484,7 +504,11 @@ class AgentSessionManager {
       allowedTools: session.allowedTools,
       skills: skillsFilter ?? null,
       outputFormat: session.outputFormat,
-      sandbox: session.sandbox,
+      // Auto mode gets OS-level sandbox enforcement as a backstop beneath the
+      // read-only classifier (explicit per-session sandbox settings win).
+      // Mode is read at query start: switching into auto mid-query keeps
+      // classifier-only protection until the next query (re)start.
+      sandbox: session.sandbox ?? (session.permissionMode === 'auto' ? autoModeSandbox(session.worktreePath) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),
@@ -499,6 +523,14 @@ class AgentSessionManager {
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
       onPermissionRequest: async (request) => {
+        // Auto mode: read-only tool calls scoped to the worktree (file reads,
+        // git reads) run without prompting. Mutating, out-of-worktree, or
+        // unrecognized calls fall through to the normal permission prompt
+        // below. session.permissionMode is read live so mid-query mode
+        // switches take effect immediately.
+        if (session.permissionMode === 'auto' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath)) {
+          return { behavior: 'allow', updatedInput: request.toolInput };
+        }
         const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
         const requestId = `perm_${id}_${++session.permRequestCounter}`;
         return new Promise<PermissionResponse>((resolve) => {
@@ -886,13 +918,25 @@ class AgentSessionManager {
     // stop/restart cycles — even when queryHandle is temporarily null.
     session.permissionMode = mode as ManagedSession['permissionMode'];
 
-    // When leaving acceptEdits mode, clear always-allowed edit tools so
-    // switching back to default/plan re-enables permission prompts for edits.
+    // When leaving an edit-accepting mode (acceptEdits or auto), clear
+    // always-allowed edit tools so switching back to default/plan re-enables
+    // permission prompts for edits.
     // These tool names must match the adapter's 'edit' category (see categorizeToolName).
-    if (prevMode === 'acceptEdits' && mode !== 'acceptEdits') {
+    const acceptsEdits = (m: string) => m === 'acceptEdits' || m === 'auto';
+    if (acceptsEdits(prevMode) && !acceptsEdits(mode)) {
       for (const tool of ['Edit', 'Write', 'MultiEdit']) {
         session.alwaysAllowedTools.delete(tool);
       }
+    }
+
+    // Entering auto mode with a live query: the sandbox is only applied at
+    // query start, so until the next (re)start the read-only classifier is
+    // the sole protection layer. Surface that honestly.
+    if (mode === 'auto' && prevMode !== 'auto' && session.queryHandle && !session.sandbox) {
+      session.emit?.({
+        type: 'status',
+        message: 'Auto mode on — read-only tool calls run without prompting; sandbox enforcement applies from the next query restart.',
+      });
     }
 
     // Pass the mode to the adapter so the SDK is kept in sync.

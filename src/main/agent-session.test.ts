@@ -272,6 +272,73 @@ describe('AgentSessionManager.createSession()', () => {
   });
 });
 
+describe('Auto mode sandbox enforcement', () => {
+  it('passes a hardened sandbox config when the session starts in auto mode', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-auto-sandbox',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'auto',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const sandbox = mockAdapter.lastConfig?.sandbox as Record<string, any>;
+    expect(sandbox).toBeTruthy();
+    expect(sandbox.enabled).toBe(true);
+    // Bash approval must stay with the read-only classifier, not the sandbox.
+    expect(sandbox.autoAllowBashIfSandboxed).toBe(false);
+    // The model must not be able to opt commands out of the sandbox.
+    expect(sandbox.allowUnsandboxedCommands).toBe(false);
+    // Missing sandbox deps degrade gracefully instead of failing the query.
+    expect(sandbox.failIfUnavailable).toBe(false);
+    expect(sandbox.filesystem?.allowWrite).toEqual(['/repo-wt']);
+
+    await sessionManager.destroySession('test-auto-sandbox');
+  });
+
+  it('does not set a sandbox for non-auto modes', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-no-sandbox',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'acceptEdits',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.sandbox).toBeNull();
+
+    await sessionManager.destroySession('test-no-sandbox');
+  });
+
+  it('explicit per-session sandbox settings win over the auto-mode sandbox', async () => {
+    const win = makeMockWindow();
+    const explicit = { enabled: true, autoAllowBashIfSandboxed: true };
+    await sessionManager.createSession({
+      id: 'test-explicit-sandbox',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'auto',
+      sandbox: explicit,
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.sandbox).toEqual(explicit);
+
+    await sessionManager.destroySession('test-explicit-sandbox');
+  });
+});
+
 describe('AgentSessionManager caveman mode', () => {
   it('does not include caveman prompt when mode is off', async () => {
     const win = makeMockWindow();

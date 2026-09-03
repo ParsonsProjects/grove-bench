@@ -580,7 +580,7 @@ class MessageStore {
 
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    const modes = ['default', 'plan', 'acceptEdits'] as const;
+    const modes = ['default', 'plan', 'acceptEdits', 'auto'] as const;
     const idx = modes.indexOf(current as typeof modes[number]);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);

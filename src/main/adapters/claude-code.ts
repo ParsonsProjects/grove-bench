@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, ThinkingLevel, ToolCategory } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, PermissionMode, SkillDefinition, ThinkingLevel, ToolCategory } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -12,7 +12,7 @@ import type {
   PermissionResponse,
   UserMessage,
 } from './types.js';
-import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { cleanEnv, isPathInside, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { logger } from '../logger.js';
@@ -109,17 +109,9 @@ const WRITE_TOOL_PATH_FIELD: Record<string, string> = {
   NotebookEdit: 'notebook_path',
 };
 
-/**
- * True if `child` resolves to a location inside (or equal to) `parent`.
- * Uses path.relative rather than string-prefix matching, so "/repo/src-secret"
- * is correctly treated as OUTSIDE "/repo/src". path.relative on win32 compares
- * case-insensitively and returns an absolute path across drives, both of which
- * this handles.
- */
-export function isPathInside(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
-}
+// Re-exported so existing importers (tests) keep working after the move to
+// agent-utils, where non-adapter modules can share it.
+export { isPathInside };
 
 // ─── SDKMessage → AgentEvent transform ───
 
@@ -130,6 +122,24 @@ export function isPathInside(parent: string, child: string): boolean {
 interface MessageContext {
   /** Maps toolUseId → toolName for matching tool_results back to their tool. */
   toolUseMap: Map<string, string>;
+  /** Grove Bench-level permission mode. 'auto' is not an SDK mode — the SDK
+   *  runs in 'acceptEdits' while Grove is in 'auto', so SDK-reported
+   *  'acceptEdits' mode_syncs are translated back to 'auto'. */
+  groveMode?: PermissionMode;
+}
+
+/** Map Grove Bench permission modes to what the SDK understands. 'auto' is
+ *  implemented app-side (read-only auto-approval in the permission handler);
+ *  at the SDK level it behaves like acceptEdits so worktree edits don't prompt. */
+function toSdkPermissionMode(mode: PermissionMode): 'default' | 'plan' | 'acceptEdits' {
+  return mode === 'auto' ? 'acceptEdits' : mode;
+}
+
+/** Translate an SDK-reported mode back to the Grove-level mode for mode_sync
+ *  events: while Grove is in 'auto', the SDK legitimately reports
+ *  'acceptEdits' — surface that as 'auto' so the UI doesn't flip to Edit. */
+function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): PermissionMode {
+  return mode === 'acceptEdits' && ctx.groveMode === 'auto' ? 'auto' : mode;
 }
 
 /**
@@ -170,7 +180,7 @@ export function transformMessage(
         }
         const modeValue = m.permissionMode ?? m.permission_mode;
         if (modeValue) {
-          events.push({ type: 'mode_sync', mode: modeValue, source: 'sdk' });
+          events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeValue, ctx), source: 'sdk' });
         }
       } else if (message.subtype === 'local_command_output') {
         const content = (message as any).content;
@@ -181,7 +191,7 @@ export function transformMessage(
           } else if (/mode.*code/i.test(content) || /code mode/i.test(content) || /default mode/i.test(content)) {
             events.push({ type: 'mode_sync', mode: 'default', source: 'sdk' });
           } else if (/mode.*accept/i.test(content) || /acceptEdits/i.test(content) || /edit mode/i.test(content)) {
-            events.push({ type: 'mode_sync', mode: 'acceptEdits', source: 'sdk' });
+            events.push({ type: 'mode_sync', mode: fromSdkSyncMode('acceptEdits', ctx), source: 'sdk' });
           }
         }
       } else if (message.subtype === 'task_started') {
@@ -271,7 +281,7 @@ export function transformMessage(
         const m = message as any;
         const modeVal = m.permissionMode ?? m.permission_mode ?? m.mode;
         if (modeVal && typeof modeVal === 'string') {
-          events.push({ type: 'mode_sync', mode: modeVal as any, source: 'sdk' });
+          events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeVal as PermissionMode, ctx), source: 'sdk' });
         }
       }
       break;
@@ -737,8 +747,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         }
       }
 
-      // Sandbox auto-approve Bash
-      if (config.sandbox && toolName === 'Bash') {
+      // Sandbox auto-approve Bash — only when the sandbox config opts in,
+      // matching SDK semantics. Auto mode's sandbox deliberately does NOT opt
+      // in: there the sandbox is an enforcement backstop and Bash approval
+      // stays with the read-only classifier in the session's permission
+      // handler.
+      const sandboxConfig = config.sandbox as { autoAllowBashIfSandboxed?: boolean } | null | undefined;
+      if (sandboxConfig?.autoAllowBashIfSandboxed && toolName === 'Bash') {
         return { behavior: 'allow' as const, updatedInput: input };
       }
 
@@ -798,7 +813,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         includePartialMessages: true,
         settingSources: ['user', 'project', 'local'],
         systemPrompt,
-        permissionMode: config.permissionMode,
+        permissionMode: toSdkPermissionMode(config.permissionMode),
         ...(config.model ? { model: config.model } : {}),
         ...(supportsLargeContext(config.model) ? { betas: [CONTEXT_1M_BETA] } : {}),
         ...(config.skills ? { skills: config.skills } : {}),
@@ -830,6 +845,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Message context for the transform function
     const ctx: MessageContext = {
       toolUseMap: new Map(),
+      groveMode: config.permissionMode,
     };
 
     // Create the async event generator
@@ -911,7 +927,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
 
       setPermissionMode(mode) {
-        q.setPermissionMode(mode);
+        ctx.groveMode = mode;
+        q.setPermissionMode(toSdkPermissionMode(mode));
       },
 
       async setThinkingLevel(level: ThinkingLevel) {
