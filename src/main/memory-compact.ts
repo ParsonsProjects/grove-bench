@@ -700,7 +700,11 @@ async function runCompaction(
     resultText = await adapter.generateText(
       buildCompactionPrompt(contents),
       'Compact the memory files above. Respond with JSON only.',
-      { cwd: opts.cwd ?? repoPath, abortSignal: abortController.signal },
+      {
+        cwd: opts.cwd ?? repoPath,
+        abortSignal: abortController.signal,
+        model: settings.getSettings().memoryModel || undefined,
+      },
     );
   } catch (err) {
     if (timedOut) {

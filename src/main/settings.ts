@@ -21,8 +21,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Memory
   memoryAutoSave: true,
-  memoryAutoCompact: true,
+  memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
+  memoryModel: 'claude-haiku-4-5',
 
   // Worktree
   autoInstallDeps: false,

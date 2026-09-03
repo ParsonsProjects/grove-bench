@@ -1011,7 +1011,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   // ─── Text generation (for memory extraction) ───
 
-  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal }): Promise<string> {
+  async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
     const queryFn = await getQuery();
 
     let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
@@ -1041,6 +1041,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         systemPrompt,
         permissionMode: 'plan',
         maxTurns: 1,
+        ...(options?.model ? { model: options.model } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
       },
     });

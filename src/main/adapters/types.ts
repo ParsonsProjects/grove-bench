@@ -239,8 +239,9 @@ export interface AgentAdapter {
   // ─── Optional text generation (used by memory auto-save) ───
 
   /** Generate text from a system prompt and user message.
-   *  Used by memory-autosave to run extraction without being coupled to a specific SDK. */
-  generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal }): Promise<string>;
+   *  Used by memory-autosave to run extraction without being coupled to a specific SDK.
+   *  `model` overrides the provider default (e.g. a cheaper model for background calls). */
+  generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string>;
 
   // ─── Optional worktree configuration ───
 

@@ -720,11 +720,16 @@ export interface GroveBenchSettings {
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;
   /** Enable automatic memory compaction (dedupe, contradiction resolution,
-   *  session-note pruning) when memory grows past its budget. Default true. */
+   *  session-note pruning) when memory grows past its budget. Default false —
+   *  it costs an LLM call; the panel's manual Compact button always works. */
   memoryAutoCompact: boolean;
   /** Abort a memory compaction pass after this many seconds. Clamped to a
    *  30-second minimum. Default 300 (5 minutes). */
   memoryCompactTimeoutSeconds: number;
+  /** Model used for background memory calls (auto-save extraction and
+   *  compaction). Empty = provider default. Defaults to Haiku — these calls
+   *  run after every session and don't need a frontier model. */
+  memoryModel: string;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */

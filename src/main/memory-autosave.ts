@@ -203,10 +203,11 @@ async function runExtraction(
     // Safety timeout: 60 seconds
     const timeout = setTimeout(() => abortController.abort(), 60_000);
 
+    const model = settings.getSettings().memoryModel || undefined;
     const resultText = await adapter.generateText(
       systemPrompt,
       'Extract memories from the conversation above. Respond with JSON only.',
-      { cwd, abortSignal: abortController.signal },
+      { cwd, abortSignal: abortController.signal, model },
     );
 
     clearTimeout(timeout);
