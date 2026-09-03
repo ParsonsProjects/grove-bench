@@ -720,7 +720,8 @@ export interface GroveBenchSettings {
   /** Enable auto-save of memories at end of session / compaction. Default true. */
   memoryAutoSave: boolean;
   /** Enable automatic memory compaction (dedupe, contradiction resolution,
-   *  session-note pruning) when memory grows past its budget. Default true. */
+   *  session-note pruning) when memory grows past its budget. Default false —
+   *  it costs an LLM call; the panel's manual Compact button always works. */
   memoryAutoCompact: boolean;
   /** Abort a memory compaction pass after this many seconds. Clamped to a
    *  30-second minimum. Default 300 (5 minutes). */

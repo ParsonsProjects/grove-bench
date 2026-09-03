@@ -601,7 +601,7 @@
             <Checkbox bind:checked={settingsStore.draft.memoryAutoCompact} />
             Auto-compact project memory
           </label>
-          <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old session notes in the background. A backup is taken first. On by default.</p>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old session notes in the background. A backup is taken first. Costs an extra model call, so off by default.</p>
 
           <div class="ml-6">
             <Label class="mb-1 block">Compaction timeout</Label>
