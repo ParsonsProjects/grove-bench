@@ -618,6 +618,18 @@
             <p class="text-xs text-muted-foreground mt-1">Abort a compaction pass (manual or automatic) that runs longer than this. Minimum 30. Default 300 (5 minutes).</p>
           </div>
 
+          <div class="ml-6">
+            <Label for="settings-memory-model" class="mb-1 block">Memory model</Label>
+            <input
+              id="settings-memory-model"
+              type="text"
+              bind:value={settingsStore.draft.memoryModel}
+              placeholder="e.g. claude-haiku-4-5"
+              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p class="text-xs text-muted-foreground mt-1">Model used for background memory auto-save and compaction calls. Defaults to Haiku to keep these cheap. Leave empty to use the provider default.</p>
+          </div>
+
           <Separator />
 
           <!-- Skill Suggestions -->

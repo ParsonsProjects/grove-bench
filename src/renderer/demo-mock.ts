@@ -35,6 +35,7 @@ const SETTINGS = {
   memoryAutoSave: true,
   memoryAutoCompact: true,
   memoryCompactTimeoutSeconds: 300,
+  memoryModel: 'claude-haiku-4-5',
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',

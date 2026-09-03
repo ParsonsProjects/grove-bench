@@ -63,6 +63,9 @@ beforeEach(() => {
   REPO = path.join(tmpDir, 'test-repo');
   vi.mocked(app.getPath).mockReturnValue(tmpDir);
   mockAdapter.generateText.mockReset();
+  vi.mocked(settings.getSettings).mockImplementation(() => (
+    { memoryAutoSave: true, memoryAutoCompact: true } as ReturnType<typeof settings.getSettings>
+  ));
 });
 
 afterEach(() => {
@@ -295,6 +298,42 @@ describe('compactMemory', () => {
     // Backup folder is invisible to memory listing
     const listed = memory.listMemoryFiles(REPO).map(e => e.relativePath);
     expect(listed.some(p => p.includes('_compact-backup'))).toBe(false);
+  });
+
+  it('passes the configured memoryModel to generateText', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'fact');
+    vi.mocked(settings.getSettings).mockReturnValue({
+      memoryAutoSave: true, memoryAutoCompact: true, memoryModel: 'claude-haiku-4-5',
+    } as ReturnType<typeof settings.getSettings>);
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [{ action: 'keep', path: 'repo/overview.md', content: '', reason: '' }],
+    }));
+
+    await compactMemory({ repoPath: REPO, force: true });
+
+    expect(mockAdapter.generateText).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ model: 'claude-haiku-4-5' }),
+    );
+  });
+
+  it('omits the model when memoryModel is empty (provider default)', async () => {
+    writeMemory('repo/overview.md', 'Overview', 'fact');
+    vi.mocked(settings.getSettings).mockReturnValue({
+      memoryAutoSave: true, memoryAutoCompact: true, memoryModel: '',
+    } as ReturnType<typeof settings.getSettings>);
+    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+      files: [{ action: 'keep', path: 'repo/overview.md', content: '', reason: '' }],
+    }));
+
+    await compactMemory({ repoPath: REPO, force: true });
+
+    expect(mockAdapter.generateText).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ model: undefined }),
+    );
   });
 
   it('leaves files untouched when the adapter returns invalid JSON', async () => {

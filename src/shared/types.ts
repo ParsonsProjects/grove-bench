@@ -725,6 +725,10 @@ export interface GroveBenchSettings {
   /** Abort a memory compaction pass after this many seconds. Clamped to a
    *  30-second minimum. Default 300 (5 minutes). */
   memoryCompactTimeoutSeconds: number;
+  /** Model used for background memory calls (auto-save extraction and
+   *  compaction). Empty = provider default. Defaults to Haiku — these calls
+   *  run after every session and don't need a frontier model. */
+  memoryModel: string;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
