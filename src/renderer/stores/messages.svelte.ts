@@ -192,8 +192,8 @@ class MessageStore {
   /** Active tab per session (survives component remount) */
   activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
 
-  /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
-  showDetailsBySession = $state<Record<string, boolean>>({});
+  /** Activity view mode per session (default: 'summary') */
+  viewModeBySession = $state<Record<string, import('../lib/message-view.js').MessageViewMode>>({});
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
@@ -431,12 +431,12 @@ class MessageStore {
     this.activeTabBySession[sessionId] = tab;
   }
 
-  getShowDetails(sessionId: string): boolean {
-    return this.showDetailsBySession[sessionId] ?? false;
+  getViewMode(sessionId: string): import('../lib/message-view.js').MessageViewMode {
+    return this.viewModeBySession[sessionId] ?? 'summary';
   }
 
-  setShowDetails(sessionId: string, show: boolean) {
-    this.showDetailsBySession[sessionId] = show;
+  setViewMode(sessionId: string, mode: import('../lib/message-view.js').MessageViewMode) {
+    this.viewModeBySession[sessionId] = mode;
   }
 
   getDraft(sessionId: string): string {
@@ -1617,7 +1617,7 @@ class MessageStore {
       this.modeBySession, this.thinkingBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
-      this.activeTabBySession, this.showDetailsBySession,
+      this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.pendingJumpBySession, this.promptInsertBySession,
     ] as Record<string, unknown>[]) {
