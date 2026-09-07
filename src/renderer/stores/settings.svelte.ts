@@ -159,6 +159,3 @@ class SettingsStore {
 }
 
 export const settingsStore = new SettingsStore();
-
-
-export const settingsStore = new SettingsStore();

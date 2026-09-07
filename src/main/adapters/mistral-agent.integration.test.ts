@@ -59,7 +59,7 @@ describe('MistralAdapter Integration Tests', () => {
       expect(result).toBeDefined();
       expect(typeof result).toBe('string');
       expect(result.length).toBeGreaterThan(0);
-    }, { timeout: 30000 });
+    }, 30000);
 
     it('should handle system prompts correctly', async () => {
       const systemPrompt = 'Respond with exactly the word "test"';
@@ -69,7 +69,7 @@ describe('MistralAdapter Integration Tests', () => {
 
       expect(result).toBeDefined();
       expect(result.toLowerCase()).toContain('test');
-    }, { timeout: 30000 });
+    }, 30000);
 
     it('should respect abort signal', async () => {
       const systemPrompt = 'Write a very long response with many paragraphs.';
@@ -84,7 +84,7 @@ describe('MistralAdapter Integration Tests', () => {
       await expect(
         adapter.generateText(systemPrompt, userMessage, { abortSignal })
       ).rejects.toThrow();
-    }, { timeout: 10000 });
+    }, 10000);
   });
 
   describe.skipIf(!hasApiKey)('start and sendMessage', () => {
@@ -124,7 +124,7 @@ describe('MistralAdapter Integration Tests', () => {
 
       // Clean up
       handle.close();
-    }, { timeout: 30000 });
+    }, 30000);
 
     it('should send and receive messages', async () => {
       const config = {
@@ -159,7 +159,7 @@ describe('MistralAdapter Integration Tests', () => {
 
       // Clean up
       handle.close();
-    }, { timeout: 30000 });
+    }, 30000);
 
     it('should handle abort gracefully', async () => {
       const config = {
@@ -191,7 +191,7 @@ describe('MistralAdapter Integration Tests', () => {
 
       // Clean up
       handle.close();
-    }, { timeout: 10000 });
+    }, 10000);
   });
 
   describe.skipIf(!hasApiKey)('setModel', () => {
@@ -219,7 +219,7 @@ describe('MistralAdapter Integration Tests', () => {
 
       // Clean up
       handle.close();
-    }, { timeout: 30000 });
+    }, 30000);
 
     it('should reject invalid model IDs', async () => {
       const config = {
@@ -241,7 +241,7 @@ describe('MistralAdapter Integration Tests', () => {
 
       // Clean up
       handle.close();
-    }, { timeout: 10000 });
+    }, 10000);
   });
 
   describe('dispose', () => {
