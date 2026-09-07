@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   analyticsEnabled: false,
   analyticsPrompted: false,
   mistralApiKey: '',
+  mistralDefaultModel: 'codestral-latest',
 };
 
 class SettingsStore {
@@ -104,6 +105,28 @@ class SettingsStore {
     this.draft.mistralApiKey = '';
   }
 
+  // Mistral Default Model
+
+  setMistralDefaultModel(model: string) {
+    this.draft.mistralDefaultModel = model;
+  }
+
+  /**
+   * Get available Mistral models for the dropdown.
+   */
+  getMistralModels(): Array<{ id: string; label: string; family?: string }> {
+    return [
+      { id: 'codestral-latest', label: 'Codestral', family: 'Mistral' },
+      { id: 'mistral-large-latest', label: 'Mistral Large', family: 'Mistral' },
+      { id: 'mistral-small-latest', label: 'Mistral Small', family: 'Mistral' },
+      { id: 'mistral-medium-latest', label: 'Mistral Medium', family: 'Mistral' },
+      { id: 'mistral-tiny-latest', label: 'Mistral Tiny', family: 'Mistral' },
+    ];
+  }
+
 }
+
+export const settingsStore = new SettingsStore();
+
 
 export const settingsStore = new SettingsStore();

@@ -47,6 +47,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Mistral
   mistralApiKey: '',
+  mistralDefaultModel: 'codestral-latest',
 };
 
 let cached: GroveBenchSettings | null = null;
@@ -78,6 +79,11 @@ export function loadSettings(): GroveBenchSettings {
     process.env.MISTRAL_API_KEY = cached.mistralApiKey;
   }
   
+  // Set Mistral default model into environment for adapters
+  if (cached.mistralDefaultModel) {
+    process.env.MISTRAL_DEFAULT_MODEL = cached.mistralDefaultModel;
+  }
+  
   return cached;
 }
 
@@ -98,6 +104,13 @@ export function saveSettings(settings: GroveBenchSettings): void {
     process.env.MISTRAL_API_KEY = settings.mistralApiKey;
   } else {
     delete process.env.MISTRAL_API_KEY;
+  }
+  
+  // Update Mistral default model in environment when settings are saved
+  if (settings.mistralDefaultModel) {
+    process.env.MISTRAL_DEFAULT_MODEL = settings.mistralDefaultModel;
+  } else {
+    delete process.env.MISTRAL_DEFAULT_MODEL;
   }
 }
 

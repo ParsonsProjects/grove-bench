@@ -493,6 +493,8 @@ export interface GroveBenchSettings {
   // Mistral
   /** Mistral API key for authentication. Stored encrypted at rest. */
   mistralApiKey?: string;
+  /** Default Mistral model for new sessions. */
+  mistralDefaultModel?: string;
 }
 
 // ─── Memory ───
