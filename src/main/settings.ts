@@ -52,6 +52,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Privacy
   analyticsEnabled: false,
   analyticsPrompted: false,
+
+  // Mistral
+  mistralApiKey: '',
+  mistralDefaultModel: 'codestral-latest',
 };
 
 let cached: GroveBenchSettings | null = null;
@@ -89,6 +93,17 @@ export function loadSettings(): GroveBenchSettings {
   } catch {
     cached = { ...DEFAULT_SETTINGS };
   }
+  
+  // Set Mistral API key into environment
+  if (cached.mistralApiKey) {
+    process.env.MISTRAL_API_KEY = cached.mistralApiKey;
+  }
+  
+  // Set Mistral default model into environment for adapters
+  if (cached.mistralDefaultModel) {
+    process.env.MISTRAL_DEFAULT_MODEL = cached.mistralDefaultModel;
+  }
+  
   return cached;
 }
 
@@ -103,6 +118,20 @@ export function saveSettings(settings: GroveBenchSettings): void {
   try {
     fs.writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2));
   } catch { /* ignore write errors */ }
+  
+  // Update Mistral API key in environment when settings are saved
+  if (settings.mistralApiKey) {
+    process.env.MISTRAL_API_KEY = settings.mistralApiKey;
+  } else {
+    delete process.env.MISTRAL_API_KEY;
+  }
+  
+  // Update Mistral default model in environment when settings are saved
+  if (settings.mistralDefaultModel) {
+    process.env.MISTRAL_DEFAULT_MODEL = settings.mistralDefaultModel;
+  } else {
+    delete process.env.MISTRAL_DEFAULT_MODEL;
+  }
 }
 
 export function applyImmediateEffects(win: BrowserWindow | null, settings: GroveBenchSettings): void {

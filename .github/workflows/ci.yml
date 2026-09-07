@@ -26,7 +26,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # Skip postinstall (electron-rebuild) — the type-check and tests don't
+        # Skip postinstall (electron-rebuild) - the type-check and tests don't
         # need native modules compiled (node-pty is mocked, electron aliased),
         # and rebuilding fails on the runner's newer Visual Studio toolchain.
         run: npm ci --ignore-scripts
