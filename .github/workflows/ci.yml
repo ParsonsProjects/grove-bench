@@ -26,10 +26,11 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # Skip postinstall (electron-rebuild) — the type-check and tests don't
+        # Skip postinstall (electron-rebuild)  the type-check and tests don't
         # need native modules compiled (node-pty is mocked, electron aliased),
         # and rebuilding fails on the runner's newer Visual Studio toolchain.
-        run: npm ci --ignore-scripts
+        # Use --legacy-peer-deps to handle Mistral SDK peer dependency conflicts
+        run: npm ci --ignore-scripts --legacy-peer-deps
 
       - name: Type check
         run: npx tsc --noEmit
