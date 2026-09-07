@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -159,6 +159,9 @@ export interface AgentQueryHandle {
   reconnectMcpServer?(serverName: string): Promise<void>;
   /** Enable (connect) or disable (disconnect) an MCP server by name. */
   setMcpServerEnabled?(serverName: string, enabled: boolean): Promise<void>;
+  /** Start an OAuth sign-in for a server stuck in `needs-auth`. Returns the
+   *  URL the user must open; the caller is responsible for opening it. */
+  authenticateMcpServer?(serverName: string): Promise<McpAuthStartResult>;
 }
 
 // ─── Prerequisite Status ───
