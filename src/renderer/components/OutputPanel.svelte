@@ -12,12 +12,14 @@
   import SystemBlock from './SystemBlock.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
-  import { isMessageVisible, filterVisibleMessages } from '$lib/message-view.js';
+  import SelectionMenu from './SelectionMenu.svelte';
+  import { bookmarkStore } from '../stores/bookmarks.svelte.js';
+  import { filterVisibleMessages, type MessageViewMode } from '$lib/message-view.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let scrollContainer: HTMLDivElement;
+  let scrollContainer = $state<HTMLDivElement>();
   let shouldAutoScroll = $state(true);
 
   let allMessages = $derived(messageStore.getMessages(sessionId));
@@ -26,11 +28,28 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
 
-  // Detail toggle — hide tool calls & thinking when off (defaults to summary mode)
-  let showDetails = $derived(messageStore.getShowDetails(sessionId));
-  let filteredMessages = $derived(filterVisibleMessages(allMessages, showDetails));
+  // View mode — Detailed shows everything; Summary hides thinking & most tool
+  // calls; Focus shows only final turn output + unanswered permissions/questions.
+  let viewMode = $derived(messageStore.getViewMode(sessionId));
+  let filteredMessages = $derived(filterVisibleMessages(allMessages, viewMode));
   let hiddenCount = $derived(allMessages.length - filteredMessages.length);
-  let summaryMode = $derived(!showDetails);
+  let summaryMode = $derived(viewMode !== 'detailed');
+
+  const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
+    detailed: 'Detailed',
+    summary: 'Summary',
+    focus: 'Focus',
+  };
+  const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
+    summary: 'focus',
+    focus: 'detailed',
+    detailed: 'summary',
+  };
+  const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
+    detailed: 'Showing everything — click for Summary',
+    summary: 'Hiding thinking & most tool calls — click for Focus (final output only)',
+    focus: 'Showing final output & pending questions only — click for Detailed',
+  };
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
@@ -91,15 +110,22 @@
 
   /** Jump to a search result: page in only as deep as the match, reveal it, scroll. */
   async function handleJump(hit: EventSearchHit) {
-    await messageStore.loadOlderUntil(sessionId, hit.eventIndex);
-    const id = messageStore.findMessageIdForEventIndex(sessionId, hit.eventIndex);
-    if (!id) return;
+    await jumpToEventIndex(hit.eventIndex);
+  }
 
-    // The target may be hidden by summary mode (thinking, or a non-Edit/Write/Bash
-    // tool call). Reveal details so it can be scrolled to.
-    const matched = allMessages.find((m) => m.id === id);
-    if (matched && !showDetails && !isMessageVisible(matched, showDetails)) {
-      messageStore.setShowDetails(sessionId, true);
+  /** Page in to the given event index, reveal the message it produced and scroll
+   *  to it. Returns true if the message was located, false otherwise (so callers
+   *  can re-resolve a stale index or fall back). */
+  async function jumpToEventIndex(eventIndex: number): Promise<boolean> {
+    await messageStore.loadOlderUntil(sessionId, eventIndex);
+    const id = messageStore.findMessageIdForEventIndex(sessionId, eventIndex);
+    if (!id) return false;
+
+    // The target may be hidden by the current view mode (thinking, a filtered
+    // tool call, or interim text in focus mode). Reveal details so it can be
+    // scrolled to.
+    if (viewMode !== 'detailed' && !filteredMessages.some((m) => m.id === id)) {
+      messageStore.setViewMode(sessionId, 'detailed');
       await tick();
     }
     // If the target is older than the rendered window, expand to include it.
@@ -115,7 +141,87 @@
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
+    return true;
   }
+
+  // ─── Bookmark jump (cross-session, driven by messageStore.pendingJumpBySession) ───
+  let fallbackBookmarkText = $state<string | null>(null);
+  let jumpInFlight = false;
+
+  // Bookmark jumps ring the target, then clear on the next user scroll/click
+  // (unlike search, which keeps the ring while you navigate between results).
+  // Armed after the jump's own programmatic scrollIntoView so only genuine user
+  // gestures (wheel / mousedown) dismiss it — scrollIntoView fires neither.
+  let clearHighlightOnInteraction = false;
+  function maybeClearHighlight() {
+    if (!clearHighlightOnInteraction) return;
+    clearHighlightOnInteraction = false;
+    currentMatchId = null;
+  }
+
+  $effect(() => {
+    const req = messageStore.pendingJumpBySession[sessionId];
+    // Track message count so a jump requested before history replay retries once
+    // the pane's history finishes loading.
+    const _loaded = messageStore.getMessages(sessionId).length;
+    if (!req || store.activeSessionId !== sessionId || jumpInFlight) return;
+    jumpInFlight = true;
+    (async () => {
+      try {
+        await resolveBookmarkJump(req);
+      } finally {
+        jumpInFlight = false;
+      }
+    })();
+  });
+
+  async function resolveBookmarkJump(req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+    // Resolve to a concrete event index — cached first, then via the durable uuid.
+    let eventIndex = req.eventIndex;
+    if (eventIndex == null && req.uuid) {
+      eventIndex = await window.groveBench.findEventIndexByUuid(sessionId, req.uuid);
+      if (eventIndex != null) bookmarkStore.patchEventIndex(req.bookmarkId, eventIndex);
+    }
+    if (eventIndex == null) {
+      showBookmarkFallback(req.bookmarkId);
+      messageStore.clearJump(sessionId);
+      return;
+    }
+
+    if (await jumpToEventIndex(eventIndex)) {
+      clearHighlightOnInteraction = true;
+      messageStore.clearJump(sessionId);
+      return;
+    }
+
+    // Cached index was stale (history shifted) — re-resolve via uuid once.
+    if (req.uuid) {
+      const ei = await window.groveBench.findEventIndexByUuid(sessionId, req.uuid);
+      if (ei != null && ei !== eventIndex) {
+        bookmarkStore.patchEventIndex(req.bookmarkId, ei);
+        if (await jumpToEventIndex(ei)) {
+          clearHighlightOnInteraction = true;
+          messageStore.clearJump(sessionId);
+          return;
+        }
+      }
+    }
+
+    // Still not found. If the pane simply hasn't replayed history yet, keep the
+    // request pending so the effect retries when messages arrive; otherwise the
+    // source is genuinely gone (e.g. cleared history) → show the stored text.
+    if (messageStore.getMessages(sessionId).length === 0) return;
+    showBookmarkFallback(req.bookmarkId);
+    messageStore.clearJump(sessionId);
+  }
+
+  function showBookmarkFallback(bookmarkId: string) {
+    const bm = bookmarkStore.list.find((b) => b.id === bookmarkId);
+    fallbackBookmarkText = bm?.selectedText ?? null;
+  }
+
+  // Text-selection actions (Bookmark / To prompt) are handled by the reusable
+  // SelectionMenu component, mounted below with this pane's scroll container.
 
   function closeSearch() {
     searchOpen = false;
@@ -130,6 +236,11 @@
       e.preventDefault();
       searchOpen = !searchOpen;
       if (!searchOpen) currentMatchId = null;
+    }
+    if (e.key === 'Escape') {
+      fallbackBookmarkText = null;
+      clearHighlightOnInteraction = false;
+      currentMatchId = null;
     }
   }
 
@@ -188,28 +299,33 @@
 {/if}
 
 <div class="flex-1 relative overflow-hidden">
-<!-- Detail toggle -->
+<!-- View mode toggle (cycles Summary → Focus → Detailed) -->
 <button
-  onclick={() => messageStore.setShowDetails(sessionId, !showDetails)}
+  onclick={() => messageStore.setViewMode(sessionId, NEXT_VIEW_MODE[viewMode])}
   class="absolute top-2 right-3 z-30 flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium border transition-colors
-    {showDetails
+    {viewMode === 'detailed'
       ? 'bg-card/80 border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50'
       : 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'}"
-  title={showDetails ? 'Hide tool calls & thinking' : 'Show tool calls & thinking'}
+  title={VIEW_MODE_HINTS[viewMode]}
 >
   <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-    {#if showDetails}
+    {#if viewMode === 'detailed'}
       <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
-    {:else}
+    {:else if viewMode === 'summary'}
       <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
+    {:else}
+      <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
     {/if}
   </svg>
-  {showDetails ? 'Detailed' : 'Summary'}{#if hiddenCount > 0} ({hiddenCount} hidden){/if}
+  {VIEW_MODE_LABELS[viewMode]}{#if hiddenCount > 0} ({hiddenCount} hidden){/if}
 </button>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"
   bind:this={scrollContainer}
   onscroll={handleScroll}
+  onmousedown={maybeClearHighlight}
+  onwheel={maybeClearHighlight}
 >
   {#each Array(20) as _, i}
     <span
@@ -340,8 +456,8 @@
 
   {/each}
 
-  <!-- Streaming thinking (live) -->
-  {#if streamingThinking}
+  <!-- Streaming thinking (live) — suppressed in focus mode -->
+  {#if streamingThinking && viewMode !== 'focus'}
     {@const lastLine = streamingThinking.trimEnd().split('\n').at(-1)?.trim() || 'thinking...'}
     <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
       <span class="inline-block w-1.5 h-3 bg-purple-400 animate-pulse shrink-0"></span>
@@ -355,7 +471,7 @@
       <MarkdownBlock content={streamingText} />
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
-  {:else if isRunning && !streamingThinking}
+  {:else if isRunning && (!streamingThinking || viewMode === 'focus')}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
       <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget"></span>
       {#if activity.activity === 'thinking'}
@@ -384,4 +500,21 @@
     &darr; Bottom
   </button>
 {/if}
+
+<!-- Bookmark text fallback: shown when a jump can't locate the source message -->
+{#if fallbackBookmarkText}
+  <div class="absolute top-2 left-3 right-16 z-30 bg-card border border-yellow-500/40 shadow-md p-2 text-xs">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-yellow-500/90 font-medium">Bookmarked text — source no longer in history</span>
+      <button
+        onclick={() => fallbackBookmarkText = null}
+        class="text-muted-foreground hover:text-foreground px-1"
+        title="Dismiss"
+      >&times;</button>
+    </div>
+    <pre class="whitespace-pre-wrap break-words max-h-40 overflow-y-auto text-foreground/90">{fallbackBookmarkText}</pre>
+  </div>
+{/if}
 </div>
+
+<SelectionMenu {sessionId} container={scrollContainer} />

@@ -100,9 +100,6 @@
       const INITIAL_PAGE_SIZE = 200;
       const skipDuringReplay = new Set([
         'partial_text', 'activity', 'tool_progress', 'usage',
-        // Dev server URLs from history point to servers that are no longer
-        // running after a restart — skip to avoid showing dead localhost links.
-        'devserver_detected',
       ]);
 
       const page = await window.groveBench.getEventHistoryPage(sessionId, INITIAL_PAGE_SIZE);
@@ -230,7 +227,9 @@
   </div>
 
   <StatusBar {sessionId} />
-  {#if activeTab === 'activity'}
+  {#if activeTab === 'activity' || activeTab === 'changes'}
+    <!-- The Changes tab shares the prompt input; sending from it jumps back to
+         Activity (handled in PromptEditor) so the response is visible. -->
     <PromptEditor {sessionId} />
   {:else if activeTab === 'terminal'}
     <!-- Terminal has its own input -->

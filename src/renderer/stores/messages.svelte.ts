@@ -1,7 +1,9 @@
-import type { AgentEvent, PermissionDecision, PermissionMode } from '../../shared/types.js';
+import type { AgentEvent, McpServerInfo, PermissionDecision, PermissionMode, ThinkingLevel } from '../../shared/types.js';
+import { THINKING_LEVELS } from '../../shared/types.js';
+import { settingsStore } from './settings.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
+import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
-import { devServerStore } from './devServer.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 
@@ -159,8 +161,8 @@ class MessageStore {
   /** Current permission mode per session */
   modeBySession = $state<Record<string, PermissionMode>>({});
 
-  /** Whether thinking/extended reasoning is enabled per session */
-  thinkingBySession = $state<Record<string, boolean>>({});
+  /** Thinking/reasoning level per session ('high' = provider default) */
+  thinkingBySession = $state<Record<string, ThinkingLevel>>({});
 
   /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
   usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
@@ -190,8 +192,8 @@ class MessageStore {
   /** Active tab per session (survives component remount) */
   activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
 
-  /** Whether to show detailed tool calls & thinking per session (default: false = summary mode) */
-  showDetailsBySession = $state<Record<string, boolean>>({});
+  /** Activity view mode per session (default: 'summary') */
+  viewModeBySession = $state<Record<string, import('../lib/message-view.js').MessageViewMode>>({});
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
@@ -268,7 +270,7 @@ class MessageStore {
     this.paginationBySession[sessionId] = { ...p, loading: true };
     try {
       const skipDuringReplay = new Set([
-        'partial_text', 'activity', 'tool_progress', 'usage', 'devserver_detected',
+        'partial_text', 'activity', 'tool_progress', 'usage',
       ]);
       const page = await window.groveBench.getEventHistoryPage(sessionId, pageSize, p.loadedFromIndex);
 
@@ -375,13 +377,20 @@ class MessageStore {
     return this.modeBySession[sessionId] ?? 'default';
   }
 
-  getThinking(sessionId: string): boolean {
-    return this.thinkingBySession[sessionId] ?? true;
+  getThinkingLevel(sessionId: string): ThinkingLevel {
+    return this.thinkingBySession[sessionId] ?? settingsStore.current.defaultThinkingLevel ?? 'high';
   }
 
-  async setThinking(sessionId: string, enabled: boolean) {
-    this.thinkingBySession[sessionId] = enabled;
-    await window.groveBench.setThinking(sessionId, enabled);
+  async setThinkingLevel(sessionId: string, level: ThinkingLevel) {
+    this.thinkingBySession[sessionId] = level;
+    await window.groveBench.setThinkingLevel(sessionId, level);
+  }
+
+  /** Cycle off → low → medium → high → off (status-bar button / Alt+T). */
+  cycleThinkingLevel(sessionId: string) {
+    const current = this.getThinkingLevel(sessionId);
+    const next = THINKING_LEVELS[(THINKING_LEVELS.indexOf(current) + 1) % THINKING_LEVELS.length];
+    this.setThinkingLevel(sessionId, next).catch((e) => console.error('Failed to set thinking level:', e));
   }
 
   getUsage(sessionId: string) {
@@ -390,6 +399,16 @@ class MessageStore {
 
   getSystemInfo(sessionId: string) {
     return this.systemInfoBySession[sessionId] ?? { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [] };
+  }
+
+  /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
+  updateMcpServers(sessionId: string, servers: McpServerInfo[]) {
+    const info = this.systemInfoBySession[sessionId];
+    if (!info) return;
+    this.systemInfoBySession[sessionId] = {
+      ...info,
+      mcpServers: servers.map((s) => ({ name: s.name, status: s.status })),
+    };
   }
 
   getContextWindow(sessionId: string): number {
@@ -412,12 +431,12 @@ class MessageStore {
     this.activeTabBySession[sessionId] = tab;
   }
 
-  getShowDetails(sessionId: string): boolean {
-    return this.showDetailsBySession[sessionId] ?? false;
+  getViewMode(sessionId: string): import('../lib/message-view.js').MessageViewMode {
+    return this.viewModeBySession[sessionId] ?? 'summary';
   }
 
-  setShowDetails(sessionId: string, show: boolean) {
-    this.showDetailsBySession[sessionId] = show;
+  setViewMode(sessionId: string, mode: import('../lib/message-view.js').MessageViewMode) {
+    this.viewModeBySession[sessionId] = mode;
   }
 
   getDraft(sessionId: string): string {
@@ -561,7 +580,7 @@ class MessageStore {
 
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    const modes = ['default', 'plan', 'acceptEdits'] as const;
+    const modes = ['default', 'plan', 'acceptEdits', 'auto'] as const;
     const idx = modes.indexOf(current as typeof modes[number]);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);
@@ -600,6 +619,45 @@ class MessageStore {
       }
     }
     return bestId;
+  }
+
+  /** Inverse of findMessageIdForEventIndex: the stable source event index a
+   *  message was stamped with during replay/pagination, or null for live or
+   *  otherwise unstamped messages. Lets bookmark capture anchor a selection to
+   *  a durable eventIndex. */
+  getEventIndexForMessageId(sessionId: string, messageId: string): number | null {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    const ei = idx?.get(messageId);
+    return ei ?? null;
+  }
+
+  /** Cross-session bookmark jump requests, consumed by the active OutputPanel's
+   *  $effect. Keyed by sessionId; the panel resolves the anchor (cached
+   *  eventIndex → uuid re-resolution → text fallback) and then clears the entry. */
+  pendingJumpBySession = $state<Record<string, { eventIndex: number | null; uuid: string | null; bookmarkId: string }>>({});
+
+  requestJump(sessionId: string, req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+    this.pendingJumpBySession = { ...this.pendingJumpBySession, [sessionId]: req };
+  }
+
+  clearJump(sessionId: string) {
+    if (!(sessionId in this.pendingJumpBySession)) return;
+    const next = { ...this.pendingJumpBySession };
+    delete next[sessionId];
+    this.pendingJumpBySession = next;
+  }
+
+  /** One-shot "insert this text into the prompt" requests (e.g. the activity
+   *  thread's "copy selection to prompt" action). The mounted PromptEditor
+   *  appends `text` to its input whenever `nonce` increments. */
+  promptInsertBySession = $state<Record<string, { text: string; nonce: number }>>({});
+
+  requestPromptInsert(sessionId: string, text: string) {
+    const prev = this.promptInsertBySession[sessionId]?.nonce ?? 0;
+    this.promptInsertBySession = {
+      ...this.promptInsertBySession,
+      [sessionId]: { text, nonce: prev + 1 },
+    };
   }
 
   private flushStreamingText(sessionId: string) {
@@ -881,10 +939,6 @@ class MessageStore {
         this.onUserMessage(sessionId, event);
         break;
 
-      case 'devserver_detected':
-        devServerStore.add(sessionId, event.port, event.url);
-        break;
-
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
@@ -910,7 +964,7 @@ class MessageStore {
           this.pushMessage(sessionId, {
             kind: 'system',
             id: nextId(),
-            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString()}` : ''}`,
+            text: `Rate limited${event.rateLimitType ? ` (${event.rateLimitType})` : ''}${event.resetsAt ? ` — resets ${new Date(event.resetsAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}`,
           });
         }
         break;
@@ -1043,6 +1097,14 @@ class MessageStore {
       slashCommands: event.slashCommands ?? [],
       mcpServers: event.mcpServers ?? [],
     };
+    // Each (re)initialized query starts at the provider's default thinking
+    // behavior. Pin the session's level (or the settings default for a new
+    // session) and re-apply it when it differs from that default.
+    const thinkingLevel = this.getThinkingLevel(sessionId);
+    this.thinkingBySession[sessionId] = thinkingLevel;
+    if (thinkingLevel !== 'high') {
+      window.groveBench.setThinkingLevel(sessionId, thinkingLevel).catch(() => {});
+    }
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -1105,6 +1167,12 @@ class MessageStore {
     // Drop stale permission requests from a dying query after the user
     // clicked Stop. The new query will re-request if needed.
     if (this.stoppingSession[sessionId]) return;
+
+    // Desktop notification for live requests only — replayed history must not
+    // re-notify. Main gates on window focus and settings.
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, permissionNotificationBody(event));
+    }
 
     this.flushStreamingText(sessionId);
     // Mark the matching tool_call as awaiting permission so it doesn't
@@ -1175,6 +1243,18 @@ class MessageStore {
   }
 
   private onResult(sessionId: string, event: Extract<AgentEvent, { type: 'result' }>) {
+    // Desktop notification anchored to the SDK's authoritative end-of-turn
+    // event (live only) — a crashed or stopped session never produces one, so
+    // it can't claim a turn "finished" that actually died. Main gates on
+    // window focus and settings.
+    if (this._replayBuffer === null) {
+      notifyOs(
+        'turn_complete',
+        sessionId,
+        event.isError ? 'Agent turn ended with an error' : 'Agent finished a turn',
+      );
+    }
+
     this.flushStreamingText(sessionId);
     this.setIsRunning(sessionId, false);
     delete this.awaitingResponse[sessionId];
@@ -1537,9 +1617,9 @@ class MessageStore {
       this.modeBySession, this.thinkingBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
-      this.activeTabBySession, this.showDetailsBySession,
+      this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
-      this.rewindDialogOpen,
+      this.rewindDialogOpen, this.pendingJumpBySession, this.promptInsertBySession,
     ] as Record<string, unknown>[]) {
       delete record[sessionId];
     }
@@ -1547,7 +1627,6 @@ class MessageStore {
     this.sourceIndexBySession.delete(sessionId);
 
     // Extracted stores own their own per-session teardown.
-    devServerStore.destroy(sessionId);
     backgroundTaskStore.destroy(sessionId);
     rateLimitStore.destroy(sessionId);
 
@@ -1632,6 +1711,14 @@ class MessageStore {
     }
   }
 
+}
+
+/** User-facing body for a blocked-agent notification — plan approvals and
+ *  questions get plain language instead of internal tool names. */
+function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
+  if (event.isPlanExecution) return 'A plan is ready for review';
+  if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
+  return `${event.toolName} is waiting for permission`;
 }
 
 export const messageStore = new MessageStore();

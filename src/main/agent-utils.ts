@@ -2,6 +2,20 @@
  * Pure utility functions shared between agent-session.ts and adapters.
  */
 
+import path from 'node:path';
+
+/**
+ * True if `child` resolves to a location inside (or equal to) `parent`.
+ * Uses path.relative rather than string-prefix matching, so "/repo/src-secret"
+ * is correctly treated as OUTSIDE "/repo/src". path.relative on win32 compares
+ * case-insensitively and returns an absolute path across drives, both of which
+ * this handles.
+ */
+export function isPathInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
 /**
  * Environment variable prefixes that leak noisy paths into the LLM context.
  */
@@ -69,4 +83,35 @@ export function readableStreamToAsyncIterable<T>(stream: ReadableStream<T>): Asy
       };
     },
   };
+}
+
+/**
+ * Find the provider chain-entry UUID to fork at when rewinding to the user
+ * message with the given (Grove-generated) uuid: the SDK uuid of the last
+ * assistant-side event before that message in the event history. Returns null
+ * when the target isn't found or no provider content precedes it (e.g. a
+ * rewind to the first message), in which case the caller should fall back to
+ * starting a fresh conversation.
+ *
+ * Only assistant-side events carry provider uuids — user_message events hold
+ * Grove's own uuids and must not be used as fork points.
+ */
+export function findRewindForkPoint(
+  events: import('../shared/types.js').AgentEvent[],
+  targetUuid: string,
+): string | null {
+  const idx = events.findLastIndex(
+    (e) => e.type === 'user_message' && e.uuid === targetUuid,
+  );
+  if (idx < 0) return null;
+  for (let i = idx - 1; i >= 0; i--) {
+    const e = events[i];
+    if (
+      (e.type === 'assistant_text' || e.type === 'assistant_tool_use' || e.type === 'thinking') &&
+      e.uuid
+    ) {
+      return e.uuid;
+    }
+  }
+  return null;
 }

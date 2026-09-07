@@ -3,6 +3,34 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { git, gitEnv } from './git.js';
 import { logger } from './logger.js';
+import type { DiffHistoryEntry, DiffHistoryResult, DiffStats } from '../shared/types.js';
+
+const BASELINE_UUID = '__baseline__';
+
+/** Sum a `git diff --numstat` output into aggregate stats. Binary files count
+ *  toward filesChanged but contribute no line counts (numstat prints `-`). */
+function parseNumstat(output: string): DiffStats {
+  const stats: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('\t');
+    if (parts.length < 3) continue;
+    stats.filesChanged++;
+    const adds = parseInt(parts[0], 10);
+    const dels = parseInt(parts[1], 10);
+    if (!Number.isNaN(adds)) stats.additions += adds;
+    if (!Number.isNaN(dels)) stats.deletions += dels;
+  }
+  return stats;
+}
+
+interface CheckpointRef {
+  ref: string;
+  turn: number;
+  uuid: string;
+  text?: string;
+}
 
 interface SessionCheckpoints {
   turnCount: number;
@@ -168,18 +196,158 @@ export class CheckpointManager {
     const ref = await this.resolveRef(sessionId, cwd, uuid);
     if (!ref) return 'No checkpoint found for this message';
 
+    const currentTree = await this.writeWorkingTree(sessionId, cwd);
+    const output = await git(['diff', ref, currentTree, '--', '.'], cwd);
+    return output || '(no changes)';
+  }
+
+  /**
+   * Build a tree object for the current working tree (incl. untracked files,
+   * excl. ignored) using a temporary index, and return its oid.
+   */
+  private async writeWorkingTree(sessionId: string, cwd: string): Promise<string> {
     const tmpIndex = path.join(os.tmpdir(), `grove-diff-${sessionId}-${Date.now()}`);
     try {
       const env = { GIT_INDEX_FILE: tmpIndex };
       await gitEnv(['read-tree', 'HEAD'], cwd, env);
       await gitEnv(['add', '-A'], cwd, env);
-      const currentTree = (await gitEnv(['write-tree'], cwd, env)).trim();
-
-      const output = await git(['diff', ref, currentTree, '--', '.'], cwd);
-      return output || '(no changes)';
+      return (await gitEnv(['write-tree'], cwd, env)).trim();
     } finally {
       try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
     }
+  }
+
+  /**
+   * List all checkpoint refs for a session (including the internal baseline),
+   * sorted oldest-first. Throws if for-each-ref fails.
+   */
+  private async listRefs(sessionId: string, cwd: string): Promise<CheckpointRef[]> {
+    const SEP = '@@GROVE_SEP@@';
+    const output = await git(
+      ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, `refs/grove/checkpoints/${sessionId}/`],
+      cwd
+    );
+    const items: CheckpointRef[] = [];
+    for (const line of output.split('\n')) {
+      if (!line.trim()) continue;
+      const parts = line.split(SEP);
+      if (parts.length < 2) continue;
+      const ref = parts[0].trim();
+      const subject = parts[1].trim();
+      const body = (parts[2] ?? '').trim();
+
+      const turnMatch = ref.match(/\/turn\/(\d+)$/);
+      const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
+
+      const uuidMatch = subject.match(/uuid=(\S+)/);
+      if (!uuidMatch) continue;
+
+      const textMatch = body.match(/^text=(.*)/);
+      const text = textMatch?.[1] || undefined;
+
+      items.push({ ref, turn, uuid: uuidMatch[1], text });
+    }
+    items.sort((a, b) => a.turn - b.turn);
+    return items;
+  }
+
+  /**
+   * Per-turn diff history: for each checkpoint, the changes made between it
+   * and the next checkpoint (or the current working tree for the latest one).
+   * Since each checkpoint is captured when a user message is sent — before the
+   * agent acts on it — an entry describes what that turn changed on disk.
+   * Also returns cumulative stats from the session baseline to now.
+   */
+  async history(sessionId: string, cwd: string): Promise<DiffHistoryResult> {
+    await this.waitForPending(sessionId);
+    const empty: DiffHistoryResult = {
+      entries: [],
+      total: { filesChanged: 0, additions: 0, deletions: 0 },
+    };
+
+    let refs: CheckpointRef[];
+    try {
+      refs = await this.listRefs(sessionId, cwd);
+    } catch {
+      return empty;
+    }
+    if (refs.length === 0) return empty;
+
+    try {
+      const currentTree = await this.writeWorkingTree(sessionId, cwd);
+
+      const entries: DiffHistoryEntry[] = [];
+      for (let i = 0; i < refs.length; i++) {
+        const r = refs[i];
+        if (r.uuid === BASELINE_UUID) continue;
+        const to = refs[i + 1]?.ref ?? currentTree;
+        let stats: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
+        try {
+          const out = await git(['diff', '--numstat', r.ref, to, '--', '.'], cwd);
+          stats = parseNumstat(out);
+        } catch (err) {
+          logger.debug(`[checkpoints] history numstat failed turn=${r.turn}:`, err);
+        }
+        entries.push({ uuid: r.uuid, turn: r.turn, text: r.text, ...stats });
+      }
+
+      // Cumulative stats: oldest ref (the baseline for new sessions) → now
+      let total: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
+      try {
+        const out = await git(['diff', '--numstat', refs[0].ref, currentTree, '--', '.'], cwd);
+        total = parseNumstat(out);
+      } catch (err) {
+        logger.debug(`[checkpoints] history total numstat failed:`, err);
+      }
+
+      // Newest first, matching list()
+      entries.sort((a, b) => b.turn - a.turn);
+      return { entries, total };
+    } catch (err) {
+      logger.warn(`[checkpoints] history failed session=${sessionId}:`, err);
+      return empty;
+    }
+  }
+
+  /**
+   * Unified diff of what a single turn changed: the checkpoint captured for
+   * this user message vs the next checkpoint, or vs the current working tree
+   * when it's the latest turn.
+   */
+  async turnDiff(sessionId: string, cwd: string, uuid: string): Promise<string> {
+    const ref = await this.resolveRef(sessionId, cwd, uuid);
+    if (!ref) return 'No checkpoint found for this message';
+
+    let refs: CheckpointRef[] = [];
+    try {
+      refs = await this.listRefs(sessionId, cwd);
+    } catch { /* fall through to working-tree diff */ }
+
+    const idx = refs.findIndex(r => r.ref === ref);
+    const next = idx >= 0 ? refs[idx + 1] : undefined;
+    const to = next ? next.ref : await this.writeWorkingTree(sessionId, cwd);
+
+    const output = await git(['diff', ref, to, '--', '.'], cwd);
+    return output || '(no changes)';
+  }
+
+  /**
+   * Cumulative full-thread diff: everything that changed from the session's
+   * oldest checkpoint (the baseline for new sessions) to the current working
+   * tree, across all turns.
+   */
+  async fullThreadDiff(sessionId: string, cwd: string): Promise<string> {
+    await this.waitForPending(sessionId);
+
+    let refs: CheckpointRef[] = [];
+    try {
+      refs = await this.listRefs(sessionId, cwd);
+    } catch { /* no refs */ }
+    if (refs.length === 0) return 'No checkpoints found for this session';
+
+    const currentTree = await this.writeWorkingTree(sessionId, cwd);
+    const output = await git(['diff', refs[0].ref, currentTree, '--', '.'], cwd);
+    return output || '(no changes)';
   }
 
   /**
@@ -307,36 +475,11 @@ export class CheckpointManager {
     await this.waitForPending(sessionId);
 
     try {
-      // Use a delimiter to separate fields since body can contain spaces
-      const SEP = '@@GROVE_SEP@@';
-      const output = await git(
-        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, `refs/grove/checkpoints/${sessionId}/`],
-        cwd
-      );
-      const items: (CheckpointInfo & { text?: string })[] = [];
-      for (const line of output.split('\n')) {
-        if (!line.trim()) continue;
-        const parts = line.split(SEP);
-        if (parts.length < 2) continue;
-        const ref = parts[0].trim();
-        const subject = parts[1].trim();
-        const body = (parts[2] ?? '').trim();
-
-        const turnMatch = ref.match(/\/turn\/(\d+)$/);
-        const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
-
-        const uuidMatch = subject.match(/uuid=(\S+)/);
-        if (!uuidMatch) continue;
-
-        // Extract display text from commit body (text=...)
-        const textMatch = body.match(/^text=(.*)/);
-        const text = textMatch?.[1] || undefined;
-
-        items.push({ uuid: uuidMatch[1], turn, ref, text });
-      }
-      // Filter out internal baseline checkpoint
-      const visible = items.filter(i => i.uuid !== '__baseline__');
-      // Sort newest first (descending turn)
+      const items = await this.listRefs(sessionId, cwd);
+      // Filter out internal baseline checkpoint; sort newest first
+      const visible: (CheckpointInfo & { text?: string })[] = items
+        .filter(i => i.uuid !== BASELINE_UUID)
+        .map(({ uuid, turn, ref, text }) => ({ uuid, turn, ref, text }));
       visible.sort((a, b) => b.turn - a.turn);
       return visible;
     } catch {

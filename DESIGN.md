@@ -689,4 +689,4 @@ All errors log to a file at `%APPDATA%/grove-bench/logs/`. Useful for debugging 
 - Agent-to-agent communication (one agent's output feeds another)
 - Git operations UI (merge, rebase, cherry-pick between agent branches)
 
-> **Already implemented since v0.3:** Built-in diff viewer, session persistence, settings UI, slash commands, skills, MCP server connections, drag-and-drop image attachments, dev server management, auto-update via electron-updater (see `docs/electron-install.md`).
+> **Already implemented since v0.3:** Built-in diff viewer, session persistence, settings UI, slash commands, skills, MCP server connections, drag-and-drop image attachments, auto-update via electron-updater (see `docs/electron-install.md`).

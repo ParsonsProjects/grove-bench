@@ -54,6 +54,15 @@ export const contextBridge = {
   exposeInMainWorld: vi.fn(),
 };
 
+export const Notification = Object.assign(
+  vi.fn(function (this: Record<string, unknown>, opts: unknown) {
+    this.opts = opts;
+    this.show = vi.fn();
+    this.on = vi.fn();
+  }),
+  { isSupported: vi.fn(() => true) },
+);
+
 export default {
   app,
   BrowserWindow,
@@ -63,4 +72,5 @@ export default {
   shell,
   nativeTheme,
   contextBridge,
+  Notification,
 };

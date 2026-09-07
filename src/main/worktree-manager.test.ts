@@ -296,3 +296,60 @@ describe('remove', () => {
     );
   });
 });
+
+describe('registerDirect (direct + attached sessions)', () => {
+  it('runs on the repo checkout and persists no explicit path for a plain direct session', async () => {
+    const info = await manager.registerDirect('/repo', 'main');
+
+    expect(info.direct).toBe(true);
+    expect(info.path).toBe('/repo');
+    // Plain direct sessions derive their path from repoPath, so it isn't stored.
+    expect(savedManifest[info.id]).toEqual({
+      repoPath: '/repo',
+      branch: 'main',
+      createdAt: info.createdAt,
+      direct: true,
+    });
+  });
+
+  it('persists the shared worktree path for an attached session', async () => {
+    const wtPath = '/worktrees/abc/wt-src';
+    const info = await manager.registerDirect('/repo', 'feature-x', wtPath);
+
+    expect(info.direct).toBe(true);
+    expect(info.path).toBe(wtPath);
+    expect(savedManifest[info.id]).toEqual({
+      repoPath: '/repo',
+      branch: 'feature-x',
+      createdAt: info.createdAt,
+      direct: true,
+      path: wtPath,
+    });
+  });
+
+  it('does not touch git when an attached session is destroyed (shared worktree is preserved)', async () => {
+    const wtPath = '/worktrees/abc/wt-src';
+    const info = await manager.registerDirect('/repo', 'feature-x', wtPath);
+    mockGit.mockClear();
+
+    await manager.remove(info.id);
+
+    // No worktree remove / branch delete / prune — the worktree belongs to the
+    // source session, not this attached one.
+    expect(mockGit).not.toHaveBeenCalled();
+    expect(savedManifest).not.toHaveProperty(info.id);
+  });
+
+  it('reconstructs the shared worktree path from the manifest after restart', async () => {
+    const wtPath = '/worktrees/abc/wt-src';
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-attached': { repoPath: '/repo', branch: 'feature-x', createdAt: 1000, direct: true, path: wtPath },
+    }));
+
+    const info = await manager.getWorktreeOrManifest('wt-attached');
+
+    expect(info?.path).toBe(wtPath);
+    expect(info?.branch).toBe('feature-x');
+    expect(info?.direct).toBe(true);
+  });
+});

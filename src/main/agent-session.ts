@@ -1,12 +1,12 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
-import { killProcessOnPort } from './port-killer.js';
-import { DevServer } from './dev-server.js';
-import { detectDevCommand } from './dev-command-detector.js';
 import * as settings from './settings.js';
+import { computeSkillsFilter } from './skills.js';
+import { analyzeRepo as analyzeSkillSuggestions } from './skill-suggestions.js';
+import { loadKnownSkills, saveKnownSkills } from './app-state.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import * as fs from 'node:fs';
@@ -15,7 +15,28 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
+import { findRewindForkPoint } from './agent-utils.js';
+import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
+
+/**
+ * Sandbox settings for Auto-mode queries: OS-level enforcement layered under
+ * the read-only classifier (see read-only-tools.ts). Writes are confined to
+ * the worktree, Bash approval stays with the classifier (no blanket
+ * auto-allow), and the model cannot opt commands out of the sandbox. Degrades
+ * gracefully — with a warning, running unsandboxed — on machines where
+ * sandbox dependencies are unavailable; the classifier remains the approval
+ * gate either way.
+ */
+function autoModeSandbox(worktreePath: string): Record<string, unknown> {
+  return {
+    enabled: true,
+    failIfUnavailable: false,
+    autoAllowBashIfSandboxed: false,
+    allowUnsandboxedCommands: false,
+    filesystem: { allowWrite: [worktreePath] },
+  };
+}
 
 interface PendingPermission {
   requestId: string;
@@ -40,6 +61,10 @@ interface ManagedSession {
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
   providerSessionId: string | null;
+  /** Set by rewindFiles(): provider chain-entry uuid to fork the conversation
+   *  at on the next query start (resume truncated at this point, forkSession).
+   *  Cleared once a query starts successfully with it. */
+  pendingResumeAt: string | null;
   /** Current model for this session — the source of truth across stop/restart,
    *  in-app resume, and app-restart resume (persisted to the worktree manifest).
    *  Initialised from the restored/default model, updated on model switches and
@@ -48,14 +73,12 @@ interface ManagedSession {
   window: BrowserWindow;
   /** Buffered events for replay after renderer reload */
   eventHistory: AgentEvent[];
-  /** Ports where dev servers were detected — cleaned up on session destroy */
-  detectedPorts: Set<number>;
   /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
   toolUseMap: Map<string, string>;
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
   /** Permission mode for the SDK query. */
-  permissionMode: 'default' | 'plan' | 'acceptEdits';
+  permissionMode: 'default' | 'plan' | 'acceptEdits' | 'auto';
   /** Extra system prompt appended to the adapter's default prompt. */
   appendSystemPrompt: string | null;
   /** Fully custom system prompt — overrides the adapter's default entirely. */
@@ -72,10 +95,16 @@ interface ManagedSession {
   eventLogPath: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName: string | null;
-  /** Host-managed dev server instance. */
-  devServer: DevServer | null;
+  /** Current thinking level — survives stop/restart so query restarts keep it. */
+  thinkingLevel: ThinkingLevel;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
+  /** Set while a user-initiated in-place interrupt is settling. The resulting
+   *  turn reports abort/teardown noise (e.g. "Request was aborted", in-flight
+   *  tool failures); this flag lets runQuery treat that as a clean stop instead
+   *  of surfacing it as an error. Cleared once the interrupt's result/throw is
+   *  consumed. */
+  interrupting: boolean;
   /** Whether a memory auto-save is currently in progress. */
   autoSaveInProgress: boolean;
   /** Emit function for sending events to the renderer — set by createEmitter. */
@@ -105,7 +134,7 @@ export interface SessionCompletionResult {
   durationMs?: number;
 }
 
-const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
+export const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
 
 // Suppress unhandled rejections that the agent SDK throws while a query is
 // being torn down.  When we stop/destroy a session we close the SDK transport
@@ -144,6 +173,97 @@ class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
+
+  /** Union of skill names each repo's sessions have reported via system_init.
+   *  Backed by persisted app state so plugin-provided skills (invisible to the
+   *  on-disk scan) survive app restarts and stay in the allowlist when the
+   *  user has disabled other skills. */
+  private knownSkillsByRepo = new Map<string, Set<string>>();
+
+  /** Worktree path for a managed session, if it exists. */
+  getWorktreePath(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.worktreePath ?? null;
+  }
+
+  private getKnownSkills(repoPath: string): Set<string> {
+    let known = this.knownSkillsByRepo.get(repoPath);
+    if (!known) {
+      known = new Set(loadKnownSkills(repoPath));
+      this.knownSkillsByRepo.set(repoPath, known);
+    }
+    return known;
+  }
+
+  private recordKnownSkills(repoPath: string, names: string[]): void {
+    const known = this.getKnownSkills(repoPath);
+    const before = known.size;
+    for (const name of names) known.add(name);
+    if (known.size !== before) {
+      saveKnownSkills(repoPath, [...known].sort());
+    }
+  }
+
+  /** Adapter for a managed session, if it exists (used by IPC to route
+   *  provider-specific operations like skill discovery). */
+  getSessionAdapter(sessionId: string): AgentAdapter | null {
+    return this.sessions.get(sessionId)?.adapter ?? null;
+  }
+
+  // ─── Skill suggestions ───
+
+  /** Per-repo debounce for post-turn suggestion analysis. */
+  private suggestionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Schedule a suggestion analysis for the session's repo, debounced so a
+   *  burst of finishing turns produces one run. */
+  private scheduleSuggestionAnalysis(session: ManagedSession): void {
+    if (!settings.getSettings().autoSkillSuggestions) return;
+    if (session.adapter.capabilities.skills !== true) return;
+    const { repoPath } = session;
+    const pending = this.suggestionTimers.get(repoPath);
+    if (pending) clearTimeout(pending);
+    this.suggestionTimers.set(repoPath, setTimeout(() => {
+      this.suggestionTimers.delete(repoPath);
+      this.analyzeSkillSuggestionsForRepo(repoPath).catch((err) => {
+        logger.warn(`[skill-suggestions] analysis failed for ${repoPath}:`, err);
+      });
+    }, 30_000));
+  }
+
+  /** Mine the repo's session logs for recurring workflows and refresh the
+   *  cached skill suggestions. Uses a live session's adapter when one exists,
+   *  falling back to the registry default. */
+  async analyzeSkillSuggestionsForRepo(repoPath: string) {
+    const adapter = [...this.sessions.values()].find((s) => s.repoPath === repoPath)?.adapter
+      ?? adapterRegistry.getDefault();
+    const worktrees = await worktreeManager.list(repoPath);
+    const sessionIds = worktrees
+      .sort((a, b) => (a.lastActiveAt ?? a.createdAt) - (b.lastActiveAt ?? b.createdAt))
+      .map((w) => w.id);
+    const existingSkills = adapter.listSkills
+      ? await adapter.listSkills(repoPath).catch(() => [])
+      : [];
+    return analyzeSkillSuggestions({
+      repoPath,
+      sessionIds,
+      eventsDir: getEventsDir(),
+      existingSkills,
+      generateText: adapter.generateText ? adapter.generateText.bind(adapter) : null,
+    });
+  }
+
+  /** Skill allowlist for a session, honoring settings.disabledSkills.
+   *  Undefined when nothing is disabled or the provider has no skill support —
+   *  the adapter option is then omitted so provider defaults apply. */
+  private async skillsFilterFor(session: ManagedSession, disabledSkills: string[]): Promise<string[] | undefined> {
+    if (disabledSkills.length === 0 || session.adapter.capabilities.skills !== true) return undefined;
+    const onDisk = session.adapter.listSkills
+      ? await session.adapter.listSkills(session.worktreePath).catch(() => [])
+      : [];
+    const known = new Set(onDisk.map((s) => s.name));
+    for (const name of this.getKnownSkills(session.repoPath)) known.add(name);
+    return computeSkillsFilter(known, disabledSkills);
+  }
 
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
@@ -185,7 +305,7 @@ class AgentSessionManager {
     repoPath: string;
     window: BrowserWindow;
     resumeSessionId?: string;
-    permissionMode?: 'default' | 'plan' | 'acceptEdits';
+    permissionMode?: 'default' | 'plan' | 'acceptEdits' | 'auto';
     appendSystemPrompt?: string | null;
     customSystemPrompt?: string | null;
     allowedTools?: string[] | null;
@@ -240,10 +360,10 @@ class AgentSessionManager {
       pendingPermissions: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
+      pendingResumeAt: null,
       model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
       window: win,
       eventHistory: this.loadEventHistory(id),
-      detectedPorts: new Set(),
       toolUseMap: new Map(),
       lastResult: null,
       permissionMode: effectivePermissionMode,
@@ -255,8 +375,9 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      devServer: null,
+      thinkingLevel: appSettings.defaultThinkingLevel ?? 'high',
       stoppedByUser: false,
+      interrupting: false,
       autoSaveInProgress: false,
       emit: null,
       permRequestCounter: 0,
@@ -362,6 +483,13 @@ class AgentSessionManager {
       };
     } catch { /* best effort */ }
 
+    // Snapshot the rewind fork target for this start attempt. It stays set on
+    // the session until a query successfully starts with it, so a stop that
+    // lands mid-startup (restartRequested) retries the same truncated resume.
+    const resumeAtUuid = session.pendingResumeAt;
+
+    const skillsFilter = await this.skillsFilterFor(session, currentSettings.disabledSkills ?? []);
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -374,8 +502,13 @@ class AgentSessionManager {
       appendSystemPrompt: session.appendSystemPrompt,
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
+      skills: skillsFilter ?? null,
       outputFormat: session.outputFormat,
-      sandbox: session.sandbox,
+      // Auto mode gets OS-level sandbox enforcement as a backstop beneath the
+      // read-only classifier (explicit per-session sandbox settings win).
+      // Mode is read at query start: switching into auto mid-query keeps
+      // classifier-only protection until the next query (re)start.
+      sandbox: session.sandbox ?? (session.permissionMode === 'auto' ? autoModeSandbox(session.worktreePath) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),
@@ -383,11 +516,21 @@ class AgentSessionManager {
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
+      thinkingLevel: session.thinkingLevel,
       resumeSessionId: session.providerSessionId,
+      resumeAtUuid,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
       onPermissionRequest: async (request) => {
+        // Auto mode: read-only tool calls scoped to the worktree (file reads,
+        // git reads) run without prompting. Mutating, out-of-worktree, or
+        // unrecognized calls fall through to the normal permission prompt
+        // below. session.permissionMode is read live so mid-query mode
+        // switches take effect immediately.
+        if (session.permissionMode === 'auto' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath)) {
+          return { behavior: 'allow', updatedInput: request.toolInput };
+        }
         const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
         const requestId = `perm_${id}_${++session.permRequestCounter}`;
         return new Promise<PermissionResponse>((resolve) => {
@@ -437,6 +580,17 @@ class AgentSessionManager {
         this.relaunchQuery(session);
         return;
       }
+      // A truncated (rewind) resume failed to start — fall back to a fresh
+      // conversation rather than wedging the session. The retry cannot loop:
+      // both resume fields are cleared before relaunching.
+      if (resumeAtUuid) {
+        logger.warn(`[runQuery] session=${id} truncated resume failed, falling back to fresh conversation:`, startErr);
+        session.pendingResumeAt = null;
+        session.providerSessionId = null;
+        worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+        this.relaunchQuery(session);
+        return;
+      }
       // Reject any pending sendMessage() waiters
       if (session.resolveQueryReady) {
         session.resolveQueryReady();
@@ -458,6 +612,11 @@ class AgentSessionManager {
 
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // The truncated resume (if any) has been consumed by this start — later
+    // restarts must resume the forked conversation normally.
+    if (resumeAtUuid && session.pendingResumeAt === resumeAtUuid) {
+      session.pendingResumeAt = null;
+    }
     // Signal any pending sendMessage() that the queryHandle is ready
     if (session.resolveQueryReady) {
       session.resolveQueryReady();
@@ -482,6 +641,11 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          // Remember reported skills so the disabled-skills allowlist can
+          // include plugin skills the on-disk scan can't see.
+          if (event.skills && event.skills.length > 0) {
+            this.recordKnownSkills(session.repoPath, event.skills);
+          }
           // Record the model the provider resolved, normalised back to a known
           // picker id. The SDK reports a dated alias (e.g. "claude-opus-4-8-
           // 20260101") which must not leak into session.model, or it would
@@ -521,25 +685,6 @@ class AgentSessionManager {
           }
         }
 
-        // Intercept tool_result to track tool names and detect dev server URLs
-        if (event.type === 'tool_result') {
-          // Dev server URL detection (from Bash output)
-          const toolName = session.toolUseMap.get(event.toolUseId);
-          if (toolName === 'Bash' && event.content) {
-            const portMatches = event.content.matchAll(
-              /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d+)/g
-            );
-            for (const m of portMatches) {
-              const port = parseInt(m[1], 10);
-              if (!session.detectedPorts.has(port)) {
-                session.detectedPorts.add(port);
-                logger.info(`Dev server detected on port ${port} in session ${session.id}`);
-                emit({ type: 'devserver_detected', port, url: `http://localhost:${port}` });
-              }
-            }
-          }
-        }
-
         // Track tool use IDs for matching tool_results
         if (event.type === 'assistant_tool_use') {
           session.toolUseMap.set(event.toolUseId, event.toolName);
@@ -576,14 +721,29 @@ class AgentSessionManager {
             totalCostUsd: event.totalCostUsd,
             durationMs: event.durationMs,
           };
+
+          // A finished turn is new history — refresh skill suggestions soon.
+          if (!event.isError) this.scheduleSuggestionAnalysis(session);
+
+          // A turn ended by a user interrupt reports abort/teardown errors
+          // (e.g. "Request was aborted", in-flight tool failures). The user
+          // asked to stop, so present a clean result instead of dumping them.
+          if (session.interrupting) {
+            session.interrupting = false;
+            emit({ ...event, isError: false, errors: undefined });
+            continue;
+          }
         }
 
         emit(event);
       }
       logger.debug(`[runQuery] session=${id} event loop ended normally`);
     } catch (err: any) {
-      // Abort errors are expected when the user stops a query — don't surface them
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted) {
+      // Abort errors are expected when the user stops a query — don't surface them.
+      // interrupting covers an in-place interrupt that tears down the event loop
+      // (the SDK throws "Request was aborted" rather than yielding a result).
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting) {
+        session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else {
         const errMsg = err?.message || String(err);
@@ -603,15 +763,10 @@ class AgentSessionManager {
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
-    // Dev servers are preserved so they survive stop/continue cycles.
     if (session.stoppedByUser) {
       session.stoppedByUser = false;
       return;
     }
-
-    // Kill any dev servers that were detected during this session
-    // (only on natural query completion, not user-initiated stop)
-    await this.killDetectedPorts(session);
 
     // Query finished
     session.status = 'stopped';
@@ -675,6 +830,10 @@ class AgentSessionManager {
       logger.debug(`[sendMessage] session=${id} no queryHandle`);
       return false;
     }
+
+    // A new turn supersedes any pending interrupt: don't let a stale flag
+    // sanitize this turn's genuine result.
+    session.interrupting = false;
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
@@ -759,13 +918,25 @@ class AgentSessionManager {
     // stop/restart cycles — even when queryHandle is temporarily null.
     session.permissionMode = mode as ManagedSession['permissionMode'];
 
-    // When leaving acceptEdits mode, clear always-allowed edit tools so
-    // switching back to default/plan re-enables permission prompts for edits.
+    // When leaving an edit-accepting mode (acceptEdits or auto), clear
+    // always-allowed edit tools so switching back to default/plan re-enables
+    // permission prompts for edits.
     // These tool names must match the adapter's 'edit' category (see categorizeToolName).
-    if (prevMode === 'acceptEdits' && mode !== 'acceptEdits') {
+    const acceptsEdits = (m: string) => m === 'acceptEdits' || m === 'auto';
+    if (acceptsEdits(prevMode) && !acceptsEdits(mode)) {
       for (const tool of ['Edit', 'Write', 'MultiEdit']) {
         session.alwaysAllowedTools.delete(tool);
       }
+    }
+
+    // Entering auto mode with a live query: the sandbox is only applied at
+    // query start, so until the next (re)start the read-only classifier is
+    // the sole protection layer. Surface that honestly.
+    if (mode === 'auto' && prevMode !== 'auto' && session.queryHandle && !session.sandbox) {
+      session.emit?.({
+        type: 'status',
+        message: 'Auto mode on — read-only tool calls run without prompting; sandbox enforcement applies from the next query restart.',
+      });
     }
 
     // Pass the mode to the adapter so the SDK is kept in sync.
@@ -819,13 +990,53 @@ class AgentSessionManager {
     }
   }
 
-  async setThinking(id: string, enabled: boolean): Promise<void> {
+  async setThinkingLevel(id: string, level: ThinkingLevel): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session?.queryHandle?.setMaxThinkingTokens) return;
+    if (!session) return;
+    // Record even without a live handle so the next query start picks it up
+    session.thinkingLevel = level;
+    if (!session.queryHandle?.setThinkingLevel) return;
     try {
-      await session.queryHandle.setMaxThinkingTokens(enabled ? null : 0);
+      await session.queryHandle.setThinkingLevel(level);
     } catch (e) {
-      logger.warn(`Failed to set thinking for session ${id}:`, e);
+      logger.warn(`Failed to set thinking level for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async listMcpServers(id: string): Promise<McpServerInfo[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.listMcpServers) return [];
+    try {
+      return await session.queryHandle.listMcpServers();
+    } catch (e) {
+      logger.warn(`Failed to list MCP servers for session ${id}:`, e);
+      return [];
+    }
+  }
+
+  async reconnectMcpServer(id: string, serverName: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.reconnectMcpServer) {
+      throw new Error('MCP server control is not available for this session');
+    }
+    try {
+      await session.queryHandle.reconnectMcpServer(serverName);
+    } catch (e) {
+      logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.setMcpServerEnabled) {
+      throw new Error('MCP server control is not available for this session');
+    }
+    try {
+      await session.queryHandle.setMcpServerEnabled(serverName, enabled);
+    } catch (e) {
+      logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
   }
@@ -842,56 +1053,6 @@ class AgentSessionManager {
     if (session) {
       session.displayName = displayName || null;
     }
-  }
-
-  /** Start a host-managed dev server for the given session. */
-  async startDevServer(sessionId: string, overrideCommand?: string): Promise<import('../shared/types.js').DevServerResult> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
-
-    // Stop existing dev server if any
-    await this.stopDevServer(sessionId);
-
-    // Resolve command via fallback chain: override → settings → auto-detect
-    const command = overrideCommand
-      || settings.getSettings().devCommand
-      || await detectDevCommand(session.worktreePath);
-
-    if (!command) throw new Error('No dev command configured and none detected from package.json');
-
-    const devServer = new DevServer(sessionId, session.worktreePath, command, (info) => {
-      // Emit devserver_detected event through the existing channel
-      session.detectedPorts.add(info.port);
-      const event: AgentEvent = { type: 'devserver_detected', port: info.port, url: info.url };
-      session.eventHistory.push(event);
-      try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
-      const w = session.window;
-      if (!w.isDestroyed()) {
-        w.webContents.send(`${IPC.AGENT_EVENT}:${sessionId}`, event);
-      }
-    });
-
-    session.devServer = devServer;
-    return devServer.start();
-  }
-
-  /** Stop the host-managed dev server for the given session. */
-  async stopDevServer(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session?.devServer) return;
-    await session.devServer.stop();
-    session.devServer = null;
-  }
-
-  /** Kill dev servers detected during this session and clear the port set. */
-  private async killDetectedPorts(session: ManagedSession): Promise<void> {
-    if (session.detectedPorts.size === 0) return;
-    const ports = [...session.detectedPorts];
-    session.detectedPorts.clear();
-    logger.info(`Killing ${ports.length} dev server(s) for session ${session.id}: ports ${ports.join(', ')}`);
-    await Promise.all(
-      ports.map((port) => killProcessOnPort(port).catch(() => {}))
-    );
   }
 
   /**
@@ -933,9 +1094,13 @@ class AgentSessionManager {
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
+    // Flag the interrupt so the resulting turn's abort/teardown noise (reported
+    // via the result's errors or a thrown abort) is treated as a clean stop.
+    session.interrupting = true;
     try {
       await handle.interrupt();
     } catch (err) {
+      session.interrupting = false;
       logger.warn(`[interruptQuery] session=${id} interrupt failed, falling back to teardown:`, err);
       return this.stopQuery(id);
     }
@@ -1034,15 +1199,6 @@ class AgentSessionManager {
         decision: 'deny',
       });
     }
-
-    // Stop host-managed dev server
-    if (session.devServer) {
-      await session.devServer.stop();
-      session.devServer = null;
-    }
-
-    // Kill any dev servers not already cleaned up on query completion
-    await this.killDetectedPorts(session);
 
     // Clean up checkpoint refs
     await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {
@@ -1175,6 +1331,17 @@ class AgentSessionManager {
     // Remove orphaned checkpoint refs for turns after the rewind point
     await session.checkpoints.pruneAfter(id, session.worktreePath, userMessageId);
 
+    // Cancel any pending memory auto-save so notes about the turns being
+    // rewound away aren't extracted and persisted after the truncation.
+    memoryAutosave.cancelAutoSave(id);
+
+    // Fork point for a truncating resume: the provider uuid of the last
+    // assistant event before the rewind target. Must be computed before the
+    // event history is truncated below.
+    const forkPoint = session.providerSessionId
+      ? findRewindForkPoint(session.eventHistory, userMessageId)
+      : null;
+
     // Truncate event history to the rewind point so replays after refresh
     // don't resurrect events that occurred after the rewound turn.
     const rewindIdx = session.eventHistory.findLastIndex(
@@ -1192,15 +1359,27 @@ class AgentSessionManager {
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
 
-    // Clear the provider session ID so the next query starts with a fresh
-    // LLM context — otherwise the SDK resumes the old conversation which
-    // still contains the rewound messages.
-    session.providerSessionId = null;
+    if (forkPoint) {
+      // True rewind: resume the same conversation truncated at the last kept
+      // chain entry, forked to a new provider session — the agent keeps the
+      // turns before the rewind point and genuinely forgets everything after.
+      session.pendingResumeAt = forkPoint;
+    } else {
+      // No provider content to keep (rewind to the first message, or the
+      // provider session never initialised) — start a fresh conversation.
+      session.providerSessionId = null;
+      session.pendingResumeAt = null;
+    }
+
+    // Persist an empty provider session id in both cases. If the app dies
+    // before the restarted query's system_init persists the forked session's
+    // new id, an app-restart resume of the OLD id would bring the rewound
+    // messages back; degrading to a fresh conversation is the safe fallback.
     worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
 
-    // Restart the query so the SDK gets a fresh context.  stopQuery() tears
-    // down the current handle and immediately calls runQuery() which will
-    // see providerSessionId === null and skip the resume option.
+    // Restart the query. stopQuery() tears down the current handle and calls
+    // runQuery(), which picks up pendingResumeAt (truncated fork resume) or —
+    // with providerSessionId null — starts a fresh conversation.
     await this.stopQuery(id);
   }
 
@@ -1217,6 +1396,27 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return [];
     return session.checkpoints.list(id, session.worktreePath);
+  }
+
+  /** Per-turn diff history (what each turn changed) plus cumulative stats. */
+  async getDiffHistory(id: string): Promise<import('../shared/types.js').DiffHistoryResult> {
+    const session = this.sessions.get(id);
+    if (!session) return { entries: [], total: { filesChanged: 0, additions: 0, deletions: 0 } };
+    return session.checkpoints.history(id, session.worktreePath);
+  }
+
+  /** Unified diff of what a single turn changed. */
+  async getTurnDiff(id: string, userMessageId: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
+  }
+
+  /** Cumulative diff from the session baseline to the current working tree. */
+  async getFullThreadDiff(id: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.fullThreadDiff(id, session.worktreePath);
   }
 
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
@@ -1291,12 +1491,28 @@ class AgentSessionManager {
     }
   }
 
+  /** Session ids that were running when the system suspended. Captured on
+   *  'suspend' so that on 'resume' we can bring back exactly the tabs that were
+   *  live before sleep (their SDK queries usually die during suspend). */
+  private runningAtSuspend = new Set<string>();
+
+  /** Snapshot the running sessions at suspend so wake-from-sleep can resume them. */
+  captureSuspendState(): void {
+    const ids = new Set<string>();
+    for (const [id, session] of this.sessions) {
+      if (session.status === 'running') ids.add(id);
+    }
+    this.runningAtSuspend = ids;
+  }
+
   /**
-   * Health-check all sessions after system resume.
-   * Detects sessions whose SDK query died silently (e.g. during sleep)
-   * and emits process_exit + SESSION_STATUS so the renderer updates.
+   * Health-check all sessions after system resume. Detects sessions whose SDK
+   * query died silently (e.g. during sleep) and emits process_exit +
+   * SESSION_STATUS so the renderer updates. Returns the ids of sessions that
+   * were running before sleep but are no longer running — the tabs the renderer
+   * should resume so they don't silently close.
    */
-  healthCheckAll(): void {
+  healthCheckAll(): string[] {
     for (const [id, session] of this.sessions) {
       if (session.status !== 'running') continue;
 
@@ -1312,6 +1528,16 @@ class AgentSessionManager {
         }
       }
     }
+
+    // Tabs to bring back: those that were running before sleep but whose query
+    // didn't survive it. Sessions that stayed running are left alone.
+    const toResume: string[] = [];
+    for (const id of this.runningAtSuspend) {
+      const session = this.sessions.get(id);
+      if (session && session.status !== 'running') toResume.push(id);
+    }
+    this.runningAtSuspend.clear();
+    return toResume;
   }
 
   get count(): number {

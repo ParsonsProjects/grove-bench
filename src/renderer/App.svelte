@@ -3,6 +3,7 @@
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
+  import { prStore } from './stores/pr.svelte.js';
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
@@ -10,10 +11,15 @@
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
+  import MemoryToast from './components/MemoryToast.svelte';
+  import { memoryStore } from './stores/memory.svelte.js';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
+  import BookmarksDrawer from './components/BookmarksDrawer.svelte';
+  import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
+  import { bookmarkStore } from './stores/bookmarks.svelte.js';
 
   let showAnalyticsConsent = $state(false);
 
@@ -64,8 +70,6 @@
 
     restored = true;
   }
-
-  let showSessionFinder = $state(false);
 
   // Track per-session running state to detect turn completion. Flash state
   // itself lives in the store so the sidebar can read it.
@@ -157,11 +161,15 @@
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
-      showSessionFinder = !showSessionFinder;
+      store.finderOpen = !store.finderOpen;
     }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'T') {
       e.preventDefault();
       reopenLastClosedTab();
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'b') {
+      e.preventDefault();
+      bookmarkStore.toggleDrawer();
     }
   }
 
@@ -174,22 +182,15 @@
   let failedResumeIds = new Set<string>();
   let prevActiveResumeId: string | null = null;
 
-  $effect(() => {
-    const session = store.activeSession;
-    const activeId = session?.id ?? null;
-
-    // Treat navigating to a (different) session as explicit retry intent:
-    // drop any prior failure so the resume below can be attempted again.
-    if (activeId !== prevActiveResumeId) {
-      prevActiveResumeId = activeId;
-      if (activeId) failedResumeIds.delete(activeId);
-    }
-
-    if (!session || session.status !== 'stopped' || resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
-
+  /** Resume a stopped session, deduped against in-flight and recently-failed
+   *  resumes. Used by the active-session auto-resume effect and by the
+   *  wake-from-sleep handler (which resumes every tab that died during sleep). */
+  function resumeStoppedSession(session: { id: string; repoPath: string; status: string } | null | undefined) {
+    if (!session || session.status !== 'stopped') return;
+    if (resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
     const sessionId = session.id;
     resumingIds.add(sessionId);
-    window.groveBench.resumeSession(session.id, session.repoPath).then((result) => {
+    window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       // Don't subscribe here — WorkspacePane handles history replay + subscription
       // on mount. Subscribing here would race with mount and cause isReady to be
@@ -201,14 +202,36 @@
     }).finally(() => {
       resumingIds.delete(sessionId);
     });
+  }
+
+  $effect(() => {
+    const session = store.activeSession;
+    const activeId = session?.id ?? null;
+
+    // Treat navigating to a (different) session as explicit retry intent:
+    // drop any prior failure so the resume below can be attempted again.
+    if (activeId !== prevActiveResumeId) {
+      prevActiveResumeId = activeId;
+      if (activeId) failedResumeIds.delete(activeId);
+    }
+
+    resumeStoppedSession(session);
   });
 
   onMount(() => {
     settingsStore.load();
+    bookmarkStore.load();
+    memoryStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });
     window.addEventListener('keydown', handleGlobalKeydown);
+
+    // Watch every open session's PR (checks, reviews) — not just the focused
+    // tab. Stopped sessions are excluded: their alerts have no agent to act,
+    // and a pile of old worktrees shouldn't each spawn a gh poll per sweep.
+    prStore.startGlobalPolling(() =>
+      store.sessions.filter((s) => s.status !== 'stopped').map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);
@@ -228,24 +251,31 @@
       }
     });
 
-    // After system resume (laptop wake), re-check session liveness.
-    // The main process runs healthCheckAll() and sends SESSION_STATUS
-    // for dead sessions, but we also re-verify subscriptions are live
-    // by listing sessions and reconciling with our local state.
-    const unsubPower = window.groveBench.onPowerResume(async () => {
-      try {
-        const runningSessions = await window.groveBench.listSessions();
-        const runningIds = new Set(
-          runningSessions.filter((s) => s.status === 'running').map((s) => s.id),
-        );
-        // Mark any locally-running sessions that the main process says are stopped
-        for (const session of store.sessions) {
-          if (session.status === 'running' && !runningIds.has(session.id)) {
-            store.updateStatus(session.id, 'stopped');
-            messageStore.markSessionStopped(session.id);
-          }
+    // After system resume (laptop wake), bring back every tab that was running
+    // before sleep. The main process reports which sessions died during suspend
+    // (their SDK query usually doesn't survive); resume them all so they stay in
+    // the Active list instead of silently dropping to Inactive. (The focused
+    // session is also covered by the auto-resume effect; resumingIds dedupes.)
+    const unsubPower = window.groveBench.onPowerResume((resumeIds) => {
+      for (const id of resumeIds) {
+        const session = store.sessions.find((s) => s.id === id);
+        if (!session || session.status === 'running') continue;
+        // healthCheckAll already emits SESSION_STATUS 'stopped'; guard in case
+        // that event hasn't been applied yet so resumeStoppedSession can proceed.
+        if (session.status !== 'stopped') {
+          store.updateStatus(id, 'stopped');
+          messageStore.markSessionStopped(id);
         }
-      } catch { /* main process may be busy — SESSION_STATUS events will catch up */ }
+        resumeStoppedSession(store.sessions.find((s) => s.id === id));
+      }
+    });
+
+    // Clicking an OS notification jumps to the session it was about. (The
+    // activeSessionId effect above clears its needs-attention flash.)
+    const unsubFocus = window.groveBench.onFocusSession((sessionId) => {
+      if (store.sessions.find((s) => s.id === sessionId)) {
+        store.activeSessionId = sessionId;
+      }
     });
 
     // Auto-close idle sessions to reclaim their PTY + agent processes.
@@ -254,6 +284,7 @@
     return () => {
       unsub();
       unsubPower();
+      unsubFocus();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
@@ -319,10 +350,14 @@
 </div>
 </div>
 
-{#if showSessionFinder}
-  <SessionFinder onclose={() => showSessionFinder = false} />
+{#if store.finderOpen}
+  <SessionFinder onclose={() => store.finderOpen = false} />
 {/if}
 
 <ErrorToast />
+<MemoryToast />
+
+<BookmarksDrawer />
+<MarkdownPreviewPanel />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />

@@ -37,15 +37,6 @@ vi.mock('./worktree-manager.js', () => ({
     getModel: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock('./port-killer.js', () => ({
-  killProcessOnPort: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('./dev-server.js', () => ({
-  DevServer: vi.fn(),
-}));
-vi.mock('./dev-command-detector.js', () => ({
-  detectDevCommand: vi.fn().mockResolvedValue(null),
-}));
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultPermissionMode: 'default',
@@ -198,7 +189,7 @@ class MockAdapter implements AgentAdapter {
       closeInput: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
-      setMaxThinkingTokens: vi.fn(),
+      setThinkingLevel: vi.fn(),
     };
   }
 }
@@ -278,6 +269,73 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('Auto mode sandbox enforcement', () => {
+  it('passes a hardened sandbox config when the session starts in auto mode', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-auto-sandbox',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'auto',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const sandbox = mockAdapter.lastConfig?.sandbox as Record<string, any>;
+    expect(sandbox).toBeTruthy();
+    expect(sandbox.enabled).toBe(true);
+    // Bash approval must stay with the read-only classifier, not the sandbox.
+    expect(sandbox.autoAllowBashIfSandboxed).toBe(false);
+    // The model must not be able to opt commands out of the sandbox.
+    expect(sandbox.allowUnsandboxedCommands).toBe(false);
+    // Missing sandbox deps degrade gracefully instead of failing the query.
+    expect(sandbox.failIfUnavailable).toBe(false);
+    expect(sandbox.filesystem?.allowWrite).toEqual(['/repo-wt']);
+
+    await sessionManager.destroySession('test-auto-sandbox');
+  });
+
+  it('does not set a sandbox for non-auto modes', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-no-sandbox',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'acceptEdits',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.sandbox).toBeNull();
+
+    await sessionManager.destroySession('test-no-sandbox');
+  });
+
+  it('explicit per-session sandbox settings win over the auto-mode sandbox', async () => {
+    const win = makeMockWindow();
+    const explicit = { enabled: true, autoAllowBashIfSandboxed: true };
+    await sessionManager.createSession({
+      id: 'test-explicit-sandbox',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'auto',
+      sandbox: explicit,
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.sandbox).toEqual(explicit);
+
+    await sessionManager.destroySession('test-explicit-sandbox');
   });
 });
 
@@ -837,6 +895,75 @@ describe('AgentSessionManager.interruptQuery()', () => {
 
     await sessionManager.destroySession('test-interrupt-nohandle');
   });
+
+  it('sanitizes abort/teardown errors from the result of an interrupted turn', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-interrupt-sanitize',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // User clicks Stop → in-place interrupt.
+    await sessionManager.interruptQuery('test-interrupt-sanitize');
+
+    // The interrupted turn reports abort/teardown noise via the result event.
+    mockAdapter.control!.emitEvent({
+      type: 'result',
+      subtype: 'error_during_execution',
+      isError: true,
+      errors: ['Error: File does not exist.', 'Error: Request was aborted.'],
+    } as any);
+
+    await vi.waitFor(() => {
+      const history = sessionManager.getEventHistory('test-interrupt-sanitize');
+      expect(history.some((e) => e.type === 'result')).toBe(true);
+    });
+
+    const result = sessionManager.getEventHistory('test-interrupt-sanitize')
+      .find((e) => e.type === 'result') as any;
+    expect(result.isError).toBe(false);
+    expect(result.errors).toBeUndefined();
+
+    await sessionManager.destroySession('test-interrupt-sanitize');
+  });
+
+  it('keeps genuine result errors when the turn was not interrupted', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-result-errors',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    // No interrupt — a real failure must still surface to the user.
+    mockAdapter.control!.emitEvent({
+      type: 'result',
+      subtype: 'error_during_execution',
+      isError: true,
+      errors: ['Real tool failure'],
+    } as any);
+
+    await vi.waitFor(() => {
+      const history = sessionManager.getEventHistory('test-result-errors');
+      expect(history.some((e) => e.type === 'result')).toBe(true);
+    });
+
+    const result = sessionManager.getEventHistory('test-result-errors')
+      .find((e) => e.type === 'result') as any;
+    expect(result.isError).toBe(true);
+    expect(result.errors).toEqual(['Real tool failure']);
+
+    await sessionManager.destroySession('test-result-errors');
+  });
 });
 
 describe('AgentSessionManager.healthCheckAll()', () => {
@@ -1042,8 +1169,10 @@ describe('AgentSessionManager.rewindFiles()', () => {
     // adapter.start() should be called again (query restarted)
     expect(mockAdapter.startCallCount).toBe(2);
 
-    // The new query should NOT have a resumeSessionId
+    // Rewinding to the first message keeps no provider content, so the new
+    // query starts a fresh conversation: no resume, no truncated fork.
     expect(mockAdapter.lastConfig?.resumeSessionId).toBeFalsy();
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBeFalsy();
 
     await sessionManager.destroySession('test-rewind-restart');
   });
@@ -1121,6 +1250,84 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(rewindEvent![1]).toMatchObject({ type: 'rewind', toMessageId: uuid });
 
     await sessionManager.destroySession('test-rewind-emit');
+  });
+
+  it('forks the provider conversation at the last kept assistant message', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-fork',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Turn 1: user message + assistant reply carrying a provider uuid
+    await sessionManager.sendMessage('test-rewind-fork', 'First');
+    await new Promise((r) => setTimeout(r, 50));
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'reply one', uuid: 'sdk-uuid-1' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Turn 2: the message we rewind away
+    await sessionManager.sendMessage('test-rewind-fork', 'Second');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-fork');
+    const userMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
+    const secondUuid = (userMsgs[1] as any).uuid;
+
+    await sessionManager.rewindFiles('test-rewind-fork', secondUuid);
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Provider session is kept so the restarted query resumes it, truncated
+    // at the last kept assistant message and forked.
+    expect(session?.providerSessionId).toBe('mock-session-id');
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBe('mock-session-id');
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBe('sdk-uuid-1');
+    // Consumed by the successful start
+    expect(session?.pendingResumeAt).toBeNull();
+
+    // The persisted id is blanked so a crash before the forked session's
+    // system_init degrades to a fresh conversation, never the old one.
+    const { worktreeManager } = await import('./worktree-manager.js');
+    expect(vi.mocked(worktreeManager.saveProviderSessionId)).toHaveBeenCalledWith('test-rewind-fork', '');
+
+    await sessionManager.destroySession('test-rewind-fork');
+  });
+
+  it('cancels any pending memory auto-save on rewind', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-autosave',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.sendMessage('test-rewind-autosave', 'Hello');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-autosave');
+    const userMsg = session!.eventHistory.find((e) => e.type === 'user_message');
+
+    await sessionManager.rewindFiles('test-rewind-autosave', (userMsg as any).uuid);
+
+    const autosave = await import('./memory-autosave.js');
+    expect(vi.mocked(autosave.cancelAutoSave)).toHaveBeenCalledWith('test-rewind-autosave');
+
+    await sessionManager.destroySession('test-rewind-autosave');
   });
 });
 
@@ -1278,5 +1485,65 @@ describe('AgentSessionManager stop/restart race', () => {
     expect(ok).toBe(true);
 
     await sessionManager.destroySession('test-race');
+  });
+});
+
+describe('AgentSessionManager wake-from-sleep', () => {
+  async function makeRunningSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return win;
+  }
+
+  it('marks a session whose query died during sleep as stopped and returns it to resume', async () => {
+    const win = await makeRunningSession('test-sleep-dead');
+    sessionManager.captureSuspendState();
+    // Simulate the SDK query not surviving suspend.
+    sessionManager.getSession('test-sleep-dead')!.queryHandle = null;
+
+    const toResume = sessionManager.healthCheckAll();
+
+    expect(toResume).toContain('test-sleep-dead');
+    expect(sessionManager.getSession('test-sleep-dead')?.status).toBe('stopped');
+    expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-sleep-dead', 'stopped');
+
+    await sessionManager.destroySession('test-sleep-dead');
+  });
+
+  it('does not resume a session whose query survived sleep', async () => {
+    await makeRunningSession('test-sleep-alive');
+    sessionManager.captureSuspendState();
+    // queryHandle intact → still running after the health check.
+
+    const toResume = sessionManager.healthCheckAll();
+
+    expect(toResume).not.toContain('test-sleep-alive');
+    expect(sessionManager.getSession('test-sleep-alive')?.status).toBe('running');
+
+    await sessionManager.destroySession('test-sleep-alive');
+  });
+
+  it('only resumes sessions captured at suspend, not ones started afterwards', async () => {
+    await makeRunningSession('test-sleep-A');
+    sessionManager.captureSuspendState(); // snapshot contains only A
+    await makeRunningSession('test-sleep-B'); // started after the snapshot
+
+    sessionManager.getSession('test-sleep-A')!.queryHandle = null;
+    sessionManager.getSession('test-sleep-B')!.queryHandle = null;
+
+    const toResume = sessionManager.healthCheckAll();
+
+    expect(toResume).toContain('test-sleep-A');
+    expect(toResume).not.toContain('test-sleep-B');
+    // B is still marked stopped (health check marks every dead query)…
+    expect(sessionManager.getSession('test-sleep-B')?.status).toBe('stopped');
+
+    await sessionManager.destroySession('test-sleep-A');
+    await sessionManager.destroySession('test-sleep-B');
   });
 });

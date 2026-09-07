@@ -4,6 +4,11 @@ vi.mock('./git.js', () => ({
   gitVersion: vi.fn(),
 }));
 
+vi.mock('./gh.js', () => ({
+  ghVersion: vi.fn(),
+  ghAuthenticated: vi.fn(),
+}));
+
 // Mock the adapter registry — checkAllPrerequisites delegates to it
 const mockCheckPrerequisites = vi.fn();
 vi.mock('./adapters/index.js', () => ({
@@ -14,10 +19,13 @@ vi.mock('./adapters/index.js', () => ({
   },
 }));
 
-import { checkGit, checkAllPrerequisites } from './prerequisites.js';
+import { checkGit, checkGh, checkAllPrerequisites } from './prerequisites.js';
 import { gitVersion } from './git.js';
+import { ghVersion, ghAuthenticated } from './gh.js';
 
 const mockGitVersion = vi.mocked(gitVersion);
+const mockGhVersion = vi.mocked(ghVersion);
+const mockGhAuthenticated = vi.mocked(ghAuthenticated);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -65,7 +73,45 @@ describe('checkGit()', () => {
   });
 });
 
+describe('checkGh()', () => {
+  it('returns available with version and auth state when gh found', async () => {
+    mockGhVersion.mockResolvedValue('2.40.0');
+    mockGhAuthenticated.mockResolvedValue(true);
+    const result = await checkGh();
+    expect(result).toEqual({ available: true, version: '2.40.0', authenticated: true });
+  });
+
+  it('reports unauthenticated gh', async () => {
+    mockGhVersion.mockResolvedValue('2.40.0');
+    mockGhAuthenticated.mockResolvedValue(false);
+    const result = await checkGh();
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+  });
+
+  it('returns unavailable when gh not found', async () => {
+    mockGhVersion.mockResolvedValue(null);
+    const result = await checkGh();
+    expect(result).toEqual({ available: false });
+    expect(mockGhAuthenticated).not.toHaveBeenCalled();
+  });
+});
+
 describe('checkAllPrerequisites()', () => {
+  beforeEach(() => {
+    mockGhVersion.mockResolvedValue(null);
+  });
+
+  it('includes gh status without gating on it', async () => {
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: true });
+    mockGhVersion.mockResolvedValue('2.40.0');
+    mockGhAuthenticated.mockResolvedValue(true);
+
+    const result = await checkAllPrerequisites();
+    expect(result.gh).toEqual({ available: true, version: '2.40.0', authenticated: true });
+  });
+
   it('returns combined results when agent is available', async () => {
     mockGitVersion.mockResolvedValue({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
     mockCheckPrerequisites.mockResolvedValue({

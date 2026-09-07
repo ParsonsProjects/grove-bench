@@ -5,21 +5,29 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolAllowRules: [],
   toolDenyRules: [],
   disableBypassMode: false,
+  disabledSkills: [],
+  autoSkillSuggestions: false,
   defaultModel: '',
-  extendedThinking: false,
+  defaultThinkingLevel: 'high',
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
-  devCommand: '',
   memoryAutoSave: true,
+  memoryAutoCompact: false,
+  memoryCompactTimeoutSeconds: 300,
+  memoryModel: 'claude-haiku-4-5',
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
-  defaultBaseBranch: 'main',
+  defaultBaseBranch: '',
   theme: 'system',
   alwaysOnTop: false,
   repoColors: {},
   diffViewMode: 'unified',
   spellcheck: true,
+  notifyOnTurnComplete: true,
+  notifyOnPermission: true,
+  notifyOnPrAlert: true,
+  notifyTaskbarFlash: true,
   analyticsEnabled: false,
   analyticsPrompted: false,
   mistralApiKey: '',
@@ -67,6 +75,30 @@ class SettingsStore {
   reset() {
     this.draft = $state.snapshot(this.current) as GroveBenchSettings;
     this.error = null;
+  }
+
+  /** Persist a partial change immediately (status-bar toggles), keeping any
+   *  unrelated unsaved Settings-panel edits in the draft intact. */
+  async updateNow(patch: Partial<GroveBenchSettings>) {
+    const next = { ...($state.snapshot(this.current) as GroveBenchSettings), ...patch };
+    this.error = null;
+    try {
+      await window.groveBench.saveSettings(next);
+      this.current = next;
+      this.draft = { ...($state.snapshot(this.draft) as GroveBenchSettings), ...patch };
+    } catch (e: any) {
+      this.error = e.message || String(e);
+      throw e;
+    }
+  }
+
+  /** Toggle one skill's disabled state and persist right away. */
+  async setSkillDisabled(name: string, disabled: boolean) {
+    const list = this.current.disabledSkills ?? [];
+    const next = disabled
+      ? (list.includes(name) ? list : [...list, name])
+      : list.filter((n) => n !== name);
+    await this.updateNow({ disabledSkills: next });
   }
 
   // ─── List helpers ───

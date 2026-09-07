@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
+import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
-import { devServerStore } from './devServer.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
@@ -12,6 +12,7 @@ const SID = 'test-session';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStore.sessions = [];
   // Clear messages for our test session
   messageStore.messagesBySession = {};
   messageStore.streamingText = {};
@@ -24,7 +25,6 @@ beforeEach(() => {
   messageStore.modelBySession = {};
   messageStore.usageBySession = {};
   messageStore.pendingClear = {};
-  devServerStore.serversBySession = {};
   rateLimitStore.bySession = {};
   messageStore.promptSuggestionsBySession = {};
   backgroundTaskStore.tasksBySession = {};
@@ -36,6 +36,32 @@ beforeEach(() => {
 });
 
 describe('ingestEvent — system_init', () => {
+  it('does not push a thinking level when the session is at the provider default (high)', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'test-model-v1',
+      tools: [],
+    } as AgentEvent);
+
+    expect(messageStore.getThinkingLevel(SID)).toBe('high');
+    expect(mockGroveBench.setThinkingLevel).not.toHaveBeenCalled();
+  });
+
+  it('re-applies a non-default thinking level when the query (re)initializes', () => {
+    messageStore.thinkingBySession[SID] = 'low';
+
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'test-model-v1',
+      tools: [],
+    } as AgentEvent);
+
+    expect(messageStore.getThinkingLevel(SID)).toBe('low');
+    expect(mockGroveBench.setThinkingLevel).toHaveBeenCalledWith(SID, 'low');
+  });
+
   it('marks session as ready and not running', () => {
     messageStore.ingestEvent(SID, {
       type: 'system_init',
@@ -335,6 +361,72 @@ describe('ingestEvent — permission_request', () => {
   });
 });
 
+describe('OS notification triggers', () => {
+  // notifyOs only fires for sessions that are still open — register SID as one.
+  beforeEach(() => {
+    sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'running' }];
+  });
+
+  it('notifies turn completion from the result event', () => {
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'turn_complete', sessionId: SID, body: 'Agent finished a turn' }),
+    );
+  });
+
+  it('uses error wording when the turn ended with an error', () => {
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'error_during_execution', isError: true } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'turn_complete', body: 'Agent turn ended with an error' }),
+    );
+  });
+
+  it('notifies permission requests with the tool name', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
+    } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'permission_request', body: 'Bash is waiting for permission' }),
+    );
+  });
+
+  it('uses plain language for plan approvals and questions', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'ExitPlanMode', toolInput: {}, toolUseId: 't2', requestId: 'r2', isPlanExecution: true,
+    } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'A plan is ready for review' }),
+    );
+
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'AskUserQuestion', toolInput: { questions: [] }, toolUseId: 't3', requestId: 'r3', toolCategory: 'question',
+    } as AgentEvent);
+    expect(mockGroveBench.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Agent is waiting for an answer' }),
+    );
+  });
+
+  it('never notifies from replayed history', () => {
+    messageStore.replayEvents(SID, [
+      { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't4', requestId: 'r4' } as AgentEvent,
+      { type: 'result', subtype: 'success', isError: false } as AgentEvent,
+    ]);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+
+  it('never notifies for a stopped session', () => {
+    sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status: 'stopped' }];
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+
+  it('never notifies for a session no longer in the store', () => {
+    sessionStore.sessions = [];
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false } as AgentEvent);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+});
+
 describe('ingestEvent — result', () => {
   it('marks session as not running and idle', () => {
     messageStore.setIsRunning(SID, true);
@@ -436,25 +528,6 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toContain('Rate limited');
     expect((msgs[0] as any).text).toContain('token');
-  });
-});
-
-describe('ingestEvent — devserver_detected (delegates to devServerStore)', () => {
-  it('adds dev server', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'devserver_detected',
-      port: 3000,
-      url: 'http://localhost:3000',
-    } as AgentEvent);
-
-    expect(devServerStore.get(SID)).toEqual([{ port: 3000, url: 'http://localhost:3000', status: 'ok' }]);
-  });
-
-  it('does not duplicate same port', () => {
-    messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
-    messageStore.ingestEvent(SID, { type: 'devserver_detected', port: 3000, url: 'http://localhost:3000' } as AgentEvent);
-
-    expect(devServerStore.get(SID)).toHaveLength(1);
   });
 });
 
@@ -910,13 +983,16 @@ describe('markSessionStopped', () => {
 });
 
 describe('cycleMode', () => {
-  it('cycles default → plan → acceptEdits → default', () => {
+  it('cycles default → plan → acceptEdits → auto → default', () => {
     messageStore.modeBySession[SID] = 'default';
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('plan');
 
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
+
+    messageStore.cycleMode(SID);
+    expect(messageStore.getMode(SID)).toBe('auto');
 
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('default');
@@ -1035,14 +1111,59 @@ describe('getters with defaults', () => {
     expect(messageStore.getContextWindow('unknown')).toBe(200000);
   });
 
-  it('getThinking returns true by default', () => {
-    expect(messageStore.getThinking('unknown')).toBe(true);
+  it('getThinkingLevel returns high by default', () => {
+    expect(messageStore.getThinkingLevel('unknown')).toBe('high');
   });
 
   it('getUsage returns zeros for unknown session', () => {
     const u = messageStore.getUsage('unknown');
     expect(u.inputTokens).toBe(0);
     expect(u.outputTokens).toBe(0);
+  });
+});
+
+describe('thinking level control', () => {
+  it('setThinkingLevel stores the level and forwards it over IPC', async () => {
+    await messageStore.setThinkingLevel(SID, 'medium');
+    expect(messageStore.getThinkingLevel(SID)).toBe('medium');
+    expect(mockGroveBench.setThinkingLevel).toHaveBeenCalledWith(SID, 'medium');
+  });
+
+  it('cycleThinkingLevel advances off → low → medium → high → adaptive → off', () => {
+    messageStore.thinkingBySession[SID] = 'off';
+    for (const expected of ['low', 'medium', 'high', 'adaptive', 'off'] as const) {
+      messageStore.cycleThinkingLevel(SID);
+      expect(messageStore.getThinkingLevel(SID)).toBe(expected);
+    }
+  });
+});
+
+describe('updateMcpServers', () => {
+  it('replaces the MCP snapshot while preserving other system info', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'system_init',
+      sessionId: SID,
+      model: 'test-model-v1',
+      tools: ['Read'],
+      mcpServers: [{ name: 'docs', status: 'connected' }],
+    } as AgentEvent);
+
+    messageStore.updateMcpServers(SID, [
+      { name: 'docs', status: 'failed', error: 'boom' },
+      { name: 'search', status: 'connected', toolCount: 3 },
+    ]);
+
+    const info = messageStore.getSystemInfo(SID);
+    expect(info.tools).toEqual(['Read']);
+    expect(info.mcpServers).toEqual([
+      { name: 'docs', status: 'failed' },
+      { name: 'search', status: 'connected' },
+    ]);
+  });
+
+  it('is a no-op before system_init', () => {
+    messageStore.updateMcpServers('uninitialized', [{ name: 'docs', status: 'connected' }]);
+    expect(messageStore.getSystemInfo('uninitialized').mcpServers).toEqual([]);
   });
 });
 
@@ -1306,6 +1427,52 @@ describe('source-event-index mapping (findMessageIdForEventIndex)', () => {
 
   it('returns null for sessions with no stamped messages', () => {
     expect(messageStore.findMessageIdForEventIndex('unknown', 5)).toBeNull();
+  });
+
+  it('getEventIndexForMessageId returns the stamped index (inverse lookup)', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'first', uuid: 'u1' }, // 10
+      { type: 'assistant_text', text: 'answer', uuid: 'a1' }, // 11
+    ] as AgentEvent[];
+    messageStore.replayEvents(SID, events, undefined, 10);
+
+    const msgs = messageStore.getMessages(SID);
+    const userId = msgs.find((m) => m.kind === 'user')!.id;
+    const textId = msgs.find((m) => m.kind === 'text')!.id;
+
+    expect(messageStore.getEventIndexForMessageId(SID, userId)).toBe(10);
+    expect(messageStore.getEventIndexForMessageId(SID, textId)).toBe(11);
+    // Unknown message id → null (e.g. live/unstamped message)
+    expect(messageStore.getEventIndexForMessageId(SID, 'nope')).toBeNull();
+    // Unknown session → null
+    expect(messageStore.getEventIndexForMessageId('unknown', userId)).toBeNull();
+  });
+});
+
+describe('pendingJumpBySession', () => {
+  it('records and clears a bookmark jump request', () => {
+    messageStore.requestJump(SID, { eventIndex: 5, uuid: 'u1', bookmarkId: 'b1' });
+    expect(messageStore.pendingJumpBySession[SID]).toEqual({ eventIndex: 5, uuid: 'u1', bookmarkId: 'b1' });
+
+    messageStore.clearJump(SID);
+    expect(messageStore.pendingJumpBySession[SID]).toBeUndefined();
+  });
+
+  it('clearJump is a no-op when there is no pending request', () => {
+    expect(() => messageStore.clearJump('no-such-session')).not.toThrow();
+  });
+});
+
+describe('requestPromptInsert', () => {
+  it('records the text and increments the nonce each call', () => {
+    messageStore.requestPromptInsert(SID, 'first');
+    const a = messageStore.promptInsertBySession[SID];
+    expect(a.text).toBe('first');
+
+    messageStore.requestPromptInsert(SID, 'second');
+    const b = messageStore.promptInsertBySession[SID];
+    expect(b.text).toBe('second');
+    expect(b.nonce).toBe(a.nonce + 1);
   });
 });
 

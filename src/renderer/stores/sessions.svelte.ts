@@ -22,6 +22,10 @@ class SessionStore {
   creating = $state(false);
   prerequisites = $state<PrerequisiteStatus | null>(null);
 
+  /** Whether the session finder (Ctrl+R palette) is open — toggled by the
+   *  global shortcut in App and the sidebar's search field. */
+  finderOpen = $state(false);
+
   /** Sessions that completed a turn while not focused — drives the "needs you"
    *  flash on their sidebar row until the user focuses them. */
   needsAttention = $state<Record<string, boolean>>({});
@@ -43,6 +47,21 @@ class SessionStore {
 
   get activeSession() {
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
+  }
+
+  /**
+   * Stopped sessions whose last activity is before the cutoff, oldest first —
+   * candidates for the sidebar's session clean-up dialog. Sessions without a
+   * timestamp get ts=0 and are listed first as unknown age, never hidden.
+   * Running sessions are never candidates.
+   */
+  stoppedSessionsOlderThan(days: number): Array<SessionEntry & { ts: number }> {
+    const cutoff = Date.now() - days * 86_400_000;
+    return this.sessions
+      .filter((s) => s.status === 'stopped')
+      .map((s) => ({ ...s, ts: s.lastActiveAt ?? s.createdAt ?? 0 }))
+      .filter((s) => s.ts < cutoff)
+      .sort((a, b) => a.ts - b.ts);
   }
 
   /** Load repos from the worktree manifest (main process). Must be called before restoreWorktrees. */
@@ -101,12 +120,14 @@ class SessionStore {
     this.addRepo(entry.repoPath);
   }
 
-  /** Quick-create a direct session on a repo (no worktree, no dialog) and focus
-   *  it. Mirrors the tab "New Session" action; the main process resolves the
-   *  repo's current branch from HEAD when branchName is empty. */
-  async createDirectSession(repoPath: string): Promise<void> {
+  /** Quick-create a new session (no dialog) that lands on `sourceSessionId`'s
+   *  branch, sharing its checkout. The main process resolves the branch + path
+   *  from the source session, so a new session forked off a worktree session
+   *  stays on that branch instead of the repo's default branch. Runs in-place
+   *  (direct), so it never creates or removes a worktree. */
+  async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
     try {
-      const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true });
+      const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId });
       this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, createdAt: Date.now() });
     } catch (e: any) {
       this.setError(e?.message || String(e));

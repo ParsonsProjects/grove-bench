@@ -1,4 +1,4 @@
-import type { AgentEvent, EventSearchHit } from '../shared/types.js';
+import type { AgentEvent, EventSearchHit, SessionPreview } from '../shared/types.js';
 
 export type { EventSearchHit };
 
@@ -68,6 +68,16 @@ export function searchableEventText(event: AgentEvent): string {
   }
 }
 
+/**
+ * Find the index of the first event carrying the given SDK uuid, or -1. Used to
+ * re-anchor a bookmark to its source message when runtime ids / cached event
+ * indices have shifted across reloads. Empty/blank uuids never match.
+ */
+export function findEventIndexByUuid(events: AgentEvent[], uuid: string): number {
+  if (!uuid) return -1;
+  return events.findIndex((e) => 'uuid' in e && e.uuid === uuid);
+}
+
 const SNIPPET_RADIUS = 40;
 
 /** Build a whitespace-collapsed window around the match, with ellipses when cut. */
@@ -85,6 +95,46 @@ function makeSnippet(normalized: string, matchIndex: number, queryLen: number): 
  * `limit` hits, each with the absolute event index (so the renderer can page in
  * exactly that depth) and a snippet for the results dropdown.
  */
+const PREVIEW_MAX_LEN = 160;
+
+function collapse(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  return normalized.length > PREVIEW_MAX_LEN ? `${normalized.slice(0, PREVIEW_MAX_LEN)}…` : normalized;
+}
+
+/**
+ * Derive a lightweight conversation preview from a session's event history:
+ * the first real user prompt (slash commands skipped) and the most recent
+ * user/assistant text. Both empty when the history has no such events.
+ */
+export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
+  let firstPrompt = '';
+  for (const e of events) {
+    if (e.type !== 'user_message') continue;
+    const text = e.text.trim();
+    if (!text || text.startsWith('/')) continue;
+    firstPrompt = collapse(text);
+    break;
+  }
+
+  let lastText = '';
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'assistant_text' || e.type === 'user_message') {
+      const text = e.text.trim();
+      if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
+      lastText = collapse(text);
+      break;
+    }
+    if (e.type === 'tool_use_summary' && e.summary.trim()) {
+      lastText = collapse(e.summary);
+      break;
+    }
+  }
+
+  return { firstPrompt, lastText };
+}
+
 export function searchEvents(events: AgentEvent[], query: string, limit = 100): EventSearchHit[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];

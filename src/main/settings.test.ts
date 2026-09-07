@@ -30,8 +30,20 @@ describe('loadSettings', () => {
     const s = loadSettings();
     expect(s.defaultPermissionMode).toBe('default');
     expect(s.theme).toBe('system');
-    expect(s.defaultBaseBranch).toBe('main');
+    expect(s.defaultBaseBranch).toBe(''); // empty = auto-detect
     expect(s.alwaysOnTop).toBe(false);
+  });
+
+  it('treats the legacy defaultBaseBranch default of "main" as unset', () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({ defaultBaseBranch: 'main' }));
+    const s = loadSettings();
+    expect(s.defaultBaseBranch).toBe('');
+  });
+
+  it('keeps a non-legacy defaultBaseBranch override', () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({ defaultBaseBranch: 'develop' }));
+    const s = loadSettings();
+    expect(s.defaultBaseBranch).toBe('develop');
   });
 
   it('merges saved data with defaults so new fields are present', () => {

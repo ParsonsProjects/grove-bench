@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -14,6 +14,7 @@
     IMAGE_MIME_TYPES,
     TEXT_EXTENSIONS,
   } from '$lib/file-attachments.js';
+  import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -35,6 +36,18 @@
     if (textarea && value) {
       autoResize();
     }
+  });
+
+  // Insert text pushed from elsewhere (e.g. the activity thread's "copy
+  // selection to prompt"). Initialised from the current nonce so a stale
+  // request doesn't re-fire when this editor (re)mounts.
+  let lastInsertNonce = messageStore.promptInsertBySession[sessionId]?.nonce ?? 0;
+  $effect(() => {
+    const req = messageStore.promptInsertBySession[sessionId];
+    if (!req || req.nonce === lastInsertNonce) return;
+    lastInsertNonce = req.nonce;
+    value = value ? `${value}\n${req.text}` : req.text;
+    tick().then(() => { textarea?.focus(); autoResize(); });
   });
   let userResized = $state(false);
   let pickerOpen = $state(false);
@@ -117,15 +130,12 @@
       closeCommandPicker();
       userResized = false;
       if (textarea) textarea.style.height = '';
+      // Sending from the Changes tab returns to Activity so the response shows.
+      messageStore.setActiveTab(sessionId, 'activity');
       return;
     }
 
-    const atPattern = /@([\w.\/\-]+)/g;
-    const refs: string[] = [];
-    let match;
-    while ((match = atPattern.exec(text)) !== null) {
-      refs.push(match[1]);
-    }
+    const refs = extractAtRefs(text);
 
     // Separate text files and image attachments
     const textFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'text' } => f.type === 'text');
@@ -148,33 +158,18 @@
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
       : text;
 
-    function send(prefix: string) {
+    function send(outgoing: string) {
       messageStore.addUserMessage(sessionId, displayText);
-      window.groveBench.sendMessage(sessionId, prefix + text, images.length > 0 ? images : undefined);
+      window.groveBench.sendMessage(sessionId, outgoing, images.length > 0 ? images : undefined);
       store.updateLastActive(sessionId);
     }
 
     if (refs.length > 0) {
-      Promise.all(
-        refs.map(async (ref) => {
-          try {
-            const content = await window.groveBench.readFile(sessionId, ref);
-            const isDir = ref.endsWith('/');
-            const tag = isDir ? 'folder' : 'file';
-            return `<${tag} path="${ref}">\n${content}\n</${tag}>`;
-          } catch {
-            const tag = ref.endsWith('/') ? 'folder' : 'file';
-            return `<${tag} path="${ref}">\n(could not read)\n</${tag}>`;
-          }
-        })
-      ).then((refTags) => {
-        const allTags = [...droppedTags, ...refTags];
-        const prefix = allTags.length > 0 ? allTags.join('\n') + '\n\n' : '';
-        send(prefix);
+      buildRefTags(refs, (ref) => window.groveBench.readFile(sessionId, ref)).then((refTags) => {
+        send(buildOutgoingMessage([...droppedTags, ...refTags], text));
       });
     } else {
-      const prefix = droppedTags.length > 0 ? droppedTags.join('\n') + '\n\n' : '';
-      send(prefix);
+      send(buildOutgoingMessage(droppedTags, text));
     }
 
     value = '';
@@ -185,6 +180,9 @@
     userResized = false;
     if (container) container.style.height = '';
     if (textarea) textarea.style.height = '';
+    // Sending from the Changes tab returns to Activity so the response shows
+    // (no-op when already on Activity).
+    messageStore.setActiveTab(sessionId, 'activity');
   }
 
   function useSuggestion(suggestion: string) {
@@ -400,7 +398,9 @@
     // Prevent default only when we have images to handle (preserve normal text paste)
     e.preventDefault();
 
-    const { files: newFiles, skipped } = await processFiles(images, attachedFiles);
+    // Clipboard images all arrive named "image.png" — rename collisions so
+    // pasting several screenshots attaches each one instead of only the first.
+    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }

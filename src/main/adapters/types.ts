@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -17,10 +17,15 @@ export interface AgentCapabilities {
   resume: boolean;
   /** Supports switching models at runtime */
   modelSwitching: boolean;
-  /** Supports toggling extended thinking */
+  /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
+  /** Supports runtime MCP server control (list status, disconnect/reconnect) */
+  mcpControl?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
+  /** Supports packaged skill instructions (discovery via listSkills, authoring
+   *  via addSkill, and the AdapterConfig.skills allowlist filter). */
+  skills?: boolean;
   /** Supports image attachments in messages */
   imageAttachments: boolean;
   /** Supports structured JSON output */
@@ -36,6 +41,8 @@ export interface ModelInfo {
   label: string;
   /** Optional grouping, e.g. "Claude", "GPT" */
   family?: string;
+  /** Context window in tokens; display fallback until the SDK reports the real value */
+  contextWindow?: number;
 }
 
 // ─── Permission Handling ───
@@ -89,13 +96,25 @@ export interface AdapterConfig {
   appendSystemPrompt?: string | null;
   customSystemPrompt?: string | null;
   allowedTools?: Set<string> | null;
+  /** Skill allowlist for the session. When unset, the provider's own defaults
+   *  apply (all discovered skills enabled). An array enables only the listed
+   *  skills — used to honor the user's disabled-skills setting. */
+  skills?: string[] | null;
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;
+  /** Thinking level to start the session at. When unset (or 'high'), the
+   *  provider's own default reasoning behavior applies. */
+  thinkingLevel?: ThinkingLevel | null;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
   resumeSessionId?: string | null;
+  /** Resume the conversation only up to and including this provider chain-entry
+   *  UUID, forking to a new provider session id (used by rewind so the agent
+   *  keeps the turns before the rewind point and forgets everything after).
+   *  Only meaningful together with resumeSessionId. */
+  resumeAtUuid?: string | null;
   onPermissionRequest: PermissionHandler;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
@@ -128,7 +147,18 @@ export interface AgentQueryHandle {
 
   setModel?(model: string): Promise<void>;
   setPermissionMode?(mode: PermissionMode): void;
-  setMaxThinkingTokens?(tokens: number | null): Promise<void>;
+  /** Adjust the thinking/reasoning level. Adapters map the level to their
+   *  provider's mechanism (token budgets, effort params, plain on/off). */
+  setThinkingLevel?(level: ThinkingLevel): Promise<void>;
+
+  // ─── Optional MCP server control — check capabilities.mcpControl first ───
+
+  /** Current status of the agent's MCP server connections. */
+  listMcpServers?(): Promise<McpServerInfo[]>;
+  /** Reconnect a (failed or disconnected) MCP server by name. */
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  /** Enable (connect) or disable (disconnect) an MCP server by name. */
+  setMcpServerEnabled?(serverName: string, enabled: boolean): Promise<void>;
 }
 
 // ─── Prerequisite Status ───
@@ -170,6 +200,16 @@ export interface AgentAdapter {
    *  Called during app shutdown. Optional — stateless adapters can omit. */
   dispose?(): Promise<void>;
 
+  // ─── Optional MCP server configuration (CLI config, not per-session) ───
+
+  /** List MCP servers from the provider's configuration. Only implement if
+   *  capabilities.mcpControl is true. `cwd` scopes local/project servers. */
+  listConfiguredMcpServers?(cwd?: string): Promise<McpConfiguredServer[]>;
+  /** Register a new MCP server in the provider's configuration. */
+  addConfiguredMcpServer?(opts: McpAddServerOpts): Promise<void>;
+  /** Remove an MCP server from the provider's configuration. */
+  removeConfiguredMcpServer?(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
+
   // ─── Optional plugin management ───
 
   /** List installed and available plugins. Only implement if capabilities.plugins is true. */
@@ -183,11 +223,25 @@ export interface AgentAdapter {
   /** Disable an installed plugin. */
   disablePlugin?(pluginId: string): Promise<void>;
 
+  // ─── Optional skill management ───
+
+  /** Skills visible to a session rooted at `worktreePath`, in whatever native
+   *  format the provider uses, mapped to neutral SkillInfo entries. Only
+   *  implement if capabilities.skills is true. */
+  listSkills?(worktreePath: string): Promise<SkillInfo[]>;
+  /** Author a new skill from the neutral definition, serialized into the
+   *  provider's native format (e.g. Claude Code writes
+   *  `.claude/skills/<name>/SKILL.md`). Project scope writes into the
+   *  worktree so the skill travels with the branch; user scope writes to the
+   *  provider's global location. Rejects if the skill already exists. */
+  addSkill?(worktreePath: string, def: SkillDefinition): Promise<SkillInfo>;
+
   // ─── Optional text generation (used by memory auto-save) ───
 
   /** Generate text from a system prompt and user message.
-   *  Used by memory-autosave to run extraction without being coupled to a specific SDK. */
-  generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal }): Promise<string>;
+   *  Used by memory-autosave to run extraction without being coupled to a specific SDK.
+   *  `model` overrides the provider default (e.g. a cheaper model for background calls). */
+  generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string>;
 
   // ─── Optional worktree configuration ───
 

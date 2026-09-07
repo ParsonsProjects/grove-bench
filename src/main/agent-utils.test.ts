@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, readableStreamToAsyncIterable } from './agent-utils.js';
+import { cleanEnv, matchToolRule, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
+import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
   it('strips npm_ prefixed vars', () => {
@@ -140,5 +141,59 @@ describe('readableStreamToAsyncIterable()', () => {
       values.push(value);
     }
     expect(values).toEqual([]);
+  });
+});
+
+describe('findRewindForkPoint()', () => {
+  const user = (uuid: string, text = 'msg'): AgentEvent => ({ type: 'user_message', text, uuid });
+  const assistant = (uuid: string): AgentEvent => ({ type: 'assistant_text', text: 'reply', uuid });
+  const toolUse = (uuid: string): AgentEvent => ({
+    type: 'assistant_tool_use', toolName: 'Bash', toolInput: {}, toolUseId: 'tu1', uuid,
+  });
+  const thinking = (uuid: string): AgentEvent => ({ type: 'thinking', thinking: 'hmm', uuid });
+  const toolResult = (): AgentEvent => ({ type: 'tool_result', toolUseId: 'tu1', content: 'ok' });
+
+  it('returns the uuid of the last assistant event before the target', () => {
+    const events = [
+      user('grove-1'), assistant('sdk-1'), assistant('sdk-2'),
+      user('grove-2'), assistant('sdk-3'),
+    ];
+    expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-2');
+  });
+
+  it('counts tool_use and thinking events as fork points', () => {
+    const events = [user('grove-1'), thinking('sdk-1'), toolUse('sdk-2'), user('grove-2')];
+    expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-2');
+  });
+
+  it('skips events without provider uuids (e.g. tool results)', () => {
+    const events = [user('grove-1'), assistant('sdk-1'), toolResult(), user('grove-2')];
+    expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-1');
+  });
+
+  it('never uses another user message uuid as a fork point', () => {
+    // user_message uuids are Grove-generated, not provider chain uuids
+    const events = [user('grove-1'), user('grove-2')];
+    expect(findRewindForkPoint(events, 'grove-2')).toBeNull();
+  });
+
+  it('returns null when rewinding to the first message', () => {
+    const events = [user('grove-1'), assistant('sdk-1')];
+    expect(findRewindForkPoint(events, 'grove-1')).toBeNull();
+  });
+
+  it('returns null when the target uuid is not in the history', () => {
+    const events = [user('grove-1'), assistant('sdk-1')];
+    expect(findRewindForkPoint(events, 'missing')).toBeNull();
+  });
+
+  it('uses the last occurrence when duplicate uuids exist', () => {
+    const events = [
+      user('grove-1'), assistant('sdk-1'),
+      user('grove-1'), assistant('sdk-2'),
+      user('grove-2'),
+    ];
+    // findLast semantics: the second grove-1 is the anchor
+    expect(findRewindForkPoint(events, 'grove-1')).toBe('sdk-1');
   });
 });
