@@ -391,6 +391,17 @@ export function registerHandlers() {
     return sessionManager.setMcpServerEnabled(sessionId, serverName, enabled);
   });
 
+  ipcMain.handle(IPC.AGENT_MCP_AUTHENTICATE, async (_event, sessionId: string, serverName: string) => {
+    const result = await sessionManager.authenticateMcpServer(sessionId, serverName);
+    if (result.authUrl) {
+      if (!/^https?:\/\//i.test(result.authUrl)) {
+        throw new Error('MCP sign-in returned a non-http auth URL');
+      }
+      await shell.openExternal(result.authUrl);
+    }
+    return result;
+  });
+
   ipcMain.handle(IPC.SKILLS_LIST, (_event, sessionId: string, fallbackPath: string) => {
     const adapter = sessionManager.getSessionAdapter(sessionId) ?? adapterRegistry.getDefault();
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;

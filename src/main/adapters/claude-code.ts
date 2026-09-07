@@ -584,6 +584,14 @@ export function parseMcpListOutput(stdout: string): McpConfiguredServer[] {
   return servers;
 }
 
+/** Shape of the CLI's `mcp_authenticate` control response (undocumented). */
+interface McpAuthenticateResponse {
+  authUrl?: string;
+  requiresUserAction?: boolean;
+  callbackExpected?: boolean;
+  callbackPort?: number;
+}
+
 /** Build the `claude mcp add ...` argument list for the given options. */
 export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   validateMcpName(opts.name);
@@ -952,6 +960,23 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       async setMcpServerEnabled(serverName: string, enabled: boolean) {
         await q.toggleMcpServer(serverName, enabled);
+      },
+
+      async authenticateMcpServer(serverName: string) {
+        // `mcpAuthenticate` is shipped in the SDK bundle but missing from its
+        // public typings. It asks the CLI to start the OAuth flow with browser
+        // opening suppressed and returns the URL for the host to open.
+        const authenticate = (q as unknown as {
+          mcpAuthenticate?: (name: string, redirectUri?: string) => Promise<McpAuthenticateResponse | undefined>;
+        }).mcpAuthenticate;
+        if (typeof authenticate !== 'function') {
+          throw new Error('MCP sign-in is not supported by this version of the Claude Agent SDK');
+        }
+        const res = await authenticate.call(q, serverName);
+        return {
+          ...(res?.authUrl ? { authUrl: res.authUrl } : {}),
+          callbackExpected: res?.callbackExpected === true,
+        };
       },
     };
 

@@ -22,6 +22,7 @@ const mockGroveBench = {
   listMcpServers: vi.fn().mockResolvedValue([]),
   reconnectMcpServer: vi.fn().mockResolvedValue(undefined),
   setMcpServerEnabled: vi.fn().mockResolvedValue(undefined),
+  authenticateMcpServer: vi.fn().mockResolvedValue({ callbackExpected: false }),
   mcpConfigList: vi.fn().mockResolvedValue([]),
   mcpConfigAdd: vi.fn().mockResolvedValue(undefined),
   mcpConfigRemove: vi.fn().mockResolvedValue(undefined),

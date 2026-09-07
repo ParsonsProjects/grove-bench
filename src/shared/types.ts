@@ -384,6 +384,16 @@ export interface McpServerInfo {
   toolCount?: number;
 }
 
+/** Result of kicking off an OAuth sign-in for an MCP server. */
+export interface McpAuthStartResult {
+  /** URL the user must open to authorize. Absent when no user action is needed. */
+  authUrl?: string;
+  /** True when the provider will redirect back to the agent, which then
+   *  finishes the flow and reconnects on its own. False means the user must
+   *  reconnect manually after authorizing (e.g. claude.ai connectors). */
+  callbackExpected: boolean;
+}
+
 /** An MCP server from the agent CLI's configuration (settings page view).
  *  Unlike McpServerInfo this is config-level, not tied to a running session. */
 export interface McpConfiguredServer {
@@ -554,6 +564,8 @@ export interface GroveBenchAPI {
   dismissSkillSuggestion(repoPath: string, suggestionId: string): Promise<void>;
   reconnectMcpServer(sessionId: string, serverName: string): Promise<void>;
   setMcpServerEnabled(sessionId: string, serverName: string, enabled: boolean): Promise<void>;
+  /** Start OAuth sign-in for a `needs-auth` server and open the auth URL in the browser. */
+  authenticateMcpServer(sessionId: string, serverName: string): Promise<McpAuthStartResult>;
 
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
@@ -929,6 +941,7 @@ export const IPC = {
   SKILLS_SUGGESTION_DISMISS: 'skills:suggestionDismiss',
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
+  AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',
