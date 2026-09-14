@@ -16,6 +16,7 @@
   import { memoryStore } from '../stores/memory.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
+  import { formatMcpActionError, mcpNeedsAuthHint } from '../lib/mcp-errors.js';
   import type { McpServerInfo, SkillInfo, SkillSuggestion, ThinkingLevel } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -255,6 +256,11 @@
   let mcpServers = $state<McpServerInfo[]>([]);
   let mcpBusy = $state<Record<string, boolean>>({});
   let mcpError = $state<string | null>(null);
+  /** Non-error guidance shown in the popup (e.g. "finish signing in in your browser"). */
+  let mcpNotice = $state<string | null>(null);
+  /** Servers with a browser sign-in in flight; we poll until they connect. */
+  let mcpSigningIn = $state<Record<string, boolean>>({});
+  let mcpSignInPoll: ReturnType<typeof setInterval> | null = null;
   let mcpKnown = $derived(systemInfo.mcpServers);
   let mcpStatuses = $derived(mcpServers.length > 0 ? mcpServers : mcpKnown);
   let mcpDownCount = $derived(mcpStatuses.filter((s) => s.status === 'failed' || s.status === 'needs-auth').length);
@@ -290,18 +296,82 @@
   async function mcpAction(name: string, action: 'reconnect' | 'enable' | 'disable') {
     mcpBusy = { ...mcpBusy, [name]: true };
     mcpError = null;
+    mcpNotice = null;
     try {
       if (action === 'reconnect') {
         await window.groveBench.reconnectMcpServer(sessionId, name);
       } else {
         await window.groveBench.setMcpServerEnabled(sessionId, name, action === 'enable');
       }
-    } catch (e: any) {
-      mcpError = e?.message ?? `Failed to ${action} ${name}`;
+    } catch (e) {
+      mcpError = formatMcpActionError(e, action, name);
     } finally {
       mcpBusy = { ...mcpBusy, [name]: false };
       await refreshMcpServers();
     }
+  }
+
+  /** Poll interval / budget while waiting for a browser sign-in to land. */
+  const MCP_SIGN_IN_POLL_MS = 2000;
+  const MCP_SIGN_IN_TIMEOUT_MS = 3 * 60 * 1000;
+
+  /**
+   * Kick off OAuth for a `needs-auth` server. The main process opens the auth
+   * URL in the system browser. When the provider redirects back to the agent
+   * (`callbackExpected`), the CLI finishes the handshake and reconnects on its
+   * own, so we just poll status until the server leaves `needs-auth`.
+   */
+  async function mcpSignIn(name: string) {
+    mcpBusy = { ...mcpBusy, [name]: true };
+    mcpError = null;
+    mcpNotice = null;
+    try {
+      const result = await window.groveBench.authenticateMcpServer(sessionId, name);
+      if (!result.authUrl) {
+        mcpNotice = `${name} did not need a browser sign-in. Reconnecting...`;
+        await window.groveBench.reconnectMcpServer(sessionId, name).catch(() => {});
+        return;
+      }
+      if (result.callbackExpected) {
+        mcpNotice = `Finish signing in to ${name} in your browser. It will reconnect automatically.`;
+        startSignInPoll(name);
+      } else {
+        mcpNotice = `Authorize ${name} in your browser, then click Reconnect.`;
+      }
+    } catch (e) {
+      mcpError = formatMcpActionError(e, 'reconnect', name);
+    } finally {
+      mcpBusy = { ...mcpBusy, [name]: false };
+      await refreshMcpServers();
+    }
+  }
+
+  function startSignInPoll(name: string) {
+    mcpSigningIn = { ...mcpSigningIn, [name]: true };
+    const deadline = Date.now() + MCP_SIGN_IN_TIMEOUT_MS;
+    if (mcpSignInPoll) return; // one ticker serves every pending sign-in
+    mcpSignInPoll = setInterval(async () => {
+      await refreshMcpServers();
+      const timedOut = Date.now() > deadline;
+      for (const pending of Object.keys(mcpSigningIn)) {
+        const status = mcpStatuses.find((s) => s.name === pending)?.status;
+        if (status && status !== 'needs-auth' && status !== 'pending') {
+          const { [pending]: _, ...rest } = mcpSigningIn;
+          mcpSigningIn = rest;
+          if (status === 'connected') mcpNotice = `${pending} signed in and connected.`;
+        } else if (timedOut) {
+          const { [pending]: _, ...rest } = mcpSigningIn;
+          mcpSigningIn = rest;
+          mcpNotice = `Still waiting on ${pending}. Finish signing in, then click Reconnect.`;
+        }
+      }
+      if (Object.keys(mcpSigningIn).length === 0) stopSignInPoll();
+    }, MCP_SIGN_IN_POLL_MS);
+  }
+
+  function stopSignInPoll() {
+    if (mcpSignInPoll) clearInterval(mcpSignInPoll);
+    mcpSignInPoll = null;
   }
 
   // ─── Skills management ───
@@ -501,6 +571,7 @@
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('click', handleClickOutside);
+    stopSignInPoll();
   });
 </script>
 
@@ -740,6 +811,8 @@
 
           {#if mcpError}
             <div class="text-destructive mb-2 break-words">{mcpError}</div>
+          {:else if mcpNotice}
+            <div class="text-yellow-500 mb-2 break-words">{mcpNotice}</div>
           {/if}
 
           <div class="space-y-1.5 max-h-64 overflow-y-auto">
@@ -771,14 +844,27 @@
                     Connect
                   </button>
                 {:else}
-                  <button
-                    onclick={() => mcpAction(server.name, 'reconnect')}
-                    disabled={mcpBusy[server.name]}
-                    class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
-                    title="Restart the connection to this server"
-                  >
-                    Reconnect
-                  </button>
+                  {#if status === 'needs-auth'}
+                    <!-- Reconnect can't complete OAuth (the CLI rejects it with
+                         "Server status: needs-auth"), so offer the sign-in instead. -->
+                    <button
+                      onclick={() => mcpSignIn(server.name)}
+                      disabled={mcpBusy[server.name] || mcpSigningIn[server.name]}
+                      class="px-1.5 py-0.5 border border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10 transition-colors shrink-0 disabled:opacity-50"
+                      title={mcpNeedsAuthHint(server.name)}
+                    >
+                      {mcpSigningIn[server.name] ? 'Waiting...' : 'Sign in'}
+                    </button>
+                  {:else}
+                    <button
+                      onclick={() => mcpAction(server.name, 'reconnect')}
+                      disabled={mcpBusy[server.name]}
+                      class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
+                      title="Restart the connection to this server"
+                    >
+                      Reconnect
+                    </button>
+                  {/if}
                   <button
                     onclick={() => mcpAction(server.name, 'disable')}
                     disabled={mcpBusy[server.name]}

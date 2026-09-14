@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo, McpAuthStartResult } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
@@ -1024,6 +1024,19 @@ class AgentSessionManager {
       await session.queryHandle.reconnectMcpServer(serverName);
     } catch (e) {
       logger.warn(`Failed to reconnect MCP server "${serverName}" for session ${id}:`, e);
+      throw e;
+    }
+  }
+
+  async authenticateMcpServer(id: string, serverName: string): Promise<McpAuthStartResult> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.authenticateMcpServer) {
+      throw new Error('MCP sign-in is not available for this session');
+    }
+    try {
+      return await session.queryHandle.authenticateMcpServer(serverName);
+    } catch (e) {
+      logger.warn(`Failed to start sign-in for MCP server "${serverName}" in session ${id}:`, e);
       throw e;
     }
   }

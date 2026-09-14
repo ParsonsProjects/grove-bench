@@ -92,6 +92,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT, sessionId, serverName),
   setMcpServerEnabled: (sessionId: string, serverName: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC.AGENT_MCP_TOGGLE, sessionId, serverName, enabled),
+  authenticateMcpServer: (sessionId: string, serverName: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_AUTHENTICATE, sessionId, serverName),
 
   // Skills
   listSkills: (sessionId: string, fallbackPath: string) =>
