@@ -519,6 +519,66 @@ describe('AgentSessionManager event processing', () => {
     await sessionManager.destroySession('test-history');
   });
 
+  it('forwards transient streaming events to the renderer without buffering them', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-transient',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'partial_text', text: 'Hel' });
+    mockAdapter.control!.emitEvent({ type: 'partial_text', text: 'lo' });
+    mockAdapter.control!.emitEvent({ type: 'activity', activity: 'generating' });
+    mockAdapter.control!.emitEvent({ type: 'usage', inputTokens: 1, outputTokens: 1 });
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Hello', uuid: 'u1' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const history = sessionManager.getEventHistory('test-transient');
+    expect(history.some((e) => e.type === 'partial_text')).toBe(false);
+    expect(history.some((e) => e.type === 'activity')).toBe(false);
+    expect(history.some((e) => e.type === 'usage')).toBe(false);
+    expect(history.filter((e) => e.type === 'assistant_text')).toHaveLength(1);
+
+    // The renderer still receives them live
+    const sentTypes = win._send.mock.calls
+      .filter((c: any[]) => c[0].includes('agent:event'))
+      .map((c: any[]) => c[1].type);
+    expect(sentTypes).toContain('partial_text');
+    expect(sentTypes).toContain('activity');
+
+    await sessionManager.destroySession('test-transient');
+  });
+
+  it('destroySession does not trigger a memory auto-save from the ended event loop', async () => {
+    const autosave = await import('./memory-autosave.js');
+    vi.mocked(autosave.triggerAutoSaveImmediate).mockClear();
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-destroy-autosave',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'hi', uuid: 'u1' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    await sessionManager.destroySession('test-destroy-autosave');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(autosave.triggerAutoSaveImmediate).not.toHaveBeenCalled();
+    expect(sessionManager.getSession('test-destroy-autosave')).toBeUndefined();
+  });
+
   it('clearEventHistory also cleans up checkpoint refs (so /clear does not leak stale checkpoints)', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({

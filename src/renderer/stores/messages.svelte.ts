@@ -345,7 +345,79 @@ class MessageStore {
    *  reliably notifies all $derived subscribers (key-level mutations on
    *  $state<Record> proxies can silently fail to propagate). */
   setIsRunning(sessionId: string, value: boolean) {
+    // Called on every streamed delta; an unchanged value must not reassign the
+    // record, or every derived reading isRunning (in every mounted pane, the
+    // sidebar, the session finder) re-runs per token.
+    if (this.isRunning[sessionId] === value) return;
     this.isRunning = { ...this.isRunning, [sessionId]: value };
+  }
+
+  // ─── Streaming delta coalescing ───
+  //
+  // The adapter emits one partial_text / partial_thinking event per model
+  // token. Appending each one to streamingText re-renders the whole markdown
+  // block per token. Deltas are buffered here and applied at most once per
+  // STREAM_FLUSH_MS; any non-streaming event settles the buffer first so
+  // ordering relative to finalized messages is preserved.
+  private static readonly STREAM_FLUSH_MS = 80;
+  private streamBuf = new Map<string, { text: string; thinking: string }>();
+  private streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private bufferStreamDelta(sessionId: string, kind: 'text' | 'thinking', delta: string) {
+    let buf = this.streamBuf.get(sessionId);
+    if (!buf) {
+      buf = { text: '', thinking: '' };
+      this.streamBuf.set(sessionId, buf);
+    }
+    if (kind === 'text') {
+      // Text starting means any pending thinking preview is obsolete.
+      buf.thinking = '';
+      buf.text += delta;
+    } else {
+      buf.thinking += delta;
+    }
+    if (!this.streamFlushTimer) {
+      this.streamFlushTimer = setTimeout(() => this.flushStreamBuffers(), MessageStore.STREAM_FLUSH_MS);
+    }
+  }
+
+  /** Apply all buffered deltas to the reactive streaming fields. */
+  flushStreamBuffers() {
+    if (this.streamFlushTimer) {
+      clearTimeout(this.streamFlushTimer);
+      this.streamFlushTimer = null;
+    }
+    if (this.streamBuf.size === 0) return;
+    for (const [sessionId, buf] of this.streamBuf) {
+      if (buf.text) {
+        this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + buf.text;
+      }
+      if (buf.thinking) {
+        this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + buf.thinking;
+      }
+    }
+    this.streamBuf.clear();
+  }
+
+  /** Called before a non-streaming event is processed. Deltas that the event
+   *  itself supersedes (a finalized text/thinking block) are dropped instead
+   *  of rendered once more; everything else is applied first. */
+  private settleStreamBuffer(sessionId: string, eventType: AgentEvent['type']) {
+    const buf = this.streamBuf.get(sessionId);
+    if (!buf) return;
+    if (eventType === 'assistant_text') buf.text = '';
+    else if (eventType === 'thinking') buf.thinking = '';
+    if (!buf.text && !buf.thinking) {
+      this.streamBuf.delete(sessionId);
+      return;
+    }
+    if (buf.text) {
+      this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + buf.text;
+    }
+    if (buf.thinking) {
+      this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + buf.thinking;
+    }
+    this.streamBuf.delete(sessionId);
   }
 
   getIsReady(sessionId: string): boolean {
@@ -356,6 +428,7 @@ class MessageStore {
    *  reliably notifies all $derived subscribers (key-level mutations on
    *  $state<Record> proxies can silently fail to propagate). */
   setIsReady(sessionId: string, value: boolean) {
+    if (this.isReady[sessionId] === value) return;
     this.isReady = { ...this.isReady, [sessionId]: value };
   }
 
@@ -851,6 +924,9 @@ class MessageStore {
 
   /** Ingest a raw AgentEvent from the main process */
   ingestEvent(sessionId: string, event: AgentEvent) {
+    if (event.type !== 'partial_text' && event.type !== 'partial_thinking') {
+      this.settleStreamBuffer(sessionId, event.type);
+    }
     switch (event.type) {
       case 'system_init':
         this.onSystemInit(sessionId, event);
@@ -871,14 +947,16 @@ class MessageStore {
 
       case 'partial_text':
         this.setIsRunning(sessionId, true);
-        this.streamingThinking[sessionId] = '';
-        this.streamingText[sessionId] = (this.streamingText[sessionId] ?? '') + event.text;
+        if (this.streamingThinking[sessionId]) this.streamingThinking[sessionId] = '';
+        this.bufferStreamDelta(sessionId, 'text', event.text);
         break;
 
       case 'partial_thinking':
         this.setIsRunning(sessionId, true);
-        this.activityBySession[sessionId] = { activity: 'thinking' };
-        this.streamingThinking[sessionId] = (this.streamingThinking[sessionId] ?? '') + event.text;
+        if (this.activityBySession[sessionId]?.activity !== 'thinking') {
+          this.activityBySession[sessionId] = { activity: 'thinking' };
+        }
+        this.bufferStreamDelta(sessionId, 'thinking', event.text);
         break;
 
       case 'assistant_tool_use':
@@ -1667,6 +1745,7 @@ class MessageStore {
     delete this.stoppingSession[sessionId];
     delete this.awaitingResponse[sessionId];
     delete this.userExplicitMode[sessionId];
+    this.streamBuf.delete(sessionId);
     // Preserve isRunning and isReady — caller controls these based on history/status
   }
 
@@ -1694,6 +1773,7 @@ class MessageStore {
     }
 
     this.sourceIndexBySession.delete(sessionId);
+    this.streamBuf.delete(sessionId);
 
     // Extracted stores own their own per-session teardown.
     backgroundTaskStore.destroy(sessionId);

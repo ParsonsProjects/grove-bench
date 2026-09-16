@@ -46,7 +46,6 @@
 
   let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
   let createPrMenuOpen = $state(false);
-  let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
 
   // ── PR watching: alerts + auto mode (all shown in one popover) ──
   let prAlerts = $derived(prStore.getAlerts(sessionId));
@@ -118,6 +117,8 @@
   let sessionBranch = $derived(store.sessions.find(s => s.id === sessionId)?.branch ?? '');
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  /** The agent path to creating a PR needs a live, idle session. */
+  let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
@@ -237,6 +238,13 @@
   let mcpSigningIn = $state<Record<string, boolean>>({});
   let mcpSignInPoll: ReturnType<typeof setInterval> | null = null;
   let mcpKnown = $derived(systemInfo.mcpServers);
+  /** Rows for the popover: live status when fetched, else what system_init
+   *  reported, normalized to the same shape. */
+  let mcpRows = $derived<McpServerInfo[]>(
+    mcpServers.length > 0
+      ? mcpServers
+      : mcpKnown.map((s) => ({ name: s.name, status: s.status as McpServerInfo['status'] })),
+  );
   let mcpStatuses = $derived(mcpServers.length > 0 ? mcpServers : mcpKnown);
   let mcpDownCount = $derived(mcpStatuses.filter((s) => s.status === 'failed' || s.status === 'needs-auth').length);
   let mcpConnectedCount = $derived(mcpStatuses.filter((s) => s.status === 'connected').length);
@@ -714,7 +722,7 @@
           {/if}
 
           <div class="space-y-1.5 max-h-64 overflow-y-auto">
-            {#each mcpServers.length > 0 ? mcpServers : mcpKnown as server (server.name)}
+            {#each mcpRows as server (server.name)}
               {@const status = server.status}
               <div class="flex items-center gap-2 group">
                 <span class="w-1.5 h-1.5 shrink-0
@@ -725,7 +733,7 @@
                     : 'bg-red-500'}"
                 ></span>
                 <div class="flex-1 min-w-0">
-                  <div class="font-mono truncate text-foreground" title={'error' in server && server.error ? server.error : server.name}>
+                  <div class="font-mono truncate text-foreground" title={server.error || server.name}>
                     {server.name}
                   </div>
                   <div class="text-muted-foreground/60 text-[10px]">

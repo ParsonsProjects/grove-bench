@@ -180,8 +180,26 @@ describe('ingestEvent — text streaming', () => {
     messageStore.ingestEvent(SID, { type: 'partial_text', text: 'Hello ' } as AgentEvent);
     messageStore.ingestEvent(SID, { type: 'partial_text', text: 'world' } as AgentEvent);
 
+    // Deltas are coalesced: nothing reactive changes until the flush tick.
+    expect(messageStore.getStreamingText(SID)).toBe('');
+    messageStore.flushStreamBuffers();
     expect(messageStore.getStreamingText(SID)).toBe('Hello world');
     expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('applies buffered deltas before a non-streaming event is processed', () => {
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'buffered' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' } as AgentEvent);
+    expect(messageStore.getStreamingText(SID)).toBe('buffered');
+  });
+
+  it('drops buffered text deltas superseded by the finalized assistant_text', () => {
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'preview' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'Final', uuid: 'u1' } as AgentEvent);
+    expect(messageStore.getStreamingText(SID)).toBe('');
+    messageStore.flushStreamBuffers();
+    expect(messageStore.getStreamingText(SID)).toBe('');
+    expect(messageStore.getMessages(SID)).toHaveLength(1);
   });
 
   it('clears streaming thinking when partial_text arrives', () => {
@@ -211,6 +229,7 @@ describe('ingestEvent — thinking', () => {
     messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'Let me ' } as AgentEvent);
     messageStore.ingestEvent(SID, { type: 'partial_thinking', text: 'think...' } as AgentEvent);
 
+    messageStore.flushStreamBuffers();
     expect(messageStore.getStreamingThinking(SID)).toBe('Let me think...');
     expect(messageStore.getActivity(SID).activity).toBe('thinking');
   });

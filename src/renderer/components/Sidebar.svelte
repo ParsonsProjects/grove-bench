@@ -493,9 +493,9 @@
           <span class="w-2 h-2 bg-green-500 shrink-0"></span>
         {/if}
         {#if session.direct}
-          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
+          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Direct (no worktree)"><title>Direct (no worktree)</title><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
         {:else}
-          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
+          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Worktree"><title>Worktree</title><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
         {/if}
         {#if session.completedAt}
           <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed"><title>Completed</title><path d="M20 6 9 17l-5-5"/></svg>

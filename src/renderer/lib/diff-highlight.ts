@@ -36,12 +36,25 @@ function escapeHtml(s: string): string {
  */
 export function highlightLine(text: string, lang: string | null): string {
   if (!lang) return escapeHtml(text);
+  const key = `${lang}\n${text}`;
+  const cached = highlightCache.get(key);
+  if (cached !== undefined) return cached;
+  let html: string;
   try {
-    return DOMPurify.sanitize(hljs.highlight(text, { language: lang }).value);
+    html = DOMPurify.sanitize(hljs.highlight(text, { language: lang }).value);
   } catch {
-    return escapeHtml(text);
+    html = escapeHtml(text);
   }
+  if (highlightCache.size >= HIGHLIGHT_CACHE_MAX) highlightCache.clear();
+  highlightCache.set(key, html);
+  return html;
 }
+
+/** DiffView calls highlightLine for every line on every re-render of the
+ *  diff, and each call builds a DOMPurify document. Lines are unchanged
+ *  across re-renders (and repeat across files), so memoize by (lang, text). */
+const HIGHLIGHT_CACHE_MAX = 5000;
+const highlightCache = new Map<string, string>();
 
 export interface WordSegment { text: string; changed: boolean; }
 

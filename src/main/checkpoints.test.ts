@@ -330,7 +330,7 @@ describe('CheckpointManager', () => {
 
       const SEP = '@@GROVE_SEP@@';
       expect(mockGit).toHaveBeenCalledWith(
-        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, 'refs/grove/checkpoints/sess1/'],
+        ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)${SEP}%(objectname)`, 'refs/grove/checkpoints/sess1/'],
         '/repo'
       );
     });
@@ -640,6 +640,67 @@ describe('CheckpointManager', () => {
         { uuid: 'uuid-a', turn: 1, text: 'only', filesChanged: 0, additions: 0, deletions: 0 },
       ]);
       expect(result.total).toEqual({ filesChanged: 1, additions: 1, deletions: 0 });
+    });
+  });
+
+  describe('history() numstat cache', () => {
+    const SEP = '@@GROVE_SEP@@';
+    // for-each-ref output including the object id (fourth field)
+    const REFS_WITH_OIDS =
+      `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}${SEP}aaa111\n` +
+      `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=first${SEP}bbb222\n` +
+      `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=uuid-b${SEP}text=second${SEP}ccc333`;
+
+    function mockWorkingTree(oid: string) {
+      mockGitEnv.mockResolvedValueOnce(''); // read-tree
+      mockGitEnv.mockResolvedValueOnce(''); // add -A
+      mockGitEnv.mockResolvedValueOnce(oid); // write-tree
+    }
+
+    it('reuses cached numstat for checkpoint pairs and an unchanged working tree', async () => {
+      const mgr = new CheckpointManager();
+
+      // First call: all three numstats run
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree');
+      mockGit.mockResolvedValueOnce('10\t2\tsrc/a.ts'); // turn/2 → turn/3
+      mockGit.mockResolvedValueOnce('1\t1\tsrc/b.ts'); // turn/3 → wtTree
+      mockGit.mockResolvedValueOnce('11\t3\tsrc/a.ts\n1\t1\tsrc/b.ts'); // baseline → wtTree
+      const first = await mgr.history('sess1', '/repo');
+      const numstatCallsAfterFirst = mockGit.mock.calls.filter((c) => c[0][0] === 'diff').length;
+      expect(numstatCallsAfterFirst).toBe(3);
+
+      // Second call with the same working tree: only for-each-ref runs
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree');
+      const second = await mgr.history('sess1', '/repo');
+      const numstatCallsAfterSecond = mockGit.mock.calls.filter((c) => c[0][0] === 'diff').length;
+      expect(numstatCallsAfterSecond).toBe(3);
+      expect(second).toEqual(first);
+    });
+
+    it('recomputes only the working-tree pairs when the tree changes', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree');
+      mockGit.mockResolvedValueOnce('10\t2\tsrc/a.ts');
+      mockGit.mockResolvedValueOnce('1\t1\tsrc/b.ts');
+      mockGit.mockResolvedValueOnce('11\t3\tsrc/a.ts\n1\t1\tsrc/b.ts');
+      await mgr.history('sess1', '/repo');
+      mockGit.mockClear();
+
+      mockGit.mockResolvedValueOnce(REFS_WITH_OIDS);
+      mockWorkingTree('wtTree2');
+      mockGit.mockResolvedValueOnce('5\t5\tsrc/b.ts'); // turn/3 → wtTree2
+      mockGit.mockResolvedValueOnce('15\t7\tsrc/a.ts\n5\t5\tsrc/b.ts'); // baseline → wtTree2
+      const result = await mgr.history('sess1', '/repo');
+
+      const diffCalls = mockGit.mock.calls.filter((c) => c[0][0] === 'diff');
+      expect(diffCalls).toHaveLength(2);
+      expect(diffCalls.every((c) => c[0][3] === 'wtTree2')).toBe(true);
+      expect(result.entries.find((e) => e.uuid === 'uuid-a')).toMatchObject({ additions: 10, deletions: 2 });
+      expect(result.entries.find((e) => e.uuid === 'uuid-b')).toMatchObject({ additions: 5, deletions: 5 });
+      expect(result.total).toEqual({ filesChanged: 2, additions: 20, deletions: 12 });
     });
   });
 

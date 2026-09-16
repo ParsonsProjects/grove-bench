@@ -102,9 +102,13 @@ class PrStore {
   startGlobalPolling(getSessionIds: () => string[]): void {
     if (this.globalTimer) return;
     const sweep = async () => {
-      // Sequential to avoid a burst of parallel gh processes
-      for (const id of getSessionIds()) {
-        await this.refresh(id, true);
+      // Each refresh is a `gh` network call plus two git processes per
+      // session; skip the sweep entirely while the window is hidden.
+      if (typeof document === 'undefined' || !document.hidden) {
+        // Sequential to avoid a burst of parallel gh processes
+        for (const id of getSessionIds()) {
+          await this.refresh(id, true);
+        }
       }
       this.globalTimer = setTimeout(sweep, POLL_MS);
     };

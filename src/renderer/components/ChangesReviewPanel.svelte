@@ -304,11 +304,23 @@
     }
   }
 
-  function getDiffLines(entry: GitStatusEntry): DiffLine[] {
-    const result = fileDiffs[fileKey(entry)];
-    if (result && result.kind === 'text' && result.patch) return parseDiffLines(result.patch);
-    return [];
-  }
+  // Parsed lines for the selected file, memoized on the patch text: neighbor
+  // prefetches and git-status refreshes reassign `fileDiffs` several times per
+  // selection, and each reassignment would otherwise reparse (and re-highlight)
+  // the whole patch.
+  let parsedDiff: { key: string; patch: string; lines: DiffLine[] } | null = null;
+  let selectedDiffLines = $derived.by((): DiffLine[] => {
+    const entry = selectedEntry;
+    if (!entry) return [];
+    const key = fileKey(entry);
+    const result = fileDiffs[key];
+    if (!result || result.kind !== 'text' || !result.patch) return [];
+    if (parsedDiff && parsedDiff.key === key && parsedDiff.patch === result.patch) return parsedDiff.lines;
+    const lines = parseDiffLines(result.patch);
+    parsedDiff = { key, patch: result.patch, lines };
+    return lines;
+  });
+  let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
 
   function openInEditor(filePath: string) {
     window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
@@ -461,6 +473,8 @@
     <!-- Left: File sidebar -->
     <div
       class="w-56 flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
+      role="listbox"
+      aria-label="Changed files"
       tabindex="0"
       onkeydown={handleFileListKeydown}
     >
@@ -484,6 +498,8 @@
             <button
               onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
               class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear filter"
+              title="Clear filter"
             >
               <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -621,7 +637,7 @@
         {@const key = fileKey(selectedEntry)}
         {@const reverting = revertingFiles.has(key)}
         {@const diffResult = fileDiffs[key]}
-        {@const diffLines = getDiffLines(selectedEntry)}
+        {@const diffLines = selectedDiffLines}
         {@const badge = statusBadge(selectedEntry.status)}
         {@const history = editHistoryByFile.get(selectedEntry.filePath)}
         {@const historyExpanded = editHistoryExpanded.has(key)}
@@ -658,7 +674,7 @@
           {/if}
 
           <div class="ml-auto flex items-center gap-2">
-            {#if hunkLineIndices(diffLines).length > 1}
+            {#if selectedHunkCount > 1}
               <div class="flex items-center text-muted-foreground" title="Jump between hunks">
                 <button onclick={() => gotoHunk(-1)} class="hover:text-foreground px-0.5" aria-label="Previous hunk">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
