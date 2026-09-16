@@ -4,6 +4,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity } from './git.js';
 import { logger } from './logger.js';
+import { removeDirectory, removeDirectoryWithRetry, pathExists } from './fs-utils.js';
 import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 
@@ -29,6 +30,12 @@ interface ManifestEntry {
   path?: string;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string;
+  /** The session was destroyed but its directory could not be deleted (Windows
+   *  file locks). The entry is hidden from listings and the background sweep
+   *  retries the deletion as a known item instead of finding an orphan dir. */
+  pendingRemoval?: boolean;
+  /** Whether the deferred removal should also delete the branch. */
+  pendingBranchDelete?: boolean;
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -305,6 +312,7 @@ export class WorktreeManager {
 
     // Serialize git operations per-repo to prevent concurrent worktree remove conflicts
     await this.withRepoLock(repoPath, async () => {
+      let dirRemoved = true;
       if (!info.direct) {
         // Retry chain for Windows file locking
         try {
@@ -314,29 +322,37 @@ export class WorktreeManager {
             await git(['worktree', 'remove', '--force', wtPath], repoPath);
           } catch {
             try {
-              await fs.rm(wtPath, { recursive: true, force: true });
+              // A PTY shell or agent process may still be releasing its cwd;
+              // back off briefly before giving up.
+              await removeDirectoryWithRetry(wtPath);
               await git(['worktree', 'prune'], repoPath);
             } catch (e) {
-              console.warn(`Failed to clean up worktree ${id}:`, e);
+              dirRemoved = false;
+              logger.warn(`Worktree ${id} is still locked; deferring removal to the background sweep: ${e}`);
             }
           }
         }
       }
 
-      // Optionally delete branch (skip for direct sessions — it's the checked-out branch)
-      if (deleteBranch && !info.direct) {
-        try {
-          await git(['branch', '-d', branch], repoPath);
-        } catch {
-          try {
-            await git(['branch', '-D', branch], repoPath);
-          } catch (e) {
-            console.warn(`Failed to delete branch ${branch}:`, e);
+      this.worktrees.delete(id);
+
+      if (!dirRemoved) {
+        // Keep the manifest entry (hidden) so the sweep retries this as a
+        // known item rather than discovering an untracked directory later.
+        await this.withManifest((manifest) => {
+          const entry = manifest[id];
+          if (entry) {
+            entry.pendingRemoval = true;
+            entry.pendingBranchDelete = deleteBranch;
           }
-        }
+        });
+        return;
       }
 
-      this.worktrees.delete(id);
+      // Optionally delete branch (skip for direct sessions — it's the checked-out branch)
+      if (deleteBranch && !info.direct) {
+        await this.deleteBranchQuietly(repoPath, branch);
+      }
 
       // Remove entry from manifest
       await this.withManifest((manifest) => {
@@ -356,6 +372,51 @@ export class WorktreeManager {
         } catch { /* directory may not exist */ }
       }
     });
+  }
+
+  private async deleteBranchQuietly(repoPath: string, branch: string): Promise<void> {
+    try {
+      await git(['branch', '-d', branch], repoPath);
+    } catch {
+      try {
+        await git(['branch', '-D', branch], repoPath);
+      } catch (e) {
+        logger.warn(`Failed to delete branch ${branch}: ${e}`);
+      }
+    }
+  }
+
+  /**
+   * Retry removal of worktrees whose directories were locked when the session
+   * was destroyed. Returns the number of entries fully cleaned up.
+   */
+  async processPendingRemovals(): Promise<number> {
+    const manifest = await this.loadManifest();
+    const pending = Object.entries(manifest).filter(([, e]) => e.pendingRemoval);
+    if (pending.length === 0) return 0;
+
+    let cleaned = 0;
+    for (const [id, entry] of pending) {
+      const hash = this.repoHash(entry.repoPath);
+      const wtPath = entry.path ?? path.join(this.getWorktreeRoot(), hash, id);
+      try {
+        await this.withRepoLock(entry.repoPath, async () => {
+          if (!entry.direct && (await pathExists(wtPath))) {
+            await removeDirectory(wtPath);
+          }
+          try { await git(['worktree', 'prune'], entry.repoPath); } catch { /* repo may be gone */ }
+          if (entry.pendingBranchDelete && !entry.direct) {
+            await this.deleteBranchQuietly(entry.repoPath, entry.branch);
+          }
+        });
+        await this.withManifest((m) => { delete m[id]; });
+        cleaned++;
+        logger.info(`Sweep: completed deferred removal of worktree ${id}`);
+      } catch (e) {
+        logger.warn(`Sweep: worktree ${id} still locked, will retry next sweep: ${e}`);
+      }
+    }
+    return cleaned;
   }
 
   async list(repoPath: string): Promise<WorktreeInfo[]> {
@@ -381,6 +442,7 @@ export class WorktreeManager {
       // Return manifest entries for this repo that git still knows about
       for (const [id, entry] of Object.entries(manifest)) {
         if (entry.repoPath !== repoPath) continue;
+        if (entry.pendingRemoval) continue;
 
         // Direct sessions don't create their own worktree on disk. Plain ones
         // run on the repo checkout; attached ones carry an explicit path to the
@@ -432,6 +494,7 @@ export class WorktreeManager {
     const manifest = await this.loadManifest();
     const repos = new Set<string>();
     for (const entry of Object.values(manifest)) {
+      if (entry.pendingRemoval) continue;
       repos.add(entry.repoPath);
     }
     return [...repos];
@@ -525,7 +588,7 @@ export class WorktreeManager {
 
     const manifest = await this.loadManifest();
     const entry = manifest[id];
-    if (!entry) return undefined;
+    if (!entry || entry.pendingRemoval) return undefined;
 
     const hash = this.repoHash(entry.repoPath);
     const info: WorktreeInfo = {
@@ -581,6 +644,7 @@ export class WorktreeManager {
       for (const [id, entry] of Object.entries(manifest)) {
         if (entry.repoPath !== repoPath) continue;
         if (entry.direct) continue; // Direct sessions have no worktree to clean up
+        if (entry.pendingRemoval) continue; // handled by processPendingRemovals
 
         const wtPath = path.join(this.getWorktreeRoot(), hash, id);
 
@@ -596,7 +660,7 @@ export class WorktreeManager {
           logger.warn(`Found orphan worktree: ${id} (dir=${dirExists}, git=${gitKnows})`);
           if (dirExists) {
             try {
-              await fs.rm(wtPath, { recursive: true, force: true });
+              await removeDirectory(wtPath);
             } catch (e) {
               logger.error(`Failed to clean orphan ${wtPath}:`, e);
             }
@@ -648,12 +712,19 @@ export class WorktreeManager {
       return 0;
     }
 
+    // Phase 0: finish removals that were deferred because the directory was locked
+    try {
+      totalCleaned += await this.processPendingRemovals();
+    } catch (e) {
+      logger.warn('Sweep: failed to process pending removals:', e);
+    }
+
     const manifest = await this.loadManifest();
 
     // Collect unique repo paths from manifest (non-direct entries only)
     const repoPaths = new Set<string>();
     for (const entry of Object.values(manifest)) {
-      if (!entry.direct) {
+      if (!entry.direct && !entry.pendingRemoval) {
         repoPaths.add(entry.repoPath);
       }
     }
@@ -691,7 +762,7 @@ export class WorktreeManager {
           if (!freshManifest[entry] && !activeIds.has(entry)) {
             logger.warn(`Sweep: removing untracked worktree directory: ${entryPath}`);
             try {
-              await fs.rm(entryPath, { recursive: true, force: true });
+              await removeDirectory(entryPath);
               totalCleaned++;
             } catch (e) {
               logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);

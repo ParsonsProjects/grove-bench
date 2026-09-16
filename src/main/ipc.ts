@@ -6,7 +6,8 @@ import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
-import { checkAllPrerequisites } from './prerequisites.js';
+import { checkCorePrerequisites, checkGh } from './prerequisites.js';
+import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
 import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
@@ -22,11 +23,15 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, clearPrerequisiteCache } from './app-state.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+
+/** App-level lifecycle signals from the renderer (e.g. 'restore-complete'). */
+export const appEvents = new EventEmitter();
 
 /** Buffer for events emitted before the session object exists (worktree creation, npm install).
  *  These are sent live via IPC but not persisted — the AGENT_HISTORY handler
@@ -351,8 +356,29 @@ export function registerHandlers() {
 
   // ─── Prerequisites ───
 
+  // Core check (git + agent). Carries forward the last known gh status so the
+  // renderer keeps PR features enabled while the slower gh check runs.
   ipcMain.handle(IPC.PREREQUISITES_CHECK, async (): Promise<PrerequisiteStatus> => {
-    return checkAllPrerequisites();
+    const core = await checkCorePrerequisites();
+    const status: PrerequisiteStatus = { ...core, gh: loadPrerequisiteCache()?.status.gh };
+    if (prerequisitesSatisfied(status)) savePrerequisiteCache(status);
+    else clearPrerequisiteCache();
+    return status;
+  });
+
+  ipcMain.handle(IPC.PREREQUISITES_CACHED, (): PrerequisiteStatus | null => {
+    return loadPrerequisiteCache()?.status ?? null;
+  });
+
+  ipcMain.handle(IPC.PREREQUISITES_GH, async () => {
+    const gh = await checkGh();
+    const cached = loadPrerequisiteCache();
+    if (cached) savePrerequisiteCache({ ...cached.status, gh });
+    return gh;
+  });
+
+  ipcMain.on(IPC.APP_RESTORE_COMPLETE, () => {
+    appEvents.emit('restore-complete');
   });
 
   // ─── Agent I/O ───

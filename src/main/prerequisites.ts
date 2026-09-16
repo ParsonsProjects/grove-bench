@@ -2,6 +2,7 @@ import type { PrerequisiteStatus } from '../shared/types.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
+import type { AdapterPrerequisiteStatus } from './adapters/types.js';
 
 const MIN_GIT_MAJOR = 2;
 const MIN_GIT_MINOR = 17;
@@ -34,6 +35,20 @@ export async function checkGh(): Promise<NonNullable<PrerequisiteStatus['gh']>> 
   };
 }
 
+/**
+ * Everything the app needs before it can run: git plus an authenticated agent
+ * CLI. Deliberately excludes the GitHub CLI, whose auth check hits the network
+ * and must not delay the startup gate.
+ */
+export async function checkCorePrerequisites(): Promise<PrerequisiteStatus> {
+  const adapter = adapterRegistry.getDefault();
+  const [gitStatus, agentStatus] = await Promise.all([
+    checkGit(),
+    adapter.checkPrerequisites(),
+  ]);
+  return buildStatus(gitStatus, agentStatus, adapter.authErrorMessage);
+}
+
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
   const adapter = adapterRegistry.getDefault();
   const [gitStatus, agentStatus, ghStatus] = await Promise.all([
@@ -41,6 +56,14 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
     adapter.checkPrerequisites(),
     checkGh(),
   ]);
+  return { ...buildStatus(gitStatus, agentStatus, adapter.authErrorMessage), gh: ghStatus };
+}
+
+function buildStatus(
+  gitStatus: PrerequisiteStatus['git'],
+  agentStatus: AdapterPrerequisiteStatus,
+  adapterAuthErrorMessage: string,
+): PrerequisiteStatus {
   // Build error/auth message from adapter when not available or not authenticated
   let errorMessage: string | undefined;
   let authErrorMessage: string | undefined;
@@ -51,7 +74,7 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
         : 'Agent CLI not found.');
   }
   if (agentStatus.available && !agentStatus.authenticated) {
-    authErrorMessage = adapter.authErrorMessage;
+    authErrorMessage = adapterAuthErrorMessage;
   }
 
   return {
@@ -65,6 +88,5 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
       errorMessage,
       authErrorMessage,
     },
-    gh: ghStatus,
   };
 }

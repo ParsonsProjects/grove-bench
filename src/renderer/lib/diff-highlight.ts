@@ -1,4 +1,4 @@
-import hljs from 'highlight.js';
+import hljs from './hljs.js';
 import DOMPurify from 'dompurify';
 import { diffWordsWithSpace } from 'diff';
 import type { DiffLine } from './diff-types.js';

@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import { Marked } from 'marked';
   import DOMPurify from 'dompurify';
-  import hljs from 'highlight.js';
+  import hljs from '../lib/hljs.js';
 
   // Allow data-code attribute through DOMPurify for copy button support
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {

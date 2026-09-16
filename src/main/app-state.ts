@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 
-import type { SessionSortState, SkillSuggestion } from '../shared/types.js';
+import type { PrerequisiteStatus, SessionSortState, SkillSuggestion } from '../shared/types.js';
+
+export interface PrerequisiteCache {
+  status: PrerequisiteStatus;
+  checkedAt: number;
+}
 
 export interface SkillSuggestionCache {
   suggestions: SkillSuggestion[];
@@ -25,6 +30,9 @@ interface AppState {
   knownSkills?: Record<string, string[]>;
   /** Last skill-suggestion analysis per repo path, including dismissals. */
   skillSuggestions?: Record<string, SkillSuggestionCache>;
+  /** Last prerequisite check that passed. Lets the renderer skip the blocking
+   *  startup overlay and re-verify in the background. Cleared on failure. */
+  prerequisiteCache?: PrerequisiteCache | null;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -181,6 +189,28 @@ export function saveSkillSuggestionCache(repoPath: string, cache: SkillSuggestio
   try {
     const state = loadAppState();
     state.skillSuggestions = { ...(state.skillSuggestions ?? {}), [repoPath]: cache };
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+}
+
+export function loadPrerequisiteCache(): PrerequisiteCache | null {
+  return loadAppState().prerequisiteCache ?? null;
+}
+
+/** Write-through — prerequisite checks run once or twice per launch. */
+export function savePrerequisiteCache(status: PrerequisiteStatus): void {
+  try {
+    const state = loadAppState();
+    state.prerequisiteCache = { status, checkedAt: Date.now() };
+    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+  } catch { /* ignore */ }
+}
+
+export function clearPrerequisiteCache(): void {
+  try {
+    const state = loadAppState();
+    if (!state.prerequisiteCache) return;
+    state.prerequisiteCache = null;
     fs.writeFileSync(getStatePath(), JSON.stringify(state));
   } catch { /* ignore */ }
 }

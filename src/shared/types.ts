@@ -533,7 +533,14 @@ export interface GroveBenchAPI {
   updateBookmark(id: string, patch: Partial<Pick<Bookmark, 'note' | 'eventIndex'>>): Promise<void>;
 
   // Prerequisites
+  /** Full check of git + agent CLI (spawns processes; excludes gh). */
   checkPrerequisites(): Promise<PrerequisiteStatus>;
+  /** Last passing check from a previous launch, or null. Instant. */
+  getCachedPrerequisites(): Promise<PrerequisiteStatus | null>;
+  /** GitHub CLI availability/auth — may hit the network, never gates the app. */
+  checkGhPrerequisite(): Promise<NonNullable<PrerequisiteStatus['gh']>>;
+  /** Tell main that startup session restore has finished. */
+  notifyRestoreComplete(): void;
 
   // Session status updates (from main → renderer)
   onSessionStatus(callback: (sessionId: string, status: SessionStatus) => void): () => void;
@@ -898,6 +905,10 @@ export const IPC = {
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
   PREREQUISITES_CHECK: 'prerequisites:check',
+  PREREQUISITES_CACHED: 'prerequisites:cached',
+  PREREQUISITES_GH: 'prerequisites:gh',
+  /** Renderer → main: session restore finished; deferred background work may start. */
+  APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
   AGENT_PERMISSION: 'agent:permission',
