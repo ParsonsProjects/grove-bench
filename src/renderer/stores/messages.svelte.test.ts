@@ -1707,3 +1707,16 @@ describe('destroySession', () => {
     expect(mockGroveBench.onAgentEvent).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('appendToPrompt', () => {
+  it('updates the draft and raises an insert request', () => {
+    messageStore.setDraft(SID, '');
+    messageStore.appendToPrompt(SID, 'first');
+    expect(messageStore.getDraft(SID)).toBe('first');
+    expect(messageStore.promptInsertBySession[SID]).toEqual({ text: 'first', nonce: 1 });
+
+    messageStore.appendToPrompt(SID, 'second');
+    expect(messageStore.getDraft(SID)).toBe('first\nsecond');
+    expect(messageStore.promptInsertBySession[SID].nonce).toBe(2);
+  });
+});

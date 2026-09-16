@@ -803,6 +803,18 @@ class MessageStore {
     };
   }
 
+  /** Append `text` to the session's prompt whether or not a PromptEditor is
+   *  mounted right now (it is not on the Terminal / Checkpoints tabs). The
+   *  draft is updated for an editor that mounts later, and an insert request
+   *  is raised for one that is already showing; the mounted editor's own
+   *  draft sync then writes the same combined text back, so the two paths
+   *  never double up. */
+  appendToPrompt(sessionId: string, text: string) {
+    const draft = this.getDraft(sessionId);
+    this.setDraft(sessionId, draft ? `${draft}\n${text}` : text);
+    this.requestPromptInsert(sessionId, text);
+  }
+
   private flushStreamingText(sessionId: string) {
     const text = this.streamingText[sessionId];
     if (text) {

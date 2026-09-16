@@ -426,7 +426,7 @@
                         </Select.Content>
                       </Select.Root>
                       <p class="text-xs text-muted-foreground mt-1">
-                        {selected?.description ?? ''}
+                        {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
                         {#if control.id === CONTROL_IDS.thinking}
                           Adjustable per session from the status bar (Alt+T).
                         {/if}

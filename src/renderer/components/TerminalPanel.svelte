@@ -126,7 +126,9 @@
     const raw = selected ? selection : collectTailLines(terminal.buffer.active, DEFAULT_TAIL_LINES).join('\n');
     const context = formatTerminalContext(raw, { selected });
     if (!context) return;
-    messageStore.requestPromptInsert(sessionId, context);
+    // The prompt editor is not mounted while the Terminal tab is showing, so
+    // go through the draft as well as the live insert request.
+    messageStore.appendToPrompt(sessionId, context);
     messageStore.setActiveTab(sessionId, 'activity');
   }
 
