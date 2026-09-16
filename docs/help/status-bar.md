@@ -2,9 +2,17 @@
 
 The status bar sits at the top of the workspace area and displays real-time information about the active session.
 
-## Model & Mode
+## Agent Settings
 
-The left side shows the current Claude model (click to switch) and operating mode:
+The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5 · Code` normally, or `Opus 5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. The agent itself is fixed when a session is created, so other agents are listed but not selectable.
+
+### Usage
+
+Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every session on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
+
+### Mode
+
+The operating mode controls how much the agent may do without asking:
 
 | Mode | Color | Description |
 |------|-------|-------------|
@@ -13,6 +21,12 @@ The left side shows the current Claude model (click to switch) and operating mod
 | **Edit** | Purple | Accept-edits mode — you must approve each file change |
 
 Click the mode badge or press `Alt+M` to cycle between modes.
+
+The mode, thinking, and speed badges are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a badge (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.
+
+## Speed
+
+On models that support it, a **Speed** badge toggles between **Standard** and **Fast** output. Fast keeps the same model but returns responses more quickly.
 
 ## Thinking Level
 

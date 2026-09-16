@@ -18,6 +18,7 @@ class ClaudeLikeAdapter implements AgentAdapter {
     thinking: true, plugins: true, imageAttachments: true, structuredOutput: true, sandbox: true,
   };
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
 }
@@ -31,6 +32,7 @@ class CodexLikeAdapter implements AgentAdapter {
     thinking: false, plugins: false, imageAttachments: false, structuredOutput: false, sandbox: false,
   };
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
 }

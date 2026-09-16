@@ -107,6 +107,7 @@ class MockAdapter implements AgentAdapter {
     resume: true,
     modelSwitching: true,
     thinking: true,
+    usage: true,
     plugins: false,
     imageAttachments: false,
     structuredOutput: false,
@@ -120,7 +121,25 @@ class MockAdapter implements AgentAdapter {
    *  a stop arriving while a query is still starting up). */
   startGate: Promise<void> | null = null;
 
-  getModels() { return [{ id: 'mock-model', label: 'Mock' }]; }
+  getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
+  /** Two universal controls plus one ('speed') that only the full model offers,
+   *  so tests can cover per-model reconciliation. */
+  getControls(model?: string | null) {
+    const controls = [
+      { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+        { value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' }, { value: 'auto', label: 'Auto' },
+      ] },
+      { id: 'thinking', label: 'Thinking', default: 'high', options: [
+        { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' },
+      ] },
+    ];
+    if (model !== 'mock-lite') {
+      controls.push({ id: 'speed', label: 'Speed', default: 'standard', options: [
+        { value: 'standard', label: 'Standard' }, { value: 'fast', label: 'Fast' },
+      ] });
+    }
+    return controls;
+  }
   async checkPrerequisites() { return { available: true }; }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
@@ -189,7 +208,8 @@ class MockAdapter implements AgentAdapter {
       closeInput: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
-      setThinkingLevel: vi.fn(),
+      setControl: vi.fn(),
+      getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
   }
 }
@@ -1545,5 +1565,131 @@ describe('AgentSessionManager wake-from-sleep', () => {
 
     await sessionManager.destroySession('test-sleep-A');
     await sessionManager.destroySession('test-sleep-B');
+  });
+});
+
+describe('AgentSessionManager session controls', () => {
+  const SETTINGS = {
+    defaultPermissionMode: 'default',
+    defaultSystemPromptAppend: null,
+    toolAllowRules: [],
+    toolDenyRules: [],
+    cavemanMode: 'off',
+  };
+
+  async function createWithHandle(id: string) {
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: id, model: 'mock-model', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    return sessionManager.getSession(id)!;
+  }
+
+  it('starts from descriptor defaults, overlaid with the settings thinking level, and passes them to the adapter', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, defaultThinkingLevel: 'low' });
+
+    await sessionManager.createSession({ id: 'ctl-defaults', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+
+    const controls = sessionManager.getControls('ctl-defaults');
+    expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
+    expect(controls.values).toEqual({ thinking: 'low', speed: 'standard' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.controls).toEqual({ thinking: 'low', speed: 'standard' });
+
+    await sessionManager.destroySession('ctl-defaults');
+  });
+
+  it('ignores a settings thinking level the adapter does not offer', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, defaultThinkingLevel: 'adaptive' });
+
+    await sessionManager.createSession({ id: 'ctl-unknown-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+
+    expect(sessionManager.getControls('ctl-unknown-default').values.thinking).toBe('high');
+
+    await sessionManager.destroySession('ctl-unknown-default');
+  });
+
+  it('emits controls_sync once the query reports system_init', async () => {
+    await createWithHandle('ctl-init');
+
+    const history = sessionManager.getEventHistory('ctl-init');
+    const sync = history.find((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }> | undefined;
+    expect(sync?.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
+    expect(sync?.values).toEqual({ thinking: 'high', speed: 'standard' });
+
+    await sessionManager.destroySession('ctl-init');
+  });
+
+  it('setControl records the value, forwards it to the live handle, and emits controls_sync', async () => {
+    const session = await createWithHandle('ctl-set');
+
+    await sessionManager.setControl('ctl-set', 'thinking', 'low');
+
+    expect(session.controls.thinking).toBe('low');
+    expect(session.queryHandle?.setControl).toHaveBeenCalledWith('thinking', 'low');
+    const syncs = sessionManager.getEventHistory('ctl-set').filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    expect(syncs.at(-1)?.values.thinking).toBe('low');
+
+    await sessionManager.destroySession('ctl-set');
+  });
+
+  it('setControl records the value without a live handle so the next query start picks it up', async () => {
+    await sessionManager.createSession({ id: 'ctl-idle', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    const session = sessionManager.getSession('ctl-idle')!;
+    session.queryHandle = null;
+
+    await sessionManager.setControl('ctl-idle', 'speed', 'fast');
+
+    expect(session.controls.speed).toBe('fast');
+
+    await sessionManager.destroySession('ctl-idle');
+  });
+
+  it('setControl rejects unknown controls, values the model does not offer, and permissionMode', async () => {
+    await createWithHandle('ctl-reject');
+
+    await expect(sessionManager.setControl('ctl-reject', 'nope', 'x')).rejects.toThrow(/Unknown control/);
+    await expect(sessionManager.setControl('ctl-reject', 'thinking', 'adaptive')).rejects.toThrow(/not a valid Thinking option/);
+    await expect(sessionManager.setControl('ctl-reject', 'permissionMode', 'plan')).rejects.toThrow(/setMode/);
+
+    await sessionManager.destroySession('ctl-reject');
+  });
+
+  it('setModel drops values the new model no longer offers and re-emits controls_sync', async () => {
+    const session = await createWithHandle('ctl-model');
+    await sessionManager.setControl('ctl-model', 'speed', 'fast');
+    expect(session.controls.speed).toBe('fast');
+
+    await sessionManager.setModel('ctl-model', 'mock-lite');
+
+    const controls = sessionManager.getControls('ctl-model');
+    expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking']);
+    expect(controls.values).toEqual({ thinking: 'high' });
+    expect(session.controls).toEqual({ thinking: 'high' });
+    const syncs = sessionManager.getEventHistory('ctl-model').filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    expect(syncs.at(-1)?.values).toEqual({ thinking: 'high' });
+
+    await sessionManager.destroySession('ctl-model');
+  });
+
+  it('getUsage returns the live handle usage, and null without a handle or when it throws', async () => {
+    const session = await createWithHandle('ctl-usage');
+
+    await expect(sessionManager.getUsage('ctl-usage')).resolves.toMatchObject({ available: true, plan: 'max' });
+
+    (session.queryHandle!.getUsage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('sdk changed'));
+    await expect(sessionManager.getUsage('ctl-usage')).resolves.toBeNull();
+
+    session.queryHandle = null;
+    await expect(sessionManager.getUsage('ctl-usage')).resolves.toBeNull();
+    await expect(sessionManager.getUsage('never-created')).resolves.toBeNull();
+
+    await sessionManager.destroySession('ctl-usage');
+  });
+
+  it('getControls for an unknown session falls back to the default adapter descriptors', () => {
+    const controls = sessionManager.getControls('never-created');
+    expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
+    expect(controls.values).toEqual({});
   });
 });

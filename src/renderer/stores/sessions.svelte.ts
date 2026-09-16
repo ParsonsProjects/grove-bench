@@ -6,6 +6,8 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Adapter id the session runs on (e.g. 'claude-code'). */
+  agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName?: string | null;
   /** Timestamp (ms) when the worktree was created. */
@@ -128,7 +130,7 @@ class SessionStore {
   async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
     try {
       const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId });
-      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, createdAt: Date.now() });
+      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now() });
     } catch (e: any) {
       this.setError(e?.message || String(e));
     }

@@ -1,11 +1,11 @@
-import type { AgentEvent, McpServerInfo, PermissionDecision, PermissionMode, ThinkingLevel } from '../../shared/types.js';
-import { THINKING_LEVELS } from '../../shared/types.js';
-import { settingsStore } from './settings.svelte.js';
+import type { AgentEvent, ControlDescriptor, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
+import { CONTROL_IDS } from '../../shared/types.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
+import { usageStore } from './usage.svelte.js';
 
 // ─── Chat message types ───
 
@@ -161,8 +161,9 @@ class MessageStore {
   /** Current permission mode per session */
   modeBySession = $state<Record<string, PermissionMode>>({});
 
-  /** Thinking/reasoning level per session ('high' = provider default) */
-  thinkingBySession = $state<Record<string, ThinkingLevel>>({});
+  /** Adapter-declared controls (descriptors for the current model + recorded
+   *  values) per session, fed by controls_sync events and loadControls(). */
+  controlsBySession = $state<Record<string, SessionControls>>({});
 
   /** Token usage per session — inputTokens is latest (= current context size), outputTokens is cumulative */
   usageBySession = $state<Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>>({});
@@ -377,20 +378,70 @@ class MessageStore {
     return this.modeBySession[sessionId] ?? 'default';
   }
 
-  getThinkingLevel(sessionId: string): ThinkingLevel {
-    return this.thinkingBySession[sessionId] ?? settingsStore.current.defaultThinkingLevel ?? 'high';
+  getControlDescriptors(sessionId: string): ControlDescriptor[] {
+    return this.controlsBySession[sessionId]?.descriptors ?? [];
   }
 
-  async setThinkingLevel(sessionId: string, level: ThinkingLevel) {
-    this.thinkingBySession[sessionId] = level;
-    await window.groveBench.setThinkingLevel(sessionId, level);
+  /** Current value of a control. permissionMode reads the mode store (kept
+   *  in sync by mode_sync); anything else reads the last controls_sync value
+   *  or the descriptor default. */
+  getControlValue(sessionId: string, controlId: string): string {
+    if (controlId === CONTROL_IDS.permissionMode) return this.getMode(sessionId);
+    const controls = this.controlsBySession[sessionId];
+    return controls?.values[controlId]
+      ?? controls?.descriptors.find((d) => d.id === controlId)?.default
+      ?? '';
   }
 
-  /** Cycle off → low → medium → high → off (status-bar button / Alt+T). */
-  cycleThinkingLevel(sessionId: string) {
-    const current = this.getThinkingLevel(sessionId);
-    const next = THINKING_LEVELS[(THINKING_LEVELS.indexOf(current) + 1) % THINKING_LEVELS.length];
-    this.setThinkingLevel(sessionId, next).catch((e) => console.error('Failed to set thinking level:', e));
+  async setControl(sessionId: string, controlId: string, value: string) {
+    if (controlId === CONTROL_IDS.permissionMode) {
+      await this.setMode(sessionId, value as PermissionMode);
+      return;
+    }
+    const controls = this.controlsBySession[sessionId];
+    if (!controls) return;
+    const previous = controls.values[controlId];
+    // Reflect the choice immediately; main's controls_sync confirms it, and
+    // the catch below rolls back if the adapter rejected it.
+    this.controlsBySession[sessionId] = { ...controls, values: { ...controls.values, [controlId]: value } };
+    try {
+      await window.groveBench.setControl(sessionId, controlId, value);
+    } catch (e) {
+      console.warn(`[setControl] ${controlId} failed, rolling back:`, e);
+      const current = this.controlsBySession[sessionId];
+      if (!current) return;
+      const values = { ...current.values };
+      if (previous === undefined) delete values[controlId];
+      else values[controlId] = previous;
+      this.controlsBySession[sessionId] = { ...current, values };
+    }
+  }
+
+  /** Advance a control to its next declared option (status-bar badge /
+   *  Alt+M, Alt+T). Falls back to the built-in mode cycle when no descriptors
+   *  have arrived yet so the shortcut never goes dead. */
+  cycleControl(sessionId: string, controlId: string) {
+    const descriptor = this.getControlDescriptors(sessionId).find((d) => d.id === controlId);
+    if (!descriptor || descriptor.options.length === 0) {
+      if (controlId === CONTROL_IDS.permissionMode) this.cycleMode(sessionId);
+      return;
+    }
+    const current = this.getControlValue(sessionId, controlId);
+    const idx = descriptor.options.findIndex((o) => o.value === current);
+    const next = descriptor.options[(idx + 1) % descriptor.options.length].value;
+    this.setControl(sessionId, controlId, next).catch((e) => console.error(`Failed to set ${controlId}:`, e));
+  }
+
+  /** Fetch descriptors for a session that hasn't reported controls_sync yet
+   *  (e.g. restored but idle). A sync that lands mid-fetch wins. */
+  async loadControls(sessionId: string) {
+    if (this.controlsBySession[sessionId]) return;
+    try {
+      const controls = await window.groveBench.getControls(sessionId);
+      if (!this.controlsBySession[sessionId]) this.controlsBySession[sessionId] = controls;
+    } catch (e) {
+      console.warn('[loadControls] failed:', e);
+    }
   }
 
   getUsage(sessionId: string) {
@@ -580,8 +631,15 @@ class MessageStore {
 
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    const modes = ['default', 'plan', 'acceptEdits', 'auto'] as const;
-    const idx = modes.indexOf(current as typeof modes[number]);
+    // Cycle through the modes the adapter declared for this session; the
+    // built-in list only serves sessions whose descriptors haven't arrived.
+    const declared = this.getControlDescriptors(sessionId)
+      .find((d) => d.id === CONTROL_IDS.permissionMode)
+      ?.options.map((o) => o.value as PermissionMode);
+    const modes: readonly PermissionMode[] = declared && declared.length > 0
+      ? declared
+      : ['default', 'plan', 'acceptEdits', 'auto'];
+    const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);
   }
@@ -863,6 +921,9 @@ class MessageStore {
 
       case 'result':
         this.onResult(sessionId, event);
+        // A finished turn is the cheapest moment to learn what it cost the
+        // plan; the store throttles so back-to-back turns don't spam the SDK.
+        usageStore.refresh(sessionId).catch(() => {});
         break;
 
       case 'error':
@@ -960,6 +1021,7 @@ class MessageStore {
           utilization: event.utilization,
           rateLimitType: event.rateLimitType,
         });
+        usageStore.applyRateLimitEvent(sessionId, event);
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {
             kind: 'system',
@@ -1051,6 +1113,9 @@ class MessageStore {
         }
         break;
 
+      case 'controls_sync':
+        this.controlsBySession[sessionId] = { descriptors: event.descriptors, values: event.values };
+        break;
       case 'mode_sync':
         this.onModeSync(sessionId, event);
         break;
@@ -1097,14 +1162,6 @@ class MessageStore {
       slashCommands: event.slashCommands ?? [],
       mcpServers: event.mcpServers ?? [],
     };
-    // Each (re)initialized query starts at the provider's default thinking
-    // behavior. Pin the session's level (or the settings default for a new
-    // session) and re-apply it when it differs from that default.
-    const thinkingLevel = this.getThinkingLevel(sessionId);
-    this.thinkingBySession[sessionId] = thinkingLevel;
-    if (thinkingLevel !== 'high') {
-      window.groveBench.setThinkingLevel(sessionId, thinkingLevel).catch(() => {});
-    }
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -1614,7 +1671,7 @@ class MessageStore {
       this.messagesBySession, this.streamingText, this.streamingThinking,
       this.isRunning, this.pendingClear, this.activityBySession,
       this.toolProgressBySession, this.isReady, this.modelBySession,
-      this.modeBySession, this.thinkingBySession, this.usageBySession,
+      this.modeBySession, this.controlsBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.viewModeBySession,

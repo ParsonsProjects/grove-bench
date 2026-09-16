@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, mapClaudeUsage } from './claude-code.js';
+import { THINKING_LEVELS } from '../../shared/types.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -49,6 +50,110 @@ describe('getModels()', () => {
       const expected = m.id.startsWith('claude-haiku') ? 200_000 : 1_000_000;
       expect(m.contextWindow, m.id).toBe(expected);
     }
+  });
+});
+
+// ─── Session controls ───
+
+describe('getControls()', () => {
+  const adapter = new ClaudeCodeAdapter();
+  const ids = (model: string | null) => adapter.getControls(model).map((d) => d.id);
+
+  it('declares mode, thinking, and speed for the default model', () => {
+    expect(ids(null)).toEqual(['permissionMode', 'thinking', 'speed']);
+    expect(adapter.getControls(null)).toEqual(claudeControlsFor(null));
+  });
+
+  it('offers every Grove permission mode in the status-bar order', () => {
+    const mode = adapter.getControls('claude-opus-5').find((d) => d.id === 'permissionMode')!;
+    expect(mode.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'auto']);
+    expect(mode.default).toBe('default');
+  });
+
+  it('offers the full thinking ladder on adaptive-capable models and drops adaptive on Haiku', () => {
+    const opus = adapter.getControls('claude-opus-5').find((d) => d.id === 'thinking')!;
+    expect(opus.options.map((o) => o.value)).toEqual(THINKING_LEVELS);
+    expect(opus.default).toBe('high');
+
+    const haiku = adapter.getControls('claude-haiku-4-5-20251001').find((d) => d.id === 'thinking')!;
+    expect(haiku.options.map((o) => o.value)).toEqual(['off', 'low', 'medium', 'high']);
+    expect(supportsAdaptiveThinking('claude-haiku-4-5-20251001')).toBe(false);
+    expect(supportsAdaptiveThinking('claude-sonnet-4-6')).toBe(true);
+  });
+
+  it('offers fast mode only where the provider supports it', () => {
+    expect(ids('claude-opus-5')).toContain('speed');
+    expect(ids('claude-opus-4-8')).toContain('speed');
+    expect(ids('claude-opus-4-6')).not.toContain('speed');
+    expect(ids('claude-sonnet-4-6')).not.toContain('speed');
+    expect(ids('claude-haiku-4-5-20251001')).not.toContain('speed');
+    expect(supportsFastMode('claude-fable-5')).toBe(false);
+  });
+
+  it('gives every option a badge label and a tone, and every default is a real option', () => {
+    for (const model of [null, ...adapter.getModels().map((m) => m.id)]) {
+      for (const d of adapter.getControls(model)) {
+        expect(d.options.length, `${model}/${d.id}`).toBeGreaterThan(1);
+        expect(d.options.map((o) => o.value), `${model}/${d.id}`).toContain(d.default);
+        for (const o of d.options) {
+          expect(o.label, `${model}/${d.id}/${o.value}`).toBeTruthy();
+          expect(o.tone, `${model}/${d.id}/${o.value}`).toBeTruthy();
+        }
+      }
+    }
+  });
+});
+
+// ─── Plan usage mapping ───
+
+describe('mapClaudeUsage()', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('reports unavailable (with the plan) when the SDK has no plan limits', () => {
+    expect(mapClaudeUsage({ subscription_type: null, rate_limits_available: false, rate_limits: null }, NOW))
+      .toEqual({ available: false, plan: null, windows: [], fetchedAt: NOW });
+    expect(mapClaudeUsage(null, NOW).available).toBe(false);
+  });
+
+  it('maps percent utilization to a fraction and ISO resets to epoch seconds', () => {
+    const usage = mapClaudeUsage({
+      subscription_type: 'max',
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 42, resets_at: '2027-01-01T10:00:00Z' },
+        seven_day: { utilization: 18, resets_at: null },
+      },
+    }, NOW);
+
+    expect(usage).toMatchObject({ available: true, plan: 'max', fetchedAt: NOW });
+    expect(usage.windows).toEqual([
+      { id: 'five_hour', label: '5-hour', utilization: 0.42, resetsAt: Math.round(Date.parse('2027-01-01T10:00:00Z') / 1000) },
+      { id: 'seven_day', label: 'Weekly', utilization: 0.18 },
+    ]);
+  });
+
+  it('drops windows without a utilization, clamps to 0–1, and includes per-model and enabled extra usage', () => {
+    const usage = mapClaudeUsage({
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: null, resets_at: '2027-01-01T10:00:00Z' },
+        seven_day_opus: { utilization: 130, resets_at: 'not a date' },
+        model_scoped: [{ display_name: 'Fable', utilization: 5, resets_at: null }],
+        extra_usage: { is_enabled: true, utilization: 12, resets_at: null },
+      },
+    }, NOW);
+
+    expect(usage.windows.map((w) => w.id)).toEqual(['seven_day_opus', 'model:Fable', 'extra_usage']);
+    expect(usage.windows[0]).toEqual({ id: 'seven_day_opus', label: 'Weekly · Opus', utilization: 1 });
+    expect(usage.windows[1].label).toBe('Weekly · Fable');
+  });
+
+  it('omits extra usage when it is not enabled', () => {
+    const usage = mapClaudeUsage({
+      rate_limits_available: true,
+      rate_limits: { extra_usage: { is_enabled: false, utilization: 12, resets_at: null } },
+    }, NOW);
+    expect(usage.windows).toEqual([]);
   });
 });
 

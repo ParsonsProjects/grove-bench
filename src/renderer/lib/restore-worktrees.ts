@@ -34,6 +34,9 @@ export async function restoreWorktrees() {
           repoPath: repo,
           status: isRunning ? 'running' : 'stopped',
           direct: wt.direct,
+          // Only a running session knows its adapter; stopped ones fall back
+          // to the default adapter in the UI until they are restarted.
+          agentType: runningSession?.agentType,
           // Prefer the running session's name; fall back to the persisted manifest
           // name so stopped sessions also restore their label after restart.
           displayName: runningSession?.displayName ?? wt.displayName ?? null,
