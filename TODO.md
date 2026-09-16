@@ -5,7 +5,13 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ## Priority 1 — High Impact
 
 ### Multi-Agent Support
-- [ ] Support multiple agent backends (Gemini, Codex, OpenHand) beyond Claude
+- [x] Adapter-declared session controls — `AgentAdapter.getControls(model)` returns per-model `ControlDescriptor`s (mode, thinking, speed, …); the session manager owns the values, validates them per model, passes them to `adapter.start()`, and emits `controls_sync`. The renderer no longer hardcodes thinking or permission-mode enums.
+- [x] Agent settings popover — one two-line status-bar trigger (agent on top; model, mode, and any non-default control beneath) opening a column-per-setting popover for agent, model, and every declared control (`SessionControlsPopover.svelte`). Alt+M / Alt+T still cycle.
+- [ ] Codex adapter — implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; the popover, shortcuts, triage, and session manager need no changes
+- [ ] Grok Build adapter
+- [ ] Per-adapter defaults in Settings — the Agent tab's default thinking level is still Claude's hand-written list; read the adapter's descriptors instead
+- [ ] Neutral form for tool allow/deny rules — the syntax is currently Claude's (`Bash(npm run *)`)
+- [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
 - [ ] Agent discovery/install marketplace ("app store")
 - [ ] Agent Client Protocol for custom agent integration
 
@@ -35,6 +41,13 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Taskbar flash while a notification is pending (cleared on focus); clicking a notification jumps to the session
 - [x] Sidebar attention flash extended to PR alerts (previously only status-bar chips)
 - [ ] Overlay badge on the taskbar icon showing the count of sessions needing attention
+
+### Attention Triage
+- [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
+- [x] Per-repo attention counts on each Projects header
+- [x] Mark Completed / Reopen in the session context menu — persisted as `completedAt` in the worktree manifest, hidden behind a "Show completed" toggle, reopened automatically by the next user message
+- [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
+- [ ] Persist the unread flag across restarts (in-memory only today)
 
 ### Robustness
 - [ ] Global error handling — `uncaughtException` handler in main; `window.onerror` / `unhandledrejection` + error boundary in renderer
@@ -68,9 +81,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Context-aware footer showing relevant keyboard shortcuts
 
 ### Cost & Usage Dashboard
+- [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
 - [ ] Per-session and cumulative token/cost view — data is already captured per message (`adapters/claude-code.ts`) but only lands in memory notes
 
 ### Session Export
+- [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action — also the enabler for switching agents mid-conversation
 - [ ] Export conversation transcript (Markdown / JSON)
 - [ ] Session export/import between machines
 
@@ -108,11 +123,13 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
-- [ ] Fetch Claude model list dynamically instead of hardcoding (`adapters/claude-code.ts` TODO)
+- [ ] Fetch Claude model list dynamically instead of hardcoding (`adapters/claude-code.ts` TODO) — the SDK's `supportedModels()` also reports per-model effort, adaptive-thinking, and fast-mode support, which could replace the static rules in `claudeControlsFor()`
+- [ ] Demo harness (`/demo.html`) console errors — duplicate keyed-each id in the Sidebar demo data, and mock bridge methods the demo never defined (`checkPrerequisites`, update listeners)
 
 ### From DESIGN.md v2 (documented but previously untracked)
 - [ ] Docker-based sandboxing of agent sessions
 - [ ] Shared CLAUDE.md / agent instructions per worktree
+- [ ] Per-repo agent instructions field in Settings (writes to `CLAUDE.md` or a memory `conventions/` note); today only the global system-prompt append exists
 - [ ] Agent-to-agent communication (one agent's output feeds another)
 - [ ] Orchestration engine (goal decomposition → parallel tasks → integration merge agent) — prototyped and removed; see user stories 20–28 in `docs/user-stories.md`
 - [ ] Worktree dependency optimizations: pnpm-store sharing, `node_modules` symlinking from main checkout (DESIGN.md §6.1)
@@ -137,6 +154,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] `/btw` — Ephemeral side question that doesn't enter conversation history. Runs while agent is working, no tool access, shows in dismissible overlay. No SDK support — needs separate `query()` call with `maxTurns: 1`
 - [x] Commands (slash commands for common actions)
 - [x] Skills (reusable prompt templates / workflows)
+- [ ] Recipes on top of skills — collections, a one-click "Run in new session", and a main-process scheduler for on-demand or scheduled runs
 - [x] MCP server connections (connect to external MCP servers)
 
 ### Git & Workflow
@@ -150,6 +168,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Dev & Preview
 - ~~Localhost run (start/preview dev server from worktree)~~ — implemented, then removed; run dev servers from the session terminal instead
+- [ ] Named background commands — a list of long-running processes with Running/Stopped state, Stop, follow-the-log, wrap, and downloadable output, decoupled from the session PTY (a narrower reimplementation of the removed dev-server feature)
 
 ## Already at Parity or Better
 

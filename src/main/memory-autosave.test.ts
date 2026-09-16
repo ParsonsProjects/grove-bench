@@ -26,6 +26,7 @@ class TextCapableAdapter implements AgentAdapter {
   generateTextResponse = '{"files":[],"sessionNote":{"shouldSave":false,"content":""}}';
 
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
 
@@ -45,6 +46,7 @@ class NoTextAdapter implements AgentAdapter {
   };
 
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
   // No generateText — this adapter cannot do memory extraction

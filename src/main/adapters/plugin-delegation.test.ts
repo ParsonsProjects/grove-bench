@@ -35,6 +35,7 @@ class PluginCapableAdapter implements AgentAdapter {
   disabledPlugin: string | null = null;
 
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
 
@@ -77,6 +78,7 @@ class NoPluginAdapter implements AgentAdapter {
   };
 
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
   // No plugin methods — adapter does not support plugins

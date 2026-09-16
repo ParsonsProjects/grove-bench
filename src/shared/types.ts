@@ -23,6 +23,10 @@ export interface WorktreeInfo {
   direct?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
+  /** Epoch ms when the user marked the session completed; null/absent when
+   *  it is still open. Completed sessions are hidden from the sidebar by
+   *  default and reopen on the next user message. */
+  completedAt?: number | null;
 }
 
 export interface WorktreeRepoConfig {
@@ -142,6 +146,9 @@ export type AgentEvent =
   // Permission mode sync — source is required so the renderer knows whether to
   // respect user-explicit overrides ('sdk' may be stale, 'session' is authoritative)
   | { type: 'mode_sync'; mode: PermissionMode; source: 'sdk' | 'session' }
+  // Adapter-declared session controls (descriptors depend on the model) and
+  // their current values — emitted on query start, model switch, and control change
+  | { type: 'controls_sync'; descriptors: ControlDescriptor[]; values: Record<string, string> }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
   // Memory auto-save status
@@ -318,8 +325,92 @@ export interface BranchCommit {
  *  'adaptive' lets the model decide when and how much to think. */
 export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
 
-/** Cycle order for the status-bar control and Alt+T shortcut. */
+/** Canonical order of the Claude adapter's thinking options. */
 export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'adaptive'];
+
+// ─── Session Controls ───
+
+/** Visual weight for a control option's status-bar badge. Adapters pick a
+ *  tone; the renderer maps it to theme colours so providers never hardcode
+ *  CSS. */
+export type ControlTone = 'muted' | 'neutral' | 'info' | 'warning' | 'accent' | 'accent-soft' | 'success' | 'highlight';
+
+export interface ControlOption {
+  value: string;
+  /** Short badge text, e.g. "Plan" or "Think: Low". */
+  label: string;
+  /** Longer explanation for settings UIs and tooltips. */
+  description?: string;
+  tone?: ControlTone;
+}
+
+/**
+ * A runtime toggle an adapter exposes for a session (permission mode, effort,
+ * speed, ...). Adapters declare these per model so the status bar renders
+ * exactly the options a provider supports instead of forcing every provider
+ * into one fixed enum. Well-known ids get app-level keyboard shortcuts (see
+ * CONTROL_SHORTCUTS); any other id is rendered as a plain cycling badge.
+ */
+export interface ControlDescriptor {
+  id: string;
+  /** Human label for tooltips and settings, e.g. "Mode", "Thinking". */
+  label: string;
+  /** Ordered options; the badge cycles through them in this order. */
+  options: ControlOption[];
+  /** Value applied when the session has no recorded choice. */
+  default: string;
+}
+
+/** Control ids the app knows about. Permission mode is special-cased because
+ *  the session manager implements app-level behaviour (auto mode) on top of
+ *  the adapter's mapping; everything else is opaque to the app. */
+export const CONTROL_IDS = {
+  permissionMode: 'permissionMode',
+  thinking: 'thinking',
+  speed: 'speed',
+} as const;
+
+/** App-level shortcuts bound to well-known control ids. */
+export const CONTROL_SHORTCUTS: Record<string, string> = {
+  [CONTROL_IDS.permissionMode]: 'Alt+M',
+  [CONTROL_IDS.thinking]: 'Alt+T',
+};
+
+// ─── Provider usage ("runway") ───
+
+/** One plan rate-limit window as reported by a provider. */
+export interface UsageWindow {
+  /** Provider-defined id, e.g. 'five_hour', 'seven_day', 'model:Fable'. */
+  id: string;
+  /** Short display label, e.g. "5-hour", "Weekly · Opus". */
+  label: string;
+  /** Fraction of the window consumed, 0–1. */
+  utilization: number;
+  /** Epoch seconds when the window resets. */
+  resetsAt?: number;
+}
+
+/** Account-level usage for a provider. Not per session: every session on the
+ *  same sign-in shares these windows. */
+export interface ProviderUsage {
+  /** False when the sign-in has no plan limits to report (API key, Bedrock,
+   *  Vertex, ...). `windows` is empty in that case. */
+  available: boolean;
+  /** Subscription name when known, e.g. 'pro', 'max'. */
+  plan?: string | null;
+  windows: UsageWindow[];
+  /** Epoch ms of the fetch that produced this snapshot. */
+  fetchedAt: number;
+}
+
+/** Snapshot of a session's controls: the descriptors valid for its current
+ *  model plus the recorded value for each. `values` never carries
+ *  permissionMode — that flows through mode_sync so stale-SDK handling stays
+ *  in one place. */
+export interface SessionControls {
+  descriptors: ControlDescriptor[];
+  values: Record<string, string>;
+}
 
 // ─── Skills ───
 
@@ -488,11 +579,13 @@ export interface GroveBenchAPI {
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
-  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string }>;
+  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   stopSession(id: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
+  /** Persist the completed flag (see WorktreeInfo.completedAt). */
+  setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -551,8 +644,15 @@ export interface GroveBenchAPI {
   // Model control
   setModel(sessionId: string, model?: string): Promise<void>;
 
-  // Thinking control
-  setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<void>;
+  // Session controls (adapter-declared: thinking, speed, ...)
+  /** Descriptors for the session's current model plus recorded values. Falls
+   *  back to the default adapter's descriptors for an unknown session. */
+  getControls(sessionId: string): Promise<SessionControls>;
+  /** Set a non-permission control; rejects unknown ids/values. */
+  setControl(sessionId: string, controlId: string, value: string): Promise<void>;
+  /** Plan usage windows for the session's provider, or null when the session
+   *  has no live query or the adapter cannot report usage. */
+  getUsage(sessionId: string): Promise<ProviderUsage | null>;
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
@@ -898,6 +998,7 @@ export const IPC = {
   SESSION_STOP: 'session:stop',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
+  SESSION_SET_COMPLETED: 'session:setCompleted',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',
@@ -943,7 +1044,9 @@ export const IPC = {
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   AGENT_SET_MODEL: 'agent:setModel',
-  AGENT_SET_THINKING: 'agent:setThinking',
+  AGENT_SET_CONTROL: 'agent:setControl',
+  AGENT_GET_CONTROLS: 'agent:getControls',
+  AGENT_GET_USAGE: 'agent:getUsage',
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',
   SKILLS_ADD: 'skills:add',

@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, ThinkingLevel } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
@@ -142,7 +142,7 @@ export function registerHandlers() {
       });
 
       logger.info(`Direct session created: id=${session.id}`);
-      return { id: session.id, branch: session.branch };
+      return { id: session.id, branch: session.branch, agentType: session.agentType };
     }
 
     // ── Validation (synchronous — errors shown in dialog) ──
@@ -294,7 +294,7 @@ export function registerHandlers() {
     });
 
     logger.info(`Session resumed: id=${session.id}`);
-    return { id: session.id, branch: session.branch };
+    return { id: session.id, branch: session.branch, agentType: session.agentType };
   });
 
   ipcMain.handle(IPC.SESSION_STOP, async (_event, id: string) => {
@@ -322,6 +322,10 @@ export function registerHandlers() {
     sessionManager.renameSession(sessionId, displayName);
     // Persist so the name survives app restart (displayName was in-memory only).
     await worktreeManager.saveDisplayName(sessionId, displayName);
+  });
+
+  ipcMain.handle(IPC.SESSION_SET_COMPLETED, async (_event, sessionId: string, completed: boolean) => {
+    await worktreeManager.saveCompleted(sessionId, completed === true);
   });
 
   // ─── Branches ───
@@ -401,8 +405,16 @@ export function registerHandlers() {
     return sessionManager.setModel(sessionId, model);
   });
 
-  ipcMain.handle(IPC.AGENT_SET_THINKING, (_event, sessionId: string, level: ThinkingLevel) => {
-    return sessionManager.setThinkingLevel(sessionId, level);
+  ipcMain.handle(IPC.AGENT_GET_CONTROLS, (_event, sessionId: string) => {
+    return sessionManager.getControls(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_GET_USAGE, (_event, sessionId: string) => {
+    return sessionManager.getUsage(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_SET_CONTROL, (_event, sessionId: string, controlId: string, value: string) => {
+    return sessionManager.setControl(sessionId, controlId, value);
   });
 
   ipcMain.handle(IPC.AGENT_MCP_LIST, (_event, sessionId: string) => {

@@ -173,6 +173,33 @@ describe('saveDisplayName', () => {
   });
 });
 
+describe('saveCompleted', () => {
+  it('stamps completedAt on the manifest entry and clears it on reopen', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    await manager.saveCompleted('wt-123', true, 5000);
+    expect((savedManifest as any)['wt-123'].completedAt).toBe(5000);
+
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, completedAt: 5000 },
+    }));
+    await manager.saveCompleted('wt-123', false);
+    expect((savedManifest as any)['wt-123'].completedAt).toBeUndefined();
+  });
+
+  it('does not create an entry for an unknown worktree ID', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    await manager.saveCompleted('wt-unknown', true);
+
+    expect(savedManifest['wt-unknown']).toBeUndefined();
+  });
+});
+
 describe('migration from claudeSessionId', () => {
   it('getProviderSessionId falls back to claudeSessionId for old manifests', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

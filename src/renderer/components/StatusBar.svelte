@@ -17,7 +17,10 @@
   import { mergeSkills } from '../lib/skills-merge.js';
   import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
   import { formatMcpActionError, mcpNeedsAuthHint } from '../lib/mcp-errors.js';
-  import type { McpServerInfo, SkillInfo, SkillSuggestion, ThinkingLevel } from '../../shared/types.js';
+  import type { McpServerInfo, SkillInfo, SkillSuggestion } from '../../shared/types.js';
+  import { CONTROL_IDS } from '../../shared/types.js';
+  import SessionControlsPopover from './SessionControlsPopover.svelte';
+  import { formatResetTime } from '../lib/reset-time.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -108,30 +111,14 @@
     if (canAgentCreatePr) sendAgentPrTurn();
     else createPrOpen = true;
   }
-  let modelPickerOpen = $state(false);
+  /** Model list for the agent-settings popover and the context-window fallback. */
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
-
-  async function switchModel(modelId: string) {
-    modelPickerOpen = false;
-    // Reflect the choice immediately — don't wait for the live SDK switch,
-    // which is slow (or a no-op) while the session is idle between turns.
-    const prev = messageStore.getModel(sessionId);
-    messageStore.setModelOverride(sessionId, modelId);
-    try {
-      await window.groveBench.setModel(sessionId, modelId);
-    } catch (e: any) {
-      messageStore.setModelOverride(sessionId, prev);
-      console.error('Failed to switch model:', e);
-    }
-  }
 
   let sessionBranch = $derived(store.sessions.find(s => s.id === sessionId)?.branch ?? '');
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   /** The agent path to creating a PR needs a live, idle session. */
   let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
-  let mode = $derived(messageStore.getMode(sessionId));
-  let thinkingLevel = $derived(messageStore.getThinkingLevel(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
@@ -225,17 +212,6 @@
   });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
-
-  /** Reset time as a clock time in the user's locale and timezone. */
-  function formatResetTime(epoch: number): string {
-    const reset = new Date(epoch * 1000);
-    if (reset.getTime() <= Date.now()) return 'now';
-    const time = reset.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    // Resets more than a day out need the date to be unambiguous
-    return reset.getTime() - Date.now() >= 24 * 3600 * 1000
-      ? `${reset.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
-      : time;
-  }
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
@@ -243,7 +219,6 @@
   let mcpExpanded = $state(false);
 
   // Refs for click-outside detection on popovers
-  let modelPickerRef = $state<HTMLDivElement | null>(null);
   let tasksRef = $state<HTMLDivElement | null>(null);
   let bgTasksRef = $state<HTMLDivElement | null>(null);
   let contextRef = $state<HTMLDivElement | null>(null);
@@ -489,52 +464,19 @@
     return null;
   });
 
-  const modeLabels: Record<string, string> = {
-    default: 'Code',
-    plan: 'Plan',
-    acceptEdits: 'Edit',
-    auto: 'Auto',
-  };
-
-  const modeColors: Record<string, string> = {
-    default: 'text-blue-400 border-blue-400/40',
-    plan: 'text-yellow-400 border-yellow-400/40',
-    acceptEdits: 'text-purple-400 border-purple-400/40',
-    auto: 'text-green-400 border-green-400/40',
-  };
-
-  const thinkingLabels: Record<ThinkingLevel, string> = {
-    off: 'No Think',
-    low: 'Think: Low',
-    medium: 'Think: Med',
-    high: 'Think: High',
-    adaptive: 'Think: Auto',
-  };
-
-  const thinkingColors: Record<ThinkingLevel, string> = {
-    off: 'text-muted-foreground/50 border-muted-foreground/20',
-    low: 'text-purple-300/70 border-purple-300/30',
-    medium: 'text-purple-400/80 border-purple-400/40',
-    high: 'text-purple-400 border-purple-400/50',
-    adaptive: 'text-cyan-400 border-cyan-400/50',
-  };
-
   function handleKeydown(e: KeyboardEvent) {
     if (e.altKey && e.key.toLowerCase() === 'm') {
       e.preventDefault();
-      messageStore.cycleMode(sessionId);
+      messageStore.cycleControl(sessionId, CONTROL_IDS.permissionMode);
     }
     if (e.altKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
-      messageStore.cycleThinkingLevel(sessionId);
+      messageStore.cycleControl(sessionId, CONTROL_IDS.thinking);
     }
   }
 
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as Node;
-    if (modelPickerOpen && modelPickerRef && !modelPickerRef.contains(target)) {
-      modelPickerOpen = false;
-    }
     if (tasksExpanded && tasksRef && !tasksRef.contains(target)) {
       tasksExpanded = false;
     }
@@ -584,51 +526,7 @@
 </script>
 
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
-  {#if model}
-    <div class="relative" bind:this={modelPickerRef}>
-      <button
-        onclick={() => modelPickerOpen = !modelPickerOpen}
-        class="hover:text-foreground transition-colors"
-        title="Change model"
-      >
-        {model}
-      </button>
-
-      {#if modelPickerOpen}
-        <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl py-1 text-xs w-48 z-50">
-          {#each modelOptions as opt}
-            <button
-              onclick={() => switchModel(opt.value)}
-              class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors
-                {model === opt.value ? 'text-primary font-medium' : 'text-muted-foreground'}"
-            >
-              {opt.label}
-              {#if model === opt.value}
-                <span class="ml-1">*</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
-
-  <button
-    onclick={() => messageStore.cycleMode(sessionId)}
-    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent {modeColors[mode] ?? modeColors.default}"
-    title="Change mode (Alt+M)"
-  >
-    {modeLabels[mode] ?? mode}
-  </button>
-
-  <button
-    onclick={() => messageStore.cycleThinkingLevel(sessionId)}
-    class="flex items-center gap-1.5 px-1.5 py-0.5 border transition-colors hover:bg-accent
-      {thinkingColors[thinkingLevel]}"
-    title="Cycle thinking level (Alt+T)"
-  >
-    {thinkingLabels[thinkingLevel]}
-  </button>
+  <SessionControlsPopover {sessionId} {modelOptions} />
 
   <span class="w-px h-3.5 bg-border"></span>
 

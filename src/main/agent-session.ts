@@ -1,6 +1,7 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, ThinkingLevel, McpServerInfo, McpAuthStartResult } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, McpServerInfo, McpAuthStartResult, ProviderUsage, SessionControls } from '../shared/types.js';
+import { CONTROL_IDS } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
@@ -36,6 +37,28 @@ function autoModeSandbox(worktreePath: string): Record<string, unknown> {
     allowUnsandboxedCommands: false,
     filesystem: { allowWrite: [worktreePath] },
   };
+}
+
+/**
+ * Starting values for an adapter's declared controls: each descriptor's
+ * default, with the user's default thinking level overlaid when the adapter
+ * exposes a thinking control that offers it. permissionMode is excluded (it
+ * has its own session field).
+ */
+export function initialControls(
+  adapter: Pick<AgentAdapter, 'getControls'>,
+  model: string | null,
+  defaultThinkingLevel: string | undefined,
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const d of adapter.getControls(model)) {
+    if (d.id === CONTROL_IDS.permissionMode) continue;
+    values[d.id] = d.default;
+    if (d.id === CONTROL_IDS.thinking && defaultThinkingLevel && d.options.some((o) => o.value === defaultThinkingLevel)) {
+      values[d.id] = defaultThinkingLevel;
+    }
+  }
+  return values;
 }
 
 /** Event types that are never persisted or replayed — live UI feedback only. */
@@ -117,8 +140,11 @@ interface ManagedSession {
   eventLogPath: string;
   /** User-assigned display name — shown instead of branch when set. */
   displayName: string | null;
-  /** Current thinking level — survives stop/restart so query restarts keep it. */
-  thinkingLevel: ThinkingLevel;
+  /** Values for the adapter's declared controls (thinking, speed, ...) keyed
+   *  by control id — survive stop/restart so query restarts keep them.
+   *  permissionMode lives in its own field because the session manager
+   *  layers app-level behaviour (auto mode) on top of it. */
+  controls: Record<string, string>;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
   /** Set while a user-initiated in-place interrupt is settling. The resulting
@@ -397,6 +423,8 @@ class AgentSessionManager {
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
 
+    const initialModel = opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null);
+
     const session: ManagedSession = {
       id,
       branch,
@@ -412,7 +440,7 @@ class AgentSessionManager {
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
       pendingResumeAt: null,
-      model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
+      model: initialModel,
       window: win,
       // Copy: the cached array must not be mutated by the live session.
       eventHistory: [...this.loadEventHistory(id)],
@@ -430,7 +458,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      thinkingLevel: appSettings.defaultThinkingLevel ?? 'high',
+      controls: initialControls(adapter, initialModel, appSettings.defaultThinkingLevel),
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,
@@ -571,7 +599,7 @@ class AgentSessionManager {
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
-      thinkingLevel: session.thinkingLevel,
+      controls: session.controls,
       resumeSessionId: session.providerSessionId,
       resumeAtUuid,
       toolAllowRules: currentSettings.toolAllowRules,
@@ -715,6 +743,9 @@ class AgentSessionManager {
               logger.warn(`Failed to persist model for ${session.id}:`, e);
             });
           }
+          // The resolved model decides which controls are valid — tell the
+          // renderer what to render now that the query is up.
+          emit({ type: 'controls_sync', ...this.reconcileControls(session) });
 
           // Persist provider session ID so we can resume after app restart
           if (session.providerSessionId) {
@@ -1051,23 +1082,77 @@ class AgentSessionManager {
       worktreeManager.saveModel(id, model).catch((e) => {
         logger.warn(`Failed to persist model for ${id}:`, e);
       });
+      session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;
     }
   }
 
-  async setThinkingLevel(id: string, level: ThinkingLevel): Promise<void> {
+  /**
+   * Descriptors for the session's current model plus recorded values. Values
+   * that are no longer offered (e.g. after switching to a model without fast
+   * mode) are reset to the descriptor default so the renderer and the next
+   * query start never see an option the provider can't honour.
+   */
+  private reconcileControls(session: ManagedSession): SessionControls {
+    const descriptors = session.adapter.getControls(session.model);
+    const values: Record<string, string> = {};
+    for (const d of descriptors) {
+      if (d.id === CONTROL_IDS.permissionMode) continue;
+      const current = session.controls[d.id];
+      values[d.id] = current !== undefined && d.options.some((o) => o.value === current) ? current : d.default;
+    }
+    session.controls = values;
+    return { descriptors, values };
+  }
+
+  /** Controls for a session; an unknown id (e.g. a stopped session that was
+   *  never restored) falls back to the default adapter's descriptors so the
+   *  status bar still has something to render. */
+  getControls(id: string): SessionControls {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return { descriptors: adapterRegistry.getDefault().getControls(null), values: {} };
+    }
+    return this.reconcileControls(session);
+  }
+
+  async setControl(id: string, controlId: string, value: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    if (controlId === CONTROL_IDS.permissionMode) {
+      throw new Error('permissionMode is set through setMode');
+    }
+    const descriptor = session.adapter.getControls(session.model).find((d) => d.id === controlId);
+    if (!descriptor) throw new Error(`Unknown control "${controlId}" for ${session.adapter.displayName}`);
+    if (!descriptor.options.some((o) => o.value === value)) {
+      throw new Error(`"${value}" is not a valid ${descriptor.label} option for ${session.model ?? 'the default model'}`);
+    }
     // Record even without a live handle so the next query start picks it up
-    session.thinkingLevel = level;
-    if (!session.queryHandle?.setThinkingLevel) return;
+    session.controls = { ...session.controls, [controlId]: value };
+    if (session.queryHandle?.setControl) {
+      try {
+        await session.queryHandle.setControl(controlId, value);
+      } catch (e) {
+        logger.warn(`Failed to set ${controlId} for session ${id}:`, e);
+        throw e;
+      }
+    }
+    session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
+  }
+
+  /** Plan usage for the session's provider; null without a live query or when
+   *  the adapter cannot report it. Failures are logged, never surfaced — the
+   *  popover treats null as "nothing to show". */
+  async getUsage(id: string): Promise<ProviderUsage | null> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.getUsage || session.adapter.capabilities.usage !== true) return null;
     try {
-      await session.queryHandle.setThinkingLevel(level);
+      return await session.queryHandle.getUsage();
     } catch (e) {
-      logger.warn(`Failed to set thinking level for session ${id}:`, e);
-      throw e;
+      logger.warn(`Failed to fetch usage for session ${id}:`, e);
+      return null;
     }
   }
 

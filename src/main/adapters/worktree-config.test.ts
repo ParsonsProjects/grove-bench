@@ -24,6 +24,7 @@ class ClaudeConfigAdapter implements AgentAdapter {
   generatedPaths: string[] = [];
 
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
 
@@ -43,6 +44,7 @@ class MinimalAdapter implements AgentAdapter {
   };
 
   getModels(): ModelInfo[] { return []; }
+  getControls() { return []; }
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> { return { available: true }; }
   async start(_config: AdapterConfig): Promise<AgentQueryHandle> { throw new Error('Not needed'); }
   // No generateWorktreeSettings — this adapter has no config to generate

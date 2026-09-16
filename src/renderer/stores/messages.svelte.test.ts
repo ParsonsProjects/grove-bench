@@ -30,26 +30,17 @@ beforeEach(() => {
   backgroundTaskStore.tasksBySession = {};
   messageStore.contextWindowBySession = {};
   messageStore.turnsBySession = {};
-  messageStore.thinkingBySession = {};
+  messageStore.controlsBySession = {};
   messageStore.rewindDialogOpen = {};
   messageStore.paginationBySession = {};
 });
 
 describe('ingestEvent — system_init', () => {
-  it('does not push a thinking level when the session is at the provider default (high)', () => {
-    messageStore.ingestEvent(SID, {
-      type: 'system_init',
-      sessionId: SID,
-      model: 'test-model-v1',
-      tools: [],
-    } as AgentEvent);
-
-    expect(messageStore.getThinkingLevel(SID)).toBe('high');
-    expect(mockGroveBench.setThinkingLevel).not.toHaveBeenCalled();
-  });
-
-  it('re-applies a non-default thinking level when the query (re)initializes', () => {
-    messageStore.thinkingBySession[SID] = 'low';
+  it('does not push control values back to main — main owns them and re-applies at query start', () => {
+    messageStore.controlsBySession[SID] = {
+      descriptors: [{ id: 'thinking', label: 'Thinking', default: 'high', options: [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] }],
+      values: { thinking: 'low' },
+    };
 
     messageStore.ingestEvent(SID, {
       type: 'system_init',
@@ -58,8 +49,8 @@ describe('ingestEvent — system_init', () => {
       tools: [],
     } as AgentEvent);
 
-    expect(messageStore.getThinkingLevel(SID)).toBe('low');
-    expect(mockGroveBench.setThinkingLevel).toHaveBeenCalledWith(SID, 'low');
+    expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
+    expect(mockGroveBench.setControl).not.toHaveBeenCalled();
   });
 
   it('marks session as ready and not running', () => {
@@ -1130,8 +1121,8 @@ describe('getters with defaults', () => {
     expect(messageStore.getContextWindow('unknown')).toBe(200000);
   });
 
-  it('getThinkingLevel returns high by default', () => {
-    expect(messageStore.getThinkingLevel('unknown')).toBe('high');
+  it('getControlDescriptors returns an empty list for an unknown session', () => {
+    expect(messageStore.getControlDescriptors('unknown')).toEqual([]);
   });
 
   it('getUsage returns zeros for unknown session', () => {
@@ -1141,19 +1132,97 @@ describe('getters with defaults', () => {
   });
 });
 
-describe('thinking level control', () => {
-  it('setThinkingLevel stores the level and forwards it over IPC', async () => {
-    await messageStore.setThinkingLevel(SID, 'medium');
-    expect(messageStore.getThinkingLevel(SID)).toBe('medium');
-    expect(mockGroveBench.setThinkingLevel).toHaveBeenCalledWith(SID, 'medium');
+describe('session controls', () => {
+  const descriptors = [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }] },
+    { id: 'thinking', label: 'Thinking', default: 'high', options: [{ value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] },
+  ];
+
+  it('controls_sync installs the descriptors and values for the session', () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'low' } } as AgentEvent);
+
+    expect(messageStore.getControlDescriptors(SID).map((d) => d.id)).toEqual(['permissionMode', 'thinking']);
+    expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
   });
 
-  it('cycleThinkingLevel advances off → low → medium → high → adaptive → off', () => {
-    messageStore.thinkingBySession[SID] = 'off';
-    for (const expected of ['low', 'medium', 'high', 'adaptive', 'off'] as const) {
-      messageStore.cycleThinkingLevel(SID);
-      expect(messageStore.getThinkingLevel(SID)).toBe(expected);
+  it('getControlValue falls back to the descriptor default, and reads permissionMode from the mode store', () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} } as AgentEvent);
+    messageStore.modeBySession[SID] = 'plan';
+
+    expect(messageStore.getControlValue(SID, 'thinking')).toBe('high');
+    expect(messageStore.getControlValue(SID, 'permissionMode')).toBe('plan');
+    expect(messageStore.getControlValue('unknown', 'thinking')).toBe('');
+  });
+
+  it('setControl reflects the value immediately and forwards it over IPC', async () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'high' } } as AgentEvent);
+
+    const pending = messageStore.setControl(SID, 'thinking', 'low');
+    expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
+    await pending;
+
+    expect(mockGroveBench.setControl).toHaveBeenCalledWith(SID, 'thinking', 'low');
+  });
+
+  it('setControl rolls back when main rejects the value', async () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'high' } } as AgentEvent);
+    mockGroveBench.setControl.mockRejectedValueOnce(new Error('not offered on this model'));
+
+    await messageStore.setControl(SID, 'thinking', 'low');
+
+    expect(messageStore.getControlValue(SID, 'thinking')).toBe('high');
+  });
+
+  it('setControl on permissionMode routes through setMode', async () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} } as AgentEvent);
+
+    await messageStore.setControl(SID, 'permissionMode', 'plan');
+
+    expect(messageStore.getMode(SID)).toBe('plan');
+    expect(mockGroveBench.setMode).toHaveBeenCalledWith(SID, 'plan');
+    expect(mockGroveBench.setControl).not.toHaveBeenCalled();
+  });
+
+  it('cycleControl walks the declared options in order and wraps', () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'off' } } as AgentEvent);
+
+    for (const expected of ['low', 'high', 'off']) {
+      messageStore.cycleControl(SID, 'thinking');
+      expect(messageStore.getControlValue(SID, 'thinking')).toBe(expected);
     }
+  });
+
+  it('cycleMode uses the declared mode options instead of the built-in list', () => {
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: {} } as AgentEvent);
+    messageStore.modeBySession[SID] = 'plan';
+
+    messageStore.cycleMode(SID);
+
+    // Declared list is [default, plan] — so plan wraps to default, not acceptEdits
+    expect(messageStore.getMode(SID)).toBe('default');
+  });
+
+  it('cycleControl on permissionMode still works before any descriptors arrive', () => {
+    messageStore.modeBySession[SID] = 'default';
+
+    messageStore.cycleControl(SID, 'permissionMode');
+
+    expect(messageStore.getMode(SID)).toBe('plan');
+  });
+
+  it('loadControls fetches once and keeps a controls_sync that landed mid-fetch', async () => {
+    let resolveFetch: (v: unknown) => void = () => {};
+    mockGroveBench.getControls.mockImplementationOnce(() => new Promise((r) => { resolveFetch = r; }));
+
+    const loading = messageStore.loadControls(SID);
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors, values: { thinking: 'low' } } as AgentEvent);
+    resolveFetch({ descriptors, values: { thinking: 'high' } });
+    await loading;
+
+    expect(messageStore.getControlValue(SID, 'thinking')).toBe('low');
+
+    await messageStore.loadControls(SID);
+    expect(mockGroveBench.getControls).toHaveBeenCalledTimes(1);
   });
 });
 

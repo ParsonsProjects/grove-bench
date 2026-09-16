@@ -1,7 +1,8 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, PermissionMode, SkillDefinition, ThinkingLevel, ToolCategory } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -537,6 +538,114 @@ export function thinkingConfigFor(
   return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
 }
 
+// ─── Session controls ───
+
+/**
+ * Adaptive thinking (the model decides when and how much to think) exists on
+ * the Claude 4.6+ generations; Haiku 4.5 only takes fixed budgets. Unset
+ * model = SDK default, which is adaptive-capable.
+ */
+export function supportsAdaptiveThinking(model: string | null | undefined): boolean {
+  if (!model) return true;
+  return !/haiku/i.test(model);
+}
+
+/**
+ * Fast mode (faster output, same model) is an Opus-only feature from 4.8 on.
+ * Unset model = SDK default, which currently qualifies.
+ */
+export function supportsFastMode(model: string | null | undefined): boolean {
+  if (!model) return true;
+  return /opus-(4-(8|9)|5)/i.test(model);
+}
+
+const PERMISSION_MODE_OPTIONS: ControlOption[] = [
+  { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+  { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+  { value: 'auto', label: 'Auto', tone: 'success', description: 'Auto-accept edits and read-only commands (sandbox-backed)' },
+];
+
+// Labels are shown under a "Thinking" heading and in the status-bar subtitle,
+// so they carry no prefix.
+const THINKING_OPTIONS: Record<ThinkingLevel, ControlOption> = {
+  off: { value: 'off', label: 'Off', tone: 'muted', description: 'No extended thinking' },
+  low: { value: 'low', label: 'Low', tone: 'accent-soft', description: 'Brief reasoning on hard steps' },
+  medium: { value: 'medium', label: 'Medium', tone: 'accent-soft', description: 'Moderate reasoning budget' },
+  high: { value: 'high', label: 'High', tone: 'accent', description: 'Provider default / maximum reasoning' },
+  adaptive: { value: 'adaptive', label: 'Auto', tone: 'highlight', description: 'Model decides when and how much to think' },
+};
+
+const SPEED_OPTIONS: ControlOption[] = [
+  { value: 'standard', label: 'Standard', tone: 'neutral', description: 'Normal output speed' },
+  { value: 'fast', label: 'Fast', tone: 'highlight', description: 'Faster output on the same model' },
+];
+
+/** Controls the Claude Code adapter exposes for `model`. Pure so it can be
+ *  unit-tested without an SDK. */
+export function claudeControlsFor(model?: string | null): ControlDescriptor[] {
+  const thinkingOptions = THINKING_LEVELS
+    .filter((level) => level !== 'adaptive' || supportsAdaptiveThinking(model))
+    .map((level) => THINKING_OPTIONS[level]);
+  const controls: ControlDescriptor[] = [
+    { id: CONTROL_IDS.permissionMode, label: 'Mode', options: PERMISSION_MODE_OPTIONS, default: 'default' },
+    { id: CONTROL_IDS.thinking, label: 'Thinking', options: thinkingOptions, default: 'high' },
+  ];
+  if (supportsFastMode(model)) {
+    controls.push({ id: CONTROL_IDS.speed, label: 'Speed', options: SPEED_OPTIONS, default: 'standard' });
+  }
+  return controls;
+}
+
+// ─── Plan usage ───
+
+interface ClaudeUsageWindow { utilization: number | null; resets_at: string | null }
+
+/** Shape of the SDK's experimental `/usage` control response (the parts we read). */
+export interface ClaudeUsageResponse {
+  subscription_type?: string | null;
+  rate_limits_available?: boolean;
+  rate_limits?: {
+    five_hour?: ClaudeUsageWindow | null;
+    seven_day?: ClaudeUsageWindow | null;
+    seven_day_opus?: ClaudeUsageWindow | null;
+    seven_day_sonnet?: ClaudeUsageWindow | null;
+    model_scoped?: Array<ClaudeUsageWindow & { display_name: string }>;
+    extra_usage?: (ClaudeUsageWindow & { is_enabled: boolean }) | null;
+  } | null;
+}
+
+/**
+ * Map the SDK's `/usage` response to the neutral ProviderUsage shape. SDK
+ * utilization is a 0–100 percentage and resets are ISO strings; the neutral
+ * shape uses 0–1 fractions and epoch seconds (matching rate_limit events).
+ * Windows without a utilization value are dropped.
+ */
+export function mapClaudeUsage(res: ClaudeUsageResponse | null | undefined, now = Date.now()): ProviderUsage {
+  const plan = res?.subscription_type ?? null;
+  const rl = res?.rate_limits;
+  if (!res?.rate_limits_available || !rl) return { available: false, plan, windows: [], fetchedAt: now };
+
+  const windows: UsageWindow[] = [];
+  const push = (id: string, label: string, w: ClaudeUsageWindow | null | undefined) => {
+    if (!w || w.utilization === null || w.utilization === undefined || Number.isNaN(w.utilization)) return;
+    const resets = w.resets_at ? Date.parse(w.resets_at) : NaN;
+    windows.push({
+      id,
+      label,
+      utilization: Math.max(0, Math.min(1, w.utilization / 100)),
+      ...(Number.isNaN(resets) ? {} : { resetsAt: Math.round(resets / 1000) }),
+    });
+  };
+  push('five_hour', '5-hour', rl.five_hour);
+  push('seven_day', 'Weekly', rl.seven_day);
+  push('seven_day_opus', 'Weekly · Opus', rl.seven_day_opus);
+  push('seven_day_sonnet', 'Weekly · Sonnet', rl.seven_day_sonnet);
+  for (const m of rl.model_scoped ?? []) push(`model:${m.display_name}`, `Weekly · ${m.display_name}`, m);
+  if (rl.extra_usage?.is_enabled) push('extra_usage', 'Extra usage', rl.extra_usage);
+  return { available: true, plan, windows, fetchedAt: now };
+}
+
 // ─── MCP config CLI helpers ───
 
 /** Names the CLI accepts and that are safe to pass through a shell. */
@@ -644,10 +753,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     mcpControl: true,
     plugins: true,
     skills: true,
+    usage: true,
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
   };
+
+  getControls(model?: string | null): ControlDescriptor[] {
+    return claudeControlsFor(model);
+  }
 
   // TODO: Hardcoded model list — update when new models are released, or fetch dynamically from the SDK if it exposes a model list.
   getModels(): ModelInfo[] {
@@ -825,7 +939,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: config.appendSystemPrompt }
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
-    const thinking = thinkingConfigFor(config.thinkingLevel);
+    const thinking = thinkingConfigFor(config.controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined);
+    const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model);
 
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
@@ -841,6 +956,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.skills ? { skills: config.skills } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(thinking ? { thinking } : {}),
+        ...(fastMode ? { settings: { fastMode: true } } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
         ...(config.resumeSessionId ? { resume: config.resumeSessionId } : {}),
@@ -953,8 +1069,30 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         q.setPermissionMode(toSdkPermissionMode(mode));
       },
 
-      async setThinkingLevel(level: ThinkingLevel) {
-        await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[level]);
+      async setControl(controlId: string, value: string) {
+        switch (controlId) {
+          case CONTROL_IDS.thinking:
+            // The runtime token control can't express 'adaptive'; null clears
+            // the limit so the provider default (adaptive on capable models)
+            // applies until the next query start passes the full config.
+            await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null);
+            return;
+          case CONTROL_IDS.speed:
+            await q.applyFlagSettings({ fastMode: value === 'fast' });
+            return;
+          default:
+            throw new Error(`Unknown control "${controlId}" for Claude Code`);
+        }
+      },
+
+      async getUsage(): Promise<ProviderUsage | null> {
+        // The SDK marks this control as experimental and says the name will
+        // change. Probe for it so an SDK bump degrades to "no usage" instead
+        // of throwing from the status bar.
+        const fn = (q as unknown as Record<string, unknown>)['usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'];
+        if (typeof fn !== 'function') return null;
+        const res = await (fn as () => Promise<ClaudeUsageResponse>).call(q);
+        return mapClaudeUsage(res);
       },
 
       async listMcpServers(): Promise<McpServerInfo[]> {

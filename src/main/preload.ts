@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision, ThinkingLevel } from '../shared/types.js';
+import type { GroveBenchAPI, CreateSessionOpts, PermissionDecision } from '../shared/types.js';
 import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
@@ -19,6 +19,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
   renameSession: (sessionId: string, displayName: string) =>
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
+  setSessionCompleted: (sessionId: string, completed: boolean) =>
+    ipcRenderer.invoke(IPC.SESSION_SET_COMPLETED, sessionId, completed),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations
@@ -81,9 +83,13 @@ const api: GroveBenchAPI = {
   setModel: (sessionId: string, model?: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_MODEL, sessionId, model),
 
-  // Thinking control
-  setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
-    ipcRenderer.invoke(IPC.AGENT_SET_THINKING, sessionId, level),
+  // Session controls (adapter-declared)
+  getControls: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_CONTROLS, sessionId),
+  getUsage: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_USAGE, sessionId),
+  setControl: (sessionId: string, controlId: string, value: string) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_CONTROL, sessionId, controlId, value),
 
   // MCP server control
   listMcpServers: (sessionId: string) =>

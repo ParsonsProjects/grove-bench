@@ -296,8 +296,46 @@ const api: Record<string, unknown> = {
   getPrInfo: async () => null,
   listCheckpoints: async () => [],
   listMcpServers: async () => [],
-  listAdapters: async () => [],
-  getModels: async () => [],
+  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
+  getModels: async () => [
+    { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
+    { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },
+    { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', contextWindow: 1_000_000 },
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', contextWindow: 200_000 },
+  ],
+  setModel: async () => {},
+  setMode: async () => {},
+  setSessionCompleted: async () => {},
+  getUsage: async () => ({
+    available: true,
+    plan: 'max',
+    fetchedAt: now,
+    windows: [
+      { id: 'five_hour', label: '5-hour', utilization: 0.42, resetsAt: Math.round((now + 95 * min) / 1000) },
+      { id: 'seven_day', label: 'Weekly', utilization: 0.18, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
+      { id: 'seven_day_opus', label: 'Weekly · Opus', utilization: 0.71, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
+    ],
+  }),
+  // Mirrors the Claude Code adapter's declared controls so the status bar
+  // renders its badges in the browser demo.
+  getControls: async () => ({
+    descriptors: [
+      { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+        { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
+        { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'success' },
+      ] },
+      { id: 'thinking', label: 'Thinking', default: 'high', options: [
+        { value: 'off', label: 'Off', tone: 'muted' }, { value: 'low', label: 'Low', tone: 'accent-soft' },
+        { value: 'medium', label: 'Medium', tone: 'accent-soft' }, { value: 'high', label: 'High', tone: 'accent' },
+        { value: 'adaptive', label: 'Auto', tone: 'highlight' },
+      ] },
+      { id: 'speed', label: 'Speed', default: 'standard', options: [
+        { value: 'standard', label: 'Standard', tone: 'neutral' }, { value: 'fast', label: 'Fast', tone: 'highlight' },
+      ] },
+    ],
+    values: { thinking: 'high', speed: 'standard' },
+  }),
+  setControl: async () => {},
   pluginList: async () => ({ installed: [], available: [] }),
   checkForUpdate: async () => null,
   ptyIsAlive: async () => false,

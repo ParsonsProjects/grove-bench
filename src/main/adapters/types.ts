@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ThinkingLevel, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -26,6 +26,8 @@ export interface AgentCapabilities {
   /** Supports packaged skill instructions (discovery via listSkills, authoring
    *  via addSkill, and the AdapterConfig.skills allowlist filter). */
   skills?: boolean;
+  /** Reports account-level plan usage windows (see AgentQueryHandle.getUsage) */
+  usage?: boolean;
   /** Supports image attachments in messages */
   imageAttachments: boolean;
   /** Supports structured JSON output */
@@ -103,9 +105,10 @@ export interface AdapterConfig {
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> } | null;
   sandbox?: Record<string, unknown> | null;
   extraEnv?: Record<string, string> | null;
-  /** Thinking level to start the session at. When unset (or 'high'), the
-   *  provider's own default reasoning behavior applies. */
-  thinkingLevel?: ThinkingLevel | null;
+  /** Values for the adapter's declared controls (see getControls) to start
+   *  the session with, keyed by control id. permissionMode is passed
+   *  separately. Missing ids mean the provider default applies. */
+  controls?: Record<string, string> | null;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
@@ -147,9 +150,15 @@ export interface AgentQueryHandle {
 
   setModel?(model: string): Promise<void>;
   setPermissionMode?(mode: PermissionMode): void;
-  /** Adjust the thinking/reasoning level. Adapters map the level to their
-   *  provider's mechanism (token budgets, effort params, plain on/off). */
-  setThinkingLevel?(level: ThinkingLevel): Promise<void>;
+  /** Apply a declared control (anything but permissionMode) mid-session.
+   *  Adapters map the value to their provider's mechanism (token budgets,
+   *  effort params, flag settings, ...). Values are pre-validated against
+   *  the descriptors from getControls(). */
+  setControl?(controlId: string, value: string): Promise<void>;
+
+  /** Current plan usage for the account behind this query. Returns null when
+   *  the provider has no such data. Check capabilities.usage first. */
+  getUsage?(): Promise<ProviderUsage | null>;
 
   // ─── Optional MCP server control — check capabilities.mcpControl first ───
 
@@ -188,6 +197,13 @@ export interface AgentAdapter {
 
   /** Available models for this provider */
   getModels(): ModelInfo[];
+
+  /** Runtime controls this provider exposes for `model` (null = provider
+   *  default model). Must include a `permissionMode` descriptor whose values
+   *  are Grove PermissionMode ids the adapter can honour; every other id is
+   *  provider-defined. Option sets may differ per model — the session manager
+   *  resets values that stop being valid after a model switch. */
+  getControls(model?: string | null): ControlDescriptor[];
 
   /** Check if the agent CLI/SDK is available and authenticated */
   checkPrerequisites(): Promise<AdapterPrerequisiteStatus>;
