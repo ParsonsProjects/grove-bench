@@ -1230,10 +1230,15 @@ class MessageStore {
       delete this.turnsBySession[sessionId];
       delete this.paginationBySession[sessionId];
       delete this.pendingClear[sessionId];
-      // Reset checkpoint store so stale checkpoints don't linger in the UI
-      checkpointStore.clear(sessionId);
+      // Drop the checkpoint selection (its message is gone) but keep the
+      // list: main keeps the git refs and flags earlier turns as
+      // beforeClear so their files stay restorable. The refresh runs after
+      // clearEventHistory has captured the clear marker.
+      checkpointStore.clearSelection(sessionId);
       // Truncate event history on disk so old messages don't reappear on restart
-      window.groveBench.clearEventHistory(sessionId).catch(() => {});
+      window.groveBench.clearEventHistory(sessionId)
+        .catch(() => {})
+        .finally(() => checkpointStore.scheduleRefresh(sessionId));
     }
     this.setIsReady(sessionId, true);
     // Don't clear isRunning if the user already submitted a message that this
@@ -1494,6 +1499,13 @@ class MessageStore {
   }
 
   private onRewind(sessionId: string, event: Extract<AgentEvent, { type: 'rewind' }>) {
+    // Files-only restore (a checkpoint from before /clear): the conversation
+    // is untouched, only the working tree moved.
+    if (event.filesOnly) {
+      gitStatusStore.refresh(sessionId);
+      checkpointStore.scheduleRefresh(sessionId);
+      return;
+    }
     // Snapshot edit history before truncation if conversation-only rewind
     if (event.conversationOnly) {
       this.preservedEditHistory[sessionId] = this.getLastTurnFileChanges(sessionId);
@@ -1712,7 +1724,7 @@ class MessageStore {
 
   /** Execute a rewind to a specific user message checkpoint.
    *  When conversationOnly is true, only truncate messages without restoring files. */
-  async executeRewind(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
+  async executeRewind(sessionId: string, userMessageId: string, options?: import('../../shared/types.js').RewindOptions): Promise<void> {
     await window.groveBench.rewindSession(sessionId, userMessageId, options);
     // The rewind event from main will handle message truncation
   }

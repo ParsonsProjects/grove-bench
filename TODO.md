@@ -25,7 +25,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Git-based snapshots at each agent turn
 - [x] Per-turn diff viewing (what changed in each turn)
 - [x] Revert workspace to any previous turn's checkpoint
-- [ ] Preserve checkpoints across `/clear` — currently checkpoints are reset on clear; a better solution would keep git checkpoint refs and rebuild the checkpoint list independently of message history
+- [x] Preserve checkpoints across `/clear` — the git refs are kept and a `__clear__` sentinel checkpoint marks the boundary; `list()` flags earlier turns `beforeClear`, the Checkpoints tab shows them under a "Before /clear" divider with a files-only Restore (the conversation they belonged to is gone, so no conversation rewind is offered)
 
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)

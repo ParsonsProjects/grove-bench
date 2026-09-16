@@ -1513,10 +1513,19 @@ class AgentSessionManager {
 
   /** Rewind files on disk to their state at a specific user message checkpoint.
    *  When options.conversationOnly is true, only truncate the conversation
-   *  without restoring files on disk. */
-  async rewindFiles(id: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void> {
+   *  without restoring files on disk. When options.filesOnly is true, only
+   *  restore the files: the conversation, event history and later checkpoint
+   *  refs are untouched (used for checkpoints from before a /clear, whose
+   *  messages are gone). */
+  async rewindFiles(id: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Session ${id} not found`);
+
+    if (options?.filesOnly) {
+      await session.checkpoints.restore(id, session.worktreePath, userMessageId);
+      session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
+      return;
+    }
 
     if (!options?.conversationOnly) {
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
@@ -1673,11 +1682,12 @@ class AgentSessionManager {
       try {
         fs.writeFileSync(session.eventLogPath, '');
       } catch { /* non-fatal */ }
-      // Clear checkpoint refs + manager state too, otherwise the post-/clear
-      // system_init's resume() re-reads the old refs and the Checkpoints tab
-      // repopulates with checkpoints from the conversation that was just cleared.
-      session.checkpoints.cleanup(id, session.worktreePath).catch((err) => {
-        logger.warn(`[clearEventHistory] checkpoint cleanup failed for ${id}:`, err);
+      // Keep the checkpoint refs — the user can still restore files to any
+      // earlier turn — but capture a clear sentinel so the Checkpoints tab can
+      // separate the cleared conversation's turns from the new one's (the
+      // post-/clear system_init's resume() re-reads all refs).
+      session.checkpoints.markCleared(id, session.worktreePath).catch((err) => {
+        logger.warn(`[clearEventHistory] checkpoint clear marker failed for ${id}:`, err);
       });
     } else {
       // Session not running — clear disk log directly

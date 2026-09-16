@@ -771,7 +771,7 @@ export function registerHandlers() {
 
   // ─── Checkpoint rewind ───
 
-  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) => {
+  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) => {
     await sessionManager.rewindFiles(sessionId, userMessageId, options);
   });
 

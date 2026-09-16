@@ -154,7 +154,7 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
-  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean };
+  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean };
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
@@ -231,11 +231,24 @@ export interface ImageDiffContent {
   head: string | null;
 }
 
+/** How far a rewind reaches. Default (neither flag) restores files AND
+ *  truncates the conversation. `conversationOnly` keeps the files on disk;
+ *  `filesOnly` keeps the conversation (used for checkpoints from before a
+ *  `/clear`, whose messages no longer exist to rewind to). */
+export interface RewindOptions {
+  conversationOnly?: boolean;
+  filesOnly?: boolean;
+}
+
 export interface CheckpointListItem {
   uuid: string;
   turn: number;
   ref: string;
   text?: string;
+  /** True when this checkpoint was captured before the most recent `/clear`.
+   *  Its files can still be restored, but its message is no longer part of
+   *  the conversation, so a conversation rewind to it is not offered. */
+  beforeClear?: boolean;
 }
 
 /** Aggregate diff statistics (git diff --numstat totals). */
@@ -693,7 +706,7 @@ export interface GroveBenchAPI {
   getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
 
   // Checkpoint rewind
-  rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
+  rewindSession(sessionId: string, userMessageId: string, options?: RewindOptions): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
   listCheckpoints(sessionId: string): Promise<CheckpointListItem[]>;
 

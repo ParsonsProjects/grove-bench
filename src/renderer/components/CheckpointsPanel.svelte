@@ -49,6 +49,8 @@
     try {
       if (mode === 'conversation') {
         await messageStore.executeRewind(sessionId, selectedUuid, { conversationOnly: true });
+      } else if (mode === 'files') {
+        await messageStore.executeRewind(sessionId, selectedUuid, { filesOnly: true });
       } else {
         await messageStore.executeRewind(sessionId, selectedUuid);
       }
@@ -64,6 +66,10 @@
   }
 
   let selectedCheckpoint = $derived(checkpoints.find(c => c.uuid === selectedUuid));
+  /** Checkpoints from before the last /clear: files restorable, conversation gone. */
+  let selectedBeforeClear = $derived(!!selectedCheckpoint?.beforeClear);
+  /** Index of the first pre-clear entry in the newest-first list (divider position). */
+  let firstBeforeClearIdx = $derived(checkpoints.findIndex(c => c.beforeClear));
 </script>
 
 {#snippet statsBadge(stats: DiffStats | undefined)}
@@ -108,10 +114,18 @@
       </button>
 
       <div class="flex-1 overflow-y-auto">
-        {#each checkpoints as cp (cp.uuid)}
+        {#each checkpoints as cp, i (cp.uuid)}
           {@const isSelected = cp.uuid === selectedUuid}
           {@const text = getMessageText(cp.uuid)}
           {@const stats = statsByUuid.get(cp.uuid)}
+          {#if i === firstBeforeClearIdx}
+            <div
+              class="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70 bg-muted/30 border-b border-border/50"
+              title="Turns from a conversation that was cleared with /clear. Their files can still be restored."
+            >
+              Before /clear
+            </div>
+          {/if}
           <button
             onclick={() => checkpointStore.selectCheckpoint(sessionId, cp.uuid)}
             class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border/50 transition-colors
@@ -120,7 +134,7 @@
             <span class="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-mono leading-none mt-0.5">
               #{cp.turn}
             </span>
-            <span class="flex-1 min-w-0 truncate text-foreground/80 leading-tight">
+            <span class="flex-1 min-w-0 truncate leading-tight {cp.beforeClear ? 'text-muted-foreground' : 'text-foreground/80'}">
               {text.length > 80 ? text.slice(0, 80) + '...' : text}
             </span>
             {@render statsBadge(stats)}
@@ -175,22 +189,35 @@
                   Since here
                 </button>
               </div>
-              <button
-                onclick={() => handleRewind('all')}
-                disabled={rewinding}
-                class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                title="Restore files and rewind conversation to this point"
-              >
-                {rewinding ? 'Rewinding...' : 'Rewind all'}
-              </button>
-              <button
-                onclick={() => handleRewind('conversation')}
-                disabled={rewinding}
-                class="px-2 py-1 text-[10px] bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-                title="Only rewind conversation, keep current files"
-              >
-                Conv. only
-              </button>
+              {#if selectedBeforeClear}
+                <!-- The conversation this turn belonged to was cleared; only the
+                     files can come back. -->
+                <button
+                  onclick={() => handleRewind('files')}
+                  disabled={rewinding}
+                  class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  title="Restore files to this checkpoint. The conversation was cleared, so it is left as is."
+                >
+                  {rewinding ? 'Restoring...' : 'Restore files'}
+                </button>
+              {:else}
+                <button
+                  onclick={() => handleRewind('all')}
+                  disabled={rewinding}
+                  class="px-2 py-1 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  title="Restore files and rewind conversation to this point"
+                >
+                  {rewinding ? 'Rewinding...' : 'Rewind all'}
+                </button>
+                <button
+                  onclick={() => handleRewind('conversation')}
+                  disabled={rewinding}
+                  class="px-2 py-1 text-[10px] bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+                  title="Only rewind conversation, keep current files"
+                >
+                  Conv. only
+                </button>
+              {/if}
             {/if}
           </div>
         </div>
