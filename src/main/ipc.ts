@@ -790,9 +790,20 @@ export function registerHandlers() {
     try {
       const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], worktree.path);
       const result = parseGitStatusPorcelain(raw);
+      if (result.entries.length === 0) return result;
       // Attach per-file line counts (combined working-tree-vs-HEAD) as a sidebar hint.
+      // Scope the diff to the changed paths so this doesn't walk the whole tree
+      // after every agent edit; fall back to the full diff when the path list
+      // would be unreasonably long for a command line.
       try {
-        const numstatRaw = await git(['diff', 'HEAD', '--numstat'], worktree.path);
+        const paths = new Set<string>();
+        for (const e of result.entries) {
+          paths.add(e.filePath);
+          if (e.origPath) paths.add(e.origPath);
+        }
+        const numstatArgs = ['diff', 'HEAD', '--numstat'];
+        if (paths.size <= 200) numstatArgs.push('--', ...paths);
+        const numstatRaw = await git(numstatArgs, worktree.path);
         const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
         for (const entry of result.entries) {
           const stat = stats.get(entry.filePath);

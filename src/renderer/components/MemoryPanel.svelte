@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -18,6 +19,12 @@
   let isEditing = $state(false);
   let showNewFile = $state(false);
   let newFilePath = $state('');
+
+  /** Focus the new-file input once the dialog has finished mounting (after
+   *  the dialog's own open-autofocus has run). */
+  function focusOnMount(node: HTMLElement) {
+    tick().then(() => node.focus());
+  }
   let newFileFolder = $state('repo');
   let confirmDeletePath = $state<string | null>(null);
   let showBackups = $state(false);
@@ -376,14 +383,15 @@
           </Select.Root>
         </div>
         <div>
-          <label class="text-xs text-muted-foreground block mb-1">File name</label>
+          <label for="memory-new-file-name" class="text-xs text-muted-foreground block mb-1">File name</label>
           <input
+            id="memory-new-file-name"
             type="text"
             bind:value={newFilePath}
             placeholder="e.g. overview"
             class="w-full text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
             onkeydown={(e) => { if (e.key === 'Enter') createNewFile(); }}
-            autofocus
+            use:focusOnMount
           />
           <span class="text-xs text-muted-foreground mt-1">.md will be added automatically</span>
         </div>

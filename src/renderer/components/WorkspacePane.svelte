@@ -28,6 +28,14 @@
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
 
+  // TerminalPanel spawns a shell process and an xterm instance on mount. Every
+  // live session's pane is mounted at once, so defer that until the Terminal
+  // tab is first opened for this session; once mounted it stays mounted.
+  let terminalMounted = $state(false);
+  $effect(() => {
+    if (activeTab === 'terminal') terminalMounted = true;
+  });
+
   function switchTab(tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
@@ -223,7 +231,9 @@
     <CheckpointsPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
-    <TerminalPanel {sessionId} />
+    {#if terminalMounted}
+      <TerminalPanel {sessionId} />
+    {/if}
   </div>
 
   <StatusBar {sessionId} />

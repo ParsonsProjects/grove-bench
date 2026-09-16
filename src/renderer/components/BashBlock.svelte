@@ -24,11 +24,32 @@
       : ''
   );
 
-  let outputLines = $derived(result ? result.split('\n') : []);
-  let isLong = $derived(outputLines.length > 20);
+  const PREVIEW_LINES = 20;
+
+  /** Number of lines without materializing a split array of the whole output. */
+  function countLines(text: string): number {
+    let n = 1;
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) n++;
+    return n;
+  }
+
+  /** The first `count` lines of `text`. */
+  function firstLines(text: string, count: number): string {
+    let idx = -1;
+    for (let i = 0; i < count; i++) {
+      idx = text.indexOf('\n', idx + 1);
+      if (idx === -1) return text;
+    }
+    return text.slice(0, idx);
+  }
+
+  let lineCount = $derived(result ? countLines(result) : 0);
+  let isLong = $derived(lineCount > PREVIEW_LINES);
   let collapsed = $state(true);
   let summaryOutputExpanded = $state(false);
   let hasLinks = $derived(result ? hasLocalhostUrl(result) : false);
+  // Only computed while the collapsed preview is actually shown.
+  let preview = $derived(result && isLong && collapsed && !summaryMode ? firstLines(result, PREVIEW_LINES) : '');
 
   function escapeHtml(text: string): string {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -65,7 +86,7 @@
           onclick={() => summaryOutputExpanded = !summaryOutputExpanded}
           class="text-xs text-muted-foreground hover:text-foreground shrink-0"
         >
-          {summaryOutputExpanded ? 'hide' : 'show'} ({outputLines.length} lines)
+          {summaryOutputExpanded ? 'hide' : 'show'} ({lineCount} lines)
         </button>
       {/if}
     {:else if result !== undefined}
@@ -74,7 +95,7 @@
           onclick={() => summaryOutputExpanded = !summaryOutputExpanded}
           class="text-xs text-muted-foreground hover:text-foreground shrink-0"
         >
-          {summaryOutputExpanded ? 'hide' : 'show'} ({outputLines.length} lines)
+          {summaryOutputExpanded ? 'hide' : 'show'} ({lineCount} lines)
         </button>
       {:else}
         <span class="text-xs text-muted-foreground">done</span>
@@ -110,15 +131,15 @@
       <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/out:opacity-100" />
       {#if isLong && collapsed}
         {#if hasLinks}
-          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(outputLines.slice(0, 20).join('\n'))}</pre>
+          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{@html linkifyOutput(preview)}</pre>
         {:else}
-          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{outputLines.slice(0, 20).join('\n')}</pre>
+          <pre class="text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap {isError ? 'text-red-300' : ''}">{preview}</pre>
         {/if}
         <button
           onclick={() => collapsed = false}
           class="text-xs text-primary hover:text-primary/80 mt-1"
         >
-          Show all {outputLines.length} lines
+          Show all {lineCount} lines
         </button>
       {:else}
         {#if hasLinks}

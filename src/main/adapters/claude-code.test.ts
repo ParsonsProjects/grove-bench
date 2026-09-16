@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -209,6 +209,35 @@ describe('supportsLargeContext()', () => {
 function makeCtx() {
   return { toolUseMap: new Map<string, string>() };
 }
+
+describe('capToolResult()', () => {
+  it('returns short results unchanged', () => {
+    expect(capToolResult('hello')).toBe('hello');
+    const exact = 'x'.repeat(200_000);
+    expect(capToolResult(exact)).toBe(exact);
+  });
+
+  it('keeps the head and tail of an oversized result with an omission marker', () => {
+    const big = 'H'.repeat(150_000) + 'M'.repeat(1_000_000) + 'T'.repeat(50_000);
+    const capped = capToolResult(big);
+    expect(capped.length).toBeLessThan(big.length);
+    expect(capped.startsWith('H'.repeat(150_000))).toBe(true);
+    expect(capped.endsWith('T'.repeat(50_000))).toBe(true);
+    expect(capped).toContain('characters omitted');
+    expect(capped).not.toContain('MMMMMMMMMMMMMMMMMMMM' + 'M'.repeat(999_980));
+  });
+
+  it('applies the cap to tool_result blocks', () => {
+    const ctx = { toolUseMap: new Map<string, string>() };
+    const events = transformMessage({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'a'.repeat(300_000) }] },
+    } as any, ctx as any);
+    const result = events.find((e) => e.type === 'tool_result') as Extract<AgentEvent, { type: 'tool_result' }>;
+    expect(result.content.length).toBeLessThan(300_000);
+    expect(result.content).toContain('characters omitted');
+  });
+});
 
 describe('transformMessage()', () => {
   describe('system messages', () => {

@@ -1,17 +1,5 @@
-<script lang="ts">
+<script lang="ts" module>
   import Fuse, { type IFuseOptions } from 'fuse.js';
-
-  let {
-    sessionId,
-    query,
-    onselect,
-    onclose,
-  }: {
-    sessionId: string;
-    query: string;
-    onselect: (path: string) => void;
-    onclose: () => void;
-  } = $props();
 
   interface FileEntry {
     path: string;
@@ -19,15 +7,20 @@
     isDir: boolean;
   }
 
-  let files = $state<FileEntry[]>([]);
-  let loading = $state(true);
-  let selectedIndex = $state(0);
-  let fuse: Fuse<FileEntry> | null = null;
-
-  let cacheKey = $derived(`filepicker:${sessionId}`);
   const CACHE_TTL = 30_000;
 
-  const fileCache = new Map<string, { files: FileEntry[]; ts: number }>();
+  // Module-level so the listing (one IPC round trip walking the worktree) and
+  // the Fuse index survive the popup closing — it is unmounted on every '@'.
+  const fileCache = new Map<string, { files: FileEntry[]; fuse: Fuse<FileEntry>; ts: number }>();
+
+  const fuseOpts: IFuseOptions<FileEntry> = {
+    keys: [
+      { name: 'filename', weight: 2 },
+      { name: 'path', weight: 1 },
+    ],
+    threshold: 0.4,
+    ignoreLocation: true,
+  };
 
   function toEntries(paths: string[]): FileEntry[] {
     return paths.map((p) => {
@@ -40,32 +33,52 @@
       };
     });
   }
+</script>
 
-  const fuseOpts: IFuseOptions<FileEntry> = {
-    keys: [
-      { name: 'filename', weight: 2 },
-      { name: 'path', weight: 1 },
-    ],
-    threshold: 0.4,
-    ignoreLocation: true,
-  };
+<script lang="ts">
+  let {
+    sessionId,
+    query,
+    onselect,
+    onclose,
+  }: {
+    sessionId: string;
+    query: string;
+    onselect: (path: string) => void;
+    onclose: () => void;
+  } = $props();
+
+  // Raw: the list is replaced wholesale, never mutated, and Fuse reads every
+  // entry per search — a deep proxy would add a trap per property access.
+  let files = $state.raw<FileEntry[]>([]);
+  let loading = $state(true);
+  let selectedIndex = $state(0);
+  let fuse: Fuse<FileEntry> | null = null;
+
+  let cacheKey = $derived(`filepicker:${sessionId}`);
 
   $effect(() => {
-    const cached = fileCache.get(cacheKey);
+    const key = cacheKey;
+    const cached = fileCache.get(key);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       files = cached.files;
-      fuse = new Fuse(files, fuseOpts);
+      fuse = cached.fuse;
       loading = false;
     } else {
       loading = true;
+      let stale = false;
       window.groveBench.listFiles(sessionId).then((result) => {
-        files = toEntries(result);
-        fileCache.set(cacheKey, { files, ts: Date.now() });
-        fuse = new Fuse(files, fuseOpts);
+        const entries = toEntries(result);
+        const index = new Fuse(entries, fuseOpts);
+        fileCache.set(key, { files: entries, fuse: index, ts: Date.now() });
+        if (stale) return;
+        files = entries;
+        fuse = index;
         loading = false;
       }).catch(() => {
-        loading = false;
+        if (!stale) loading = false;
       });
+      return () => { stale = true; };
     }
   });
 

@@ -43,6 +43,20 @@ type SpawnedProcess = import('@anthropic-ai/claude-agent-sdk').SpawnedProcess;
  * invocation to ourselves and drop the PATH dependency entirely. Non-node
  * commands (e.g. a native `claude` binary) are spawned unchanged.
  */
+/** Tool results are kept only for display, replay and memory extraction — the
+ *  model already received the full text. Cap what we retain so a test suite
+ *  or build printing tens of MB doesn't live in main-process history, the
+ *  JSONL log and renderer state for the rest of the session. */
+const MAX_TOOL_RESULT_CHARS = 200_000;
+const TOOL_RESULT_HEAD_CHARS = 150_000;
+
+export function capToolResult(content: string): string {
+  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
+  const tailChars = MAX_TOOL_RESULT_CHARS - TOOL_RESULT_HEAD_CHARS;
+  const omitted = content.length - TOOL_RESULT_HEAD_CHARS - tailChars;
+  return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
+}
+
 function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
@@ -340,7 +354,7 @@ export function transformMessage(
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
-              content: resultContent,
+              content: capToolResult(resultContent),
               isError: block.is_error,
             });
           }

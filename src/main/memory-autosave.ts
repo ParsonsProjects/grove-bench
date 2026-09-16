@@ -253,19 +253,16 @@ async function runExtraction(
 
   logger.info(`[memory-autosave] Running extraction for session ${sessionId} (${events.length} events)`);
 
+  const abortController = new AbortController();
+  // Safety timeout: 60 seconds
+  const timeout = setTimeout(() => abortController.abort(), 60_000);
   try {
-    const abortController = new AbortController();
-    // Safety timeout: 60 seconds
-    const timeout = setTimeout(() => abortController.abort(), 60_000);
-
     const model = settings.getSettings().memoryModel || undefined;
     const resultText = await adapter.generateText(
       systemPrompt,
       'Extract memories from the conversation above. Respond with JSON only.',
       { cwd, abortSignal: abortController.signal, model },
     );
-
-    clearTimeout(timeout);
 
     // Parse the JSON response. Take the first balanced object so fences or
     // trailing commentary from the model don't waste the whole extraction.
@@ -286,6 +283,8 @@ async function runExtraction(
   } catch (err) {
     logger.error(`[memory-autosave] Extraction failed: ${err}`);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

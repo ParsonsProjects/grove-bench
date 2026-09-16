@@ -30,12 +30,24 @@ interface CheckpointRef {
   turn: number;
   uuid: string;
   text?: string;
+  /** Commit object id. Used to key the numstat cache by content rather than
+   *  by ref name, since turn numbers are reused after a rewind. */
+  oid?: string;
 }
+
+/** Bound on cached numstat results per session — one entry per (from, to)
+ *  pair, so this is only reached after hundreds of turns. */
+const NUMSTAT_CACHE_MAX = 500;
 
 interface SessionCheckpoints {
   turnCount: number;
   uuidToRef: Map<string, string>;
   captureQueue: Promise<void>;
+  /** `git diff --numstat` results keyed by `${fromOid}..${toOid}`. Both sides
+   *  are content-addressed (checkpoint commits, working-tree tree objects), so
+   *  an entry never goes stale; history() would otherwise re-run one git
+   *  process per checkpoint on every refresh. */
+  numstatCache: Map<string, DiffStats>;
 }
 
 export interface CheckpointInfo {
@@ -50,7 +62,7 @@ export class CheckpointManager {
   private getOrCreate(sessionId: string): SessionCheckpoints {
     let s = this.sessions.get(sessionId);
     if (!s) {
-      s = { turnCount: 0, uuidToRef: new Map(), captureQueue: Promise.resolve() };
+      s = { turnCount: 0, uuidToRef: new Map(), captureQueue: Promise.resolve(), numstatCache: new Map() };
       this.sessions.set(sessionId, s);
     }
     return s;
@@ -224,7 +236,7 @@ export class CheckpointManager {
   private async listRefs(sessionId: string, cwd: string): Promise<CheckpointRef[]> {
     const SEP = '@@GROVE_SEP@@';
     const output = await git(
-      ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)`, `refs/grove/checkpoints/${sessionId}/`],
+      ['for-each-ref', `--format=%(refname)${SEP}%(subject)${SEP}%(body)${SEP}%(objectname)`, `refs/grove/checkpoints/${sessionId}/`],
       cwd
     );
     const items: CheckpointRef[] = [];
@@ -235,6 +247,7 @@ export class CheckpointManager {
       const ref = parts[0].trim();
       const subject = parts[1].trim();
       const body = (parts[2] ?? '').trim();
+      const oid = parts[3]?.trim() || undefined;
 
       const turnMatch = ref.match(/\/turn\/(\d+)$/);
       const turn = turnMatch ? parseInt(turnMatch[1], 10) : 0;
@@ -245,7 +258,7 @@ export class CheckpointManager {
       const textMatch = body.match(/^text=(.*)/);
       const text = textMatch?.[1] || undefined;
 
-      items.push({ ref, turn, uuid: uuidMatch[1], text });
+      items.push({ ref, turn, uuid: uuidMatch[1], text, oid });
     }
     items.sort((a, b) => a.turn - b.turn);
     return items;
@@ -275,16 +288,29 @@ export class CheckpointManager {
 
     try {
       const currentTree = await this.writeWorkingTree(sessionId, cwd);
+      const cache = this.getOrCreate(sessionId).numstatCache;
+
+      // Cached by content ids: a (checkpoint, checkpoint) pair never changes,
+      // and the working tree's tree oid only matches while nothing on disk moved.
+      const numstat = async (from: CheckpointRef, to: CheckpointRef | string): Promise<DiffStats> => {
+        const toRef = typeof to === 'string' ? to : to.ref;
+        const key = `${from.oid ?? from.ref}..${typeof to === 'string' ? to : (to.oid ?? to.ref)}`;
+        const hit = cache.get(key);
+        if (hit) return hit;
+        const out = await git(['diff', '--numstat', from.ref, toRef, '--', '.'], cwd);
+        const stats = parseNumstat(out);
+        if (cache.size >= NUMSTAT_CACHE_MAX) cache.clear();
+        cache.set(key, stats);
+        return stats;
+      };
 
       const entries: DiffHistoryEntry[] = [];
       for (let i = 0; i < refs.length; i++) {
         const r = refs[i];
         if (r.uuid === BASELINE_UUID) continue;
-        const to = refs[i + 1]?.ref ?? currentTree;
         let stats: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
         try {
-          const out = await git(['diff', '--numstat', r.ref, to, '--', '.'], cwd);
-          stats = parseNumstat(out);
+          stats = await numstat(r, refs[i + 1] ?? currentTree);
         } catch (err) {
           logger.debug(`[checkpoints] history numstat failed turn=${r.turn}:`, err);
         }
@@ -294,8 +320,7 @@ export class CheckpointManager {
       // Cumulative stats: oldest ref (the baseline for new sessions) → now
       let total: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
       try {
-        const out = await git(['diff', '--numstat', refs[0].ref, currentTree, '--', '.'], cwd);
-        total = parseNumstat(out);
+        total = await numstat(refs[0], currentTree);
       } catch (err) {
         logger.debug(`[checkpoints] history total numstat failed:`, err);
       }
