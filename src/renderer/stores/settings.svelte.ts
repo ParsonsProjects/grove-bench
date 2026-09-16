@@ -28,8 +28,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   notifyOnPermission: true,
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
+  notifyTaskbarBadge: true,
   analyticsEnabled: false,
   analyticsPrompted: false,
+  crashReportsEnabled: false,
 };
 
 class SettingsStore {

@@ -300,6 +300,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
   setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
+  getUnreadSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_UNREAD) as Promise<string[]>,
+  setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
   getSidebarWidth: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>
@@ -330,6 +332,22 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.NOTIFY_FOCUS_SESSION, handler);
     };
   },
+
+  // Error reporting
+  onAppError: (callback: (report: import('../shared/types.js').AppErrorReport) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, report: import('../shared/types.js').AppErrorReport) =>
+      callback(report);
+    ipcRenderer.on(IPC.APP_ERROR, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.APP_ERROR, handler);
+    };
+  },
+  reportError: (report: import('../shared/types.js').AppErrorReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
+
+  // Taskbar attention badge
+  setAttentionBadge: (count: number, dataUrl: string | null) =>
+    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl),
 
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),

@@ -772,10 +772,26 @@ export interface GroveBenchAPI {
   setSessionSort(sort: SessionSortState): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
+  /** Sessions flagged unread (finished a turn / got a PR alert while not
+   *  focused) when the app last ran, so the flag survives a restart. */
+  getUnreadSessions(): Promise<string[]>;
+  setUnreadSessions(ids: string[]): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
   onPowerResume(callback: (resumeIds: string[]) => void): () => void;
+
+  // Error reporting
+  /** Uncaught main-process errors, forwarded so the UI can surface them. */
+  onAppError(callback: (report: AppErrorReport) => void): () => void;
+  /** Send an uncaught renderer error to main for the file log. */
+  reportError(report: AppErrorReport): void;
+
+  // Taskbar attention badge
+  /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
+   *  badge, Linux badge count). `dataUrl` is a renderer-drawn PNG used for the
+   *  Windows overlay; 0 clears the badge. */
+  setAttentionBadge(count: number, dataUrl: string | null): void;
 
   // OS notifications
   notify(req: OsNotificationRequest): void;
@@ -885,12 +901,36 @@ export interface GroveBenchSettings {
   notifyOnPrAlert: boolean;
   /** Flash the taskbar button alongside a notification. Default true. */
   notifyTaskbarFlash: boolean;
+  /** Overlay a badge on the taskbar icon with the number of sessions that
+   *  need attention (blocked on input, or finished while unfocused). Default true. */
+  notifyTaskbarBadge: boolean;
 
   // Privacy
   /** Enable anonymous usage analytics (PostHog). Off by default. */
   analyticsEnabled: boolean;
   /** Whether the user has been shown the analytics consent prompt. */
   analyticsPrompted: boolean;
+  /** Send uncaught exceptions (message + stack, no code or paths beyond the
+   *  stack itself) to the analytics backend. Only effective while
+   *  analyticsEnabled is on. Off by default. */
+  crashReportsEnabled: boolean;
+}
+
+// ─── Error reporting ───
+
+/** An uncaught error captured in either process. Main-process errors are
+ *  forwarded to the renderer for display; renderer errors are forwarded to
+ *  main for the file log. */
+export interface AppErrorReport {
+  source: 'main' | 'renderer';
+  /** What surfaced it: 'uncaughtException', 'unhandledRejection', 'error',
+   *  'boundary', ... */
+  kind: string;
+  message: string;
+  stack?: string;
+  /** Session whose view raised it, when known (renderer error boundaries). */
+  sessionId?: string;
+  timestamp: number;
 }
 
 // ─── Memory ───
@@ -1080,6 +1120,13 @@ export const IPC = {
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
+  APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
+  /** Main → renderer: an uncaught main-process error. */
+  APP_ERROR: 'app:error',
+  /** Renderer → main: an uncaught renderer error, for the file log. */
+  APP_REPORT_ERROR: 'app:reportError',
+  WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARK_ADD: 'bookmarks:add',

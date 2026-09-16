@@ -561,6 +561,10 @@
                 <Checkbox bind:checked={settingsStore.draft.notifyTaskbarFlash} />
                 Flash the taskbar button
               </label>
+              <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                <Checkbox bind:checked={settingsStore.draft.notifyTaskbarBadge} />
+                Badge the taskbar icon with the number of sessions needing attention
+              </label>
             </div>
           </div>
 
@@ -665,6 +669,11 @@
             Help improve Grove Bench by sending anonymous usage data
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">No personal information or code content is collected.</p>
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer {settingsStore.draft.analyticsEnabled ? '' : 'opacity-50'}">
+            <Checkbox bind:checked={settingsStore.draft.crashReportsEnabled} disabled={!settingsStore.draft.analyticsEnabled} />
+            Send crash reports
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">When something goes wrong, send the error message and stack trace along with the usage data. Requires usage data to be on. Never includes prompts, code, or repository paths.</p>
         </div>
 
       {:else if tab === 'mcp'}

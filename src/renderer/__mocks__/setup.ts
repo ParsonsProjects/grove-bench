@@ -75,6 +75,11 @@ const mockGroveBench = {
   setSessionSort: vi.fn(),
   getSidebarWidth: vi.fn(() => Promise.resolve(null as number | null)),
   setSidebarWidth: vi.fn(),
+  getUnreadSessions: vi.fn(() => Promise.resolve([] as string[])),
+  setUnreadSessions: vi.fn(),
+  onAppError: vi.fn(() => () => {}),
+  reportError: vi.fn(),
+  setAttentionBadge: vi.fn(),
   listBookmarks: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').Bookmark[])),
   addBookmark: vi.fn((b: Omit<import('../../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
     Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 } as import('../../shared/types.js').Bookmark)),

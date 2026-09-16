@@ -40,19 +40,19 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Native notification when an agent is blocked on a permission prompt or question, and for PR-watch alerts (new CI failure / review comments / needs-human)
 - [x] Taskbar flash while a notification is pending (cleared on focus); clicking a notification jumps to the session
 - [x] Sidebar attention flash extended to PR alerts (previously only status-bar chips)
-- [ ] Overlay badge on the taskbar icon showing the count of sessions needing attention
+- [x] Overlay badge on the taskbar icon showing the count of sessions needing attention — renderer draws the count bitmap (`attention-badge.ts`), main applies it via `setOverlayIcon` (Windows) / dock badge (macOS) / `setBadgeCount` (Linux); toggle in Settings → Notifications
 
 ### Attention Triage
 - [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
 - [x] Per-repo attention counts on each Projects header
 - [x] Mark Completed / Reopen in the session context menu — persisted as `completedAt` in the worktree manifest, hidden behind a "Show completed" toggle, reopened automatically by the next user message
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
-- [ ] Persist the unread flag across restarts (in-memory only today)
+- [x] Persist the unread flag across restarts — `unreadSessionIds` in app-state.json, restored after worktree restore
 
 ### Robustness
-- [ ] Global error handling — `uncaughtException` handler in main; `window.onerror` / `unhandledrejection` + error boundary in renderer
-- [ ] Opt-in crash reporting (exception capture alongside existing PostHog analytics)
-- [ ] Schema versioning + migration for persisted state (`settings.ts` `validate()` is an empty stub; `app-state.ts` raw-parses JSON with no upgrade path)
+- [x] Global error handling — `crash-handling.ts` installs `uncaughtException` / `unhandledRejection` handlers in main (file log + forwarded to the renderer as a toast); `error-handling.ts` hooks `window.onerror` / `unhandledrejection` in the renderer (toast + file log via IPC); `<svelte:boundary>` around the sidebar and each session pane with a Reload view button
+- [x] Opt-in crash reporting — "Send crash reports" toggle under Privacy (requires analytics on); uncaught errors from either process go to PostHog `captureException` with message, stack, source and kind only
+- [x] Schema versioning + migration for persisted state — `persisted-state.ts` (top-level `schemaVersion`, ordered migration table, newer-file handling); settings.json and app-state.json are migrated on load, then validated field by field with Zod so one corrupt value resets to its default instead of dropping the file. Worktree manifest still unversioned.
 
 ## Priority 2 — Notable Gaps
 

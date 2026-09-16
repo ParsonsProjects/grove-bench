@@ -48,8 +48,10 @@ const SETTINGS = {
   notifyOnPermission: true,
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
+  notifyTaskbarBadge: true,
   analyticsEnabled: false,
   analyticsPrompted: true,
+  crashReportsEnabled: false,
 };
 
 const PREVIEWS: Record<string, { firstPrompt: string; lastText: string }> = {
@@ -284,6 +286,11 @@ const api: Record<string, unknown> = {
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
   getSidebarWidth: async () => 320,
+  getUnreadSessions: async () => [],
+  setUnreadSessions: () => {},
+  onAppError: () => () => {},
+  reportError: () => {},
+  setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
   getEventHistoryCount: async () => 0,
   searchEventHistory: async () => [],

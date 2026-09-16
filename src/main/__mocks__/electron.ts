@@ -7,6 +7,12 @@ export const app = {
   isReady: vi.fn(() => true),
   on: vi.fn(),
   quit: vi.fn(),
+  setBadgeCount: vi.fn(),
+  dock: { setBadge: vi.fn() },
+};
+
+export const nativeImage = {
+  createFromDataURL: vi.fn(() => ({ isEmpty: () => false })),
 };
 
 export const BrowserWindow = vi.fn().mockImplementation(() => ({
