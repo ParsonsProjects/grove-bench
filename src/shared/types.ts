@@ -330,6 +330,22 @@ export interface BranchCommit {
   body: string;
 }
 
+/** A commit with its id, for pickers (cherry-pick source lists). */
+export interface CommitEntry {
+  sha: string;
+  shortSha: string;
+  subject: string;
+}
+
+/** Outcome of a branch operation (rebase / cherry-pick / squash). A failed
+ *  operation is always unwound (`--abort`) before returning, so the worktree
+ *  is never left mid-operation; `conflicts` lists the files that clashed. */
+export interface GitOpResult {
+  success: boolean;
+  conflicts?: string[];
+  error?: string;
+}
+
 // ─── Thinking Level ───
 
 /** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
@@ -704,6 +720,14 @@ export interface GroveBenchAPI {
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
   getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
+  /** Commits on `ref` (a branch name or commit) that aren't on `base`, newest first, with ids. */
+  gitLogCommits(sessionId: string, ref: string, base: string): Promise<CommitEntry[]>;
+  /** Rebase the session branch onto another branch. Conflicts are aborted and reported. */
+  gitRebase(sessionId: string, onto: string): Promise<GitOpResult>;
+  /** Apply one commit onto the session branch. Conflicts are aborted and reported. */
+  gitCherryPick(sessionId: string, sha: string): Promise<GitOpResult>;
+  /** Squash every commit since the merge base with `base` into one. */
+  gitSquash(sessionId: string, base: string, message: string): Promise<GitOpResult>;
 
   // Checkpoint rewind
   rewindSession(sessionId: string, userMessageId: string, options?: RewindOptions): Promise<void>;
@@ -1100,6 +1124,10 @@ export const IPC = {
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',
+  GIT_LOG_COMMITS: 'git:logCommits',
+  GIT_REBASE: 'git:rebase',
+  GIT_CHERRY_PICK: 'git:cherryPick',
+  GIT_SQUASH: 'git:squash',
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_INFO: 'pr:info',
   PR_CREATE: 'pr:create',

@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import type { BranchCommit, GitSyncStatus } from '../shared/types.js';
+import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
 
 export async function git(args: string[], cwd: string): Promise<string> {
   const result = await execa('git', args, { cwd });
@@ -125,43 +125,45 @@ export async function validateBranchName(name: string): Promise<boolean> {
   }
 }
 
+/**
+ * Work out which files a failed merge/rebase/cherry-pick left in conflict:
+ * porcelain status first, then `diff --diff-filter=U`, then the CONFLICT
+ * lines in git's own message. Falls back to the error text so the caller
+ * always has something to show.
+ */
+async function detectConflicts(cwd: string, opErr: any): Promise<string[]> {
+  const errMsg: string = opErr?.stderr || opErr?.message || String(opErr);
+  try {
+    const status = await git(['status', '--porcelain'], cwd);
+    const conflicts = status.split('\n')
+      .filter(l => /^(UU|AA|DD|DU|UD|AU|UA)\s/.test(l))
+      .map(l => l.slice(3).trim());
+    if (conflicts.length > 0) return conflicts;
+
+    // No UU lines — try to extract conflicted files from diff --name-only --diff-filter=U
+    const diffOutput = await git(['diff', '--name-only', '--diff-filter=U'], cwd).catch(() => '');
+    const diffConflicts = diffOutput.split('\n').map(l => l.trim()).filter(Boolean);
+    if (diffConflicts.length > 0) return diffConflicts;
+
+    // Still nothing — extract info from the error message
+    // ("CONFLICT (content): Merge conflict in <file>")
+    const conflictMatches = [...errMsg.matchAll(/CONFLICT[^:]*:\s*Merge conflict in\s+(.+)/g)];
+    if (conflictMatches.length > 0) {
+      return conflictMatches.map((m: RegExpMatchArray) => m[1].trim());
+    }
+    return [errMsg.slice(0, 200)];
+  } catch {
+    return [errMsg.slice(0, 200)];
+  }
+}
+
 export async function mergeNoCommit(cwd: string, branch: string): Promise<{ success: boolean; conflicts?: string[] }> {
   try {
     await git(['merge', '--no-commit', '--no-ff', branch], cwd);
     await git(['commit', '-m', `Merge ${branch}`], cwd);
     return { success: true };
   } catch (mergeErr: any) {
-    // Check for conflict markers via porcelain status
-    try {
-      const status = await git(['status', '--porcelain'], cwd);
-      const conflicts = status.split('\n')
-        .filter(l => /^(UU|AA|DD|DU|UD|AU|UA)\s/.test(l))
-        .map(l => l.slice(3).trim());
-
-      if (conflicts.length > 0) {
-        return { success: false, conflicts };
-      }
-
-      // No UU lines — try to extract conflicted files from diff --name-only --diff-filter=U
-      const diffOutput = await git(['diff', '--name-only', '--diff-filter=U'], cwd).catch(() => '');
-      const diffConflicts = diffOutput.split('\n').map(l => l.trim()).filter(Boolean);
-      if (diffConflicts.length > 0) {
-        return { success: false, conflicts: diffConflicts };
-      }
-
-      // Still nothing — extract info from the merge error message
-      const errMsg = mergeErr?.stderr || mergeErr?.message || String(mergeErr);
-      // Look for "CONFLICT (content): Merge conflict in <file>" patterns
-      const conflictMatches = [...errMsg.matchAll(/CONFLICT[^:]*:\s*Merge conflict in\s+(.+)/g)];
-      if (conflictMatches.length > 0) {
-        return { success: false, conflicts: conflictMatches.map((m: RegExpMatchArray) => m[1].trim()) };
-      }
-
-      return { success: false, conflicts: [errMsg.slice(0, 200)] };
-    } catch {
-      const errMsg = mergeErr?.stderr || mergeErr?.message || String(mergeErr);
-      return { success: false, conflicts: [errMsg.slice(0, 200)] };
-    }
+    return { success: false, conflicts: await detectConflicts(cwd, mergeErr) };
   }
 }
 
@@ -169,6 +171,116 @@ export async function abortMerge(cwd: string): Promise<void> {
   try {
     await git(['merge', '--abort'], cwd);
   } catch { /* no merge in progress */ }
+}
+
+// ─── Branch operations (rebase / cherry-pick / squash) ───
+
+/** True when there are no staged, unstaged, or untracked changes. */
+export async function isWorkingTreeClean(cwd: string): Promise<boolean> {
+  const status = await git(['status', '--porcelain'], cwd);
+  return status.trim() === '';
+}
+
+const DIRTY_TREE_ERROR = 'The working tree has uncommitted changes. Commit or stash them first.';
+
+/** Shared guard for history-rewriting operations. */
+async function requireCleanTree(cwd: string): Promise<GitOpResult | null> {
+  try {
+    if (!(await isWorkingTreeClean(cwd))) return { success: false, error: DIRTY_TREE_ERROR };
+  } catch (e: any) {
+    return { success: false, error: e?.stderr?.trim() || e?.message || 'git status failed' };
+  }
+  return null;
+}
+
+/** Turn a failed operation into a GitOpResult: conflicts when git left the
+ *  tree mid-operation (which `abortArgs` then unwinds), otherwise the error. */
+async function failedOp(cwd: string, err: any, abortArgs: string[]): Promise<GitOpResult> {
+  const errMsg: string = err?.stderr || err?.message || String(err);
+  const looksLikeConflict = /CONFLICT|could not apply|conflict/i.test(errMsg);
+  const conflicts = looksLikeConflict ? await detectConflicts(cwd, err) : [];
+  // Always unwind so the worktree is usable again; the user can redo the
+  // operation in the terminal if they want to resolve by hand.
+  await git(abortArgs, cwd).catch(() => {});
+  if (conflicts.length > 0 && looksLikeConflict) return { success: false, conflicts };
+  return { success: false, error: errMsg.trim().slice(0, 500) };
+}
+
+/** Rebase the current branch onto `onto`. Conflicts abort the rebase. */
+export async function rebaseOnto(cwd: string, onto: string): Promise<GitOpResult> {
+  const dirty = await requireCleanTree(cwd);
+  if (dirty) return dirty;
+  try {
+    await git(['rebase', onto], cwd);
+    return { success: true };
+  } catch (e: any) {
+    return failedOp(cwd, e, ['rebase', '--abort']);
+  }
+}
+
+/** Apply one commit from anywhere in the repo onto the current branch. */
+export async function cherryPick(cwd: string, sha: string): Promise<GitOpResult> {
+  if (!/^[0-9a-f]{4,40}$/i.test(sha)) return { success: false, error: `Not a commit id: ${sha}` };
+  const dirty = await requireCleanTree(cwd);
+  if (dirty) return dirty;
+  try {
+    await git(['cherry-pick', sha], cwd);
+    return { success: true };
+  } catch (e: any) {
+    return failedOp(cwd, e, ['cherry-pick', '--abort']);
+  }
+}
+
+/**
+ * Squash every commit since the merge base with `base` into one commit with
+ * `message`. Uses a soft reset so the tree is untouched; refuses when there
+ * are fewer than two commits to squash.
+ */
+export async function squashSince(cwd: string, base: string, message: string): Promise<GitOpResult> {
+  if (!message.trim()) return { success: false, error: 'A commit message is required.' };
+  const dirty = await requireCleanTree(cwd);
+  if (dirty) return dirty;
+  let mergeBase: string;
+  try {
+    mergeBase = (await git(['merge-base', base, 'HEAD'], cwd)).trim();
+  } catch (e: any) {
+    return { success: false, error: `Cannot find a merge base with ${base}: ${e?.stderr?.trim() || e?.message || e}` };
+  }
+  const count = parseInt((await git(['rev-list', '--count', `${mergeBase}..HEAD`], cwd)).trim(), 10);
+  if (!count || count < 2) {
+    return { success: false, error: count === 1 ? 'Only one commit since the base — nothing to squash.' : 'No commits since the base.' };
+  }
+  try {
+    await git(['reset', '--soft', mergeBase], cwd);
+    await git(['commit', '-m', message], cwd);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.stderr?.trim() || e?.message || 'squash failed' };
+  }
+}
+
+/** Commits reachable from `ref` but not from `base`, newest first, with ids
+ *  (for cherry-pick pickers). Falls back to origin/<base> like branchCommits. */
+export async function logCommits(cwd: string, ref: string, base: string): Promise<CommitEntry[]> {
+  for (const baseRef of [base, `origin/${base}`]) {
+    try {
+      const raw = await git(['log', '--format=%H%x1f%h%x1f%s%x1e', `${baseRef}..${ref}`], cwd);
+      return parseLogCommits(raw);
+    } catch { /* base ref missing — try the remote-tracking name */ }
+  }
+  return [];
+}
+
+export function parseLogCommits(raw: string): CommitEntry[] {
+  return raw
+    .split('\x1e')
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const [sha = '', shortSha = '', subject = ''] = chunk.split('\x1f');
+      return { sha: sha.trim(), shortSha: shortSha.trim(), subject: subject.trim() };
+    })
+    .filter((c) => c.sha);
 }
 
 export async function branchHasRemote(cwd: string, branch: string): Promise<boolean> {

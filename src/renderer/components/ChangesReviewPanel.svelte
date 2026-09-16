@@ -10,11 +10,15 @@
   import CopyButton from './CopyButton.svelte';
   import ImageDiffView from './ImageDiffView.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import GitOpsDialog from './GitOpsDialog.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { settingsStore } from '../stores/settings.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
+
+  /** Rebase / squash / cherry-pick dialog (branch operations between agent branches). */
+  let gitOpsOpen = $state(false);
 
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
@@ -535,6 +539,13 @@
           </div>
         {/if}
         <div class="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-2">
+          <button
+            onclick={() => gitOpsOpen = true}
+            class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors shrink-0"
+            title="Rebase, squash, or cherry-pick between this branch and other sessions' branches"
+          >
+            Branch…
+          </button>
           <span>{gitStatus.entries.length} change{gitStatus.entries.length !== 1 ? 's' : ''}</span>
           {#if stagedEntries.length > 0}
             <span class="text-green-400">{stagedEntries.length}S</span>
@@ -803,3 +814,7 @@
     {/if}
   </Dialog.Content>
 </Dialog.Root>
+
+{#if gitOpsOpen}
+  <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
+{/if}

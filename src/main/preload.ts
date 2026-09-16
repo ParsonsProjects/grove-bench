@@ -140,6 +140,16 @@ const api: GroveBenchAPI = {
   getBranchCommits: (sessionId: string, base: string) =>
     ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base),
 
+  // Branch operations
+  gitLogCommits: (sessionId: string, ref: string, base: string) =>
+    ipcRenderer.invoke(IPC.GIT_LOG_COMMITS, sessionId, ref, base),
+  gitRebase: (sessionId: string, onto: string) =>
+    ipcRenderer.invoke(IPC.GIT_REBASE, sessionId, onto),
+  gitCherryPick: (sessionId: string, sha: string) =>
+    ipcRenderer.invoke(IPC.GIT_CHERRY_PICK, sessionId, sha),
+  gitSquash: (sessionId: string, base: string, message: string) =>
+    ipcRenderer.invoke(IPC.GIT_SQUASH, sessionId, base, message),
+
   // Checkpoint rewind
   rewindSession: (sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) =>
     ipcRenderer.invoke(IPC.AGENT_REWIND, sessionId, userMessageId, options),

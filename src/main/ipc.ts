@@ -9,7 +9,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
 import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -756,6 +756,46 @@ export function registerHandlers() {
       logger.warn(`git sync status failed for session ${sessionId}:`, e);
       return { upstream: null, ahead: 0, behind: 0 };
     }
+  });
+
+  // ─── Branch operations ───
+  // Each handler resolves the session's worktree and returns a GitOpResult;
+  // git.ts guarantees a failed operation is aborted before it returns.
+
+  ipcMain.handle(IPC.GIT_LOG_COMMITS, async (_event, sessionId: string, ref: string, base: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return [];
+    if (typeof ref !== 'string' || !ref || ref.startsWith('-')) return [];
+    if (typeof base !== 'string' || !base || base.startsWith('-')) return [];
+    try {
+      return await logCommits(worktree.path, ref, base);
+    } catch (e) {
+      logger.warn(`log commits failed for session ${sessionId}:`, e);
+      return [];
+    }
+  });
+
+  ipcMain.handle(IPC.GIT_REBASE, async (_event, sessionId: string, onto: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (typeof onto !== 'string' || !onto.trim() || onto.startsWith('-')) return { success: false, error: 'Pick a branch to rebase onto.' };
+    logger.info(`Rebasing session ${sessionId} (${worktree.branch}) onto ${onto}`);
+    return rebaseOnto(worktree.path, onto.trim());
+  });
+
+  ipcMain.handle(IPC.GIT_CHERRY_PICK, async (_event, sessionId: string, sha: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    logger.info(`Cherry-picking ${sha} into session ${sessionId} (${worktree.branch})`);
+    return cherryPick(worktree.path, typeof sha === 'string' ? sha.trim() : '');
+  });
+
+  ipcMain.handle(IPC.GIT_SQUASH, async (_event, sessionId: string, base: string, message: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (typeof base !== 'string' || !base.trim() || base.startsWith('-')) return { success: false, error: 'Pick a base branch.' };
+    logger.info(`Squashing session ${sessionId} (${worktree.branch}) since ${base}`);
+    return squashSince(worktree.path, base.trim(), typeof message === 'string' ? message : '');
   });
 
   ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string) => {

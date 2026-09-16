@@ -33,7 +33,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Merge-Back Workflow
 - ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
-- [ ] Rebase / cherry-pick / squash between agent branches (DESIGN.md §14 "Git operations UI")
+- [x] Rebase / cherry-pick / squash between agent branches — "Branch…" in the Changes tab opens `GitOpsDialog` (rebase onto the base or another session's branch, squash every commit since the base into one, cherry-pick a commit from another session's branch); operations refuse on a dirty tree and any conflict is aborted and reported with the file list, so the branch is never left mid-operation
 
 ### OS Notifications
 - [x] Native notification when an agent finishes a turn while the window is unfocused

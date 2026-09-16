@@ -299,6 +299,13 @@ const api: Record<string, unknown> = {
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
   getDefaultBranch: async () => 'main',
+  gitLogCommits: async () => [
+    { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
+    { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },
+  ],
+  gitRebase: async () => ({ success: true }),
+  gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
+  gitSquash: async () => ({ success: true }),
   getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
   getPrInfo: async () => null,
   listCheckpoints: async () => [],
