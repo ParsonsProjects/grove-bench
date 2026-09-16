@@ -98,7 +98,7 @@ export interface PrerequisiteStatus {
  * Adapters map their provider-specific tool names to these categories
  * so the renderer doesn't need to know provider-specific tool names.
  */
-export type ToolCategory = 'edit' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
+export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
 
 // ─── Agent Events (renderer-side, serializable) ───
 
@@ -862,9 +862,36 @@ export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra';
 
 // ─── Settings ───
 
+/**
+ * A tool allow/deny rule: `<tool>` or `<tool>(<glob>)`.
+ *
+ * `<tool>` is preferably one of the adapter-neutral keywords below (so the
+ * same rule works for every agent), or a provider tool name for anything the
+ * keywords don't cover (Claude: `Bash`, `NotebookEdit`, `mcp__github__*`).
+ * The glob matches the call's specifier — the command for `shell`, the file
+ * path for `edit`/`read`, the URL for `web`, the prompt for `agent`, and the
+ * server/tool name after `mcp__` for `mcp`. `*` matches anything.
+ *
+ *   shell(npm run *)   edit(src/**)   read(**\/.env*)   web(*github.com*)
+ *   mcp(github__*)     question       Bash(git push *)
+ */
 export interface ToolRule {
-  pattern: string; // e.g. "Bash(npm run *)", "Read(/src/**)", "mcp__*"
+  pattern: string;
 }
+
+/** Neutral rule keywords → the tool category they stand for. `mcp` is
+ *  special-cased by the matcher (provider tools prefixed `mcp__`). */
+export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
+  shell: 'bash',
+  bash: 'bash',
+  edit: 'edit',
+  write: 'edit',
+  read: 'read',
+  web: 'web_fetch',
+  fetch: 'web_fetch',
+  agent: 'agent',
+  question: 'question',
+};
 
 export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions';
 

@@ -10,7 +10,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Codex adapter — implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; the popover, shortcuts, triage, and session manager need no changes
 - [ ] Grok Build adapter
 - [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
-- [ ] Neutral form for tool allow/deny rules — the syntax is currently Claude's (`Bash(npm run *)`)
+- [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
 - [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
 - [ ] Agent discovery/install marketplace ("app store")
 - [ ] Agent Client Protocol for custom agent integration

@@ -324,7 +324,11 @@
           <!-- Tool Allow Rules -->
           <div>
             <Label class="mb-1 block">Tool Allow Rules</Label>
-            <p class="text-xs text-muted-foreground mb-2">Patterns like Bash(npm run *), Read(/src/**), WebFetch(domain:github.com)</p>
+            <p class="text-xs text-muted-foreground mb-2">
+              Rules work for any agent: <code>shell(npm run *)</code>, <code>edit(src/**)</code>, <code>read(**/.env*)</code>,
+              <code>web(*github.com*)</code>, <code>mcp(github__*)</code>, <code>agent</code>, <code>question</code>.
+              A provider's own tool name also works, e.g. <code>Bash(git push *)</code>.
+            </p>
             {#if settingsStore.draft.toolAllowRules.length > 0}
               <div class="flex flex-wrap gap-1 mb-2">
                 {#each settingsStore.draft.toolAllowRules as rule, i (i)}
@@ -341,7 +345,7 @@
               <input
                 type="text"
                 bind:value={newAllowRule}
-                placeholder="Bash(npm run *)"
+                placeholder="shell(npm run *)"
                 onkeydown={(e) => { if (e.key === 'Enter') addAllowRule(); }}
                 class="flex-1 bg-background border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
               />
@@ -369,7 +373,7 @@
               <input
                 type="text"
                 bind:value={newDenyRule}
-                placeholder="Bash(git push *)"
+                placeholder="shell(git push *)"
                 onkeydown={(e) => { if (e.key === 'Enter') addDenyRule(); }}
                 class="flex-1 bg-background border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
               />
