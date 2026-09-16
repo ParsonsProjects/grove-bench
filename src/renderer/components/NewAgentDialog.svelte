@@ -181,8 +181,8 @@
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
   <Dialog.Content class="max-w-sm">
     <Dialog.Header>
-      <Dialog.Title>New Agent</Dialog.Title>
-      <Dialog.Description>Create a new agent session in a worktree branch.</Dialog.Description>
+      <Dialog.Title>New Conversation</Dialog.Title>
+      <Dialog.Description>Start a new conversation in its own worktree branch.</Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-3 mt-4">
