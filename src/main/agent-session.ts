@@ -40,22 +40,23 @@ function autoModeSandbox(worktreePath: string): Record<string, unknown> {
 }
 
 /**
- * Starting values for an adapter's declared controls: each descriptor's
- * default, with the user's default thinking level overlaid when the adapter
- * exposes a thinking control that offers it. permissionMode is excluded (it
- * has its own session field).
+ * Initial control values for a new session: each of the adapter's declared
+ * controls (except permissionMode, which has its own session field) starts
+ * at the descriptor default, overlaid with the user's saved default for that
+ * adapter when the descriptor offers that value.
  */
 export function initialControls(
   adapter: Pick<AgentAdapter, 'getControls'>,
   model: string | null,
-  defaultThinkingLevel: string | undefined,
+  adapterDefaults: Record<string, string> | undefined,
 ): Record<string, string> {
   const values: Record<string, string> = {};
   for (const d of adapter.getControls(model)) {
     if (d.id === CONTROL_IDS.permissionMode) continue;
     values[d.id] = d.default;
-    if (d.id === CONTROL_IDS.thinking && defaultThinkingLevel && d.options.some((o) => o.value === defaultThinkingLevel)) {
-      values[d.id] = defaultThinkingLevel;
+    const saved = adapterDefaults?.[d.id];
+    if (saved && d.options.some((o) => o.value === saved)) {
+      values[d.id] = saved;
     }
   }
   return values;
@@ -458,7 +459,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      controls: initialControls(adapter, initialModel, appSettings.defaultThinkingLevel),
+      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id]),
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,

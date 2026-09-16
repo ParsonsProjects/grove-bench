@@ -11,7 +11,8 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
-  import type { SettingsPermissionMode, CavemanMode, ThinkingLevel, McpConfigScope } from '../../shared/types.js';
+  import type { SettingsPermissionMode, CavemanMode, McpConfigScope, ControlDescriptor } from '../../shared/types.js';
+  import { CONTROL_IDS } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
   interface Props {
@@ -198,13 +199,44 @@
     { value: 'ultra', label: 'Ultra', description: 'Max compression, abbreviations' },
   ];
 
-  const thinkingLevels: { value: ThinkingLevel; label: string; description: string }[] = [
-    { value: 'off', label: 'Off', description: 'No extended thinking' },
-    { value: 'low', label: 'Low', description: 'Brief reasoning on hard steps' },
-    { value: 'medium', label: 'Medium', description: 'Moderate reasoning budget' },
-    { value: 'high', label: 'High', description: 'Provider default / maximum reasoning' },
-    { value: 'adaptive', label: 'Adaptive', description: 'Model decides when and how much to think' },
-  ];
+  // ── Per-adapter defaults ──
+  // Each registered adapter declares its own session controls (thinking,
+  // speed, ...) per model; the Agent tab renders those descriptors instead of
+  // a hand-written list, so a new adapter needs no Settings changes.
+  interface AdapterControls { id: string; displayName: string; controls: ControlDescriptor[] }
+  let adapterControls = $state<AdapterControls[]>([]);
+  let adapterControlsLoading = $state(false);
+  let adapterControlsRequest = 0;
+
+  async function loadAdapterControls(model: string) {
+    const request = ++adapterControlsRequest;
+    adapterControlsLoading = true;
+    try {
+      const adapters = await window.groveBench.listAdapters();
+      const withControls = await Promise.all(adapters.map(async (a) => {
+        let controls: ControlDescriptor[] = [];
+        try { controls = await window.groveBench.getAdapterControls(a.id, model || null); } catch { /* adapter unavailable */ }
+        return { id: a.id, displayName: a.displayName, controls: controls.filter((c) => c.id !== CONTROL_IDS.permissionMode) };
+      }));
+      if (request === adapterControlsRequest) adapterControls = withControls;
+    } catch {
+      if (request === adapterControlsRequest) adapterControls = [];
+    } finally {
+      if (request === adapterControlsRequest) adapterControlsLoading = false;
+    }
+  }
+
+  // Descriptors depend on the model (e.g. adaptive thinking, fast mode), so
+  // reload when the default model changes while the panel is open.
+  $effect(() => {
+    const model = settingsStore.draft.defaultModel;
+    if (open && tab === 'agent') loadAdapterControls(model);
+  });
+
+  function controlValue(adapterId: string, control: ControlDescriptor): string {
+    const saved = settingsStore.adapterDefault(adapterId, control.id);
+    return saved && control.options.some((o) => o.value === saved) ? saved : control.default;
+  }
 
   const themes: { value: 'system' | 'dark' | 'light'; label: string }[] = [
     { value: 'system', label: 'System' },
@@ -361,24 +393,47 @@
             <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
           </div>
 
-          <!-- Thinking Level -->
-          <div>
-            <Label class="mb-1 block">Default Thinking Level</Label>
-            <Select.Root type="single" value={settingsStore.draft.defaultThinkingLevel} onValueChange={(v) => { if (v) settingsStore.draft.defaultThinkingLevel = v as ThinkingLevel; }}>
-              <Select.Trigger class="w-48">
-                {thinkingLevels.find(l => l.value === settingsStore.draft.defaultThinkingLevel)?.label ?? 'High'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each thinkingLevels as level (level.value)}
-                  <Select.Item value={level.value} label={level.label} />
-                {/each}
-              </Select.Content>
-            </Select.Root>
-            <p class="text-xs text-muted-foreground mt-1">
-              {thinkingLevels.find(l => l.value === settingsStore.draft.defaultThinkingLevel)?.description ?? ''}
-              Adjustable per session from the status bar (Alt+T).
+          <!-- Per-adapter session control defaults (from each adapter's descriptors) -->
+          {#if adapterControls.length === 0}
+            <p class="text-xs text-muted-foreground">
+              {adapterControlsLoading ? 'Loading agent controls…' : 'No agent adapters registered.'}
             </p>
-          </div>
+          {/if}
+          {#each adapterControls as adapter (adapter.id)}
+            <div>
+              <div class="text-sm font-medium text-foreground mb-2">{adapter.displayName} defaults</div>
+              {#if adapter.controls.length === 0}
+                <p class="text-xs text-muted-foreground">This agent declares no adjustable session controls.</p>
+              {:else}
+                <div class="flex flex-col gap-3">
+                  {#each adapter.controls as control (control.id)}
+                    {@const value = controlValue(adapter.id, control)}
+                    {@const selected = control.options.find((o) => o.value === value)}
+                    <div>
+                      <Label class="mb-1 block">Default {control.label}</Label>
+                      <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(adapter.id, control.id, v === control.default ? null : v); }}>
+                        <Select.Trigger class="w-48">
+                          {selected?.label ?? value}
+                        </Select.Trigger>
+                        <Select.Content>
+                          {#each control.options as option (option.value)}
+                            <Select.Item value={option.value} label={option.label} />
+                          {/each}
+                        </Select.Content>
+                      </Select.Root>
+                      <p class="text-xs text-muted-foreground mt-1">
+                        {selected?.description ?? ''}
+                        {#if control.id === CONTROL_IDS.thinking}
+                          Adjustable per session from the status bar (Alt+T).
+                        {/if}
+                      </p>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
+          <p class="text-xs text-muted-foreground -mt-2">Options depend on the default model above. Applied to new sessions only.</p>
 
           <Separator />
 

@@ -3,7 +3,6 @@ import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
-import { THINKING_LEVELS } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
@@ -17,7 +16,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Agent Defaults
   defaultModel: '',
-  defaultThinkingLevel: 'high',
+  adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -64,7 +63,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -81,6 +80,25 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
   (raw) => {
     const { extendedThinking: _legacy, devCommand: _devCommand, skillSuggestions: _skillSuggestions, ...rest } = raw;
     if (rest.defaultBaseBranch === 'main') rest.defaultBaseBranch = '';
+    return rest;
+  },
+  // 1 → 2: `defaultThinkingLevel` (Claude's thinking levels, hand-written)
+  // became `adapterDefaults`, keyed by adapter id then control id, so each
+  // adapter's own control descriptors drive the Settings UI. The saved level
+  // moves under the Claude Code adapter's `thinking` control.
+  (raw) => {
+    const { defaultThinkingLevel, ...rest } = raw;
+    const existing = (typeof rest.adapterDefaults === 'object' && rest.adapterDefaults !== null)
+      ? (rest.adapterDefaults as Record<string, Record<string, string>>)
+      : {};
+    if (typeof defaultThinkingLevel === 'string' && defaultThinkingLevel) {
+      rest.adapterDefaults = {
+        ...existing,
+        'claude-code': { ...(existing['claude-code'] ?? {}), thinking: defaultThinkingLevel },
+      };
+    } else {
+      rest.adapterDefaults = existing;
+    }
     return rest;
   },
 ];
@@ -101,7 +119,7 @@ const settingsSchema = z.object({
   autoSkillSuggestions: z.boolean().catch(DEFAULT_SETTINGS.autoSkillSuggestions),
 
   defaultModel: z.string().catch(DEFAULT_SETTINGS.defaultModel),
-  defaultThinkingLevel: z.enum(THINKING_LEVELS).catch(DEFAULT_SETTINGS.defaultThinkingLevel),
+  adapterDefaults: z.record(z.string(), z.record(z.string(), z.string())).catch(DEFAULT_SETTINGS.adapterDefaults),
   cavemanMode: z.enum(['off', 'lite', 'full', 'ultra']).catch(DEFAULT_SETTINGS.cavemanMode),
   workingDirectories: z.array(z.string()).catch(DEFAULT_SETTINGS.workingDirectories),
   defaultSystemPromptAppend: z.string().catch(DEFAULT_SETTINGS.defaultSystemPromptAppend),

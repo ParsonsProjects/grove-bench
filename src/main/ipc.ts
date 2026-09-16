@@ -968,6 +968,14 @@ export function registerHandlers() {
     }));
   });
 
+  ipcMain.handle(IPC.AGENT_GET_ADAPTER_CONTROLS, (_event, adapterType?: string, model?: string | null) => {
+    const adapter = adapterType
+      ? adapterRegistry.get(adapterType)
+      : adapterRegistry.getDefault();
+    if (!adapter) return [];
+    return adapter.getControls(typeof model === 'string' && model ? model : null);
+  });
+
   ipcMain.handle(IPC.AGENT_GET_MODELS, (_event, adapterType?: string) => {
     const adapter = adapterType
       ? adapterRegistry.get(adapterType)

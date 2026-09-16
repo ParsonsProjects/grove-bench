@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disabledSkills: [],
   autoSkillSuggestions: false,
   defaultModel: '',
-  defaultThinkingLevel: 'high',
+  adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -168,3 +168,23 @@ describe('working directories', () => {
 });
 
 
+
+describe('adapter defaults', () => {
+  it('sets, reads and clears per-adapter control defaults in the draft', () => {
+    expect(settingsStore.adapterDefault('claude-code', 'thinking')).toBeUndefined();
+    settingsStore.setAdapterDefault('claude-code', 'thinking', 'low');
+    settingsStore.setAdapterDefault('claude-code', 'speed', 'fast');
+    settingsStore.setAdapterDefault('codex', 'effort', 'high');
+    expect(settingsStore.draft.adapterDefaults).toEqual({
+      'claude-code': { thinking: 'low', speed: 'fast' },
+      codex: { effort: 'high' },
+    });
+    expect(settingsStore.adapterDefault('claude-code', 'thinking')).toBe('low');
+
+    // Clearing the last control for an adapter drops the adapter key entirely
+    settingsStore.setAdapterDefault('codex', 'effort', null);
+    settingsStore.setAdapterDefault('claude-code', 'speed', '');
+    expect(settingsStore.draft.adapterDefaults).toEqual({ 'claude-code': { thinking: 'low' } });
+    expect(settingsStore.dirty).toBe(true);
+  });
+});

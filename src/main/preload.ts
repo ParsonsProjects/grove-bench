@@ -357,6 +357,8 @@ const api: GroveBenchAPI = {
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  getAdapterControls: (adapterType?: string, model?: string | null) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_ADAPTER_CONTROLS, adapterType, model),
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
 
   // Auto-update

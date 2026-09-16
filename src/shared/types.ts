@@ -819,6 +819,10 @@ export interface GroveBenchAPI {
 
   // Agent adapters
   listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
+  /** Control descriptors an adapter declares for `model` (null = its default
+   *  model), without needing a session. Used by Settings for per-adapter
+   *  defaults. Unknown adapter = []. */
+  getAdapterControls(adapterType?: string, model?: string | null): Promise<ControlDescriptor[]>;
   getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string; contextWindow?: number }>>;
 
   // Auto-update
@@ -857,8 +861,12 @@ export interface GroveBenchSettings {
 
   // Agent Defaults
   defaultModel: string;
-  /** Default thinking level for new sessions. 'high' = provider default. */
-  defaultThinkingLevel: ThinkingLevel;
+  /** Default values for each adapter's declared session controls (thinking,
+   *  speed, ...), keyed by adapter id then control id. Only ids the adapter
+   *  actually offers for the session's model are applied; anything else is
+   *  ignored, so a stale entry never breaks a session. Permission mode is
+   *  not here — see defaultPermissionMode. */
+  adapterDefaults: Record<string, Record<string, string>>;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
@@ -1177,6 +1185,7 @@ export const IPC = {
   AGENT_TURN_DIFF: 'agent:turnDiff',
   AGENT_FULL_THREAD_DIFF: 'agent:fullThreadDiff',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater
   UPDATE_CHECK: 'update:check',

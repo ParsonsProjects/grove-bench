@@ -28,7 +28,7 @@ const SETTINGS = {
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
   defaultModel: '',
-  defaultThinkingLevel: 'high',
+  adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -304,6 +304,15 @@ const api: Record<string, unknown> = {
   listCheckpoints: async () => [],
   listMcpServers: async () => [],
   listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
+  getAdapterControls: async () => [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
+    { id: 'thinking', label: 'Thinking', default: 'high', options: [
+      { value: 'off', label: 'Off', description: 'No extended thinking' },
+      { value: 'low', label: 'Low', description: 'Brief reasoning on hard steps' },
+      { value: 'medium', label: 'Medium', description: 'Moderate reasoning budget' },
+      { value: 'high', label: 'High', description: 'Provider default / maximum reasoning' },
+    ] },
+  ],
   getModels: async () => [
     { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
     { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },

@@ -9,7 +9,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Agent settings popover — one two-line status-bar trigger (agent on top; model, mode, and any non-default control beneath) opening a column-per-setting popover for agent, model, and every declared control (`SessionControlsPopover.svelte`). Alt+M / Alt+T still cycle.
 - [ ] Codex adapter — implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; the popover, shortcuts, triage, and session manager need no changes
 - [ ] Grok Build adapter
-- [ ] Per-adapter defaults in Settings — the Agent tab's default thinking level is still Claude's hand-written list; read the adapter's descriptors instead
+- [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
 - [ ] Neutral form for tool allow/deny rules — the syntax is currently Claude's (`Bash(npm run *)`)
 - [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
 - [ ] Agent discovery/install marketplace ("app store")
@@ -19,7 +19,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Full working shell with color support and interactive command execution
 - [x] Persistent shell state (env vars, directory changes across commands)
 - [x] Per-session PTY terminals (split, toggle, resize, clear, restart)
-- [ ] Attach terminal output as context to AI messages
+- [x] Attach terminal output as context to AI messages — "To prompt" in the terminal toolbar inserts the selection (or the last 200 lines of scrollback) into the prompt as a fenced block and switches to Activity
 
 ### Checkpointing & Revert
 - [x] Git-based snapshots at each agent turn

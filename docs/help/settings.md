@@ -14,7 +14,7 @@ Control how the agent handles actions that need approval:
 Configure agent behavior:
 
 - **Default Model** — Select which Claude model to use for new sessions
-- **Default Thinking Level** — How much extended thinking (deeper reasoning) new sessions use: Off, Low, Medium, High (provider default), or Adaptive (the model decides when and how much to think)
+- **Agent defaults** — One group per installed agent, listing the session controls that agent declares for the default model (for Claude Code: Thinking, and Speed on models that support fast mode). Pick the value new sessions start with; each session can still change it from the status bar
 - **System Prompt Append** — Add custom instructions that apply to all sessions
 - **Additional Working Directories** — Extra directories the agent can access
 

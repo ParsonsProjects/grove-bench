@@ -1692,8 +1692,8 @@ describe('AgentSessionManager session controls', () => {
     return sessionManager.getSession(id)!;
   }
 
-  it('starts from descriptor defaults, overlaid with the settings thinking level, and passes them to the adapter', async () => {
-    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, defaultThinkingLevel: 'low' });
+  it('starts from descriptor defaults, overlaid with the adapter\'s saved defaults, and passes them to the adapter', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
 
     await sessionManager.createSession({ id: 'ctl-defaults', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
@@ -1706,8 +1706,8 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-defaults');
   });
 
-  it('ignores a settings thinking level the adapter does not offer', async () => {
-    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, defaultThinkingLevel: 'adaptive' });
+  it('ignores saved defaults the adapter does not offer, and other adapters\' defaults', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'adaptive', bogus: 'x' }, other: { thinking: 'low' } } });
 
     await sessionManager.createSession({ id: 'ctl-unknown-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 

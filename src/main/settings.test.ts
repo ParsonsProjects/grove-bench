@@ -127,6 +127,17 @@ describe('schema versioning', () => {
     expect(written.defaultBaseBranch).toBe('');
   });
 
+  it('moves defaultThinkingLevel under the Claude Code adapter defaults (v1 → v2)', () => {
+    const { settings } = upgradeSettings({ schemaVersion: 1, defaultThinkingLevel: 'low' });
+    expect(settings.adapterDefaults).toEqual({ 'claude-code': { thinking: 'low' } });
+    expect((settings as any).defaultThinkingLevel).toBeUndefined();
+    // An unversioned file goes through both migrations
+    const { settings: fromV0 } = upgradeSettings({ defaultThinkingLevel: 'medium', devCommand: 'x' });
+    expect(fromV0.adapterDefaults).toEqual({ 'claude-code': { thinking: 'medium' } });
+    // Nothing saved → empty map, no phantom Claude entry
+    expect(upgradeSettings({ schemaVersion: 1 }).settings.adapterDefaults).toEqual({});
+  });
+
   it('does not rewrite or re-migrate a current-version file', () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, defaultBaseBranch: 'main' }));
     const s = loadSettings();
@@ -157,7 +168,7 @@ describe('validateSettings', () => {
   it('falls back per field on invalid values instead of discarding the file', () => {
     const s = validateSettings({
       theme: 'neon',
-      defaultThinkingLevel: 'ultra',
+      adapterDefaults: 'ultra',
       idleAutoStopMinutes: 'soon',
       toolAllowRules: [{ pattern: 'Bash(*)' }],
       toolDenyRules: 'nope',
@@ -165,7 +176,7 @@ describe('validateSettings', () => {
       notifyOnPermission: 'yes',
     });
     expect(s.theme).toBe('system');
-    expect(s.defaultThinkingLevel).toBe('high');
+    expect(s.adapterDefaults).toEqual({});
     expect(s.idleAutoStopMinutes).toBe(30);
     expect(s.toolAllowRules).toEqual([{ pattern: 'Bash(*)' }]);
     expect(s.toolDenyRules).toEqual([]);
