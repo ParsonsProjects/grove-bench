@@ -30,6 +30,8 @@ interface ManifestEntry {
   path?: string;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string;
+  /** Epoch ms when the user marked the session completed; absent while open. */
+  completedAt?: number;
   /** The session was destroyed but its directory could not be deleted (Windows
    *  file locks). The entry is hidden from listings and the background sweep
    *  retries the deletion as a known item instead of finding an orphan dir. */
@@ -287,6 +289,18 @@ export class WorktreeManager {
     });
   }
 
+  /** Persist whether the user marked a session completed. Reopening clears
+   *  the timestamp rather than keeping a stale one. */
+  async saveCompleted(worktreeId: string, completed: boolean, now = Date.now()): Promise<void> {
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].completedAt = completed ? now : undefined;
+      }
+    });
+    const info = this.worktrees.get(worktreeId);
+    if (info) info.completedAt = completed ? now : null;
+  }
+
 
   async remove(id: string, deleteBranch = false): Promise<void> {
     let info = this.worktrees.get(id);
@@ -457,6 +471,7 @@ export class WorktreeManager {
             lastActiveAt: entry.lastActiveAt,
             direct: true,
             displayName: entry.displayName ?? null,
+            completedAt: entry.completedAt ?? null,
           });
           continue;
         }
@@ -480,6 +495,7 @@ export class WorktreeManager {
           createdAt: entry.createdAt,
           lastActiveAt: entry.lastActiveAt,
           displayName: entry.displayName ?? null,
+          completedAt: entry.completedAt ?? null,
         });
       }
 
@@ -600,6 +616,7 @@ export class WorktreeManager {
       lastActiveAt: entry.lastActiveAt,
       direct: entry.direct,
       displayName: entry.displayName ?? null,
+      completedAt: entry.completedAt ?? null,
     };
 
     // Cache in memory for subsequent lookups

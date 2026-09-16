@@ -19,6 +19,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
   renameSession: (sessionId: string, displayName: string) =>
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
+  setSessionCompleted: (sessionId: string, completed: boolean) =>
+    ipcRenderer.invoke(IPC.SESSION_SET_COMPLETED, sessionId, completed),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations

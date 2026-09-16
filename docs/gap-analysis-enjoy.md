@@ -117,6 +117,12 @@ unification), then attention triage and usage runway, then Enjoy's grouping and 
    Still open: per-adapter defaults in Settings (the Agent tab's default thinking level is still Claude's list), a
    neutral form for tool allow/deny rules, and the Codex adapter itself.
 2. **Attention triage.** Add `unread` and `completed` to session state; add All / Needs you / Working / Unread filters and per-repo counts to the sidebar; add "Mark completed". Mostly reuses existing status signals.
+
+   **Status (2026-09-16): done.** `session-triage.ts` classifies each session into exactly one of needs-you
+   (pending permission or question), working, unread (the existing needs-attention flash), or idle. The sidebar
+   has filter chips with counts, the same three counts on each repo header, a "Mark Completed / Reopen" context
+   menu item persisted as `completedAt` in the worktree manifest, and a "Show completed" toggle. A completed
+   session reopens on the next user message.
 3. **Always-visible usage runway** in the model picker, from the existing rate-limit store, plus the TODO cost dashboard.
 
    **Status (2026-09-16): done.** `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with

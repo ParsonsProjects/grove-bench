@@ -14,6 +14,9 @@ interface SessionEntry {
   createdAt?: number;
   /** Timestamp (ms) of the last user interaction. */
   lastActiveAt?: number;
+  /** Epoch ms when the user marked the session completed; null/absent while
+   *  open. Completed sessions hide from the sidebar unless "Show completed". */
+  completedAt?: number | null;
 }
 
 class SessionStore {
@@ -170,6 +173,30 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, lastActiveAt: now } : s
     );
+    // New user activity reopens a completed session — it is clearly not done.
+    if (this.sessions.find((s) => s.id === id)?.completedAt) {
+      this.setCompleted(id, false).catch(() => {});
+    }
+  }
+
+  get completedCount() {
+    return this.sessions.filter((s) => !!s.completedAt).length;
+  }
+
+  /** Mark a session completed (or reopen it). Applied optimistically and
+   *  persisted through main; rolled back if persistence fails. */
+  async setCompleted(id: string, completed: boolean): Promise<void> {
+    const previous = this.sessions.find((s) => s.id === id)?.completedAt ?? null;
+    const next = completed ? Date.now() : null;
+    if (!!previous === completed) return;
+    this.sessions = this.sessions.map((s) => (s.id === id ? { ...s, completedAt: next } : s));
+    if (completed) this.clearNeedsAttention(id);
+    try {
+      await window.groveBench.setSessionCompleted(id, completed);
+    } catch (e) {
+      console.warn('[setCompleted] persist failed, rolling back:', e);
+      this.sessions = this.sessions.map((s) => (s.id === id ? { ...s, completedAt: previous } : s));
+    }
   }
 
   updateDisplayName(id: string, displayName: string | null) {

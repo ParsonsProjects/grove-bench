@@ -305,6 +305,7 @@ const api: Record<string, unknown> = {
   ],
   setModel: async () => {},
   setMode: async () => {},
+  setSessionCompleted: async () => {},
   getUsage: async () => ({
     available: true,
     plan: 'max',

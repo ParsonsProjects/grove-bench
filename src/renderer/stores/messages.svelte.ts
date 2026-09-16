@@ -366,6 +366,18 @@ class MessageStore {
     );
   }
 
+  /** Whether the agent is blocked on an unanswered question */
+  hasPendingQuestion(sessionId: string): boolean {
+    return (this.messagesBySession[sessionId] ?? []).some(
+      (m) => m.kind === 'question' && !(m as { resolved?: boolean }).resolved,
+    );
+  }
+
+  /** Whether the session is waiting on the user for anything (permission or question) */
+  needsInput(sessionId: string): boolean {
+    return this.hasPendingPermission(sessionId) || this.hasPendingQuestion(sessionId);
+  }
+
   getModel(sessionId: string): string {
     return this.modelBySession[sessionId] ?? '';
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { localStorageMock } from '../__mocks__/setup.js';
+import { localStorageMock, mockGroveBench } from '../__mocks__/setup.js';
 import { store } from './sessions.svelte.js';
 import type { SessionStatus } from '../../shared/types.js';
 
@@ -147,6 +147,55 @@ describe('SessionStore', () => {
       store.removeSession('s1');
 
       expect(store.needsAttention['s1']).toBeUndefined();
+    });
+  });
+
+  describe('completed', () => {
+    beforeEach(() => {
+      mockGroveBench.setSessionCompleted.mockReset();
+      mockGroveBench.setSessionCompleted.mockResolvedValue(undefined);
+    });
+
+    it('marks a session completed optimistically, clears its attention flag, and persists', async () => {
+      store.addSession(makeSession({ id: 's1' }), false);
+      store.markNeedsAttention('s1');
+
+      const pending = store.setCompleted('s1', true);
+      expect(store.sessions[0].completedAt).toEqual(expect.any(Number));
+      expect(store.needsAttention['s1']).toBeUndefined();
+      await pending;
+
+      expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('s1', true);
+      expect(store.completedCount).toBe(1);
+    });
+
+    it('rolls back when persistence fails', async () => {
+      store.addSession(makeSession({ id: 's1' }), false);
+      mockGroveBench.setSessionCompleted.mockRejectedValueOnce(new Error('disk'));
+
+      await store.setCompleted('s1', true);
+
+      expect(store.sessions[0].completedAt).toBeNull();
+      expect(store.completedCount).toBe(0);
+    });
+
+    it('is a no-op when the flag already matches', async () => {
+      store.addSession(makeSession({ id: 's1' }), false);
+
+      await store.setCompleted('s1', false);
+
+      expect(mockGroveBench.setSessionCompleted).not.toHaveBeenCalled();
+    });
+
+    it('reopens a completed session when the user is active in it again', async () => {
+      store.addSession(makeSession({ id: 's1' }), false);
+      await store.setCompleted('s1', true);
+
+      store.updateLastActive('s1');
+      await Promise.resolve();
+
+      expect(store.sessions[0].completedAt).toBeNull();
+      expect(mockGroveBench.setSessionCompleted).toHaveBeenLastCalledWith('s1', false);
     });
   });
 

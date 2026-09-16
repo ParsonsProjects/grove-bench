@@ -23,6 +23,10 @@ export interface WorktreeInfo {
   direct?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
+  /** Epoch ms when the user marked the session completed; null/absent when
+   *  it is still open. Completed sessions are hidden from the sidebar by
+   *  default and reopen on the next user message. */
+  completedAt?: number | null;
 }
 
 export interface WorktreeRepoConfig {
@@ -580,6 +584,8 @@ export interface GroveBenchAPI {
   stopSession(id: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
+  /** Persist the completed flag (see WorktreeInfo.completedAt). */
+  setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -992,6 +998,7 @@ export const IPC = {
   SESSION_STOP: 'session:stop',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
+  SESSION_SET_COMPLETED: 'session:setCompleted',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',

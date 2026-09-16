@@ -324,6 +324,10 @@ export function registerHandlers() {
     await worktreeManager.saveDisplayName(sessionId, displayName);
   });
 
+  ipcMain.handle(IPC.SESSION_SET_COMPLETED, async (_event, sessionId: string, completed: boolean) => {
+    await worktreeManager.saveCompleted(sessionId, completed === true);
+  });
+
   // ─── Branches ───
 
   ipcMain.handle(IPC.BRANCH_LIST, async (_event, repoPath: string) => {

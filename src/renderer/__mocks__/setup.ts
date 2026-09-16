@@ -23,6 +23,7 @@ const mockGroveBench = {
   setModel: vi.fn().mockResolvedValue(undefined),
   getModels: vi.fn().mockResolvedValue([]),
   getUsage: vi.fn().mockResolvedValue(null),
+  setSessionCompleted: vi.fn().mockResolvedValue(undefined),
   listAdapters: vi.fn().mockResolvedValue([]),
   listMcpServers: vi.fn().mockResolvedValue([]),
   reconnectMcpServer: vi.fn().mockResolvedValue(undefined),

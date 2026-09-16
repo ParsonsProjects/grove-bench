@@ -21,6 +21,7 @@
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor, DEFAULT_SORT } from '../lib/session-sort.js';
+  import { triageState, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import type { SessionSortState } from '../../shared/types.js';
@@ -125,7 +126,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'add' | 'rename' | 'folder' | 'stop' | 'destroy';
+    icon: 'add' | 'rename' | 'folder' | 'stop' | 'destroy' | 'check';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -138,6 +139,11 @@
       { label: 'New Session', icon: 'add', action: () => store.createAttachedSession(session.id, session.repoPath) },
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
+      // Completed sessions leave the working set (hidden unless "Show completed")
+      // and come back on their own when the user sends another message.
+      session.completedAt
+        ? { label: 'Reopen', icon: 'check', action: () => store.setCompleted(sessionId, false) }
+        : { label: 'Mark Completed', icon: 'check', action: () => store.setCompleted(sessionId, true) },
     ];
     // Stop disconnects a live session (keeps it resumable); not shown for already-stopped ones.
     if (session.status !== 'stopped') {
@@ -372,36 +378,72 @@
   }
 
   function getSessionHasPending(sessionId: string): boolean {
-    return messageStore.hasPendingPermission(sessionId);
+    return messageStore.needsInput(sessionId);
   }
 
-  /** Live sessions (anything not stopped), ordered by the active sort.
-   *  This is the always-visible "working set" that replaces the old tab bar. */
+  // ── Attention triage: filter chips, per-repo counts, completed sessions ──
+
+  let triageFilter = $state<TriageFilter>('all');
+
+  /** "Show completed" is a per-viewer convenience, so it lives in localStorage. */
+  const SHOW_COMPLETED_KEY = 'grove-bench:sidebar-show-completed';
+  let showCompleted = $state(false);
+  try { showCompleted = localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; } catch { /* storage unavailable */ }
+  function toggleShowCompleted() {
+    showCompleted = !showCompleted;
+    try { localStorage.setItem(SHOW_COMPLETED_KEY, showCompleted ? '1' : '0'); } catch { /* ignore */ }
+  }
+
+  const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
+    'needs-you': 'bg-amber-500',
+    working: 'bg-primary',
+    unread: 'bg-green-400',
+  };
+
+  function triageOf(session: { id: string }): TriageState {
+    return triageState({
+      needsInput: messageStore.needsInput(session.id),
+      running: messageStore.getIsRunning(session.id),
+      unread: !!store.needsAttention[session.id],
+    });
+  }
+
+  function notHiddenCompleted(session: { completedAt?: number | null }): boolean {
+    return showCompleted || !session.completedAt;
+  }
+
+  /** Every session the sidebar considers (completed ones only when asked). */
+  let visibleSessions = $derived(store.sessions.filter(notHiddenCompleted));
+
+  /** Counts for the filter chips, over active and stopped sessions alike. */
+  let counts = $derived(triageCounts(visibleSessions.map(triageOf)));
+
+  function rowVisible(session: { id: string; completedAt?: number | null }): boolean {
+    return notHiddenCompleted(session) && matchesTriageFilter(triageFilter, triageOf(session));
+  }
+
+  /** Live sessions (anything not stopped) that pass the filter, ordered by the
+   *  active sort. This is the always-visible "working set". */
   let activeSessions = $derived(
-    sortSessions(store.sessions.filter((s) => s.status !== 'stopped'), sort),
+    sortSessions(store.sessions.filter((s) => s.status !== 'stopped' && rowVisible(s)), sort),
   );
 
-  /** Aggregate counts for the ACTIVE header. A waiting session takes priority
-   *  over working so the categories are mutually exclusive (no double-count). */
-  let activeStats = $derived.by(() => {
-    let working = 0, idle = 0, waiting = 0;
-    for (const s of activeSessions) {
-      if (messageStore.hasPendingPermission(s.id)) waiting++;
-      else if (messageStore.getIsRunning(s.id)) working++;
-      else idle++;
-    }
-    return { working, idle, waiting };
-  });
+  let stoppedCount = $derived(visibleSessions.filter((s) => s.status === 'stopped').length);
 
-  let stoppedCount = $derived(store.sessions.filter((s) => s.status === 'stopped').length);
+  /** Attention counts for one repo's header (all of its sessions, any status). */
+  function repoCounts(repo: string) {
+    return triageCounts(store.sessionsForRepo(repo).filter(notHiddenCompleted).map(triageOf));
+  }
 
-  /** All sessions for a repo, grouped by branch (for the INACTIVE tree), with
-   *  each group's sessions ordered by the active sort. Active (non-stopped)
-   *  sessions are kept here too — the rows render greyed-out and non-clickable
-   *  (they remain fully interactive in the ACTIVE list above). */
+  /** All sessions for a repo that pass the filter, grouped by branch (for the
+   *  INACTIVE tree), with each group's sessions ordered by the active sort.
+   *  Active (non-stopped) sessions are kept here too — the rows render
+   *  greyed-out and non-clickable (they remain fully interactive in the ACTIVE
+   *  list above). */
   function getInactiveBranchGroups(repo: string): [string, typeof store.sessions][] {
     const groups: Record<string, typeof store.sessions> = {};
     for (const s of store.sessionsForRepo(repo)) {
+      if (!rowVisible(s)) continue;
       const key = s.branch || 'main';
       (groups[key] ??= []).push(s);
     }
@@ -415,7 +457,7 @@
   class="relative border-r border-sidebar-border flex flex-col bg-sidebar shrink-0"
   style="width: {sidebarWidth}px"
 >
-  <!-- Reusable session row, shared by the Active list and the Inactive tree -->
+  <!-- Reusable session row, shared by the Conversations list and the Projects tree -->
   {#snippet sessionRow(session: (typeof store.sessions)[number], showRepoPrefix: boolean, labelOverride: string | null, greyedOut: boolean = false)}
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
@@ -427,7 +469,7 @@
       onclick={() => { if (!isDestroying && !greyedOut) focusSession(session.id); }}
       oncontextmenu={(e) => { if (isDestroying || greyedOut) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
       disabled={isDestroying || greyedOut}
-      title={greyedOut ? `${sessionRowLabel(session)} — active; manage it in the Active list above` : subtitle ? `${sessionRowLabel(session)}\n${subtitle.text}` : sessionRowLabel(session)}
+      title={greyedOut ? `${sessionRowLabel(session)} — live; manage it under Conversations above` : subtitle ? `${sessionRowLabel(session)}\n${subtitle.text}` : sessionRowLabel(session)}
       class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left group/session transition-colors
         {greyedOut ? 'cursor-not-allowed' : isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
     >
@@ -455,7 +497,10 @@
         {:else}
           <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
         {/if}
-        <span class="text-sm truncate min-w-0 {greyedOut ? 'opacity-40' : ''}">
+        {#if session.completedAt}
+          <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed"><title>Completed</title><path d="M20 6 9 17l-5-5"/></svg>
+        {/if}
+        <span class="text-sm truncate min-w-0 {greyedOut ? 'opacity-40' : ''} {session.completedAt ? 'text-muted-foreground' : ''}">
           {#if showRepoPrefix}{#if repoColor}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
         </span>
       </div>
@@ -464,9 +509,9 @@
           <span class="text-[10px] text-muted-foreground/50 {greyedOut ? 'opacity-40' : 'group-hover/session:hidden'}" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
         {/if}
         {#if greyedOut}
-          <!-- Active session shown here for context only; manage it in the Active list. -->
+          <!-- Active session shown here for context only; manage it under Conversations. -->
         {:else if isStopped}
-          <!-- Inactive session: destroy (removes the worktree). -->
+          <!-- Stopped session: destroy (removes the worktree). -->
           <span
             role="button"
             tabindex="-1"
@@ -479,7 +524,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </span>
         {:else}
-          <!-- Active session: stop (disconnect but keep it resumable). -->
+          <!-- Live session: stop (disconnect but keep it resumable). -->
           <span
             role="button"
             tabindex="-1"
@@ -510,7 +555,7 @@
     </button>
   {/snippet}
 
-  <!-- Sort toggle, shared by the Active list and the Inactive tree -->
+  <!-- Sort toggle, shared by the Conversations list and the Projects tree -->
   {#snippet sortButton(key: SessionSortState['key'], label: string)}
     {@const active = sort.key === key}
     <button
@@ -548,35 +593,61 @@
       {@render sortButton('age', 'Age')}
     </div>
 
-    <!-- ACTIVE: the live working set, always visible at the top -->
+    <!-- Triage filter: what needs me, what is working, what finished while I was away -->
+    <div class="flex items-center gap-1 mb-2 px-1 flex-wrap" role="group" aria-label="Filter sessions">
+      {#each TRIAGE_FILTERS as f (f)}
+        {@const n = counts[f]}
+        {@const active = triageFilter === f}
+        <button
+          type="button"
+          onclick={() => triageFilter = f}
+          aria-pressed={active}
+          class="flex items-center gap-1 px-1.5 py-0.5 text-[10px] border transition-colors
+            {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground/60 hover:text-foreground hover:bg-sidebar-accent/50'}
+            {n === 0 && f !== 'all' ? 'opacity-50' : ''}"
+          title="{TRIAGE_FILTER_LABELS[f]}: {n}"
+        >
+          {#if f !== 'all'}<span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>{/if}
+          {TRIAGE_FILTER_LABELS[f]}
+          <span class="text-muted-foreground/50">{n}</span>
+        </button>
+      {/each}
+    </div>
+
+    <!-- CONVERSATIONS: the live working set, always visible at the top -->
     <div class="flex items-center justify-between mb-1 px-1">
-      <span class="text-xs text-muted-foreground uppercase tracking-wide">Active</span>
-      <div class="flex items-center gap-2 text-[10px] text-muted-foreground/60">
-        {#if activeStats.working}
-          <span class="flex items-center gap-0.5" title="{activeStats.working} working"><span class="w-1.5 h-1.5 bg-primary"></span>{activeStats.working}</span>
-        {/if}
-        {#if activeStats.idle}
-          <span class="flex items-center gap-0.5" title="{activeStats.idle} idle"><span class="w-1.5 h-1.5 bg-green-500"></span>{activeStats.idle}</span>
-        {/if}
-        {#if activeStats.waiting}
-          <span class="flex items-center gap-0.5" title="{activeStats.waiting} waiting for input"><span class="w-1.5 h-1.5 bg-amber-500"></span>{activeStats.waiting}</span>
-        {/if}
-      </div>
+      <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
     </div>
 
     {#each activeSessions as session (session.id)}
       {@render sessionRow(session, true, null)}
     {/each}
     {#if activeSessions.length === 0}
-      <p class="text-xs text-muted-foreground/50 pl-4 py-1">No active agents</p>
+      <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
     {/if}
 
-    <!-- INACTIVE: stopped sessions grouped by repo; hosts repo management -->
+    <!-- PROJECTS: every repo with its sessions (stopped ones actionable); hosts repo management -->
     <div class="flex items-center justify-between mt-5 mb-2 px-1">
-      <span class="text-xs text-muted-foreground uppercase tracking-wide">Inactive</span>
-      {#if stoppedCount}
-        <span class="text-[10px] text-muted-foreground/50">{stoppedCount} stopped</span>
-      {/if}
+      <span class="text-xs text-muted-foreground uppercase tracking-wide">Projects</span>
+      <div class="flex items-center gap-2 text-[10px] text-muted-foreground/50">
+        {#if stoppedCount}
+          <span>{stoppedCount} stopped</span>
+        {/if}
+        {#if store.completedCount > 0}
+          <button
+            type="button"
+            onclick={toggleShowCompleted}
+            aria-pressed={showCompleted}
+            class="flex items-center gap-1 hover:text-foreground transition-colors"
+            title="{showCompleted ? 'Hide' : 'Show'} sessions you marked completed"
+          >
+            <span class="w-2.5 h-2.5 border border-current flex items-center justify-center">
+              {#if showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
+            </span>
+            Show completed ({store.completedCount})
+          </button>
+        {/if}
+      </div>
     </div>
 
     {#each store.repos as repo (repo)}
@@ -584,6 +655,7 @@
       {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
       {@const inactiveGroups = getInactiveBranchGroups(repo)}
       {@const inactiveCount = inactiveGroups.reduce((n, [, s]) => n + s.length, 0)}
+      {@const rc = repoCounts(repo)}
       {@const collapsed = isRepoCollapsed(collapsedRepos, repo)}
       <div class="mb-3">
         <!-- Repo header (click to collapse/expand the repo's inactive tree) -->
@@ -603,6 +675,16 @@
             </span>
             {#if inactiveCount}
               <span class="text-xs text-muted-foreground/40 shrink-0">{inactiveCount}</span>
+            {/if}
+            <!-- Per-repo attention counts, same dots as the filter chips -->
+            {#if rc['needs-you']}
+              <span class="flex items-center gap-0.5 text-[10px] text-amber-500 shrink-0" title="{rc['needs-you']} need{rc['needs-you'] === 1 ? 's' : ''} you"><span class="w-1.5 h-1.5 bg-amber-500"></span>{rc['needs-you']}</span>
+            {/if}
+            {#if rc.working}
+              <span class="flex items-center gap-0.5 text-[10px] text-primary shrink-0" title="{rc.working} working"><span class="w-1.5 h-1.5 bg-primary"></span>{rc.working}</span>
+            {/if}
+            {#if rc.unread}
+              <span class="flex items-center gap-0.5 text-[10px] text-green-400 shrink-0" title="{rc.unread} unread"><span class="w-1.5 h-1.5 bg-green-400"></span>{rc.unread}</span>
             {/if}
           </button>
           <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -646,7 +728,7 @@
           {/each}
 
           {#if inactiveGroups.length === 0}
-            <p class="text-xs text-muted-foreground/40 pl-4 py-1">No inactive agents</p>
+            <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No sessions in this project' : `No sessions match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
           {/if}
         {/if}
       </div>

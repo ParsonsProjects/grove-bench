@@ -81,3 +81,87 @@ describe('Sidebar session rows', () => {
     expect(store.finderOpen).toBe(true);
   });
 });
+
+describe('Sidebar attention triage', () => {
+  beforeEach(() => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 'working', branch: 'feat-a', repoPath: '/repo-a', status: 'running', displayName: 'Working one' },
+      { id: 'blocked', branch: 'feat-b', repoPath: '/repo-a', status: 'running', displayName: 'Blocked one' },
+      { id: 'finished', branch: 'feat-c', repoPath: '/repo-b', status: 'running', displayName: 'Finished one' },
+      { id: 'quiet', branch: 'feat-d', repoPath: '/repo-b', status: 'running', displayName: 'Quiet one' },
+    ] as any;
+    store.activeSessionId = 'quiet';
+    store.needsAttention = { finished: true };
+    messageStore.setIsRunning('working', true);
+    messageStore.messagesBySession['blocked'] = [
+      { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
+    ];
+    localStorage.removeItem('grove-bench:sidebar-show-completed');
+  });
+
+  afterEach(() => {
+    store.needsAttention = {};
+    mockGroveBench.setSessionCompleted.mockReset();
+    mockGroveBench.setSessionCompleted.mockResolvedValue(undefined);
+  });
+
+  it('shows filter chips with mutually exclusive counts', async () => {
+    render(Sidebar);
+
+    const group = screen.getByRole('group', { name: 'Filter sessions' });
+    expect(group).toHaveTextContent('All 4');
+    expect(group).toHaveTextContent('Needs you 1');
+    expect(group).toHaveTextContent('Working 1');
+    expect(group).toHaveTextContent('Unread 1');
+  });
+
+  it('filters the active list by the selected chip', async () => {
+    render(Sidebar);
+
+    await fireEvent.click(screen.getByTitle('Needs you: 1'));
+
+    expect(screen.getByText('Blocked one')).toBeInTheDocument();
+    expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTitle('Unread: 1'));
+    expect(screen.getByText('Finished one')).toBeInTheDocument();
+    expect(screen.queryByText('Blocked one')).not.toBeInTheDocument();
+  });
+
+  it('shows per-repo attention counts in the repo header', async () => {
+    render(Sidebar);
+
+    expect(screen.getByTitle('1 needs you')).toBeInTheDocument();
+    expect(screen.getByTitle('1 working')).toBeInTheDocument();
+    expect(screen.getByTitle('1 unread')).toBeInTheDocument();
+  });
+
+  it('hides completed sessions until "Show completed" is on, and reopens them from the context menu', async () => {
+    store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, completedAt: 123 } : s));
+    render(Sidebar);
+
+    expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Filter sessions' })).toHaveTextContent('All 3');
+
+    await fireEvent.click(screen.getByText('Show completed (1)'));
+    expect(screen.getByText('Quiet one')).toBeInTheDocument();
+
+    await fireEvent.contextMenu(screen.getByText('Quiet one'));
+    await fireEvent.click(screen.getByText('Reopen'));
+
+    expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('quiet', false);
+    expect(store.sessions.find((s) => s.id === 'quiet')?.completedAt).toBeNull();
+  });
+
+  it('marks a session completed from the context menu', async () => {
+    render(Sidebar);
+
+    await fireEvent.contextMenu(screen.getByText('Working one'));
+    await fireEvent.click(screen.getByText('Mark Completed'));
+
+    expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('working', true);
+    expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+  });
+});
