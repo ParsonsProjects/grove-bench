@@ -1155,6 +1155,40 @@ describe('AgentSessionManager.sendMessage()', () => {
   it('returns false for non-existent session', async () => {
     expect(await sessionManager.sendMessage('nonexistent', 'hello')).toBe(false);
   });
+
+  it('waits for the first queryHandle instead of dropping a prompt sent during startup', async () => {
+    // Hold adapter.start() open so the session exists with no handle yet —
+    // the window in which the renderer's always-live input can already send.
+    let openGate!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-early',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    expect(mockAdapter.control).toBeNull();
+
+    const pending = sessionManager.sendMessage('test-send-early', 'Hello before connect');
+    // Not resolved (false) yet — it is waiting, not dropped
+    let settled = false;
+    pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+
+    openGate();
+    expect(await pending).toBe(true);
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const userMsgs = sessionManager.getEventHistory('test-send-early').filter((e) => e.type === 'user_message');
+    expect(userMsgs).toHaveLength(1);
+    expect(userMsgs[0]).toMatchObject({ type: 'user_message', text: 'Hello before connect' });
+
+    await sessionManager.destroySession('test-send-early');
+  });
 });
 
 describe('AgentSessionManager.listSessions()', () => {

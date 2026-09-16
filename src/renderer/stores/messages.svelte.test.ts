@@ -33,6 +33,8 @@ beforeEach(() => {
   messageStore.controlsBySession = {};
   messageStore.rewindDialogOpen = {};
   messageStore.paginationBySession = {};
+  messageStore.queuedBySession = {};
+  messageStore.queuePausedBySession = {};
 });
 
 describe('ingestEvent — system_init', () => {
@@ -1683,5 +1685,267 @@ describe('destroySession', () => {
     messageStore.subscribe(SID);
     // onAgentEvent called twice: once per subscribe, proving the guard was cleared
     expect(mockGroveBench.onAgentEvent).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('outgoing message queue', () => {
+  const result: AgentEvent = { type: 'result', subtype: 'success', isError: false } as AgentEvent;
+  const init: AgentEvent = { type: 'system_init', sessionId: 'p', model: 'm', tools: [] } as AgentEvent;
+
+  it('sends immediately when the session is idle', () => {
+    const outcome = messageStore.submitMessage(SID, { displayText: 'hi', outgoing: 'hi' });
+
+    expect(outcome).toBe('sent');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'hi', undefined);
+    expect(messageStore.getQueue(SID)).toEqual([]);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+    expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['user']);
+  });
+
+  it('queues (and does not send) while a turn is running', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    mockGroveBench.sendMessage.mockClear();
+
+    const outcome = messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second <full>' });
+
+    expect(outcome).toBe('queued');
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+    expect(messageStore.getQueue(SID)[0]).toMatchObject({ displayText: 'second', outgoing: 'second <full>' });
+    // Not shown in the thread until it is actually sent
+    expect(messageStore.getMessages(SID).map((m) => (m as any).text)).toEqual(['first']);
+    expect(messageStore.canSendNow(SID)).toBe(false);
+  });
+
+  it('sends queued prompts one per turn, in order, when results arrive', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
+    messageStore.submitMessage(SID, { displayText: 'third', outgoing: 'third', images: [{ data: 'x', mediaType: 'image/png', name: 'a.png' }] });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.sendMessage).toHaveBeenLastCalledWith(SID, 'second', undefined);
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['third']);
+    // The new turn is running again, so the third waits
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(2);
+    expect(mockGroveBench.sendMessage).toHaveBeenLastCalledWith(SID, 'third', [{ data: 'x', mediaType: 'image/png', name: 'a.png' }]);
+    expect(messageStore.getQueue(SID)).toEqual([]);
+
+    const userTexts = messageStore.getMessages(SID).filter((m) => m.kind === 'user').map((m) => (m as any).text);
+    expect(userTexts).toEqual(['first', 'second', 'third']);
+  });
+
+  it('sends the next queued prompt when a restarted query connects idle', () => {
+    // Session is "running" (e.g. connecting after a stop/restart) with a queued item
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'later', outgoing: 'later' });
+    messageStore.setIsRunning(SID, false);
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, init);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'later', undefined);
+    expect(messageStore.getQueue(SID)).toEqual([]);
+  });
+
+  it('does not flush on system_init while a submitted prompt is still awaiting its response', () => {
+    // First prompt goes straight to main (fresh session, not yet connected)
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, init);
+
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
+  it('never flushes from replayed history', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'q', outgoing: 'q' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.replayEvents(SID, [init, result]);
+
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+  });
+
+  it('removes a single queued item', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    const [a] = messageStore.getQueue(SID);
+
+    messageStore.removeQueuedMessage(SID, a.id);
+
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['b']);
+    mockGroveBench.sendMessage.mockClear();
+    messageStore.ingestEvent(SID, result);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'b', undefined);
+  });
+
+  it('clearQueue drops everything so nothing is sent after the turn', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+
+    messageStore.clearQueue(SID);
+    mockGroveBench.sendMessage.mockClear();
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.getQueue(SID)).toEqual([]);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('editQueuedMessage moves the text back to the prompt input', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'fix it', outgoing: 'fix it' });
+    const [item] = messageStore.getQueue(SID);
+
+    expect(messageStore.editQueuedMessage(SID, item.id)).toBe(true);
+
+    expect(messageStore.getQueue(SID)).toEqual([]);
+    expect(messageStore.promptInsertBySession[SID]?.text).toBe('fix it');
+    expect(messageStore.editQueuedMessage(SID, 'nope')).toBe(false);
+  });
+
+  it('Stop pauses the queue; the restarted query does not fire the next item until Resume', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.markSessionStopped(SID);
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+
+    // Restart connects idle — still held
+    messageStore.ingestEvent(SID, init);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+
+    messageStore.resumeQueue(SID);
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined);
+    expect(messageStore.getQueue(SID)).toEqual([]);
+  });
+
+  it('Stop with an empty queue does not leave a pause behind', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.markSessionStopped(SID);
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+  });
+
+  it('a new prompt typed while paused and idle is sent ahead of the held items', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'held', outgoing: 'held' });
+    messageStore.markSessionStopped(SID);
+    mockGroveBench.sendMessage.mockClear();
+
+    expect(messageStore.canSendNow(SID)).toBe(true);
+    const outcome = messageStore.submitMessage(SID, { displayText: 'correction', outgoing: 'correction' });
+
+    expect(outcome).toBe('sent');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'correction', undefined);
+    // Still paused: the held item waits for an explicit Resume
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(messageStore.getQueue(SID).map((m) => m.displayText)).toEqual(['held']);
+    messageStore.ingestEvent(SID, result);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('removing the last paused item clears the pause', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'held', outgoing: 'held' });
+    messageStore.markSessionStopped(SID);
+    const [held] = messageStore.getQueue(SID);
+
+    messageStore.removeQueuedMessage(SID, held.id);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+  });
+
+  it('rewind pauses the queue', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'held', outgoing: 'held' });
+
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'none', conversationOnly: true } as AgentEvent);
+
+    expect(messageStore.isQueuePaused(SID)).toBe(true);
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+  });
+
+  it('slash commands queue while running and dispatch through sendCommand', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    mockGroveBench.sendMessage.mockClear();
+
+    expect(messageStore.submitCommand(SID, '/compact')).toBe('queued');
+    expect(messageStore.getQueue(SID)[0]).toMatchObject({ outgoing: '/compact', isCommand: true });
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/compact');
+    const last = messageStore.getMessages(SID).at(-1) as any;
+    expect(last.kind).toBe('user');
+    expect(last.text).toBe('/compact');
+  });
+
+  it('/clear queued behind a turn still arms pendingClear when it goes out', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitCommand(SID, '/clear');
+    expect(messageStore.pendingClear[SID]).toBeUndefined();
+
+    messageStore.ingestEvent(SID, result);
+
+    expect(messageStore.pendingClear[SID]).toBe(true);
+  });
+
+  it('/rewind is client-side and never queued, even while running', () => {
+    messageStore.setIsRunning(SID, true);
+
+    expect(messageStore.submitCommand(SID, '/rewind')).toBe('sent');
+
+    expect(messageStore.getQueue(SID)).toEqual([]);
+    expect(messageStore.rewindDialogOpen[SID]).toBe(true);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('a slash command sent while idle goes straight out', () => {
+    expect(messageStore.submitCommand(SID, '/compact')).toBe('sent');
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '/compact');
+  });
+
+  it('process_exit and error do not fire queued prompts (no query to receive them)', () => {
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second' });
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, { type: 'error', message: 'boom' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+    // ...but the item is sent once the resumed query connects idle
+    messageStore.ingestEvent(SID, init);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'second', undefined);
+  });
+
+  it('destroySession drops the queue and pause state', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.markSessionStopped(SID);
+
+    messageStore.destroySession(SID);
+
+    expect(messageStore.queuedBySession[SID]).toBeUndefined();
+    expect(messageStore.queuePausedBySession[SID]).toBeUndefined();
   });
 });
