@@ -91,13 +91,11 @@
   }
 
   async function ensurePty() {
-    const alive = await terminalStore.checkAlive(sessionId);
-    if (!alive) {
-      await terminalStore.spawn(sessionId);
-      // After spawning, send initial resize
-      if (terminal) {
-        terminalStore.resize(sessionId, terminal.cols, terminal.rows);
-      }
+    const wasAlive = terminalStore.isAlive(sessionId);
+    const ok = await terminalStore.ensureAlive(sessionId);
+    if (ok && !wasAlive && terminal) {
+      // Freshly spawned (or first seen): send the current dimensions
+      terminalStore.resize(sessionId, terminal.cols, terminal.rows);
     }
   }
 

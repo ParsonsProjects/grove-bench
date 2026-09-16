@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
@@ -23,10 +24,13 @@
   } = $props();
 
   let open = $state(true);
-  let name = $state(initial?.name ?? '');
-  let description = $state(initial?.description ?? '');
+  // `initial` is a one-time prefill: read it once at mount, deliberately
+  // not tracked, so later prop changes don't clobber what the user typed.
+  const prefill = untrack(() => initial);
+  let name = $state(prefill?.name ?? '');
+  let description = $state(prefill?.description ?? '');
   let scope = $state<'project' | 'user'>('project');
-  let instructions = $state(initial?.instructions ?? '');
+  let instructions = $state(prefill?.instructions ?? '');
   let creating = $state(false);
   let dialogError = $state('');
 

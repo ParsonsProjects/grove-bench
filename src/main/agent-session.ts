@@ -38,6 +38,20 @@ function autoModeSandbox(worktreePath: string): Record<string, unknown> {
   };
 }
 
+/** Event types that are never persisted or replayed — live UI feedback only. */
+const TRANSIENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set<AgentEvent['type']>([
+  'partial_text', 'partial_thinking', 'activity', 'tool_progress', 'usage',
+]);
+
+/** Event-log batching: flush after this delay or once this many bytes queue. */
+const EVENT_LOG_FLUSH_MS = 250;
+const EVENT_LOG_FLUSH_BYTES = 64 * 1024;
+
+/** Parsed on-disk histories for sessions that are not running, keyed by id.
+ *  Bounded so the session finder's cross-session search doesn't re-parse
+ *  every log per keystroke, but old sessions don't pin memory forever. */
+const HISTORY_CACHE_MAX = 12;
+
 interface PendingPermission {
   requestId: string;
   toolName: string;
@@ -71,10 +85,18 @@ interface ManagedSession {
    *  from the provider's system_init (normalised to a known picker id). */
   model: string | null;
   window: BrowserWindow;
-  /** Buffered events for replay after renderer reload */
+  /** Buffered events for replay after renderer reload. Transient streaming
+   *  events (see TRANSIENT_EVENT_TYPES) are not kept here — the renderer
+   *  skips them on replay anyway. */
   eventHistory: AgentEvent[];
-  /** Maps toolUseId → toolName for matching tool_results back to Bash calls */
-  toolUseMap: Map<string, string>;
+  /** JSONL lines waiting to be appended to eventLogPath (see queueEventLog). */
+  logBuffer: string[];
+  logBufferBytes: number;
+  logFlushTimer: ReturnType<typeof setTimeout> | null;
+  /** Set by destroySession before the query is closed so the event loop's
+   *  tail (status update, completion callback, memory auto-save) is skipped —
+   *  the worktree is about to be removed, so nothing may spawn inside it. */
+  destroying: boolean;
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
   /** Permission mode for the SDK query. */
@@ -265,17 +287,50 @@ class AgentSessionManager {
     return computeSkillsFilter(known, disabledSkills);
   }
 
+  /** Queue an event line for the on-disk JSONL log. Lines are appended in
+   *  batches (every EVENT_LOG_FLUSH_MS or EVENT_LOG_FLUSH_BYTES) instead of
+   *  one synchronous open/write/close per event. flushEventLog() must be
+   *  called before the log file is rewritten or the session is dropped. */
+  private queueEventLog(session: ManagedSession, event: AgentEvent): void {
+    const line = JSON.stringify(event) + '\n';
+    session.logBuffer.push(line);
+    session.logBufferBytes += line.length;
+    if (session.logBufferBytes >= EVENT_LOG_FLUSH_BYTES) {
+      this.flushEventLog(session);
+    } else if (!session.logFlushTimer) {
+      const timer = setTimeout(() => this.flushEventLog(session), EVENT_LOG_FLUSH_MS);
+      (timer as { unref?: () => void }).unref?.();
+      session.logFlushTimer = timer;
+    }
+  }
+
+  /** Synchronously write any queued log lines. */
+  private flushEventLog(session: ManagedSession): void {
+    if (session.logFlushTimer) {
+      clearTimeout(session.logFlushTimer);
+      session.logFlushTimer = null;
+    }
+    if (session.logBuffer.length === 0) return;
+    const data = session.logBuffer.join('');
+    session.logBuffer = [];
+    session.logBufferBytes = 0;
+    try {
+      fs.appendFileSync(session.eventLogPath, data);
+    } catch { /* non-fatal */ }
+  }
+
   /** Create an emit function bound to a session — buffers events and persists them to JSONL on disk. */
   private createEmitter(session: ManagedSession): (event: AgentEvent) => void {
     const id = session.id;
     const emit = (event: AgentEvent) => {
-      logger.debug(`[emit] session=${id} event.type=${event.type}`);
-      session.eventHistory.push(event);
-
-      // Persist to disk (fire-and-forget, non-blocking)
-      try {
-        fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n');
-      } catch { /* non-fatal */ }
+      // Streaming deltas and activity ticks are only useful live: the renderer
+      // drops them on replay, search ignores them, and memory extraction never
+      // reads them. Keeping them would grow eventHistory and the JSONL log by
+      // one entry per token.
+      if (!TRANSIENT_EVENT_TYPES.has(event.type)) {
+        session.eventHistory.push(event);
+        this.queueEventLog(session, event);
+      }
 
       // Notify registered listeners (used for progress events)
       const listeners = this.eventListeners.get(id);
@@ -287,11 +342,7 @@ class AgentSessionManager {
 
       const w = session.window;
       if (!w.isDestroyed()) {
-        const channel = `${IPC.AGENT_EVENT}:${id}`;
-        logger.debug(`[emit] sending on channel=${channel}`);
-        w.webContents.send(channel, event);
-      } else {
-        logger.debug(`[emit] window is destroyed, dropping event`);
+        w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
       }
     };
     session.emit = emit;
@@ -363,8 +414,12 @@ class AgentSessionManager {
       pendingResumeAt: null,
       model: opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null),
       window: win,
-      eventHistory: this.loadEventHistory(id),
-      toolUseMap: new Map(),
+      // Copy: the cached array must not be mutated by the live session.
+      eventHistory: [...this.loadEventHistory(id)],
+      logBuffer: [],
+      logBufferBytes: 0,
+      logFlushTimer: null,
+      destroying: false,
       lastResult: null,
       permissionMode: effectivePermissionMode,
       appendSystemPrompt: effectiveAppendPrompt,
@@ -631,7 +686,9 @@ class AgentSessionManager {
     // Process event stream from the adapter
     try {
       for await (const event of handle.events) {
-        logger.debug(`[runQuery] session=${id} event type=${event.type}`);
+        if (!TRANSIENT_EVENT_TYPES.has(event.type)) {
+          logger.debug(`[runQuery] session=${id} event type=${event.type}`);
+        }
         if (abortController.signal.aborted) break;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
@@ -683,11 +740,6 @@ class AgentSessionManager {
               logger.warn(`Checkpoint baseline failed for ${id}:`, err);
             });
           }
-        }
-
-        // Track tool use IDs for matching tool_results
-        if (event.type === 'assistant_tool_use') {
-          session.toolUseMap.set(event.toolUseId, event.toolName);
         }
 
         // Auto-save memories before compaction wipes context
@@ -768,6 +820,15 @@ class AgentSessionManager {
       return;
     }
 
+    // destroySession closed the query: the session is being torn down and its
+    // worktree removed. Don't flip status, fire callbacks, or start a memory
+    // extraction (which would spawn a subprocess with cwd inside the worktree
+    // and hold it locked while removal runs).
+    if (session.destroying) {
+      logger.debug(`[runQuery] session=${id} event loop ended during destroy`);
+      return;
+    }
+
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
@@ -816,10 +877,16 @@ class AgentSessionManager {
     if (!session.queryHandle && session.queryReady) {
       logger.debug(`[sendMessage] session=${id} waiting for queryHandle after stop`);
       const QUERY_READY_TIMEOUT_MS = 30_000;
-      const timeout = new Promise<'timeout'>((resolve) =>
-        setTimeout(() => resolve('timeout'), QUERY_READY_TIMEOUT_MS),
-      );
-      const result = await Promise.race([session.queryReady, timeout]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), QUERY_READY_TIMEOUT_MS);
+      });
+      let result: unknown;
+      try {
+        result = await Promise.race([session.queryReady, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
       if (result === 'timeout' || !session.queryHandle) {
         logger.warn(`[sendMessage] session=${id} timed out waiting for queryHandle`);
         return false;
@@ -1194,6 +1261,10 @@ class AgentSessionManager {
     memoryAutosave.cancelAutoSave(id);
     memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory, session.branch);
 
+    // Must be set before close(): closing ends runQuery's event loop, whose
+    // tail would otherwise treat this as a normal query end (see runQuery).
+    session.destroying = true;
+
     // Close the query and input stream before aborting to allow graceful cleanup
     try {
       session.queryHandle?.close();
@@ -1225,6 +1296,8 @@ class AgentSessionManager {
     // Wait for Windows file handles to release
     await new Promise((r) => setTimeout(r, 500));
 
+    this.flushEventLog(session);
+    this.historyCache.delete(id);
     this.sessions.delete(id);
   }
 
@@ -1294,7 +1367,7 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
     session.eventHistory.push(event);
-    try { fs.appendFileSync(session.eventLogPath, JSON.stringify(event) + '\n'); } catch { /* non-fatal */ }
+    this.queueEventLog(session, event);
     const w = session.window;
     if (!w.isDestroyed()) {
       w.webContents.send(`${IPC.AGENT_EVENT}:${id}`, event);
@@ -1311,8 +1384,24 @@ class AgentSessionManager {
   /** Load event history from the disk JSONL log for a session.
    *  Parses each line individually so a single corrupt line (e.g. from a
    *  crash mid-write) doesn't discard the entire history. */
+  private historyCache = new Map<string, { mtimeMs: number; size: number; events: AgentEvent[] }>();
+
   private loadEventHistory(id: string): AgentEvent[] {
     const logPath = path.join(getEventsDir(), `${id}.jsonl`);
+    let stat: { mtimeMs: number; size: number };
+    try {
+      stat = fs.statSync(logPath);
+    } catch {
+      this.historyCache.delete(id);
+      return [];
+    }
+    const cached = this.historyCache.get(id);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      // Refresh recency (Map preserves insertion order; oldest is evicted first).
+      this.historyCache.delete(id);
+      this.historyCache.set(id, cached);
+      return cached.events;
+    }
     try {
       const data = fs.readFileSync(logPath, 'utf-8');
       const events: AgentEvent[] = [];
@@ -1323,6 +1412,13 @@ class AgentSessionManager {
         } catch {
           logger.warn(`[loadEventHistory] skipping corrupt line in ${id}.jsonl`);
         }
+      }
+      this.historyCache.delete(id);
+      this.historyCache.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, events });
+      while (this.historyCache.size > HISTORY_CACHE_MAX) {
+        const oldest = this.historyCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.historyCache.delete(oldest);
       }
       return events;
     } catch {
@@ -1363,7 +1459,11 @@ class AgentSessionManager {
     if (rewindIdx >= 0) {
       // Exclude the rewind target message — it gets placed back into the input
       session.eventHistory = session.eventHistory.slice(0, rewindIdx);
-      // Rewrite the disk log to match
+      // Rewrite the disk log to match (drop queued appends first — they are
+      // part of what is being cut)
+      session.logBuffer = [];
+      session.logBufferBytes = 0;
+      this.flushEventLog(session);
       try {
         const lines = session.eventHistory.map(e => JSON.stringify(e)).join('\n') + '\n';
         fs.writeFileSync(session.eventLogPath, lines);
@@ -1443,13 +1543,7 @@ class AgentSessionManager {
   getEventHistoryCount(id: string): number {
     const session = this.sessions.get(id);
     if (session) return session.eventHistory.length;
-    const logPath = path.join(getEventsDir(), `${id}.jsonl`);
-    try {
-      const data = fs.readFileSync(logPath, 'utf-8');
-      return data.split('\n').filter(Boolean).length;
-    } catch {
-      return 0;
-    }
+    return this.loadEventHistory(id).length;
   }
 
   /** Return a page of events from the end of the history.
@@ -1488,6 +1582,9 @@ class AgentSessionManager {
         });
       }
       session.eventHistory = [];
+      session.logBuffer = [];
+      session.logBufferBytes = 0;
+      this.flushEventLog(session);
       try {
         fs.writeFileSync(session.eventLogPath, '');
       } catch { /* non-fatal */ }
@@ -1501,6 +1598,7 @@ class AgentSessionManager {
       // Session not running — clear disk log directly
       const logPath = path.join(getEventsDir(), `${id}.jsonl`);
       try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
+      this.historyCache.delete(id);
     }
   }
 

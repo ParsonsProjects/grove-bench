@@ -458,7 +458,8 @@
 
   <!-- Streaming thinking (live) — suppressed in focus mode -->
   {#if streamingThinking && viewMode !== 'focus'}
-    {@const lastLine = streamingThinking.trimEnd().split('\n').at(-1)?.trim() || 'thinking...'}
+    {@const trimmed = streamingThinking.trimEnd()}
+    {@const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() || 'thinking...'}
     <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
       <span class="inline-block w-1.5 h-3 bg-purple-400 animate-pulse shrink-0"></span>
       <span class="truncate">{lastLine}</span>
@@ -468,7 +469,7 @@
   <!-- Streaming text (live) -->
   {#if streamingText}
     <div class="py-1 text-sm text-foreground">
-      <MarkdownBlock content={streamingText} />
+      <MarkdownBlock content={streamingText} streaming />
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
   {:else if isRunning && (!streamingThinking || viewMode === 'focus')}

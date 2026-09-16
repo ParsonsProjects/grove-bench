@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -41,7 +41,7 @@
   // Insert text pushed from elsewhere (e.g. the activity thread's "copy
   // selection to prompt"). Initialised from the current nonce so a stale
   // request doesn't re-fire when this editor (re)mounts.
-  let lastInsertNonce = messageStore.promptInsertBySession[sessionId]?.nonce ?? 0;
+  let lastInsertNonce = untrack(() => messageStore.promptInsertBySession[sessionId]?.nonce ?? 0);
   $effect(() => {
     const req = messageStore.promptInsertBySession[sessionId];
     if (!req || req.nonce === lastInsertNonce) return;
@@ -112,10 +112,10 @@
         userResized = false;
         if (textarea) textarea.style.height = '';
         messageStore.setActiveTab(sessionId, 'terminal');
-        // Ensure PTY is alive, then write the command + Enter
+        // Ensure PTY is alive, then write the command + Enter. Shares the
+        // in-flight check with the terminal panel mounting on tab switch.
         (async () => {
-          const alive = await terminalStore.checkAlive(sessionId);
-          if (!alive) await terminalStore.spawn(sessionId);
+          await terminalStore.ensureAlive(sessionId);
           terminalStore.write(sessionId, cmd + '\r');
         })();
       }

@@ -76,6 +76,22 @@ class TerminalStore {
     return ok;
   }
 
+  private ensuring = new Map<string, Promise<boolean>>();
+
+  /** Make sure a PTY is alive, spawning one if needed. Concurrent callers
+   *  (e.g. the panel mounting while a `!command` is being dispatched) share
+   *  one in-flight check so they can't each spawn and kill the other's shell. */
+  ensureAlive(sessionId: string): Promise<boolean> {
+    const pending = this.ensuring.get(sessionId);
+    if (pending) return pending;
+    const run = (async () => {
+      const alive = await this.checkAlive(sessionId);
+      return alive ? true : this.spawn(sessionId);
+    })().finally(() => this.ensuring.delete(sessionId));
+    this.ensuring.set(sessionId, run);
+    return run;
+  }
+
   /** Write data to the PTY (keystrokes, pasted text). */
   write(sessionId: string, data: string) {
     window.groveBench.ptyWrite(sessionId, data);
