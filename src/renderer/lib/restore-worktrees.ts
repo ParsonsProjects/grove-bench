@@ -7,17 +7,20 @@ import { store } from '../stores/sessions.svelte.js';
  * added them — if validation fails (e.g. git not in PATH yet), just skip
  * restoring sessions for that repo. The repo stays in the sidebar so the
  * user can retry or remove it manually.
+ *
+ * Repos are restored in parallel: each one costs a couple of git subprocess
+ * calls, and running them serially made startup scale with repo count.
  */
 export async function restoreWorktrees() {
   const runningSessions = await window.groveBench.listSessions();
   const runningMap = new Map(runningSessions.filter((s) => s.status === 'running').map((s) => [s.id, s]));
 
-  for (const repo of [...store.repos]) {
+  await Promise.all([...store.repos].map(async (repo) => {
     try {
       const valid = await window.groveBench.validateRepo(repo);
       if (!valid) {
         console.warn(`Repo validation failed during restore, skipping: ${repo}`);
-        continue;
+        return;
       }
       const worktrees = await window.groveBench.listWorktrees(repo);
       for (const wt of worktrees) {
@@ -47,5 +50,5 @@ export async function restoreWorktrees() {
     } catch (e) {
       console.error(`Failed to restore worktrees for ${repo}:`, e);
     }
-  }
+  }));
 }

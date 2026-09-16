@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, MenuItem, powerMonitor } from 'electron';
 import path from 'node:path';
-import { registerHandlers } from './ipc.js';
+import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
@@ -118,13 +118,22 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
-  // Run an initial worktree sweep shortly after launch, then every 15 minutes
+  // Background worktree sweep. The first run waits until the renderer has
+  // finished restoring sessions (disk and CPU are busiest then), with a
+  // 60s fallback if that signal never arrives; then every 15 minutes.
   const runSweep = () => {
     worktreeManager.sweepStaleWorktrees().catch((e) => {
       logger.warn('Background worktree sweep failed:', e);
     });
   };
-  setTimeout(runSweep, 10_000); // 10s after launch
+  let firstSweepScheduled = false;
+  const scheduleFirstSweep = () => {
+    if (firstSweepScheduled) return;
+    firstSweepScheduled = true;
+    setTimeout(runSweep, 5_000);
+  };
+  appEvents.once('restore-complete', scheduleFirstSweep);
+  setTimeout(scheduleFirstSweep, 60_000);
   const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
 

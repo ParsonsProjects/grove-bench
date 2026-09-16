@@ -53,7 +53,8 @@ export function initAutoUpdater(win: BrowserWindow) {
   });
 
   if (app.isPackaged) {
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 10_000);
+    // Wait until session restore has settled before touching the network.
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 60_000);
     if (checkInterval) clearInterval(checkInterval);
     checkInterval = setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
   }

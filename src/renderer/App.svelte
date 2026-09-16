@@ -6,6 +6,7 @@
   import { prStore } from './stores/pr.svelte.js';
   import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
+  import { orderTabsForResume, RESUME_STAGGER_MS } from './lib/resume-order.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { deriveSessionName } from './lib/session-name.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -45,18 +46,6 @@
       }
     }
 
-    for (const tabId of persistedOpenTabs) {
-      const session = store.sessions.find((s) => s.id === tabId);
-      if (session && session.status === 'stopped') {
-        window.groveBench.resumeSession(tabId, session.repoPath).then((result) => {
-          store.updateStatus(result.id, 'running');
-        }).catch((e: any) => {
-          store.setError(e.message || String(e));
-          failedResumeIds.add(tabId);
-        });
-      }
-    }
-
     // Restore persisted active tab, or fall back to first running session
     const persistedTabId = await window.groveBench.getActiveTab();
     if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
@@ -68,7 +57,18 @@
       }
     }
 
+    // Resume previously-open tabs: the active one first (it's on screen), the
+    // rest staggered so their agent subprocesses don't all boot at once.
+    // `restored` stays false until every resume has been started so the
+    // open-tabs persistence effect doesn't briefly write a partial list.
+    const ordered = orderTabsForResume(persistedOpenTabs, store.activeSessionId);
+    for (let i = 0; i < ordered.length; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, RESUME_STAGGER_MS));
+      resumeStoppedSession(store.sessions.find((s) => s.id === ordered[i]));
+    }
+
     restored = true;
+    window.groveBench.notifyRestoreComplete();
   }
 
   // Track per-session running state to detect turn completion. Flash state

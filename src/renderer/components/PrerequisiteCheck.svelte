@@ -1,15 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
+  import { prerequisitesSatisfied } from '../../shared/prerequisites.js';
+  import type { PrerequisiteStatus } from '../../shared/types.js';
 
   let checking = $state(true);
   let errors = $state<string[]>([]);
 
-  async function runCheck() {
-    checking = true;
-    errors = [];
-    const status = await window.groveBench.checkPrerequisites();
-    store.prerequisites = status;
+  function errorsFor(status: PrerequisiteStatus): string[] {
     const errs: string[] = [];
 
     if (!status.git.available) {
@@ -24,12 +22,46 @@
       errs.push(status.agent.authErrorMessage ?? 'Agent is not authenticated.');
     }
 
-    errors = errs;
-    checking = false;
+    return errs;
   }
 
-  onMount(() => {
-    runCheck();
+  /** The GitHub CLI check can hit the network; it only enables PR features,
+   *  so it always runs after the gate and never holds the UI. */
+  function refreshGh() {
+    window.groveBench.checkGhPrerequisite().then((gh) => {
+      if (store.prerequisites) store.prerequisites = { ...store.prerequisites, gh };
+    }).catch(() => { /* PR features simply stay disabled */ });
+  }
+
+  /** Full check of git + agent CLI. In background mode the overlay stays
+   *  hidden unless the check actually finds a problem. */
+  async function runCheck(background = false) {
+    if (!background) {
+      checking = true;
+      errors = [];
+    }
+    const status = await window.groveBench.checkPrerequisites();
+    store.prerequisites = { ...status, gh: status.gh ?? store.prerequisites?.gh };
+    errors = errorsFor(status);
+    checking = false;
+    refreshGh();
+  }
+
+  onMount(async () => {
+    // Fast path: a previous launch passed. Show the app immediately and
+    // re-verify in the background; the overlay only returns on a real failure.
+    let cached: PrerequisiteStatus | null = null;
+    try {
+      cached = await window.groveBench.getCachedPrerequisites();
+    } catch { /* treat as no cache */ }
+
+    if (cached && prerequisitesSatisfied(cached)) {
+      store.prerequisites = cached;
+      checking = false;
+      runCheck(true);
+    } else {
+      runCheck();
+    }
   });
 
   const hasErrors = $derived(errors.length > 0);
@@ -69,7 +101,7 @@
       <p class="text-xs text-muted-foreground mt-6 mb-4">Fix the issues above, then re-check.</p>
       <button
         class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-        onclick={runCheck}
+        onclick={() => runCheck()}
       >
         Re-check
       </button>

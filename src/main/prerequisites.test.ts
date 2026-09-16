@@ -19,7 +19,8 @@ vi.mock('./adapters/index.js', () => ({
   },
 }));
 
-import { checkGit, checkGh, checkAllPrerequisites } from './prerequisites.js';
+import { checkGit, checkGh, checkAllPrerequisites, checkCorePrerequisites } from './prerequisites.js';
+import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 
@@ -136,5 +137,49 @@ describe('checkAllPrerequisites()', () => {
     const result = await checkAllPrerequisites();
     expect(result.git.available).toBe(true);
     expect(result.agent.available).toBe(false);
+  });
+});
+
+describe('checkCorePrerequisites()', () => {
+  it('checks git and the agent but never spawns gh', async () => {
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: true, path: '/bin/claude' });
+
+    const result = await checkCorePrerequisites();
+
+    expect(result.git.available).toBe(true);
+    expect(result.agent.authenticated).toBe(true);
+    expect(result.gh).toBeUndefined();
+    expect(mockGhVersion).not.toHaveBeenCalled();
+    expect(mockGhAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the adapter auth message when not authenticated', async () => {
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: false });
+
+    const result = await checkCorePrerequisites();
+    expect(result.agent.authenticated).toBe(false);
+    expect(result.agent.errorMessage).toBeUndefined();
+  });
+});
+
+describe('prerequisitesSatisfied()', () => {
+  const ok = { git: { available: true, meetsMinimum: true }, agent: { available: true, authenticated: true } };
+
+  it('passes with git and an authenticated agent, regardless of gh', () => {
+    expect(prerequisitesSatisfied(ok)).toBe(true);
+    expect(prerequisitesSatisfied({ ...ok, gh: { available: false } })).toBe(true);
+  });
+
+  it('fails when git is missing or too old', () => {
+    expect(prerequisitesSatisfied({ ...ok, git: { available: false } })).toBe(false);
+    expect(prerequisitesSatisfied({ ...ok, git: { available: true, meetsMinimum: false } })).toBe(false);
+  });
+
+  it('fails when the agent is missing or not authenticated', () => {
+    expect(prerequisitesSatisfied({ ...ok, agent: { available: false } })).toBe(false);
+    expect(prerequisitesSatisfied({ ...ok, agent: { available: true, authenticated: false } })).toBe(false);
+    expect(prerequisitesSatisfied({ ...ok, agent: { available: true } })).toBe(false);
   });
 });

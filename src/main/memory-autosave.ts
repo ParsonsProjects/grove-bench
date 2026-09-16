@@ -29,6 +29,12 @@ const MAX_SESSION_SLUG_LENGTH = 60;
 const BRANCH_PREFIXES = /^(?:feature|bug|fix|hotfix)\//;
 const MAX_EVENTS_FOR_EXTRACTION = 60;
 const DEBOUNCE_MS = 5_000;
+/** Minimum gap between per-turn extractions for one session. Each extraction
+ *  boots a full agent subprocess, so running it after every turn is the
+ *  single largest source of background process churn. */
+export const MIN_SAVE_INTERVAL_MS = 3 * 60_000;
+/** Skip a per-turn extraction unless at least this many new events arrived. */
+export const MIN_NEW_EVENTS = 8;
 
 // ─── Tracking state ───
 
@@ -38,7 +44,56 @@ const inProgress = new Set<string>();
 /** Debounce timers keyed by session ID. */
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** When each session last ran an extraction and how many events it had. */
+const lastSave = new Map<string, { at: number; eventCount: number }>();
+
+/** Test hook: clear all tracking state. */
+export function _resetForTests(): void {
+  inProgress.clear();
+  for (const t of debounceTimers.values()) clearTimeout(t);
+  debounceTimers.clear();
+  lastSave.clear();
+}
+
 // ─── Helpers ───
+
+/**
+ * Pull the first complete JSON object out of a model response. Models often
+ * wrap the JSON in fences or append a sentence after it; `JSON.parse` on the
+ * raw text then fails with "Unexpected non-whitespace character after JSON".
+ * Walks the text tracking string/escape state so braces inside strings don't
+ * confuse the match. Returns null when no balanced object is found.
+ */
+export function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
 
 /**
  * Read all non-session memory files and return them as a map of path → content.
@@ -212,14 +267,15 @@ async function runExtraction(
 
     clearTimeout(timeout);
 
-    // Parse the JSON response
-    // Strip markdown fences if present
-    const cleaned = resultText
-      .replace(/^```(?:json)?\s*/m, '')
-      .replace(/\s*```\s*$/m, '')
-      .trim();
+    // Parse the JSON response. Take the first balanced object so fences or
+    // trailing commentary from the model don't waste the whole extraction.
+    const jsonText = extractJsonObject(resultText);
+    if (!jsonText) {
+      logger.warn(`[memory-autosave] No JSON object in extraction response (${resultText.length} chars)`);
+      return null;
+    }
 
-    const parsed = JSON.parse(cleaned) as ExtractionResult;
+    const parsed = JSON.parse(jsonText) as ExtractionResult;
 
     if (!parsed.files || !parsed.sessionNote) {
       logger.warn('[memory-autosave] Invalid extraction result structure');
@@ -366,7 +422,32 @@ export function triggerAutoSave(opts: AutoSaveOptions): void {
 }
 
 /**
- * Trigger auto-save immediately (no debounce). Used for compaction and session end.
+ * Decide whether a per-turn auto-save should run now, be deferred, or be
+ * skipped, given when the session last saved and how much it has grown since.
+ * Exported for tests.
+ */
+export function planTurnAutoSave(
+  sessionId: string,
+  eventCount: number,
+  now = Date.now(),
+): { action: 'run' } | { action: 'defer'; delayMs: number } | { action: 'skip' } {
+  const last = lastSave.get(sessionId);
+  if (!last) return { action: 'run' };
+  const newEvents = eventCount - last.eventCount;
+  // History shrank (/clear or rewind): the old baseline is meaningless, start over.
+  if (newEvents < 0) return { action: 'run' };
+  if (newEvents < MIN_NEW_EVENTS) return { action: 'skip' };
+  const elapsed = now - last.at;
+  if (elapsed >= MIN_SAVE_INTERVAL_MS) return { action: 'run' };
+  return { action: 'defer', delayMs: MIN_SAVE_INTERVAL_MS - elapsed };
+}
+
+/**
+ * Trigger auto-save after a completed turn. Runs at once for the first save,
+ * but subsequent turns are rate-limited: too soon after the last save and the
+ * run is deferred until the interval elapses; too little new activity and it
+ * is skipped entirely. Compaction and `/clear` use `triggerAutoSave` and are
+ * not throttled, since context is about to be lost.
  */
 export async function triggerAutoSaveImmediate(opts: AutoSaveOptions): Promise<void> {
   const appSettings = settings.getSettings();
@@ -379,6 +460,26 @@ export async function triggerAutoSaveImmediate(opts: AutoSaveOptions): Promise<v
 
   if (countUserTurns(opts.events) < MIN_TURNS_FOR_AUTOSAVE) {
     opts.onStatus?.('skipped');
+    return;
+  }
+
+  const plan = planTurnAutoSave(opts.sessionId, opts.events.length);
+  if (plan.action === 'skip') {
+    logger.debug(`[memory-autosave] Too little new activity for session ${opts.sessionId}, skipping`);
+    opts.onStatus?.('skipped');
+    return;
+  }
+  if (plan.action === 'defer') {
+    // Only one deferred run per session; a later turn re-plans from scratch.
+    if (debounceTimers.has(opts.sessionId)) return;
+    logger.debug(`[memory-autosave] Deferring auto-save for session ${opts.sessionId} by ${Math.round(plan.delayMs / 1000)}s`);
+    const timer = setTimeout(() => {
+      debounceTimers.delete(opts.sessionId);
+      runAutoSave(opts).catch(err => {
+        logger.error(`[memory-autosave] Auto-save failed for session ${opts.sessionId}: ${err}`);
+      });
+    }, plan.delayMs);
+    debounceTimers.set(opts.sessionId, timer);
     return;
   }
 
@@ -395,13 +496,23 @@ export async function triggerAutoSaveImmediate(opts: AutoSaveOptions): Promise<v
 async function runAutoSave(opts: AutoSaveOptions): Promise<void> {
   const { sessionId, repoPath, cwd, events, branchName, adapterType, onStatus } = opts;
 
+  if (inProgress.has(sessionId)) return;
   inProgress.add(sessionId);
+  // Record up front so a failing extraction doesn't re-run every turn.
+  lastSave.set(sessionId, { at: Date.now(), eventCount: events.length });
   onStatus?.('started');
 
   try {
     const extraction = await runExtraction(repoPath, cwd, events, sessionId, adapterType);
 
     if (!extraction) {
+      // Extraction failed or was unavailable: keep at least a heuristic
+      // session note so the work isn't lost, but never overwrite a richer
+      // note a previous successful extraction already wrote.
+      const sessionPath = generateSessionFilename(sessionId, branchName);
+      if (!memory.readMemoryFile(repoPath, sessionPath)) {
+        saveSessionMetadata(repoPath, sessionId, events, branchName);
+      }
       onStatus?.('skipped');
       return;
     }
@@ -433,4 +544,5 @@ export function cancelAutoSave(sessionId: string): void {
     clearTimeout(timer);
     debounceTimers.delete(sessionId);
   }
+  lastSave.delete(sessionId);
 }

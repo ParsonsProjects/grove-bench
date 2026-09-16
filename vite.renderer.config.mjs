@@ -22,6 +22,22 @@ export default defineConfig({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Split the heavy vendor libraries out of the app chunk so the
+        // browser can fetch and parse them in parallel, and so an app-only
+        // change doesn't invalidate the cached vendor code. (posthog-js is
+        // dynamically imported from analytics.ts and gets its own chunk.)
+        manualChunks(id) {
+          const p = id.replace(/\\/g, '/');
+          if (!p.includes('/node_modules/')) return undefined;
+          if (p.includes('/node_modules/@xterm/')) return 'xterm';
+          if (p.includes('/node_modules/highlight.js/')) return 'highlight';
+          if (p.includes('/node_modules/marked/') || p.includes('/node_modules/dompurify/')) return 'markdown';
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     fs: {

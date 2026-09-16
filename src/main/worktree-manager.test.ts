@@ -30,6 +30,13 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const mockFsUtils = vi.hoisted(() => ({
+  removeDirectory: vi.fn(),
+  removeDirectoryWithRetry: vi.fn(),
+  pathExists: vi.fn(),
+}));
+vi.mock('./fs-utils.js', () => mockFsUtils);
+
 import { git } from './git.js';
 import { WorktreeManager } from './worktree-manager.js';
 
@@ -294,6 +301,90 @@ describe('remove', () => {
       expect.stringContaining('worktrees'),
       { recursive: true, force: true },
     );
+  });
+
+  it('retries the raw delete when both git removes fail', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
+    mockGit
+      .mockRejectedValueOnce(new Error('locked'))   // worktree remove
+      .mockRejectedValueOnce(new Error('locked'))   // worktree remove --force
+      .mockResolvedValue('');                        // prune, branch ops
+    mockFsUtils.removeDirectoryWithRetry.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue(['wt-b']);
+
+    await manager.remove('wt-a');
+
+    expect(mockFsUtils.removeDirectoryWithRetry).toHaveBeenCalledWith(expect.stringContaining('wt-a'));
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'prune'], '/repo');
+    expect(savedManifest).not.toHaveProperty('wt-a');
+  });
+
+  it('keeps a hidden manifest entry when the directory stays locked', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...manifest }));
+    mockGit.mockRejectedValue(new Error('locked'));
+    mockFsUtils.removeDirectoryWithRetry.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+
+    await manager.remove('wt-a', true);
+
+    expect((savedManifest as any)['wt-a']).toMatchObject({
+      repoPath: '/repo',
+      pendingRemoval: true,
+      pendingBranchDelete: true,
+    });
+    // Branch deletion is deferred too: it would fail while the worktree still holds it
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'feat-a'], '/repo');
+  });
+});
+
+describe('pending removals', () => {
+  const pendingManifest = {
+    'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000, pendingRemoval: true, pendingBranchDelete: true },
+    'wt-b': { repoPath: '/repo', branch: 'feat-b', createdAt: 2000 },
+  };
+
+  it('hides pending-removal entries from list() and listRepos()', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/gone', branch: 'feat-a', createdAt: 1000, pendingRemoval: true },
+      'wt-b': { repoPath: '/repo', branch: 'feat-b', createdAt: 2000 },
+    }));
+    mockGit.mockResolvedValue('worktree /mock/userData/worktrees/x/wt-b\nbranch refs/heads/feat-b\n');
+
+    expect(await manager.listRepos()).toEqual(['/repo']);
+    expect(await manager.getWorktreeOrManifest('wt-a')).toBeUndefined();
+  });
+
+  it('processPendingRemovals deletes the directory, prunes, drops the branch and the entry', async () => {
+    let liveManifest: Record<string, unknown> = { ...pendingManifest };
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(liveManifest));
+    mockFs.writeFile.mockImplementation(async (_path: string, data: string) => {
+      liveManifest = JSON.parse(data);
+      savedManifest = liveManifest;
+    });
+    mockFsUtils.pathExists.mockResolvedValue(true);
+    mockFsUtils.removeDirectory.mockResolvedValue(undefined);
+    mockGit.mockResolvedValue('');
+
+    const cleaned = await manager.processPendingRemovals();
+
+    expect(cleaned).toBe(1);
+    expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(expect.stringContaining('wt-a'));
+    expect(mockGit).toHaveBeenCalledWith(['worktree', 'prune'], '/repo');
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
+    expect(savedManifest).not.toHaveProperty('wt-a');
+    expect(savedManifest).toHaveProperty('wt-b');
+  });
+
+  it('processPendingRemovals leaves the entry for the next sweep when still locked', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ ...pendingManifest }));
+    mockFsUtils.pathExists.mockResolvedValue(true);
+    mockFsUtils.removeDirectory.mockRejectedValue(new Error('EBUSY'));
+    mockGit.mockResolvedValue('');
+
+    const cleaned = await manager.processPendingRemovals();
+
+    expect(cleaned).toBe(0);
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 });
 
