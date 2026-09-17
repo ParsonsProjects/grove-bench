@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, summarizeChecks, failingCheckNames, commentSignature, prStatus, prCreate, prReviewComments } from './gh.js';
+import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, summarizeChecks, failingCheckNames, commentSignature, prStatus, prCreate, prReviewComments, GH_TIMEOUT_MS } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
@@ -17,7 +17,7 @@ describe('ghVersion()', () => {
   it('parses the version from gh --version output', async () => {
     mockExeca.mockResolvedValue({ stdout: 'gh version 2.40.1 (2023-12-13)\nhttps://github.com/cli/cli/releases/tag/v2.40.1' } as any);
     expect(await ghVersion()).toBe('2.40.1');
-    expect(mockExeca).toHaveBeenCalledWith('gh', ['--version'], {});
+    expect(mockExeca).toHaveBeenCalledWith('gh', ['--version'], { timeout: GH_TIMEOUT_MS });
   });
 
   it('returns null when gh is not installed', async () => {
@@ -30,7 +30,7 @@ describe('ghAuthenticated()', () => {
   it('returns true when gh auth status exits cleanly', async () => {
     mockExeca.mockResolvedValue({ stdout: '' } as any);
     expect(await ghAuthenticated()).toBe(true);
-    expect(mockExeca).toHaveBeenCalledWith('gh', ['auth', 'status'], {});
+    expect(mockExeca).toHaveBeenCalledWith('gh', ['auth', 'status'], { timeout: GH_TIMEOUT_MS });
   });
 
   it('returns false when gh auth status fails', async () => {
@@ -100,7 +100,7 @@ describe('prStatus()', () => {
     expect(mockExeca).toHaveBeenCalledWith(
       'gh',
       ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews'],
-      { cwd: '/repo' },
+      { cwd: '/repo', timeout: GH_TIMEOUT_MS },
     );
     expect(result).toEqual({
       number: 42,
@@ -143,6 +143,16 @@ describe('prStatus()', () => {
   it('returns null when no PR exists for the branch', async () => {
     mockExeca.mockRejectedValue(new Error('no pull requests found'));
     expect(await prStatus('/repo', 'feat/x')).toBeNull();
+  });
+
+  it('recognises the no-PR message on stderr as well as the error message', async () => {
+    mockExeca.mockRejectedValue(Object.assign(new Error('Command failed'), { stderr: 'no pull requests found for branch "feat/x"' }));
+    expect(await prStatus('/repo', 'feat/x')).toBeNull();
+  });
+
+  it('throws on any other gh failure so the caller keeps its last snapshot', async () => {
+    mockExeca.mockRejectedValue(Object.assign(new Error('Command timed out'), { stderr: 'error connecting to api.github.com' }));
+    await expect(prStatus('/repo', 'feat/x')).rejects.toThrow(/gh pr view failed: error connecting/);
   });
 
   it('returns null on malformed output', async () => {
@@ -204,8 +214,8 @@ describe('prReviewComments()', () => {
       } as any); // issues/N/comments
 
     const result = await prReviewComments('/repo', 42);
-    expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/pulls/42/comments?per_page=100'], { cwd: '/repo' });
-    expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/issues/42/comments?per_page=100'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/pulls/42/comments?per_page=100'], { cwd: '/repo', timeout: GH_TIMEOUT_MS });
+    expect(mockExeca).toHaveBeenCalledWith('gh', ['api', 'repos/{owner}/{repo}/issues/42/comments?per_page=100'], { cwd: '/repo', timeout: GH_TIMEOUT_MS });
     expect(result).toEqual([
       { id: 'review-5', author: 'alice', authorAssociation: 'MEMBER', body: 'Looks mostly good, two nits' },
       { id: 'comment-9', author: 'bob', authorAssociation: 'COLLABORATOR', path: 'src/a.ts', line: 12, body: 'Rename this variable' },
@@ -247,7 +257,7 @@ describe('prCreate()', () => {
       1,
       'gh',
       ['pr', 'create', '--head', 'feat/x', '--title', 'T', '--body', 'B', '--base', 'main', '--draft'],
-      { cwd: '/repo' },
+      { cwd: '/repo', timeout: GH_TIMEOUT_MS },
     );
     expect(result.number).toBe(7);
     expect(result.isDraft).toBe(true);
@@ -263,7 +273,7 @@ describe('prCreate()', () => {
       1,
       'gh',
       ['pr', 'create', '--head', 'feat/x', '--title', 'T', '--body', ''],
-      { cwd: '/repo' },
+      { cwd: '/repo', timeout: GH_TIMEOUT_MS },
     );
   });
 
