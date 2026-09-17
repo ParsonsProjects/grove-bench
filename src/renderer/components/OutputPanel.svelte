@@ -14,7 +14,7 @@
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
-  import { filterVisibleMessages, type MessageViewMode } from '$lib/message-view.js';
+  import { filterVisibleMessages } from '$lib/message-view.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -30,26 +30,10 @@
 
   // View mode — Detailed shows everything; Summary hides thinking & most tool
   // calls; Focus shows only final turn output + unanswered permissions/questions.
+  // The toggle lives in the status bar; the default comes from settings.
   let viewMode = $derived(messageStore.getViewMode(sessionId));
   let filteredMessages = $derived(filterVisibleMessages(allMessages, viewMode));
-  let hiddenCount = $derived(allMessages.length - filteredMessages.length);
   let summaryMode = $derived(viewMode !== 'detailed');
-
-  const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
-    detailed: 'Detailed',
-    summary: 'Summary',
-    focus: 'Focus',
-  };
-  const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
-    summary: 'focus',
-    focus: 'detailed',
-    detailed: 'summary',
-  };
-  const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
-    detailed: 'Showing everything — click for Summary',
-    summary: 'Hiding thinking & most tool calls — click for Focus (final output only)',
-    focus: 'Showing final output & pending questions only — click for Detailed',
-  };
 
   // ─── Lazy loading: only render recent messages, load older on demand ───
   const PAGE_SIZE = 50;
@@ -299,26 +283,6 @@
 {/if}
 
 <div class="flex-1 relative overflow-hidden">
-<!-- View mode toggle (cycles Summary → Focus → Detailed) -->
-<button
-  onclick={() => messageStore.setViewMode(sessionId, NEXT_VIEW_MODE[viewMode])}
-  class="absolute top-2 right-3 z-30 flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium border transition-colors
-    {viewMode === 'detailed'
-      ? 'bg-card/80 border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50'
-      : 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'}"
-  title={VIEW_MODE_HINTS[viewMode]}
->
-  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-    {#if viewMode === 'detailed'}
-      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
-    {:else if viewMode === 'summary'}
-      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
-    {:else}
-      <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
-    {/if}
-  </svg>
-  {VIEW_MODE_LABELS[viewMode]}{#if hiddenCount > 0} ({hiddenCount} hidden){/if}
-</button>
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"

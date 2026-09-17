@@ -186,8 +186,10 @@ describe('validateSettings', () => {
       toolDenyRules: 'nope',
       repoColors: { '/repo': '#fff' },
       notifyOnPermission: 'yes',
+      defaultActivityView: 'everything',
     });
     expect(s.theme).toBe('system');
+    expect(s.defaultActivityView).toBe('summary');
     expect(s.adapterDefaults).toEqual({});
     expect(s.idleAutoStopMinutes).toBe(30);
     expect(s.toolAllowRules).toEqual([{ pattern: 'Bash(*)' }]);
@@ -201,6 +203,11 @@ describe('validateSettings', () => {
     expect((s as any).bogus).toBeUndefined();
     expect(s.crashReportsEnabled).toBe(false);
     expect(s.notifyTaskbarBadge).toBe(true);
+    expect(s.defaultActivityView).toBe('summary');
+  });
+
+  it('keeps a valid defaultActivityView', () => {
+    expect(validateSettings({ defaultActivityView: 'focus' }).defaultActivityView).toBe('focus');
   });
 
   it('returns defaults for non-object input', () => {

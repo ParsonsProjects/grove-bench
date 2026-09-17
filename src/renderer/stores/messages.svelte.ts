@@ -7,6 +7,7 @@ import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 
 // ─── Chat message types ───
 
@@ -207,7 +208,8 @@ class MessageStore {
   /** Active tab per session (survives component remount) */
   activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
 
-  /** Activity view mode per session (default: 'summary') */
+  /** Activity view mode per session. Unset = the global default
+   *  (settings.defaultActivityView). Not persisted across restarts. */
   viewModeBySession = $state<Record<string, import('../lib/message-view.js').MessageViewMode>>({});
 
   /** Draft input text per session (survives tab switches and component remounts) */
@@ -590,7 +592,7 @@ class MessageStore {
   }
 
   getViewMode(sessionId: string): import('../lib/message-view.js').MessageViewMode {
-    return this.viewModeBySession[sessionId] ?? 'summary';
+    return this.viewModeBySession[sessionId] ?? settingsStore.current.defaultActivityView ?? 'summary';
   }
 
   setViewMode(sessionId: string, mode: import('../lib/message-view.js').MessageViewMode) {

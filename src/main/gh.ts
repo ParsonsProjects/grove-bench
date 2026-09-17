@@ -1,9 +1,23 @@
 import { execa } from 'execa';
 import type { PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment } from '../shared/types.js';
 
+/** gh can sit forever on a stalled connection or an interactive prompt. The
+ *  renderer polls PR status for every session in sequence, so one hung call
+ *  would freeze the sweep for all of them; a bounded call fails instead and
+ *  the next sweep retries. */
+export const GH_TIMEOUT_MS = 30_000;
+
 export async function gh(args: string[], cwd?: string): Promise<string> {
-  const result = await execa('gh', args, cwd ? { cwd } : {});
+  const result = await execa('gh', args, { ...(cwd ? { cwd } : {}), timeout: GH_TIMEOUT_MS });
   return result.stdout;
+}
+
+/** gh's "there is no PR for this branch" failure, as opposed to a network,
+ *  auth, or timeout failure. */
+export function isNoPrError(e: unknown): boolean {
+  const err = e as { stderr?: unknown; message?: unknown } | null;
+  const text = `${typeof err?.stderr === 'string' ? err.stderr : ''}\n${typeof err?.message === 'string' ? err.message : ''}`;
+  return /no pull requests found|could not resolve to a PullRequest/i.test(text);
 }
 
 export async function ghVersion(): Promise<string | null> {
@@ -98,12 +112,22 @@ export function summarizeChecks(rollup: unknown): PrChecksSummary | null {
   return summary;
 }
 
-/** PR state for a branch; null when no PR exists or gh is unavailable.
+/** PR state for a branch; null when no PR exists. Any other gh failure
+ *  (offline, auth, timeout) throws so the caller can keep its last good
+ *  snapshot and flag it stale, rather than showing "no PR" for a branch
+ *  that has one.
  *  selfLogin (when known) excludes that user's own comments/reviews from the
  *  new-feedback signature — see commentSignature. */
 export async function prStatus(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo | null> {
+  let stdout: string;
   try {
-    const stdout = await gh(['pr', 'view', branch, '--json', PR_VIEW_FIELDS], repoPath);
+    stdout = await gh(['pr', 'view', branch, '--json', PR_VIEW_FIELDS], repoPath);
+  } catch (e) {
+    if (isNoPrError(e)) return null;
+    const err = e as { stderr?: string; message?: string };
+    throw new Error(`gh pr view failed: ${err.stderr?.trim() || err.message || String(e)}`);
+  }
+  try {
     const data = JSON.parse(stdout);
     if (!data.number || !data.url) return null;
     return {
@@ -189,7 +213,12 @@ export async function prCreate(repoPath: string, branch: string, opts: PrCreateO
   } catch (e: any) {
     throw new Error(e?.stderr?.trim() || e?.message || 'gh pr create failed');
   }
-  const created = await prStatus(repoPath, branch);
+  let created: PrInfo | null;
+  try {
+    created = await prStatus(repoPath, branch);
+  } catch (e: any) {
+    throw new Error(`PR was created but could not be read back — check GitHub (${e?.message ?? e})`);
+  }
   if (!created) throw new Error('PR was created but could not be read back — check GitHub');
   return created;
 }

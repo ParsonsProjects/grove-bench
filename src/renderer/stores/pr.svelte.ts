@@ -8,6 +8,11 @@ import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
 
 const POLL_MS = 60_000;
 const THROTTLE_MS = 5_000;
+/** The sweep stops waiting on one session's fetch after this long and moves
+ *  on. The main-side gh call has its own (shorter) timeout; this is the
+ *  backstop so a stuck IPC round-trip can never freeze polling for every
+ *  other session. A late result still lands when it eventually resolves. */
+const SWEEP_REFRESH_TIMEOUT_MS = 45_000;
 /** Auto-fix gives up on a head commit after this many attempts and asks for a human. */
 const MAX_AUTO_FIX_ATTEMPTS = 2;
 
@@ -41,6 +46,8 @@ class PrStore {
   /** Auto-fix attempts on the current head commit, per session. */
   private autoFixAttempts = new Map<string, { sha: string; attempts: number }>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
+  private sweeping = false;
+  private getPolledSessionIds: (() => string[]) | null = null;
   private nextAlertId = 1;
 
   getPr(sessionId: string): PrInfo | null {
@@ -79,40 +86,79 @@ class PrStore {
     if (!force && now - last < THROTTLE_MS) return;
     this.lastFetch.set(sessionId, now);
 
-    try {
-      const [pr, sync] = await Promise.all([
-        window.groveBench.getPrInfo(sessionId),
-        window.groveBench.getGitSyncStatus(sessionId),
-      ]);
-      this.prBySession = { ...this.prBySession, [sessionId]: pr };
-      this.syncBySession = { ...this.syncBySession, [sessionId]: sync };
-      if (this.fetchFailedBySession[sessionId]) {
-        this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: false };
-      }
-      this.handleDetection(sessionId);
-    } catch (e) {
-      // Keep the stale snapshot but flag it so the UI can say so
-      this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: true };
-      console.error('Failed to fetch PR status:', e);
+    // The two fetches are independent: a gh failure (offline, auth, timeout)
+    // must not discard a fresh local sync count, and vice versa. Whatever
+    // succeeded is stored; a failure keeps the previous snapshot and flags
+    // it stale rather than showing "no PR" for a branch that has one.
+    const [pr, sync] = await Promise.allSettled([
+      window.groveBench.getPrInfo(sessionId),
+      window.groveBench.getGitSyncStatus(sessionId),
+    ]);
+    if (sync.status === 'fulfilled') {
+      this.syncBySession = { ...this.syncBySession, [sessionId]: sync.value };
     }
+    if (pr.status === 'fulfilled') {
+      this.prBySession = { ...this.prBySession, [sessionId]: pr.value };
+    }
+    const failed = pr.status === 'rejected' || sync.status === 'rejected';
+    if (failed !== (this.fetchFailedBySession[sessionId] ?? false)) {
+      this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: failed };
+    }
+    if (pr.status === 'rejected') console.error('Failed to fetch PR status:', pr.reason);
+    if (sync.status === 'rejected') console.error('Failed to fetch branch sync status:', sync.reason);
+    if (pr.status === 'fulfilled') this.handleDetection(sessionId);
   }
 
   /** Poll every open session (focused or not) — started once from App.
-   *  Self-scheduling so a slow sweep never overlaps the next one. */
+   *  Self-scheduling so a slow sweep never overlaps the next one. Sweeps are
+   *  skipped while the window is hidden and one runs as soon as it is shown
+   *  again, so a minimised app doesn't come back to minute-old checks. */
   startGlobalPolling(getSessionIds: () => string[]): void {
-    if (this.globalTimer) return;
-    const sweep = async () => {
+    if (this.getPolledSessionIds) return;
+    this.getPolledSessionIds = getSessionIds;
+    this.globalTimer = setTimeout(() => this.sweep(), POLL_MS);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
+    }
+  }
+
+  /** Stop the global sweep (tests, teardown). */
+  stopGlobalPolling(): void {
+    if (this.globalTimer) clearTimeout(this.globalTimer);
+    this.globalTimer = null;
+    this.getPolledSessionIds = null;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    }
+  }
+
+  private onVisibilityChange = (): void => {
+    if (document.hidden || this.sweeping || !this.getPolledSessionIds) return;
+    if (this.globalTimer) clearTimeout(this.globalTimer);
+    this.globalTimer = null;
+    void this.sweep();
+  };
+
+  /** One pass over every polled session. Sequential to avoid a burst of
+   *  parallel gh processes, but bounded per session so a stuck fetch can't
+   *  stall the rest. Always re-arms the next sweep, whatever happened. */
+  private async sweep(): Promise<void> {
+    if (this.sweeping || !this.getPolledSessionIds) return;
+    this.sweeping = true;
+    try {
       // Each refresh is a `gh` network call plus two git processes per
       // session; skip the sweep entirely while the window is hidden.
       if (typeof document === 'undefined' || !document.hidden) {
-        // Sequential to avoid a burst of parallel gh processes
-        for (const id of getSessionIds()) {
-          await this.refresh(id, true);
+        for (const id of this.getPolledSessionIds()) {
+          await withTimeout(this.refresh(id, true), SWEEP_REFRESH_TIMEOUT_MS);
         }
       }
-      this.globalTimer = setTimeout(sweep, POLL_MS);
-    };
-    this.globalTimer = setTimeout(sweep, POLL_MS);
+    } catch (e) {
+      console.error('PR status sweep failed:', e);
+    } finally {
+      this.sweeping = false;
+      if (this.getPolledSessionIds !== null) this.globalTimer = setTimeout(() => this.sweep(), POLL_MS);
+    }
   }
 
   /** Fetch when a status bar mounts — throttled, so rapid tab switching
@@ -275,6 +321,15 @@ class PrStore {
     const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
     this.fetchFailedBySession = restFailed;
   }
+}
+
+/** Resolve when `p` settles or after `ms`, whichever comes first. The
+ *  promise is not cancelled — a late result still applies. */
+function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    p.then(() => { clearTimeout(t); resolve(); }, () => { clearTimeout(t); resolve(); });
+  });
 }
 
 function prAlertBody(alert: PrAlertInput): string {

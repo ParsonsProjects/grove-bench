@@ -43,6 +43,7 @@ const SETTINGS = {
   alwaysOnTop: false,
   repoColors: {},
   diffViewMode: 'unified',
+  defaultActivityView: 'summary',
   spellcheck: true,
   notifyOnTurnComplete: true,
   notifyOnPermission: true,
@@ -267,8 +268,10 @@ const api: Record<string, unknown> = {
   },
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
+    gh: { available: true, version: '2.65.0', authenticated: true },
     agent: { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
   }),
+  checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
@@ -307,7 +310,12 @@ const api: Record<string, unknown> = {
   gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
   gitSquash: async () => ({ success: true }),
   getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
-  getPrInfo: async () => null,
+  // Branch stack states: s-oauth has an open PR with a failing check; the
+  // others show the "Create PR" link (s-sidebar with unpushed commits).
+  getPrInfo: async (id: string) => id === 's-oauth'
+    ? { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], headSha: 'b2c3d4e' }
+    : null,
+  getGitSyncStatus: async (id: string) => ({ upstream: id === 's-readme' ? null : 'origin', ahead: id === 's-sidebar' ? 3 : id === 's-oauth' ? 1 : 0, behind: id === 's-oauth' ? 2 : 0 }),
   listCheckpoints: async () => [],
   listMcpServers: async () => [],
   listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
