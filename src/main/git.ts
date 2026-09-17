@@ -1,8 +1,13 @@
 import { execa } from 'execa';
 import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
 
-export async function git(args: string[], cwd: string): Promise<string> {
-  const result = await execa('git', args, { cwd });
+export interface GitOptions {
+  /** Kill the git process after this many ms (for network commands that can hang). */
+  timeout?: number;
+}
+
+export async function git(args: string[], cwd: string, opts?: GitOptions): Promise<string> {
+  const result = await execa('git', args, opts?.timeout ? { cwd, timeout: opts.timeout } : { cwd });
   return result.stdout;
 }
 
