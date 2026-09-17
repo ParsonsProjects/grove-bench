@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
 
 import SessionControlsPopover from './SessionControlsPopover.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -13,6 +13,7 @@ const SID = 's1';
 const DESCRIPTORS = [
   { id: 'permissionMode', label: 'Mode', default: 'default', options: [
     { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
+    { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
   ] },
   { id: 'thinking', label: 'Thinking', default: 'high', options: [
     { value: 'low', label: 'Low', tone: 'accent-soft' }, { value: 'high', label: 'High', tone: 'accent' },
@@ -89,6 +90,19 @@ describe('SessionControlsPopover', () => {
     expect(screen.getByRole('button', { name: 'Codex' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Claude Code' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Claude Code' })).toHaveAttribute('title', 'Current agent');
+  });
+
+  it('divides grouped options from the provider\'s own with the group as a heading', async () => {
+    const dialog = await openPopover();
+    const heading = within(dialog).getByText('Grove Bench');
+    expect(heading).toHaveAttribute('title', 'Not a Claude Code option');
+    // The heading sits between the provider's modes and the grouped one.
+    const modeButtons = within(dialog).getAllByRole('button', { name: /^(Code|Plan|Read-safe)$/ });
+    expect(modeButtons.map((b) => b.textContent?.trim())).toEqual(['Code', 'Plan', 'Read-safe']);
+    expect(heading.compareDocumentPosition(modeButtons[1]) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(heading.compareDocumentPosition(modeButtons[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Only one divider: ungrouped options never get one.
+    expect(within(dialog).getAllByText('Grove Bench')).toHaveLength(1);
   });
 
   it('selecting a control option goes through the store and IPC', async () => {

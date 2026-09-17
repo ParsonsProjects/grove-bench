@@ -66,13 +66,16 @@ describe('getControls()', () => {
 
   it('offers every Grove permission mode in the status-bar order', () => {
     const mode = adapter.getControls('claude-opus-5').find((d) => d.id === 'permissionMode')!;
-    expect(mode.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'readSafe', 'auto']);
+    expect(mode.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'auto', 'readSafe']);
     expect(mode.default).toBe('default');
+    // Grove's own mode is grouped so the UI divides it from Claude's modes.
+    expect(mode.options.map((o) => o.group)).toEqual([undefined, undefined, undefined, undefined, 'Grove Bench']);
   });
 
   it('drops native auto mode on models the provider does not support it on', () => {
     const haiku = adapter.getControls('claude-haiku-4-5-20251001').find((d) => d.id === 'permissionMode')!;
     expect(haiku.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'readSafe']);
+    expect(haiku.options.at(-1)?.group).toBe('Grove Bench');
     expect(supportsAutoMode('claude-haiku-4-5-20251001')).toBe(false);
     expect(supportsAutoMode('claude-sonnet-4-6')).toBe(true);
     expect(supportsAutoMode(null)).toBe(true);

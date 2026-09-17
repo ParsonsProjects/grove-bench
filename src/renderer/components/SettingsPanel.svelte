@@ -184,14 +184,18 @@
     { id: 'plugins', label: 'Plugins' },
   ];
 
-  const permissionModes: { value: SettingsPermissionMode; label: string }[] = [
+  // Claude's own modes first; Grove's app-level modes sit under a divider
+  // with their own heading so they don't read as CLI options.
+  const permissionModes: { value: SettingsPermissionMode; label: string; group?: string }[] = [
     { value: 'default', label: 'Default' },
     { value: 'acceptEdits', label: 'Accept Edits' },
     { value: 'plan', label: 'Plan (read-only)' },
-    { value: 'readSafe', label: 'Read-safe (edits + read-only commands)' },
     { value: 'auto', label: 'Auto (Claude classifier approves actions)' },
     { value: 'bypassPermissions', label: 'Bypass Permissions' },
+    { value: 'readSafe', label: 'Read-safe (edits + read-only commands)', group: 'Grove Bench' },
   ];
+  const claudeModes = $derived(permissionModes.filter((m) => !m.group && (!settingsStore.draft.disableBypassMode || m.value !== 'bypassPermissions')));
+  const groveModes = $derived(permissionModes.filter((m) => m.group));
 
   const cavemanModes: { value: CavemanMode; label: string; description: string }[] = [
     { value: 'off', label: 'Off', description: 'Normal verbose output' },
@@ -306,9 +310,16 @@
                 {permissionModes.find(m => m.value === settingsStore.draft.defaultPermissionMode)?.label ?? 'Default'}
               </Select.Trigger>
               <Select.Content>
-                {#each permissionModes.filter(m => settingsStore.draft.disableBypassMode ? m.value !== 'bypassPermissions' : true) as mode (mode.value)}
+                {#each claudeModes as mode (mode.value)}
                   <Select.Item value={mode.value} label={mode.label} />
                 {/each}
+                <Select.Separator />
+                <Select.Group>
+                  <Select.GroupHeading>{groveModes[0]?.group}</Select.GroupHeading>
+                  {#each groveModes as mode (mode.value)}
+                    <Select.Item value={mode.value} label={mode.label} />
+                  {/each}
+                </Select.Group>
               </Select.Content>
             </Select.Root>
             <p class="text-xs text-muted-foreground mt-1">Controls how tools are approved in new sessions.</p>

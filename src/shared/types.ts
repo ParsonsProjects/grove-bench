@@ -371,6 +371,10 @@ export interface ControlOption {
   /** Longer explanation for settings UIs and tooltips. */
   description?: string;
   tone?: ControlTone;
+  /** Options that belong to a different source than the provider's own
+   *  (e.g. an app-level mode) name it here. The UI draws a divider and this
+   *  heading where the group changes, so ungrouped options come first. */
+  group?: string;
 }
 
 /**

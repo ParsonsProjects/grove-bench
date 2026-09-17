@@ -584,8 +584,10 @@ const PERMISSION_MODE_OPTIONS: ControlOption[] = [
   { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
   { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
   { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
-  { value: 'readSafe', label: 'Read-safe', tone: 'success', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+  // Grove's own mode, listed after Claude's so the divider shows it isn't one
+  // of the CLI's.
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
 ];
 
 /**

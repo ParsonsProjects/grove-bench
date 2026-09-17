@@ -19,10 +19,10 @@ The operating mode controls how much the agent may do without asking:
 | **Code** | Blue | Default mode — the agent asks before edits and non-trivial commands |
 | **Plan** | Yellow | Planning mode — the agent explores and plans but doesn't edit files |
 | **Edit** | Purple | Accept-edits mode — file edits inside the worktree are applied without asking; commands still prompt |
-| **Read-safe** | Green | Grove's own mode — edits and recognised read-only commands (file reads, `git status`, `git log`, `ls`, `grep`, …) run without asking. Anything that writes, reaches outside the worktree, touches the network, or isn't on the allowlist still prompts. A sandbox confines writes to the worktree as a backstop |
 | **Auto** | Cyan | Claude Code's native auto mode — a classifier model reviews each action instead of you. Read-only actions and in-worktree edits are approved; risky or out-of-scope actions (force push, `curl \| bash`, secrets, mass deletion) are blocked and shown as a status line rather than prompted. Not offered on models that don't support it (Haiku) |
+| **Read-safe** | Green | Grove's own mode — edits and recognised read-only commands (file reads, `git status`, `git log`, `ls`, `grep`, …) run without asking. Anything that writes, reaches outside the worktree, touches the network, or isn't on the allowlist still prompts. A sandbox confines writes to the worktree as a backstop |
 
-Click the mode badge or press `Alt+M` to cycle between modes.
+Click the mode badge or press `Alt+M` to cycle between modes. The first four are Claude Code's own modes. Read-safe is Grove Bench's, so it sits below a divider headed "Grove Bench" in the mode list and in Settings.
 
 Read-safe and Auto differ in who decides: Read-safe uses a fixed allowlist inside Grove and asks you about everything else, so nothing unexpected ever runs unprompted. Auto hands the decision to Claude's classifier and rarely prompts, so the agent can run tests, commit and so on without you, at the cost of a model making the call.
 
