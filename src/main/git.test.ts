@@ -32,6 +32,11 @@ import {
   syncStatus,
   branchCommits,
   parseBranchCommits,
+  rebaseOnto,
+  cherryPick,
+  squashSince,
+  logCommits,
+  parseLogCommits,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -533,5 +538,131 @@ describe('branchCommits()', () => {
   it('returns empty when neither ref resolves', async () => {
     mockExeca.mockRejectedValue(new Error('unknown revision'));
     expect(await branchCommits('/repo', 'main')).toEqual([]);
+  });
+});
+
+describe('branch operations', () => {
+  const clean = () => mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // status --porcelain
+
+  describe('rebaseOnto()', () => {
+    it('refuses on a dirty tree without running rebase', async () => {
+      mockExeca.mockResolvedValueOnce({ stdout: ' M src/a.ts' } as any);
+      const r = await rebaseOnto('/repo', 'main');
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/uncommitted/);
+      expect(mockExeca).toHaveBeenCalledTimes(1);
+    });
+
+    it('rebases a clean tree', async () => {
+      clean();
+      mockExeca.mockResolvedValueOnce({ stdout: 'Successfully rebased' } as any);
+      const r = await rebaseOnto('/repo', 'main');
+      expect(r).toEqual({ success: true });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['rebase', 'main'], { cwd: '/repo' });
+    });
+
+    it('aborts and reports conflicting files', async () => {
+      clean();
+      mockExeca.mockRejectedValueOnce(Object.assign(new Error('rebase failed'), { stderr: 'CONFLICT (content): Merge conflict in src/a.ts' }));
+      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/a.ts\nUU src/b.ts' } as any); // status
+      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // rebase --abort
+      const r = await rebaseOnto('/repo', 'main');
+      expect(r).toEqual({ success: false, conflicts: ['src/a.ts', 'src/b.ts'] });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['rebase', '--abort'], { cwd: '/repo' });
+    });
+
+    it('reports a non-conflict failure as an error and still unwinds', async () => {
+      clean();
+      mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'fatal: invalid upstream nope' }));
+      mockExeca.mockRejectedValueOnce(new Error('no rebase in progress')); // abort
+      const r = await rebaseOnto('/repo', 'nope');
+      expect(r.success).toBe(false);
+      expect(r.error).toBe('fatal: invalid upstream nope');
+      expect(r.conflicts).toBeUndefined();
+    });
+  });
+
+  describe('cherryPick()', () => {
+    it('rejects a malformed commit id before touching git', async () => {
+      const r = await cherryPick('/repo', '--not-a-sha');
+      expect(r.success).toBe(false);
+      expect(mockExeca).not.toHaveBeenCalled();
+    });
+
+    it('applies a commit on a clean tree', async () => {
+      clean();
+      mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+      const r = await cherryPick('/repo', 'abc1234');
+      expect(r).toEqual({ success: true });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['cherry-pick', 'abc1234'], { cwd: '/repo' });
+    });
+
+    it('aborts on conflict', async () => {
+      clean();
+      mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'error: could not apply abc1234... subject\nCONFLICT (content): Merge conflict in src/c.ts' }));
+      mockExeca.mockResolvedValueOnce({ stdout: 'UU src/c.ts' } as any);
+      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // abort
+      const r = await cherryPick('/repo', 'abc1234');
+      expect(r).toEqual({ success: false, conflicts: ['src/c.ts'] });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['cherry-pick', '--abort'], { cwd: '/repo' });
+    });
+  });
+
+  describe('squashSince()', () => {
+    it('requires a message', async () => {
+      const r = await squashSince('/repo', 'main', '   ');
+      expect(r.success).toBe(false);
+      expect(mockExeca).not.toHaveBeenCalled();
+    });
+
+    it('soft-resets to the merge base and commits', async () => {
+      clean();
+      mockExeca.mockResolvedValueOnce({ stdout: 'base123\n' } as any); // merge-base
+      mockExeca.mockResolvedValueOnce({ stdout: '3\n' } as any); // rev-list --count
+      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // reset --soft
+      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // commit
+      const r = await squashSince('/repo', 'main', 'One commit');
+      expect(r).toEqual({ success: true });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['merge-base', 'main', 'HEAD'], { cwd: '/repo' });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['reset', '--soft', 'base123'], { cwd: '/repo' });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['commit', '-m', 'One commit'], { cwd: '/repo' });
+    });
+
+    it('refuses with fewer than two commits', async () => {
+      clean();
+      mockExeca.mockResolvedValueOnce({ stdout: 'base123' } as any);
+      mockExeca.mockResolvedValueOnce({ stdout: '1' } as any);
+      const r = await squashSince('/repo', 'main', 'msg');
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(/Only one commit/);
+      expect(mockExeca).not.toHaveBeenCalledWith('git', expect.arrayContaining(['reset']), expect.anything());
+    });
+
+    it('reports a missing merge base', async () => {
+      clean();
+      mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'fatal: Not a valid object name nope' }));
+      const r = await squashSince('/repo', 'nope', 'msg');
+      expect(r.success).toBe(false);
+      expect(r.error).toContain('merge base');
+    });
+  });
+
+  describe('logCommits() / parseLogCommits()', () => {
+    it('parses sha, short sha and subject records', () => {
+      const raw = 'aaaa\x1fa1\x1fFirst\x1e\nbbbb\x1fb1\x1fSecond\x1e\n';
+      expect(parseLogCommits(raw)).toEqual([
+        { sha: 'aaaa', shortSha: 'a1', subject: 'First' },
+        { sha: 'bbbb', shortSha: 'b1', subject: 'Second' },
+      ]);
+      expect(parseLogCommits('')).toEqual([]);
+    });
+
+    it('falls back to origin/<base> when the local base is missing', async () => {
+      mockExeca.mockRejectedValueOnce(new Error('unknown revision'));
+      mockExeca.mockResolvedValueOnce({ stdout: 'cccc\x1fc1\x1fThird\x1e' } as any);
+      const r = await logCommits('/repo', 'feat/x', 'main');
+      expect(r).toEqual([{ sha: 'cccc', shortSha: 'c1', subject: 'Third' }]);
+      expect(mockExeca).toHaveBeenLastCalledWith('git', ['log', '--format=%H%x1f%h%x1f%s%x1e', 'origin/main..feat/x'], { cwd: '/repo' });
+    });
   });
 });

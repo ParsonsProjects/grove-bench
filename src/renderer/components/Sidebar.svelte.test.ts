@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
 
 import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -163,5 +163,30 @@ describe('Sidebar attention triage', () => {
 
     expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('working', true);
     expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+  });
+});
+
+describe('Sidebar bottom buttons', () => {
+  afterEach(() => {
+    mockGroveBench.getSidebarWidth.mockReset();
+    mockGroveBench.getSidebarWidth.mockResolvedValue(null);
+  });
+
+  it('shows text labels at the default width', async () => {
+    render(Sidebar);
+    const newConversation = await screen.findByRole('button', { name: 'New conversation' });
+    expect(newConversation).toHaveTextContent('+ Conversation');
+    expect(screen.getByRole('button', { name: 'Add a repository' })).toHaveTextContent('+ Repository');
+  });
+
+  it('collapses to icons when the sidebar is narrow', async () => {
+    mockGroveBench.getSidebarWidth.mockResolvedValue(250);
+    render(Sidebar);
+    const newConversation = await screen.findByRole('button', { name: 'New conversation' });
+    await waitFor(() => expect(newConversation).not.toHaveTextContent('Conversation'));
+    expect(newConversation.querySelector('svg')).not.toBeNull();
+    const addRepo = screen.getByRole('button', { name: 'Add a repository' });
+    expect(addRepo).not.toHaveTextContent('Repository');
+    expect(addRepo.querySelector('svg')).not.toBeNull();
   });
 });

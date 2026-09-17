@@ -8,7 +8,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disabledSkills: [],
   autoSkillSuggestions: false,
   defaultModel: '',
-  defaultThinkingLevel: 'high',
+  adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -28,8 +28,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   notifyOnPermission: true,
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
+  notifyTaskbarBadge: true,
   analyticsEnabled: false,
   analyticsPrompted: false,
+  crashReportsEnabled: false,
 };
 
 class SettingsStore {
@@ -100,6 +102,23 @@ class SettingsStore {
   }
 
   // ─── List helpers ───
+
+  /** Draft value for one adapter control, or undefined when unset. */
+  adapterDefault(adapterId: string, controlId: string): string | undefined {
+    return this.draft.adapterDefaults?.[adapterId]?.[controlId];
+  }
+
+  /** Set (or with an empty value, clear) an adapter control default in the draft. */
+  setAdapterDefault(adapterId: string, controlId: string, value: string | null) {
+    const current = this.draft.adapterDefaults ?? {};
+    const forAdapter = { ...(current[adapterId] ?? {}) };
+    if (value) forAdapter[controlId] = value;
+    else delete forAdapter[controlId];
+    const next = { ...current };
+    if (Object.keys(forAdapter).length > 0) next[adapterId] = forAdapter;
+    else delete next[adapterId];
+    this.draft.adapterDefaults = next;
+  }
 
   addToolAllowRule(pattern: string) {
     this.draft.toolAllowRules = [...this.draft.toolAllowRules, { pattern }];

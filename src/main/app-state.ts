@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
+import { z } from 'zod';
 
 import type { PrerequisiteStatus, SessionSortState, SkillSuggestion } from '../shared/types.js';
+import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -16,7 +18,7 @@ export interface SkillSuggestionCache {
   analyzedAt: number;
 }
 
-interface AppState {
+export interface AppState {
   activeTabId: string | null;
   openTabIds: string[];
   collapsedRepos: Record<string, boolean>;
@@ -33,6 +35,9 @@ interface AppState {
   /** Last prerequisite check that passed. Lets the renderer skip the blocking
    *  startup overlay and re-verify in the background. Cleared on failure. */
   prerequisiteCache?: PrerequisiteCache | null;
+  /** Sessions flagged unread (finished a turn / got a PR alert while not
+   *  focused) when the app last ran. Restored into the sidebar on launch. */
+  unreadSessionIds?: string[];
 }
 
 const DEFAULT_STATE: AppState = {
@@ -43,128 +48,163 @@ const DEFAULT_STATE: AppState = {
   sidebarWidth: null,
 };
 
+// ─── Schema versioning ───
+
+/** Bump when a persisted field changes meaning or shape, and add a migration
+ *  below. New optional fields need no bump. */
+export const APP_STATE_SCHEMA_VERSION = 1;
+
+/** `APP_STATE_MIGRATIONS[n]` upgrades a version-n state object to n+1. */
+export const APP_STATE_MIGRATIONS: readonly Migration[] = [
+  // 0 → 1: the unversioned layout. Nothing changed shape; this step only
+  // exists so version-0 files get stamped and future migrations have a
+  // well-defined starting point.
+  (raw) => raw,
+];
+
+// ─── Validation ───
+
+/** Per-field fallback: a corrupt value resets that field only. */
+const appStateSchema = z.object({
+  activeTabId: z.string().nullable().catch(DEFAULT_STATE.activeTabId),
+  openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
+  collapsedRepos: z.record(z.string(), z.boolean()).catch(DEFAULT_STATE.collapsedRepos),
+  sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
+  sidebarWidth: z.number().finite().nullable().optional().catch(null),
+  knownSkills: z.record(z.string(), z.array(z.string())).optional().catch(undefined),
+  skillSuggestions: z.record(z.string(), z.object({
+    suggestions: z.array(z.custom<SkillSuggestion>((v) => typeof v === 'object' && v !== null)),
+    dismissedIds: z.array(z.string()),
+    analyzedAt: z.number(),
+  })).optional().catch(undefined),
+  prerequisiteCache: z.object({
+    status: z.custom<PrerequisiteStatus>((v) => typeof v === 'object' && v !== null),
+    checkedAt: z.number(),
+  }).nullable().optional().catch(null),
+  unreadSessionIds: z.array(z.string()).optional().catch(undefined),
+}) satisfies z.ZodType<AppState, unknown>;
+
+/** Normalize a raw object into a valid AppState. Never throws. */
+export function validateAppState(raw: unknown): AppState {
+  const input = typeof raw === 'object' && raw !== null ? raw : {};
+  const result = appStateSchema.safeParse({ ...DEFAULT_STATE, ...input });
+  return result.success ? (result.data as AppState) : { ...DEFAULT_STATE };
+}
+
+/** Migrate + validate a parsed app-state.json. Exported for tests. */
+export function upgradeAppState(raw: unknown): { state: AppState; migrated: boolean; fromVersion: number } {
+  const { data, migrated, fromVersion, newerThanApp } = migrateRaw(raw, APP_STATE_MIGRATIONS, APP_STATE_SCHEMA_VERSION);
+  if (newerThanApp) {
+    console.warn(`[app-state] app-state.json is schema v${fromVersion}, newer than this app (v${APP_STATE_SCHEMA_VERSION})`);
+  }
+  return { state: validateAppState(data), migrated, fromVersion };
+}
+
 function getStatePath(): string {
   return path.join(app.getPath('userData'), 'app-state.json');
+}
+
+function writeAppState(state: AppState): void {
+  fs.writeFileSync(getStatePath(), JSON.stringify(stampSchemaVersion(state, APP_STATE_SCHEMA_VERSION)));
 }
 
 export function loadAppState(): AppState {
   try {
     const data = fs.readFileSync(getStatePath(), 'utf-8');
-    return JSON.parse(data) as AppState;
+    const { state, migrated } = upgradeAppState(JSON.parse(data));
+    if (migrated) {
+      try { writeAppState(state); } catch { /* ignore */ }
+    }
+    return state;
   } catch {
     return { ...DEFAULT_STATE };
   }
 }
 
-// Track pending values so flush can write them immediately
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingActiveTab: { value: string | null } | null = null;
+/** Read-modify-write the state file. Write errors are ignored (best-effort
+ *  persistence, same as before versioning). */
+function updateAppState(mutate: (state: AppState) => void): void {
+  try {
+    const state = loadAppState();
+    mutate(state);
+    writeAppState(state);
+  } catch { /* ignore */ }
+}
+
+// ─── Debounced writers ───
+// Frequent renderer-driven updates (tab switches, sidebar drags) are coalesced
+// so we don't rewrite the file on every event. flushPendingSaves() writes
+// everything outstanding immediately (before suspend, or before a read).
+
+interface DebouncedWriter<T> {
+  save(value: T): void;
+  flush(): void;
+}
+
+const DEBOUNCE_MS = 500;
+const writers: DebouncedWriter<never>[] = [];
+
+function debouncedWriter<T>(apply: (state: AppState, value: T) => void): DebouncedWriter<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let pending: { value: T } | null = null;
+  const write = () => {
+    if (!pending) return;
+    const { value } = pending;
+    pending = null;
+    timer = null;
+    updateAppState((state) => apply(state, value));
+  };
+  const writer: DebouncedWriter<T> = {
+    save(value) {
+      pending = { value };
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(write, DEBOUNCE_MS);
+    },
+    flush() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      write();
+    },
+  };
+  writers.push(writer as DebouncedWriter<never>);
+  return writer;
+}
+
+const activeTabWriter = debouncedWriter<string | null>((s, v) => { s.activeTabId = v; });
+const openTabsWriter = debouncedWriter<string[]>((s, v) => { s.openTabIds = v; });
+const collapsedReposWriter = debouncedWriter<Record<string, boolean>>((s, v) => { s.collapsedRepos = v; });
+const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessionSort = v; });
+const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
+const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
 
 export function saveActiveTab(id: string | null): void {
-  pendingActiveTab = { value: id };
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    writePendingActiveTab();
-  }, 500);
+  activeTabWriter.save(id);
 }
-
-function writePendingActiveTab(): void {
-  if (!pendingActiveTab) return;
-  try {
-    const state = loadAppState();
-    state.activeTabId = pendingActiveTab.value;
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
-  pendingActiveTab = null;
-  saveTimer = null;
-}
-
-let openTabsTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingOpenTabs: { value: string[] } | null = null;
 
 export function saveOpenTabs(ids: string[]): void {
-  pendingOpenTabs = { value: ids };
-  if (openTabsTimer) clearTimeout(openTabsTimer);
-  openTabsTimer = setTimeout(() => {
-    writePendingOpenTabs();
-  }, 500);
+  openTabsWriter.save(ids);
 }
-
-function writePendingOpenTabs(): void {
-  if (!pendingOpenTabs) return;
-  try {
-    const state = loadAppState();
-    state.openTabIds = pendingOpenTabs.value;
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
-  pendingOpenTabs = null;
-  openTabsTimer = null;
-}
-
-let collapsedReposTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingCollapsedRepos: { value: Record<string, boolean> } | null = null;
 
 export function saveCollapsedRepos(map: Record<string, boolean>): void {
-  pendingCollapsedRepos = { value: map };
-  if (collapsedReposTimer) clearTimeout(collapsedReposTimer);
-  collapsedReposTimer = setTimeout(() => {
-    writePendingCollapsedRepos();
-  }, 500);
+  collapsedReposWriter.save(map);
 }
-
-function writePendingCollapsedRepos(): void {
-  if (!pendingCollapsedRepos) return;
-  try {
-    const state = loadAppState();
-    state.collapsedRepos = pendingCollapsedRepos.value;
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
-  pendingCollapsedRepos = null;
-  collapsedReposTimer = null;
-}
-
-let sessionSortTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingSessionSort: { value: SessionSortState } | null = null;
 
 export function saveSessionSort(sort: SessionSortState): void {
-  pendingSessionSort = { value: sort };
-  if (sessionSortTimer) clearTimeout(sessionSortTimer);
-  sessionSortTimer = setTimeout(() => {
-    writePendingSessionSort();
-  }, 500);
+  sessionSortWriter.save(sort);
 }
-
-function writePendingSessionSort(): void {
-  if (!pendingSessionSort) return;
-  try {
-    const state = loadAppState();
-    state.sessionSort = pendingSessionSort.value;
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
-  pendingSessionSort = null;
-  sessionSortTimer = null;
-}
-
-let sidebarWidthTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingSidebarWidth: { value: number } | null = null;
 
 export function saveSidebarWidth(width: number): void {
-  pendingSidebarWidth = { value: width };
-  if (sidebarWidthTimer) clearTimeout(sidebarWidthTimer);
-  sidebarWidthTimer = setTimeout(() => {
-    writePendingSidebarWidth();
-  }, 500);
+  sidebarWidthWriter.save(width);
 }
 
-function writePendingSidebarWidth(): void {
-  if (!pendingSidebarWidth) return;
-  try {
-    const state = loadAppState();
-    state.sidebarWidth = pendingSidebarWidth.value;
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
-  pendingSidebarWidth = null;
-  sidebarWidthTimer = null;
+export function loadUnreadSessionIds(): string[] {
+  return loadAppState().unreadSessionIds ?? [];
+}
+
+export function saveUnreadSessionIds(ids: string[]): void {
+  unreadWriter.save(ids);
 }
 
 export function loadKnownSkills(repoPath: string): string[] {
@@ -173,11 +213,9 @@ export function loadKnownSkills(repoPath: string): string[] {
 
 /** Write-through (no debounce) — system_init events are rare. */
 export function saveKnownSkills(repoPath: string, skills: string[]): void {
-  try {
-    const state = loadAppState();
+  updateAppState((state) => {
     state.knownSkills = { ...(state.knownSkills ?? {}), [repoPath]: skills };
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
+  });
 }
 
 export function loadSkillSuggestionCache(repoPath: string): SkillSuggestionCache | null {
@@ -186,11 +224,9 @@ export function loadSkillSuggestionCache(repoPath: string): SkillSuggestionCache
 
 /** Write-through (no debounce) — analysis runs are rare. */
 export function saveSkillSuggestionCache(repoPath: string, cache: SkillSuggestionCache): void {
-  try {
-    const state = loadAppState();
+  updateAppState((state) => {
     state.skillSuggestions = { ...(state.skillSuggestions ?? {}), [repoPath]: cache };
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
+  });
 }
 
 export function loadPrerequisiteCache(): PrerequisiteCache | null {
@@ -199,11 +235,9 @@ export function loadPrerequisiteCache(): PrerequisiteCache | null {
 
 /** Write-through — prerequisite checks run once or twice per launch. */
 export function savePrerequisiteCache(status: PrerequisiteStatus): void {
-  try {
-    const state = loadAppState();
+  updateAppState((state) => {
     state.prerequisiteCache = { status, checkedAt: Date.now() };
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
-  } catch { /* ignore */ }
+  });
 }
 
 export function clearPrerequisiteCache(): void {
@@ -211,35 +245,11 @@ export function clearPrerequisiteCache(): void {
     const state = loadAppState();
     if (!state.prerequisiteCache) return;
     state.prerequisiteCache = null;
-    fs.writeFileSync(getStatePath(), JSON.stringify(state));
+    writeAppState(state);
   } catch { /* ignore */ }
 }
 
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */
 export function flushPendingSaves(): void {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  if (openTabsTimer) {
-    clearTimeout(openTabsTimer);
-    openTabsTimer = null;
-  }
-  if (collapsedReposTimer) {
-    clearTimeout(collapsedReposTimer);
-    collapsedReposTimer = null;
-  }
-  if (sessionSortTimer) {
-    clearTimeout(sessionSortTimer);
-    sessionSortTimer = null;
-  }
-  if (sidebarWidthTimer) {
-    clearTimeout(sidebarWidthTimer);
-    sidebarWidthTimer = null;
-  }
-  writePendingActiveTab();
-  writePendingOpenTabs();
-  writePendingCollapsedRepos();
-  writePendingSessionSort();
-  writePendingSidebarWidth();
+  for (const w of writers) w.flush();
 }

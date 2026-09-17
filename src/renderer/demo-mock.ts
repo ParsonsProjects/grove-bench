@@ -28,7 +28,7 @@ const SETTINGS = {
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
   defaultModel: '',
-  defaultThinkingLevel: 'high',
+  adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -48,8 +48,10 @@ const SETTINGS = {
   notifyOnPermission: true,
   notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
+  notifyTaskbarBadge: true,
   analyticsEnabled: false,
   analyticsPrompted: true,
+  crashReportsEnabled: false,
 };
 
 const PREVIEWS: Record<string, { firstPrompt: string; lastText: string }> = {
@@ -284,6 +286,11 @@ const api: Record<string, unknown> = {
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
   getSidebarWidth: async () => 320,
+  getUnreadSessions: async () => [],
+  setUnreadSessions: () => {},
+  onAppError: () => () => {},
+  reportError: () => {},
+  setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
   getEventHistoryCount: async () => 0,
   searchEventHistory: async () => [],
@@ -292,11 +299,27 @@ const api: Record<string, unknown> = {
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
   getDefaultBranch: async () => 'main',
+  gitLogCommits: async () => [
+    { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
+    { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },
+  ],
+  gitRebase: async () => ({ success: true }),
+  gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
+  gitSquash: async () => ({ success: true }),
   getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
   getPrInfo: async () => null,
   listCheckpoints: async () => [],
   listMcpServers: async () => [],
   listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
+  getAdapterControls: async () => [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
+    { id: 'thinking', label: 'Thinking', default: 'high', options: [
+      { value: 'off', label: 'Off', description: 'No extended thinking' },
+      { value: 'low', label: 'Low', description: 'Brief reasoning on hard steps' },
+      { value: 'medium', label: 'Medium', description: 'Moderate reasoning budget' },
+      { value: 'high', label: 'High', description: 'Provider default / maximum reasoning' },
+    ] },
+  ],
   getModels: async () => [
     { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
     { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },

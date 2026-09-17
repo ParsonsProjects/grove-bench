@@ -9,7 +9,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
 import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -23,7 +23,9 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, clearPrerequisiteCache } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, clearPrerequisiteCache } from './app-state.js';
+import { logRendererError } from './crash-handling.js';
+import { applyAttentionBadge } from './attention-badge.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -763,6 +765,46 @@ export function registerHandlers() {
     }
   });
 
+  // ─── Branch operations ───
+  // Each handler resolves the session's worktree and returns a GitOpResult;
+  // git.ts guarantees a failed operation is aborted before it returns.
+
+  ipcMain.handle(IPC.GIT_LOG_COMMITS, async (_event, sessionId: string, ref: string, base: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return [];
+    if (typeof ref !== 'string' || !ref || ref.startsWith('-')) return [];
+    if (typeof base !== 'string' || !base || base.startsWith('-')) return [];
+    try {
+      return await logCommits(worktree.path, ref, base);
+    } catch (e) {
+      logger.warn(`log commits failed for session ${sessionId}:`, e);
+      return [];
+    }
+  });
+
+  ipcMain.handle(IPC.GIT_REBASE, async (_event, sessionId: string, onto: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (typeof onto !== 'string' || !onto.trim() || onto.startsWith('-')) return { success: false, error: 'Pick a branch to rebase onto.' };
+    logger.info(`Rebasing session ${sessionId} (${worktree.branch}) onto ${onto}`);
+    return rebaseOnto(worktree.path, onto.trim());
+  });
+
+  ipcMain.handle(IPC.GIT_CHERRY_PICK, async (_event, sessionId: string, sha: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    logger.info(`Cherry-picking ${sha} into session ${sessionId} (${worktree.branch})`);
+    return cherryPick(worktree.path, typeof sha === 'string' ? sha.trim() : '');
+  });
+
+  ipcMain.handle(IPC.GIT_SQUASH, async (_event, sessionId: string, base: string, message: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (typeof base !== 'string' || !base.trim() || base.startsWith('-')) return { success: false, error: 'Pick a base branch.' };
+    logger.info(`Squashing session ${sessionId} (${worktree.branch}) since ${base}`);
+    return squashSince(worktree.path, base.trim(), typeof message === 'string' ? message : '');
+  });
+
   ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return [];
@@ -776,7 +818,7 @@ export function registerHandlers() {
 
   // ─── Checkpoint rewind ───
 
-  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) => {
+  ipcMain.handle(IPC.AGENT_REWIND, async (_event, sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) => {
     await sessionManager.rewindFiles(sessionId, userMessageId, options);
   });
 
@@ -973,6 +1015,14 @@ export function registerHandlers() {
     }));
   });
 
+  ipcMain.handle(IPC.AGENT_GET_ADAPTER_CONTROLS, (_event, adapterType?: string, model?: string | null) => {
+    const adapter = adapterType
+      ? adapterRegistry.get(adapterType)
+      : adapterRegistry.getDefault();
+    if (!adapter) return [];
+    return adapter.getControls(typeof model === 'string' && model ? model : null);
+  });
+
   ipcMain.handle(IPC.AGENT_GET_MODELS, (_event, adapterType?: string) => {
     const adapter = adapterType
       ? adapterRegistry.get(adapterType)
@@ -1132,12 +1182,46 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {
+    flushPendingSaves();
+    return loadUnreadSessionIds();
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_UNREAD, (_event, ids: unknown) => {
+    if (Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
+      saveUnreadSessionIds(ids);
+    }
+  });
+
+  // ─── Error reporting ───
+
+  ipcMain.on(IPC.APP_REPORT_ERROR, (_event, report: import('../shared/types.js').AppErrorReport) => {
+    if (!report || typeof report.message !== 'string') return;
+    logRendererError({
+      source: 'renderer',
+      kind: typeof report.kind === 'string' ? report.kind : 'error',
+      message: report.message.slice(0, 2000),
+      ...(typeof report.stack === 'string' ? { stack: report.stack.slice(0, 8000) } : {}),
+      ...(typeof report.sessionId === 'string' ? { sessionId: report.sessionId } : {}),
+      timestamp: typeof report.timestamp === 'number' ? report.timestamp : Date.now(),
+    });
+  });
+
   // ─── OS notifications ───
 
   ipcMain.on(IPC.NOTIFY_SHOW, (event, req: import('../shared/types.js').OsNotificationRequest) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return;
     showOsNotification(win, req, settings.getSettings());
+  });
+
+  // ─── Taskbar attention badge ───
+
+  ipcMain.on(IPC.WIN_SET_ATTENTION_BADGE, (event, count: unknown, dataUrl: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
   });
 
   // ─── Window controls ───
