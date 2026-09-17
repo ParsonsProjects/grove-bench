@@ -122,30 +122,19 @@ describe('filterVisibleMessages', () => {
     expect(visible).toEqual(['1', '2', '3', '4']);
   });
 
-  it('focus mode keeps only the final text of each turn', () => {
+  it('focus mode keeps every assistant text block, not just the last per turn', () => {
     const turn: ChatMessage[] = [
-      { kind: 'user', id: 'u1', text: 'do stuff' },
-      text('t1'), // interim status note
-      tool({ id: 'tc1', toolName: 'Edit' }),
-      text('t2'), // final text of turn 1
+      { kind: 'user', id: 'u1', text: 'review this' },
+      text('t1'), // status note before a tool call
+      tool({ id: 'tc1', toolName: 'Read' }),
+      text('t2'), // findings
+      text('t3'), // next steps, split into a separate block by the agent
       { kind: 'result', id: 'r1', subtype: 'success', isError: false },
       { kind: 'user', id: 'u2', text: 'more' },
-      text('t3'), // final so far — turn 2 still running
+      text('t4'),
     ];
     const visible = filterVisibleMessages(turn, 'focus').map((m) => m.id);
-    expect(visible).toEqual(['u1', 't2', 'r1', 'u2', 't3']);
-  });
-
-  it('focus mode treats the next user message as a turn boundary when no result exists', () => {
-    const turn: ChatMessage[] = [
-      { kind: 'user', id: 'u1', text: 'do stuff' },
-      text('t1'),
-      text('t2'), // final text before next user prompt
-      { kind: 'user', id: 'u2', text: 'more' },
-      text('t3'),
-    ];
-    const visible = filterVisibleMessages(turn, 'focus').map((m) => m.id);
-    expect(visible).toEqual(['u1', 't2', 'u2', 't3']);
+    expect(visible).toEqual(['u1', 't1', 't2', 't3', 'r1', 'u2', 't4']);
   });
 
   it('focus mode keeps unresolved permission/question blocks and drops resolved ones', () => {
