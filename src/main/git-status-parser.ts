@@ -129,3 +129,39 @@ export function parseHashObjectOutput(raw: string, paths: string[]): Map<string,
   paths.forEach((p, idx) => { if (hashes[idx]) out.set(p, hashes[idx]); });
   return out;
 }
+
+const ZERO_OID = /^0+$/;
+
+/**
+ * Parse `git diff --raw -z --no-abbrev <from> <to>`. Each record is
+ * ":oldmode newmode oldsha newsha STATUS\0path\0" (renames/copies carry a
+ * score and two paths). The new-side blob id doubles as the content hash the
+ * UI uses for "changed since viewed", so it is attached here.
+ */
+export function parseDiffRaw(raw: string): GitStatusEntry[] {
+  if (!raw) return [];
+  const parts = raw.split('\0');
+  const entries: GitStatusEntry[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const meta = parts[i];
+    if (!meta.startsWith(':')) { i++; continue; }
+    const fields = meta.slice(1).split(' ');
+    if (fields.length < 5) { i++; continue; }
+    const newSha = fields[3];
+    const code = fields[4];
+    const kind = code[0];
+    const contentHash = ZERO_OID.test(newSha) ? 'deleted' : newSha;
+    if (kind === 'R' || kind === 'C') {
+      const origPath = parts[i + 1];
+      const filePath = parts[i + 2];
+      if (filePath) entries.push({ filePath, status: mapStatus(kind), staged: false, origPath, contentHash });
+      i += 3;
+      continue;
+    }
+    const filePath = parts[i + 1];
+    if (filePath) entries.push({ filePath, status: mapStatus(kind), staged: false, contentHash });
+    i += 2;
+  }
+  return entries;
+}

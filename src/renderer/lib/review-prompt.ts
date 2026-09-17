@@ -23,7 +23,8 @@ export function buildReviewPrompt(comments: ReviewComment[]): string {
     for (const c of list) {
       const where = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
       const sideNote = c.side === 'old' ? ' (removed lines)' : '';
-      parts.push(`\n### ${filePath}:${where}${sideNote}`);
+      const ctxNote = c.context ? ` — ${c.context}` : '';
+      parts.push(`\n### ${filePath}:${where}${sideNote}${ctxNote}`);
       if (c.snippet.trim()) parts.push('```' + fenceLang(filePath) + '\n' + c.snippet + '\n```');
       parts.push(c.body.trim());
     }

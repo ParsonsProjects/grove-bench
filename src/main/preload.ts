@@ -167,6 +167,12 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_TURN_DIFF, sessionId, userMessageId),
   getFullThreadDiff: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_FULL_THREAD_DIFF, sessionId),
+  getCheckpointFiles: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full') =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILES, sessionId, uuid, scope),
+  getCheckpointFileDiff: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_DIFF, sessionId, uuid, scope, filePath),
+  getCheckpointFileLines: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_LINES, sessionId, uuid, scope, filePath),
 
   // Git status
   getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string }) =>

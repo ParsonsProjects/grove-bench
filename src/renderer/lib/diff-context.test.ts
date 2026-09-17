@@ -57,6 +57,11 @@ describe('withExpandableContext', () => {
     expect(out.filter(l => l.type === 'expander').length).toBe(3);
   });
 
+  it('offers no expanders for a brand-new file shown in full', () => {
+    const added: DiffLine[] = [hunk(0, 0, 1, 2), { type: 'add', text: 'a', newLineNum: 1 }, { type: 'add', text: 'b', newLineNum: 2 }];
+    expect(withExpandableContext(added, null, []).some(l => l.type === 'expander')).toBe(false);
+  });
+
   it('returns the input unchanged when there are no hunk headers', () => {
     const plain: DiffLine[] = [{ type: 'add', text: 'a', newLineNum: 1 }];
     expect(withExpandableContext(plain, file, [])).toBe(plain);

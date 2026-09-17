@@ -245,6 +245,10 @@ export interface FileDiffOptions {
  *  diff), used to expand context around hunks. Null when unreadable / binary. */
 export type FileLinesResult = { lines: string[] } | null;
 
+/** Which checkpoint comparison to show: what one turn changed, everything
+ *  since a checkpoint (rewind preview), or the whole session. */
+export type CheckpointDiffScope = 'turn' | 'since' | 'full';
+
 /** Result of a single-file diff request. Text files carry a unified patch; binary
  *  and image files are flagged so the UI can show a card / thumbnails instead of garbled text. */
 export type FileDiffResult =
@@ -766,6 +770,9 @@ export interface GroveBenchAPI {
   getDiffHistory(sessionId: string): Promise<DiffHistoryResult>;
   getTurnDiff(sessionId: string, userMessageId: string): Promise<string>;
   getFullThreadDiff(sessionId: string): Promise<string>;
+  getCheckpointFiles(sessionId: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult>;
+  getCheckpointFileDiff(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileDiffResult>;
+  getCheckpointFileLines(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileLinesResult>;
 
   // Git status
   getGitStatus(sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult>;
@@ -1268,6 +1275,9 @@ export const IPC = {
   AGENT_DIFF_HISTORY: 'agent:diffHistory',
   AGENT_TURN_DIFF: 'agent:turnDiff',
   AGENT_FULL_THREAD_DIFF: 'agent:fullThreadDiff',
+  AGENT_CHECKPOINT_FILES: 'agent:checkpointFiles',
+  AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
+  AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',

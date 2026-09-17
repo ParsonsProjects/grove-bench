@@ -12,7 +12,7 @@ import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
 import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
-import type { FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
+import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
 import { logger } from './logger.js';
@@ -912,6 +912,24 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_FULL_THREAD_DIFF, async (_event, sessionId: string) => {
     return sessionManager.getFullThreadDiff(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_CHECKPOINT_FILES, async (_event, sessionId: string, uuid: string, scope: CheckpointDiffScope) => {
+    return sessionManager.getCheckpointFiles(sessionId, uuid, scope);
+  });
+
+  ipcMain.handle(IPC.AGENT_CHECKPOINT_FILE_DIFF, async (_event, sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    return sessionManager.getCheckpointFileDiff(sessionId, uuid, scope, relPath);
+  });
+
+  ipcMain.handle(IPC.AGENT_CHECKPOINT_FILE_LINES, async (_event, sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return null;
+    const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    return sessionManager.getCheckpointFileLines(sessionId, uuid, scope, relPath);
   });
 
   // ─── Git status ───

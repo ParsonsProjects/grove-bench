@@ -1,4 +1,4 @@
-import type { CheckpointListItem, DiffHistoryEntry, DiffHistoryResult } from '../../shared/types.js';
+import type { CheckpointDiffScope, CheckpointListItem, DiffHistoryEntry, DiffHistoryResult, FileDiffResult, FileLinesResult, GitStatusEntry, GitStatusResult } from '../../shared/types.js';
 
 const THROTTLE_MS = 500;
 
@@ -18,7 +18,8 @@ class CheckpointStore {
   checkpointsBySession = $state<Record<string, CheckpointListItem[]>>({});
   loadingBySession = $state<Record<string, boolean>>({});
   selectedBySession = $state<Record<string, string | null>>({});
-  diffBySession = $state<Record<string, string | null>>({});
+  /** Files changed across the selected comparison (for the review panel). */
+  filesBySession = $state<Record<string, GitStatusResult | null>>({});
   diffLoadingBySession = $state<Record<string, boolean>>({});
   historyBySession = $state<Record<string, DiffHistoryResult>>({});
   diffModeBySession = $state<Record<string, CheckpointDiffMode>>({});
@@ -38,8 +39,31 @@ class CheckpointStore {
     return this.selectedBySession[sessionId] ?? null;
   }
 
-  getDiff(sessionId: string): string | null {
-    return this.diffBySession[sessionId] ?? null;
+  getFiles(sessionId: string): GitStatusResult | null {
+    return this.filesBySession[sessionId] ?? null;
+  }
+
+  /** The main-process scope for the current selection + mode. */
+  getScope(sessionId: string): CheckpointDiffScope {
+    if (this.getSelected(sessionId) === FULL_THREAD_UUID) return 'full';
+    return this.getDiffMode(sessionId);
+  }
+
+  /** Identity of the current comparison, for the review panel's caches. */
+  getSourceKey(sessionId: string): string {
+    return `cp:${this.getSelected(sessionId) ?? ''}:${this.getScope(sessionId)}`;
+  }
+
+  loadFileDiff(sessionId: string, entry: GitStatusEntry): Promise<FileDiffResult> {
+    const selected = this.getSelected(sessionId);
+    if (!selected) return Promise.resolve({ kind: 'text', patch: '' });
+    return window.groveBench.getCheckpointFileDiff(sessionId, selected, this.getScope(sessionId), entry.filePath);
+  }
+
+  loadFileLines(sessionId: string, entry: GitStatusEntry): Promise<FileLinesResult> {
+    const selected = this.getSelected(sessionId);
+    if (!selected) return Promise.resolve(null);
+    return window.groveBench.getCheckpointFileLines(sessionId, selected, this.getScope(sessionId), entry.filePath);
   }
 
   isDiffLoading(sessionId: string): boolean {
@@ -99,7 +123,7 @@ class CheckpointStore {
 
   async selectCheckpoint(sessionId: string, uuid: string): Promise<void> {
     this.selectedBySession = { ...this.selectedBySession, [sessionId]: uuid };
-    return this.loadDiff(sessionId);
+    return this.loadFiles(sessionId);
   }
 
   /** Select the cumulative full-thread diff (all changes across all turns). */
@@ -112,32 +136,33 @@ class CheckpointStore {
     if (this.getDiffMode(sessionId) === mode) return;
     this.diffModeBySession = { ...this.diffModeBySession, [sessionId]: mode };
     const selected = this.getSelected(sessionId);
-    if (selected && selected !== FULL_THREAD_UUID) return this.loadDiff(sessionId);
+    if (selected && selected !== FULL_THREAD_UUID) return this.loadFiles(sessionId);
   }
 
-  private async loadDiff(sessionId: string): Promise<void> {
+  /** Reload the current comparison's file list (e.g. after the agent edits). */
+  async reloadFiles(sessionId: string): Promise<void> {
+    return this.loadFiles(sessionId);
+  }
+
+  private async loadFiles(sessionId: string): Promise<void> {
     const selected = this.getSelected(sessionId);
     if (!selected) return;
+    const scope = this.getScope(sessionId);
 
     this.diffLoadingBySession = { ...this.diffLoadingBySession, [sessionId]: true };
-    this.diffBySession = { ...this.diffBySession, [sessionId]: null };
 
     try {
-      let diff: string;
-      if (selected === FULL_THREAD_UUID) {
-        diff = await window.groveBench.getFullThreadDiff(sessionId);
-      } else if (this.getDiffMode(sessionId) === 'turn') {
-        diff = await window.groveBench.getTurnDiff(sessionId, selected);
-      } else {
-        diff = await window.groveBench.getCheckpointDiff(sessionId, selected);
-      }
-      // Ignore stale responses if the selection changed while loading
-      if (this.getSelected(sessionId) !== selected) return;
-      this.diffBySession = { ...this.diffBySession, [sessionId]: diff };
+      const files = await window.groveBench.getCheckpointFiles(sessionId, selected, scope);
+      // Ignore stale responses if the selection or mode changed while loading
+      if (this.getSelected(sessionId) !== selected || this.getScope(sessionId) !== scope) return;
+      this.filesBySession = { ...this.filesBySession, [sessionId]: files };
     } catch (e) {
-      console.error('Failed to load checkpoint diff:', e);
-    } finally {
+      console.error('Failed to load checkpoint files:', e);
       if (this.getSelected(sessionId) === selected) {
+        this.filesBySession = { ...this.filesBySession, [sessionId]: { entries: [], scopeError: 'Failed to load checkpoint diff' } };
+      }
+    } finally {
+      if (this.getSelected(sessionId) === selected && this.getScope(sessionId) === scope) {
         this.diffLoadingBySession = { ...this.diffLoadingBySession, [sessionId]: false };
       }
     }
@@ -145,7 +170,7 @@ class CheckpointStore {
 
   clearSelection(sessionId: string): void {
     this.selectedBySession = { ...this.selectedBySession, [sessionId]: null };
-    this.diffBySession = { ...this.diffBySession, [sessionId]: null };
+    this.filesBySession = { ...this.filesBySession, [sessionId]: null };
     this.diffLoadingBySession = { ...this.diffLoadingBySession, [sessionId]: false };
   }
 
@@ -160,8 +185,8 @@ class CheckpointStore {
     this.loadingBySession = restLoading;
     const { [sessionId]: _s, ...restSelected } = this.selectedBySession;
     this.selectedBySession = restSelected;
-    const { [sessionId]: _d, ...restDiff } = this.diffBySession;
-    this.diffBySession = restDiff;
+    const { [sessionId]: _d, ...restFiles } = this.filesBySession;
+    this.filesBySession = restFiles;
     const { [sessionId]: _dl, ...restDiffLoading } = this.diffLoadingBySession;
     this.diffLoadingBySession = restDiffLoading;
     const { [sessionId]: _h, ...restHistory } = this.historyBySession;

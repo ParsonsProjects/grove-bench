@@ -92,10 +92,13 @@ export function withExpandableContext(
   }
 
   // Tail: after the last hunk to end of file (only knowable with file content).
+  // A single hunk whose old side is empty (`@@ -0,0 +1,n @@`) is a brand-new
+  // file shown in full, so there is nothing below it to reveal.
   const last = lines[hunkIdx[hunkIdx.length - 1]].hunk!;
+  const wholeNewFile = hunkIdx.length === 1 && last.oldStart === 0 && last.oldCount === 0;
   const tailFrom = last.newStart + last.newCount;
   const tailTo = totalNew ?? tailFrom + EXPAND_STEP - 1;
-  if (totalNew === null || tailTo >= tailFrom) {
+  if (!wholeNewFile && (totalNew === null || tailTo >= tailFrom)) {
     emitGap(tailFrom, tailTo, last.oldStart + last.oldCount - (last.newStart + last.newCount), 'tail');
   }
   return out;

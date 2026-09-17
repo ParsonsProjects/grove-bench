@@ -1635,6 +1635,25 @@ class AgentSessionManager {
     return session.checkpoints.fullThreadDiff(id, session.worktreePath);
   }
 
+  /** Files changed across a checkpoint comparison (for the review panel). */
+  async getCheckpointFiles(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope): Promise<import('../shared/types.js').GitStatusResult> {
+    const session = this.sessions.get(id);
+    if (!session) return { entries: [], scopeError: 'Session not found' };
+    return session.checkpoints.files(id, session.worktreePath, uuid, scope);
+  }
+
+  async getCheckpointFileDiff(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileDiffResult> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    return session.checkpoints.fileDiff(id, session.worktreePath, uuid, scope, relPath);
+  }
+
+  async getCheckpointFileLines(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileLinesResult> {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    return session.checkpoints.fileLines(id, session.worktreePath, uuid, scope, relPath);
+  }
+
   /** Return all buffered events for replay after renderer reload. Falls back to disk log. */
   getEventHistory(id: string): AgentEvent[] {
     const session = this.sessions.get(id);

@@ -59,4 +59,7 @@ export interface ReviewComment {
   snippet: string;
   body: string;
   createdAt: number;
+  /** Which comparison the comment was written against (e.g. "checkpoint #3,
+   *  this turn"). Absent for the uncommitted working tree. */
+  context?: string;
 }
