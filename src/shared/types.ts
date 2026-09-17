@@ -371,6 +371,10 @@ export interface ControlOption {
   /** Longer explanation for settings UIs and tooltips. */
   description?: string;
   tone?: ControlTone;
+  /** Options that belong to a different source than the provider's own
+   *  (e.g. an app-level mode) name it here. The UI draws a divider and this
+   *  heading where the group changes, so ungrouped options come first. */
+  group?: string;
 }
 
 /**
@@ -391,7 +395,7 @@ export interface ControlDescriptor {
 }
 
 /** Control ids the app knows about. Permission mode is special-cased because
- *  the session manager implements app-level behaviour (auto mode) on top of
+ *  the session manager implements app-level behaviour (read-safe mode) on top of
  *  the adapter's mapping; everything else is opaque to the app. */
 export const CONTROL_IDS = {
   permissionMode: 'permissionMode',
@@ -893,7 +897,7 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
-export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions';
+export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | 'auto' | 'bypassPermissions';
 
 export interface GroveBenchSettings {
   // Permission & Security
@@ -1093,12 +1097,18 @@ export type UpdateStatus =
 
 // ─── IPC Channel Names ───
 
-/** Session permission modes. 'auto' is Grove Bench's own mode (not an SDK
- *  mode): edits are auto-accepted like acceptEdits, and read-only tool calls
- *  scoped to the worktree (git status/log/diff, ls, grep, …) run without
- *  prompting — mutating, out-of-worktree, network-fetching, or unrecognized
- *  calls prompt. Adapters map it to their closest native mode. */
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto';
+/** Session permission modes.
+ *
+ *  'readSafe' is Grove Bench's own mode (not an SDK mode): edits are
+ *  auto-accepted like acceptEdits, and read-only tool calls scoped to the
+ *  worktree (git status/log/diff, ls, grep, …) run without prompting —
+ *  mutating, out-of-worktree, network-fetching, or unrecognized calls prompt.
+ *  Adapters map it to their closest native mode.
+ *
+ *  'auto' is the provider's native auto mode (Claude Code's model classifier
+ *  approves or blocks each action instead of prompting). It is passed
+ *  through to the adapter untouched. */
+export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | 'auto';
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',

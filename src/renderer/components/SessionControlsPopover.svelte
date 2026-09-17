@@ -247,8 +247,15 @@
               {ctl.label}
               {#if CONTROL_SHORTCUTS[ctl.id]}<span class="normal-case tracking-normal text-muted-foreground/40">{CONTROL_SHORTCUTS[ctl.id]}</span>{/if}
             </div>
-            {#each ctl.options as opt (opt.value)}
+            {#each ctl.options as opt, i (opt.value)}
               {@const current = opt.value === value}
+              {#if opt.group && opt.group !== ctl.options[i - 1]?.group}
+                <!-- Options from another source (e.g. Grove's own modes) sit
+                     below a divider with their source as the heading. -->
+                <div class="mt-1.5 pt-1.5 border-t border-border/60 px-2 text-[10px] uppercase tracking-wide text-muted-foreground/60" title="Not a {agentName} option">
+                  {opt.group}
+                </div>
+              {/if}
               <button
                 onclick={() => choose(ctl.id, opt.value)}
                 class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent

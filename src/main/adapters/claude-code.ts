@@ -142,24 +142,32 @@ export { isPathInside };
 interface MessageContext {
   /** Maps toolUseId → toolName for matching tool_results back to their tool. */
   toolUseMap: Map<string, string>;
-  /** Grove Bench-level permission mode. 'auto' is not an SDK mode — the SDK
-   *  runs in 'acceptEdits' while Grove is in 'auto', so SDK-reported
-   *  'acceptEdits' mode_syncs are translated back to 'auto'. */
+  /** Grove Bench-level permission mode. 'readSafe' is not an SDK mode — the
+   *  SDK runs in 'acceptEdits' while Grove is in 'readSafe', so SDK-reported
+   *  'acceptEdits' mode_syncs are translated back to 'readSafe'. */
   groveMode?: PermissionMode;
 }
 
-/** Map Grove Bench permission modes to what the SDK understands. 'auto' is
- *  implemented app-side (read-only auto-approval in the permission handler);
- *  at the SDK level it behaves like acceptEdits so worktree edits don't prompt. */
-function toSdkPermissionMode(mode: PermissionMode): 'default' | 'plan' | 'acceptEdits' {
-  return mode === 'auto' ? 'acceptEdits' : mode;
+/** Strip ANSI escape sequences from provider-authored text before it is
+ *  shown in the UI (the SDK warns that decision reasons may carry them). */
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, '');
+}
+
+/** Map Grove Bench permission modes to what the SDK understands. 'readSafe'
+ *  is implemented app-side (read-only auto-approval in the permission
+ *  handler); at the SDK level it behaves like acceptEdits so worktree edits
+ *  don't prompt. 'auto' is the SDK's own classifier mode and passes through. */
+export function toSdkPermissionMode(mode: PermissionMode): 'default' | 'plan' | 'acceptEdits' | 'auto' {
+  return mode === 'readSafe' ? 'acceptEdits' : mode;
 }
 
 /** Translate an SDK-reported mode back to the Grove-level mode for mode_sync
- *  events: while Grove is in 'auto', the SDK legitimately reports
- *  'acceptEdits' — surface that as 'auto' so the UI doesn't flip to Edit. */
-function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): PermissionMode {
-  return mode === 'acceptEdits' && ctx.groveMode === 'auto' ? 'auto' : mode;
+ *  events: while Grove is in 'readSafe', the SDK legitimately reports
+ *  'acceptEdits' — surface that as 'readSafe' so the UI doesn't flip to Edit. */
+export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): PermissionMode {
+  return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
 /**
@@ -296,6 +304,14 @@ export function transformMessage(
           files: (m.files ?? []).map((f: any) => ({ filename: f.filename, fileId: f.file_id })),
           failed: m.failed ?? [],
         });
+      } else if (message.subtype === 'permission_denied') {
+        // A tool call denied without a prompt (auto-mode classifier, deny
+        // rule, ...). The CLI shows a notification for these; surface the
+        // same so a blocked action in auto mode isn't silent.
+        const m = message as any;
+        const reason = typeof m.decision_reason === 'string' ? stripAnsi(m.decision_reason).trim() : '';
+        const who = m.decision_reason_type === 'classifier' ? 'Auto mode blocked' : 'Blocked';
+        events.push({ type: 'status', message: `${who} ${m.tool_name ?? 'a tool call'}${reason ? `: ${reason}` : ''}` });
       } else {
         // Try to extract permission mode from any unhandled system message
         const m = message as any;
@@ -568,8 +584,21 @@ const PERMISSION_MODE_OPTIONS: ControlOption[] = [
   { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
   { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
   { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
-  { value: 'auto', label: 'Auto', tone: 'success', description: 'Auto-accept edits and read-only commands (sandbox-backed)' },
+  { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+  // Grove's own mode, listed after Claude's so the divider shows it isn't one
+  // of the CLI's.
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
 ];
+
+/**
+ * Auto mode (a classifier model reviews actions instead of prompting) needs
+ * Opus 4.6+, Sonnet 4.6+ or Fable; Haiku is not supported. Unset model = SDK
+ * default, which qualifies.
+ */
+export function supportsAutoMode(model: string | null | undefined): boolean {
+  if (!model) return true;
+  return !/haiku/i.test(model);
+}
 
 // Labels are shown under a "Thinking" heading and in the status-bar subtitle,
 // so they carry no prefix.
@@ -592,8 +621,10 @@ export function claudeControlsFor(model?: string | null): ControlDescriptor[] {
   const thinkingOptions = THINKING_LEVELS
     .filter((level) => level !== 'adaptive' || supportsAdaptiveThinking(model))
     .map((level) => THINKING_OPTIONS[level]);
+  const modeOptions = PERMISSION_MODE_OPTIONS
+    .filter((o) => o.value !== 'auto' || supportsAutoMode(model));
   const controls: ControlDescriptor[] = [
-    { id: CONTROL_IDS.permissionMode, label: 'Mode', options: PERMISSION_MODE_OPTIONS, default: 'default' },
+    { id: CONTROL_IDS.permissionMode, label: 'Mode', options: modeOptions, default: 'default' },
     { id: CONTROL_IDS.thinking, label: 'Thinking', options: thinkingOptions, default: 'high' },
   ];
   if (supportsFastMode(model)) {
@@ -892,10 +923,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       }
 
       // Sandbox auto-approve Bash — only when the sandbox config opts in,
-      // matching SDK semantics. Auto mode's sandbox deliberately does NOT opt
-      // in: there the sandbox is an enforcement backstop and Bash approval
-      // stays with the read-only classifier in the session's permission
-      // handler.
+      // matching SDK semantics. Read-safe mode's sandbox deliberately does
+      // NOT opt in: there the sandbox is an enforcement backstop and Bash
+      // approval stays with the read-only classifier in the session's
+      // permission handler.
       const sandboxConfig = config.sandbox as { autoAllowBashIfSandboxed?: boolean } | null | undefined;
       if (sandboxConfig?.autoAllowBashIfSandboxed && toolName === 'Bash') {
         return { behavior: 'allow' as const, updatedInput: input };

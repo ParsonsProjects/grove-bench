@@ -138,6 +138,18 @@ describe('schema versioning', () => {
     expect(upgradeSettings({ schemaVersion: 1 }).settings.adapterDefaults).toEqual({});
   });
 
+  it('renames a saved auto default mode to readSafe (2 → 3)', () => {
+    // 'auto' meant Grove's read-only auto-approval before the provider's
+    // native auto mode took the name; a v2 file keeps its old behaviour.
+    const { settings: fromV2, migrated } = upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'auto' });
+    expect(fromV2.defaultPermissionMode).toBe('readSafe');
+    expect(migrated).toBe(true);
+    // A current-version 'auto' is the native mode and stays as is.
+    expect(upgradeSettings({ schemaVersion: 3, defaultPermissionMode: 'auto' }).settings.defaultPermissionMode).toBe('auto');
+    // Other modes pass through the migration untouched.
+    expect(upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'plan' }).settings.defaultPermissionMode).toBe('plan');
+  });
+
   it('does not rewrite or re-migrate a current-version file', () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, defaultBaseBranch: 'main' }));
     const s = loadSettings();
