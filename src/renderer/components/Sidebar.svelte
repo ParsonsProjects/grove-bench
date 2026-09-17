@@ -9,6 +9,7 @@
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import AddRepoButton from './AddRepoButton.svelte';
+  import MessageSquarePlusIcon from '@lucide/svelte/icons/message-square-plus';
   import NewAgentDialog from './NewAgentDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -40,7 +41,11 @@
   const SIDEBAR_MIN = 240;
   const SIDEBAR_MAX = 480;
   const SIDEBAR_DEFAULT = 300;
+  // Below this width the "+ Repository" / "+ Conversation" labels no longer
+  // fit side by side, so the bottom buttons collapse to icons.
+  const SIDEBAR_COMPACT_BELOW = 280;
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
+  let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
   let resizing = $state(false);
 
   onMount(async () => {
@@ -692,7 +697,7 @@
               <button
                 onclick={() => openNewAgent(repo)}
                 class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
-                title="New agent in this repo"
+                title="New conversation in this repo"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               </button>
@@ -743,15 +748,21 @@
   <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
     <div class="flex gap-2">
       <div class="flex-1 min-w-0">
-        <AddRepoButton />
+        <AddRepoButton {compact} />
       </div>
       <Button
         onclick={() => openNewAgent()}
         disabled={!store.canCreate}
         class="flex-1"
         size="sm"
+        title="New conversation"
+        aria-label="New conversation"
       >
-        + Agent
+        {#if compact}
+          <MessageSquarePlusIcon aria-hidden="true" />
+        {:else}
+          + Conversation
+        {/if}
       </Button>
     </div>
     <div class="flex justify-between px-1">

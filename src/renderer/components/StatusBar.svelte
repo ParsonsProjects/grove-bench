@@ -528,8 +528,11 @@
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
 
-  <span class="w-px h-3.5 bg-border"></span>
+  <span class="w-px self-stretch bg-border"></span>
 
+  <!-- Activity stack: session state on top; transient chips (pending tools,
+       rate limit, background tasks, memory compaction) underneath. -->
+  <div class="flex flex-col gap-px leading-snug">
   <span class="flex items-center gap-1.5">
     {#if isRunning}
       <span class="w-1.5 h-1.5 {activity.activity === 'thinking' ? 'bg-purple-400' : 'bg-primary'} animate-pulse"></span>
@@ -550,6 +553,8 @@
     {/if}
   </span>
 
+  {#if pendingTools.length > 0 || (rateLimit && rateLimit.status !== 'allowed') || backgroundTasks.length > 0 || memoryCompacting}
+  <div class="flex items-center gap-3 text-[11px]">
   {#if pendingTools.length > 0}
     <div class="relative" bind:this={tasksRef}>
       <button
@@ -672,21 +677,32 @@
       compacting memory
     </button>
   {/if}
+  </div>
+  {/if}
+  </div>
 
-  <span class="w-px h-3.5 bg-border"></span>
+  <span class="w-px self-stretch bg-border"></span>
 
-  {#if lastResult?.totalCostUsd !== undefined}
-    <span>${lastResult.totalCostUsd.toFixed(4)}</span>
+  <!-- Last turn: cost over duration -->
+  {#if lastResult?.totalCostUsd !== undefined || lastResult?.durationMs !== undefined}
+    <div class="flex flex-col gap-px leading-snug" title="Last turn — cost and duration">
+      {#if lastResult?.totalCostUsd !== undefined}
+        <span>${lastResult.totalCostUsd.toFixed(4)}</span>
+      {/if}
+      {#if lastResult?.durationMs !== undefined}
+        <span class="text-[11px] text-muted-foreground/70">{(lastResult.durationMs / 1000).toFixed(1)}s</span>
+      {/if}
+    </div>
+
+    <span class="w-px self-stretch bg-border"></span>
   {/if}
 
-  {#if lastResult?.durationMs !== undefined}
-    <span>{(lastResult.durationMs / 1000).toFixed(1)}s</span>
-  {/if}
-
-  <span class="w-px h-3.5 bg-border"></span>
-
+  <!-- Capabilities stack: MCP servers over skills. Both popovers anchor to the
+       stack so they open above the pair rather than over each other. -->
+  {#if mcpKnown.length > 0 || allSkills.length > 0}
+  <div class="relative flex flex-col gap-px leading-snug">
   {#if mcpKnown.length > 0}
-    <div class="relative" bind:this={mcpRef}>
+    <div bind:this={mcpRef}>
       <button
         onclick={toggleMcpPopover}
         class="flex items-center gap-1 transition-colors
@@ -789,7 +805,7 @@
   {/if}
 
   {#if allSkills.length > 0}
-    <div class="relative" bind:this={skillsRef}>
+    <div bind:this={skillsRef}>
       <button
         onclick={toggleSkillsPopover}
         class="flex items-center gap-1 transition-colors
@@ -942,31 +958,43 @@
     </div>
   {/if}
 
-  {#if sessionBranch}
-    <span class="text-muted-foreground/70 truncate max-w-40" title={sessionBranch}>
-      {sessionBranch}
-    </span>
+  </div>
   {/if}
 
-  {#if gitSync.ahead > 0}
-    <button
-      onclick={doPush}
-      disabled={pushing}
-      class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors disabled:opacity-50"
-      title={pushing ? 'Pushing…' : `${gitSync.ahead} unpushed commit${gitSync.ahead > 1 ? 's' : ''} — click to push`}
-    >
-      {pushing ? 'pushing…' : `↑${gitSync.ahead}`}
-    </button>
-  {/if}
+  <!-- Branch stack: branch name over its sync state (ahead / behind / push error) -->
+  {#if sessionBranch || gitSync.ahead > 0 || gitSync.behind > 0 || pushError}
+  <div class="flex flex-col gap-px leading-snug min-w-0">
+    {#if sessionBranch}
+      <span class="text-muted-foreground/70 truncate max-w-40" title={sessionBranch}>
+        {sessionBranch}
+      </span>
+    {/if}
 
-  {#if gitSync.behind > 0}
-    <span class="text-muted-foreground/70" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
-      ↓{gitSync.behind}
-    </span>
-  {/if}
+    {#if gitSync.ahead > 0 || gitSync.behind > 0 || pushError}
+      <span class="flex items-center gap-2 text-[11px]">
+        {#if gitSync.ahead > 0}
+          <button
+            onclick={doPush}
+            disabled={pushing}
+            class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors disabled:opacity-50"
+            title={pushing ? 'Pushing…' : `${gitSync.ahead} unpushed commit${gitSync.ahead > 1 ? 's' : ''} — click to push`}
+          >
+            {pushing ? 'pushing…' : `↑${gitSync.ahead}`}
+          </button>
+        {/if}
 
-  {#if pushError}
-    <span class="text-red-400 truncate max-w-32" title={pushError}>push failed</span>
+        {#if gitSync.behind > 0}
+          <span class="text-muted-foreground/70" title="{gitSync.behind} commit{gitSync.behind > 1 ? 's' : ''} behind upstream (as of last fetch)">
+            ↓{gitSync.behind}
+          </span>
+        {/if}
+
+        {#if pushError}
+          <span class="text-red-400 truncate max-w-32" title={pushError}>push failed</span>
+        {/if}
+      </span>
+    {/if}
+  </div>
   {/if}
 
   {#if prInfo}
@@ -1195,9 +1223,12 @@
     <div class="relative ml-auto" bind:this={contextRef}>
       <button
         onclick={() => contextExpanded = !contextExpanded}
-        class="flex items-center gap-2 hover:text-foreground transition-colors"
+        class="flex flex-col items-end gap-1 leading-snug hover:text-foreground transition-colors"
         title="Context usage — click for details"
       >
+        <span style:color={textColor} class="font-medium transition-colors">
+          {formatTokens(usedTokens)}/{formatTokens(contextWindow)} ({usedPercent.toFixed(0)}%)
+        </span>
         <!-- Mini bar with color-coded fill -->
         <div class="w-24 h-1.5 bg-muted overflow-hidden flex">
           {#if cachePercent > 0}
@@ -1205,9 +1236,6 @@
           {/if}
           <div class="h-full transition-all" style:width="{freshPercent}%" style:background-color={barBg}></div>
         </div>
-        <span style:color={textColor} class="font-medium transition-colors">
-          {formatTokens(usedTokens)}/{formatTokens(contextWindow)} ({usedPercent.toFixed(0)}%)
-        </span>
       </button>
 
       {#if contextExpanded}
