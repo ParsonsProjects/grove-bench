@@ -36,9 +36,11 @@
       if (line.startsWith('@@')) return { type: 'hunk' as const, text: line };
       if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff '))
         return { type: 'header' as const, text: line };
-      if (line.startsWith('+')) return { type: 'add' as const, text: line };
-      if (line.startsWith('-')) return { type: 'del' as const, text: line };
-      return { type: 'context' as const, text: line };
+      // Strip the diff marker: DiffView draws its own +/- gutter and pairs
+      // del/add lines for word-level marks, which the marker would skew.
+      if (line.startsWith('+')) return { type: 'add' as const, text: line.slice(1) };
+      if (line.startsWith('-')) return { type: 'del' as const, text: line.slice(1) };
+      return { type: 'context' as const, text: line.startsWith(' ') ? line.slice(1) : line };
     });
   }
 
