@@ -549,7 +549,7 @@ export interface McpAddServerOpts {
 /** Renderer → main request to show a desktop notification. Main gates on
  *  window focus and the per-kind settings, so callers can fire unconditionally. */
 export interface OsNotificationRequest {
-  kind: 'turn_complete' | 'permission_request' | 'pr_alert';
+  kind: 'turn_complete' | 'permission_request';
   /** Session to focus when the notification is clicked. */
   sessionId: string;
   title: string;
@@ -969,8 +969,6 @@ export interface GroveBenchSettings {
   notifyOnTurnComplete: boolean;
   /** Notify when an agent is blocked waiting on a permission decision. Default true. */
   notifyOnPermission: boolean;
-  /** Notify on PR-watch alerts (new CI failure, review comments, needs-human). Default true. */
-  notifyOnPrAlert: boolean;
   /** Flash the taskbar button alongside a notification. Default true. */
   notifyTaskbarFlash: boolean;
   /** Overlay a badge on the taskbar icon with the number of sessions that

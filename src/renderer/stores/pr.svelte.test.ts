@@ -44,9 +44,8 @@ describe('PR alert gating by session status', () => {
 
     await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
     expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'new_comments', count: 1 }]);
-    expect(mockGroveBench.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'pr_alert', sessionId: SID }),
-    );
+    // In-app only: PR alerts never raise a desktop notification
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
   });
 
   it('never alerts or notifies for a stopped session', async () => {

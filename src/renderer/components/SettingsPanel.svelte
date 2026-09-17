@@ -613,10 +613,6 @@
                 Agent is waiting on a permission or question
               </label>
               <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                <Checkbox bind:checked={settingsStore.draft.notifyOnPrAlert} />
-                PR activity (new CI failures, review comments)
-              </label>
-              <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
                 <Checkbox bind:checked={settingsStore.draft.notifyTaskbarFlash} />
                 Flash the taskbar button
               </label>

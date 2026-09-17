@@ -46,7 +46,6 @@ const SETTINGS = {
   spellcheck: true,
   notifyOnTurnComplete: true,
   notifyOnPermission: true,
-  notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
   analyticsEnabled: false,

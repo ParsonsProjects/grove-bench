@@ -48,7 +48,6 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Notifications
   notifyOnTurnComplete: true,
   notifyOnPermission: true,
-  notifyOnPrAlert: true,
   notifyTaskbarFlash: true,
   notifyTaskbarBadge: true,
 
@@ -144,7 +143,6 @@ const settingsSchema = z.object({
 
   notifyOnTurnComplete: z.boolean().catch(DEFAULT_SETTINGS.notifyOnTurnComplete),
   notifyOnPermission: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPermission),
-  notifyOnPrAlert: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPrAlert),
   notifyTaskbarFlash: z.boolean().catch(DEFAULT_SETTINGS.notifyTaskbarFlash),
   notifyTaskbarBadge: z.boolean().catch(DEFAULT_SETTINGS.notifyTaskbarBadge),
 
