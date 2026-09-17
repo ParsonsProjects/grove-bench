@@ -392,8 +392,15 @@ export function registerHandlers() {
   ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
     sessionManager.sendMessage(sessionId, content, images).then((ok) => {
       if (!ok) {
-        // Session is dead — notify renderer so it doesn't stay stuck in "Writing message"
+        // Session is dead or never connected — tell the user the prompt was
+        // not delivered, then unlock the renderer so it doesn't stay stuck in
+        // "Writing message".
         const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+        if (event.sender.isDestroyed()) return;
+        event.sender.send(channel, {
+          type: 'error',
+          message: 'Message not delivered: the agent is not connected. Send it again once the session shows as connected.',
+        } as import('../shared/types.js').AgentEvent);
         event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
       }
     });

@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ImageAttachment, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
@@ -6,6 +6,7 @@ import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
+import { store as sessionStore } from './sessions.svelte.js';
 
 // ─── Chat message types ───
 
@@ -126,6 +127,19 @@ export type ChatMessage =
 // ─── Store ───
 
 let msgCounter = 0;
+/** A prompt the user submitted while the agent was busy (connecting or mid-turn).
+ *  Held in the renderer until the session is idle so it can still be removed. */
+export interface QueuedMessage {
+  id: string;
+  /** Text shown in the thread once sent (includes attachment names). */
+  displayText: string;
+  /** Prepared outgoing text sent to main (file tags + prompt), or the slash command. */
+  outgoing: string;
+  images?: ImageAttachment[];
+  /** Slash command — dispatched through sendCommand rather than as a prompt. */
+  isCommand?: boolean;
+}
+
 function nextId(): string {
   return `msg_${++msgCounter}_${Date.now()}`;
 }
@@ -198,6 +212,14 @@ class MessageStore {
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
+
+  /** Prompts waiting to be sent, oldest first. Dispatched one per turn once the
+   *  session is connected and idle. See submitMessage / flushQueue. */
+  queuedBySession = $state<Record<string, QueuedMessage[]>>({});
+
+  /** Set when the user intervened (Stop, rewind). Queued prompts stay put until
+   *  the user clicks Resume, so a stale follow-up doesn't fire right after a stop. */
+  queuePausedBySession = $state<Record<string, boolean>>({});
 
   /** Preserved edit history after conversation-only rewind (keyed by session) */
   preservedEditHistory = $state<Record<string, { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[]>>({});
@@ -591,6 +613,117 @@ class MessageStore {
     this.promptSuggestionsBySession[sessionId] = [];
   }
 
+  // ── Outgoing message queue ───────────────────────────────────────────────
+  // The input never locks. A prompt submitted while the agent is busy —
+  // still connecting after the first send, mid-turn, or waiting on a
+  // permission — is parked here and sent when the turn finishes. The first
+  // prompt of a fresh session is never queued: the SDK only reports
+  // system_init once it has something to process, so holding it would
+  // deadlock the "connecting" state.
+
+  getQueue(sessionId: string): QueuedMessage[] {
+    return this.queuedBySession[sessionId] ?? [];
+  }
+
+  isQueuePaused(sessionId: string): boolean {
+    return this.queuePausedBySession[sessionId] ?? false;
+  }
+
+  /** Whether a submission right now would be sent immediately (vs queued).
+   *  Idle with nothing queued: send. Idle with a paused queue: the user is
+   *  intervening, so their new prompt goes ahead of the held items. Idle with
+   *  an unpaused, non-empty queue (transient, e.g. after a process exit before
+   *  the restart connects): queue behind to keep order. */
+  canSendNow(sessionId: string): boolean {
+    if (this.getIsRunning(sessionId)) return false;
+    return this.getQueue(sessionId).length === 0 || this.isQueuePaused(sessionId);
+  }
+
+  /** Submit a prompt: send it now if the agent is idle, otherwise queue it. */
+  submitMessage(sessionId: string, msg: { displayText: string; outgoing: string; images?: ImageAttachment[] }): 'sent' | 'queued' {
+    return this.submitOrQueue(sessionId, { ...msg, isCommand: false });
+  }
+
+  /** Submit a slash command. /rewind is client-side and always immediate;
+   *  everything else follows the same send-or-queue rule as prompts. */
+  submitCommand(sessionId: string, command: string): 'sent' | 'queued' {
+    const trimmed = command.trim();
+    if (trimmed === '/rewind') {
+      this.openRewindDialog(sessionId);
+      return 'sent';
+    }
+    return this.submitOrQueue(sessionId, { displayText: trimmed, outgoing: trimmed, isCommand: true });
+  }
+
+  private submitOrQueue(sessionId: string, item: Omit<QueuedMessage, 'id'>): 'sent' | 'queued' {
+    if (this.canSendNow(sessionId)) {
+      // A paused queue stays paused: the held items only go out on Resume.
+      this.dispatch(sessionId, item);
+      return 'sent';
+    }
+    this.queuedBySession = {
+      ...this.queuedBySession,
+      [sessionId]: [...this.getQueue(sessionId), { ...item, id: nextId() }],
+    };
+    return 'queued';
+  }
+
+  removeQueuedMessage(sessionId: string, id: string) {
+    const remaining = this.getQueue(sessionId).filter((m) => m.id !== id);
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: remaining };
+    if (remaining.length === 0) delete this.queuePausedBySession[sessionId];
+  }
+
+  clearQueue(sessionId: string) {
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: [] };
+    delete this.queuePausedBySession[sessionId];
+  }
+
+  /** Put a queued item's text back into the input (and drop it from the queue)
+   *  so it can be edited before sending. Returns false for nothing to edit. */
+  editQueuedMessage(sessionId: string, id: string): boolean {
+    const item = this.getQueue(sessionId).find((m) => m.id === id);
+    if (!item) return false;
+    this.removeQueuedMessage(sessionId, id);
+    this.appendToPrompt(sessionId, item.displayText);
+    return true;
+  }
+
+  /** Lift a pause set by Stop/rewind and send the next queued item if idle. */
+  resumeQueue(sessionId: string) {
+    delete this.queuePausedBySession[sessionId];
+    this.flushQueue(sessionId);
+  }
+
+  /** Send the oldest queued item if the session is idle and not paused.
+   *  Only one is sent per call — the next goes out when its turn's result
+   *  arrives, so each queued prompt gets its own turn. */
+  flushQueue(sessionId: string) {
+    // Never fire from replayed history: those results are old news.
+    if (this._replayBuffer !== null) return;
+    if (this.getIsRunning(sessionId) || this.isQueuePaused(sessionId)) return;
+    const queue = this.getQueue(sessionId);
+    if (queue.length === 0) return;
+    const [next, ...rest] = queue;
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: rest };
+    this.dispatch(sessionId, next);
+  }
+
+  private pauseQueue(sessionId: string) {
+    if (this.getQueue(sessionId).length === 0) return;
+    this.queuePausedBySession = { ...this.queuePausedBySession, [sessionId]: true };
+  }
+
+  private dispatch(sessionId: string, item: Omit<QueuedMessage, 'id'>) {
+    if (item.isCommand) {
+      this.sendCommand(sessionId, item.outgoing);
+      return;
+    }
+    this.addUserMessage(sessionId, item.displayText);
+    window.groveBench.sendMessage(sessionId, item.outgoing, item.images?.length ? item.images : undefined);
+    sessionStore.updateLastActive(sessionId);
+  }
+
   /** Get all currently pending tool calls with their progress info. */
   getPendingTools(sessionId: string): { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] {
     const msgs = this.messagesBySession[sessionId] ?? [];
@@ -900,6 +1033,10 @@ class MessageStore {
     // Suppress late permission_request events from the dying query.
     // Cleared on the next system_init when the new query connects.
     this.stoppingSession[sessionId] = true;
+
+    // Stop is an intervention: hold queued follow-ups until the user resumes,
+    // rather than firing the next one into the restarted query.
+    this.pauseQueue(sessionId);
 
     // Resolve any pending tool calls and permissions so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
@@ -1284,6 +1421,10 @@ class MessageStore {
       this.addUserMessage(sessionId, pendingMsg);
       window.groveBench.sendMessage(sessionId, pendingMsg);
     }
+
+    // Connected and idle (e.g. after a stop/restart or /clear) — send the
+    // next queued prompt. No-op while a turn is already pending or paused.
+    this.flushQueue(sessionId);
   }
 
   private onToolResult(sessionId: string, event: Extract<AgentEvent, { type: 'tool_result' }>) {
@@ -1442,6 +1583,9 @@ class MessageStore {
     });
     backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
     gitStatusStore.scheduleRefresh(sessionId, 100);
+
+    // Turn finished — the agent is free for the next queued prompt.
+    this.flushQueue(sessionId);
   }
 
   private onUserMessage(sessionId: string, event: Extract<AgentEvent, { type: 'user_message' }>) {
@@ -1543,6 +1687,8 @@ class MessageStore {
     this.isRunning[sessionId] = false;
     this.streamingText[sessionId] = '';
     this.streamingThinking[sessionId] = '';
+    // A rewind rewrites history; queued follow-ups may no longer make sense.
+    this.pauseQueue(sessionId);
     // Refresh git status since files may have changed on disk
     gitStatusStore.refresh(sessionId);
   }
@@ -1792,6 +1938,7 @@ class MessageStore {
       this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.pendingJumpBySession, this.promptInsertBySession,
+      this.queuedBySession, this.queuePausedBySession,
     ] as Record<string, unknown>[]) {
       delete record[sessionId];
     }

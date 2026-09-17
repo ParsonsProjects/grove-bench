@@ -479,6 +479,14 @@ class AgentSessionManager {
 
     const emit = this.createEmitter(session);
 
+    // Let sendMessage() wait for the first queryHandle instead of dropping a
+    // prompt that arrives while adapter.start() is still in flight (the
+    // renderer's input is live from the moment the pane mounts). runQuery
+    // resolves this once the handle is set, or on start failure.
+    session.queryReady = new Promise<void>((resolve) => {
+      session.resolveQueryReady = resolve;
+    });
+
     this.runQuery(session, emit).catch((err) => {
         console.error(`[runQuery] session=${id} FAILED:`, err);
         const errMsg = String(err.message || err);

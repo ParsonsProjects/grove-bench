@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
+  import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
   import {
@@ -90,17 +90,19 @@
 
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
 
-  // The input is always usable once mounted — no need to wait for system_init.
-  // The SDK's system_init can take 30+ seconds (or never arrive for the first
-  // query) but messages are queued in the ReadableStream and processed once
-  // the SDK connects.  Gating on system_init left worktree inputs permanently
-  // disabled.
-  let canSend = $derived(!isRunning);
+  // The input is always usable — never gated on system_init or on a running
+  // turn. The SDK's system_init can take 30+ seconds (or never arrive for a
+  // fresh query until it has a prompt to process), so the first prompt goes
+  // straight to main, where it waits in the SDK's input stream until the
+  // agent connects. Anything submitted while the agent is busy (connecting
+  // or mid-turn) is queued in the store and sent when the turn finishes; the
+  // queue is shown above the input so items can be removed before they go.
+  let willQueue = $derived(!messageStore.canSendNow(sessionId));
   let promptSuggestions = $derived(messageStore.getPromptSuggestions(sessionId));
 
   function handleSubmit() {
     const text = value.trim();
-    if (!text || !canSend) return;
+    if (!text) return;
 
     // Shell command: ! prefix runs directly in terminal
     if (text.startsWith('!')) {
@@ -124,7 +126,7 @@
 
     // Check if it's a slash command
     if (text.startsWith('/')) {
-      messageStore.sendCommand(sessionId, text);
+      messageStore.submitCommand(sessionId, text);
       value = '';
       closePicker();
       closeCommandPicker();
@@ -158,10 +160,13 @@
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
       : text;
 
+    // Sends now if the agent is idle, otherwise parks the prompt in the queue.
     function send(outgoing: string) {
-      messageStore.addUserMessage(sessionId, displayText);
-      window.groveBench.sendMessage(sessionId, outgoing, images.length > 0 ? images : undefined);
-      store.updateLastActive(sessionId);
+      messageStore.submitMessage(sessionId, {
+        displayText,
+        outgoing,
+        images: images.length > 0 ? images : undefined,
+      });
     }
 
     if (refs.length > 0) {
@@ -546,6 +551,9 @@
     </div>
   {/if}
 
+  <!-- Queued messages (waiting for the agent to be free) -->
+  <MessageQueue {sessionId} />
+
   <div class="flex gap-2 items-end px-4 pb-3 pt-2">
     <!-- Hidden file input for picker -->
     <input
@@ -559,7 +567,6 @@
 
     <button
       onclick={openFilePicker}
-      disabled={isRunning}
       title="Attach files"
       class="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed p-1 self-center"
     >
@@ -575,26 +582,25 @@
       oninput={handleInput}
       onkeydown={handleKeydown}
       onpaste={handlePaste}
-      placeholder={isRunning ? 'Waiting for agent...' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
+      placeholder={willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)'}
       rows="1"
-      class="flex-1 bg-card border px-3 py-2 text-sm text-foreground
+      class="flex-1 bg-card border border-input px-3 py-2 text-sm text-foreground
         placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-ring
-        disabled:opacity-50 disabled:cursor-not-allowed font-mono
-        {isRunning ? 'border-muted opacity-60' : 'border-input'}"
+        disabled:opacity-50 disabled:cursor-not-allowed font-mono"
     ></textarea>
 
+    <Button
+      variant="outline"
+      onclick={handleSubmit}
+      disabled={!value.trim()}
+      title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
+      class="text-primary border-primary hover:bg-primary/10 h-auto"
+    >
+      {willQueue ? 'Queue' : 'Send'}
+    </Button>
     {#if isRunning}
       <Button variant="outline" onclick={handleStop} class="text-destructive border-destructive hover:bg-destructive/10 h-auto">
         Stop
-      </Button>
-    {:else}
-      <Button
-        variant="outline"
-        onclick={handleSubmit}
-        disabled={!value.trim() || !canSend}
-        class="text-primary border-primary hover:bg-primary/10 h-auto"
-      >
-        Send
       </Button>
     {/if}
   </div>
