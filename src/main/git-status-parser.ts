@@ -92,3 +92,76 @@ export function parseNumstat(raw: string): DiffStat[] {
   }
   return out;
 }
+
+/**
+ * Parse `git diff --name-status -z <ref>` (working tree vs a commit). Records
+ * are "STATUS\0path\0"; renames and copies carry a score and two paths:
+ * "R100\0oldpath\0newpath\0". Entries are unstaged from the UI's point of
+ * view: the branch scope has no staging concept.
+ */
+export function parseNameStatus(raw: string): GitStatusEntry[] {
+  if (!raw) return [];
+  const parts = raw.split('\0');
+  const entries: GitStatusEntry[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const code = parts[i];
+    if (!code) { i++; continue; }
+    const kind = code[0];
+    if (kind === 'R' || kind === 'C') {
+      const origPath = parts[i + 1];
+      const filePath = parts[i + 2];
+      if (filePath) entries.push({ filePath, status: mapStatus(kind), staged: false, origPath });
+      i += 3;
+      continue;
+    }
+    const filePath = parts[i + 1];
+    if (filePath) entries.push({ filePath, status: mapStatus(kind), staged: false });
+    i += 2;
+  }
+  return entries;
+}
+
+/** Parse `git hash-object --stdin-paths` output (one hash per input path, in order). */
+export function parseHashObjectOutput(raw: string, paths: string[]): Map<string, string> {
+  const hashes = raw.split('\n').map(h => h.trim()).filter(Boolean);
+  const out = new Map<string, string>();
+  paths.forEach((p, idx) => { if (hashes[idx]) out.set(p, hashes[idx]); });
+  return out;
+}
+
+const ZERO_OID = /^0+$/;
+
+/**
+ * Parse `git diff --raw -z --no-abbrev <from> <to>`. Each record is
+ * ":oldmode newmode oldsha newsha STATUS\0path\0" (renames/copies carry a
+ * score and two paths). The new-side blob id doubles as the content hash the
+ * UI uses for "changed since viewed", so it is attached here.
+ */
+export function parseDiffRaw(raw: string): GitStatusEntry[] {
+  if (!raw) return [];
+  const parts = raw.split('\0');
+  const entries: GitStatusEntry[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const meta = parts[i];
+    if (!meta.startsWith(':')) { i++; continue; }
+    const fields = meta.slice(1).split(' ');
+    if (fields.length < 5) { i++; continue; }
+    const newSha = fields[3];
+    const code = fields[4];
+    const kind = code[0];
+    const contentHash = ZERO_OID.test(newSha) ? 'deleted' : newSha;
+    if (kind === 'R' || kind === 'C') {
+      const origPath = parts[i + 1];
+      const filePath = parts[i + 2];
+      if (filePath) entries.push({ filePath, status: mapStatus(kind), staged: false, origPath, contentHash });
+      i += 3;
+      continue;
+    }
+    const filePath = parts[i + 1];
+    if (filePath) entries.push({ filePath, status: mapStatus(kind), staged: false, contentHash });
+    i += 2;
+  }
+  return entries;
+}

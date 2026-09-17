@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { checkpointStore, FULL_THREAD_UUID } from './checkpoints.svelte.js';
-import type { CheckpointListItem, DiffHistoryResult } from '../../shared/types.js';
+import type { CheckpointListItem, DiffHistoryResult, GitStatusResult } from '../../shared/types.js';
+
+const files = (...paths: string[]): GitStatusResult => ({ entries: paths.map(p => ({ filePath: p, status: 'modified' as const, staged: false })) });
 
 const SID = 'test-session';
 
@@ -32,7 +34,7 @@ beforeEach(() => {
   checkpointStore.checkpointsBySession = {};
   checkpointStore.loadingBySession = {};
   checkpointStore.selectedBySession = {};
-  checkpointStore.diffBySession = {};
+  checkpointStore.filesBySession = {};
   checkpointStore.diffLoadingBySession = {};
   checkpointStore.historyBySession = {};
   checkpointStore.diffModeBySession = {};
@@ -51,8 +53,8 @@ describe('initial state', () => {
     expect(checkpointStore.getSelected(SID)).toBeNull();
   });
 
-  it('getDiff returns null', () => {
-    expect(checkpointStore.getDiff(SID)).toBeNull();
+  it('getFiles returns null', () => {
+    expect(checkpointStore.getFiles(SID)).toBeNull();
   });
 
   it('getHistory returns empty result', () => {
@@ -124,126 +126,139 @@ describe('getHistoryEntry()', () => {
 });
 
 describe('selectCheckpoint()', () => {
-  it('stores selection and loads the per-turn diff by default', async () => {
-    mockGroveBench.getTurnDiff.mockResolvedValueOnce('turn diff output');
+  it('stores selection and loads the per-turn file list by default', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('a.ts'));
 
     await checkpointStore.selectCheckpoint(SID, 'uuid-2');
 
     expect(checkpointStore.getSelected(SID)).toBe('uuid-2');
-    expect(mockGroveBench.getTurnDiff).toHaveBeenCalledWith(SID, 'uuid-2');
-    expect(mockGroveBench.getCheckpointDiff).not.toHaveBeenCalled();
-    expect(checkpointStore.getDiff(SID)).toBe('turn diff output');
+    expect(mockGroveBench.getCheckpointFiles).toHaveBeenCalledWith(SID, 'uuid-2', 'turn');
+    expect(checkpointStore.getFiles(SID)).toEqual(files('a.ts'));
+    expect(checkpointStore.getSourceKey(SID)).toBe('cp:uuid-2:turn');
   });
 
-  it('loads the since-checkpoint diff in since mode', async () => {
+  it('loads the since-checkpoint file list in since mode', async () => {
     await checkpointStore.setDiffMode(SID, 'since');
-    mockGroveBench.getCheckpointDiff.mockResolvedValueOnce('since diff output');
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('b.ts'));
 
     await checkpointStore.selectCheckpoint(SID, 'uuid-2');
 
-    expect(mockGroveBench.getCheckpointDiff).toHaveBeenCalledWith(SID, 'uuid-2');
-    expect(mockGroveBench.getTurnDiff).not.toHaveBeenCalled();
-    expect(checkpointStore.getDiff(SID)).toBe('since diff output');
+    expect(mockGroveBench.getCheckpointFiles).toHaveBeenCalledWith(SID, 'uuid-2', 'since');
+    expect(checkpointStore.getFiles(SID)).toEqual(files('b.ts'));
   });
 
   it('sets diff loading flag', async () => {
-    let resolveDiff: (v: string) => void;
-    mockGroveBench.getTurnDiff.mockReturnValueOnce(
-      new Promise<string>((r) => { resolveDiff = r; })
+    let resolveFiles: (v: GitStatusResult) => void;
+    mockGroveBench.getCheckpointFiles.mockReturnValueOnce(
+      new Promise<GitStatusResult>((r) => { resolveFiles = r; })
     );
 
     const p = checkpointStore.selectCheckpoint(SID, 'uuid-1');
     expect(checkpointStore.isDiffLoading(SID)).toBe(true);
 
-    resolveDiff!('diff');
+    resolveFiles!(files());
     await p;
     expect(checkpointStore.isDiffLoading(SID)).toBe(false);
   });
 
-  it('handles diff load error gracefully', async () => {
-    mockGroveBench.getTurnDiff.mockRejectedValueOnce(new Error('fail'));
+  it('handles a load error by surfacing a scope error', async () => {
+    mockGroveBench.getCheckpointFiles.mockRejectedValueOnce(new Error('fail'));
 
     await checkpointStore.selectCheckpoint(SID, 'uuid-1');
 
     expect(checkpointStore.isDiffLoading(SID)).toBe(false);
-    expect(checkpointStore.getDiff(SID)).toBeNull();
+    expect(checkpointStore.getFiles(SID)?.entries).toEqual([]);
+    expect(checkpointStore.getFiles(SID)?.scopeError).toBeTruthy();
   });
 
-  it('discards a stale diff response after the selection changed', async () => {
-    let resolveFirst: (v: string) => void;
-    mockGroveBench.getTurnDiff.mockReturnValueOnce(
-      new Promise<string>((r) => { resolveFirst = r; })
+  it('discards a stale response after the selection changed', async () => {
+    let resolveFirst: (v: GitStatusResult) => void;
+    mockGroveBench.getCheckpointFiles.mockReturnValueOnce(
+      new Promise<GitStatusResult>((r) => { resolveFirst = r; })
     );
     const p1 = checkpointStore.selectCheckpoint(SID, 'uuid-1');
 
-    mockGroveBench.getTurnDiff.mockResolvedValueOnce('second diff');
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('second.ts'));
     await checkpointStore.selectCheckpoint(SID, 'uuid-2');
 
-    resolveFirst!('first diff');
+    resolveFirst!(files('first.ts'));
     await p1;
 
     expect(checkpointStore.getSelected(SID)).toBe('uuid-2');
-    expect(checkpointStore.getDiff(SID)).toBe('second diff');
+    expect(checkpointStore.getFiles(SID)).toEqual(files('second.ts'));
+  });
+
+  it('routes per-file diff and line requests to the selected comparison', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('a.ts'));
+    await checkpointStore.selectCheckpoint(SID, 'uuid-2');
+    const entry = files('a.ts').entries[0];
+
+    await checkpointStore.loadFileDiff(SID, entry);
+    await checkpointStore.loadFileLines(SID, entry);
+
+    expect(mockGroveBench.getCheckpointFileDiff).toHaveBeenCalledWith(SID, 'uuid-2', 'turn', 'a.ts');
+    expect(mockGroveBench.getCheckpointFileLines).toHaveBeenCalledWith(SID, 'uuid-2', 'turn', 'a.ts');
   });
 });
 
 describe('selectFullThread()', () => {
-  it('selects the full-thread sentinel and loads the cumulative diff', async () => {
-    mockGroveBench.getFullThreadDiff.mockResolvedValueOnce('cumulative diff');
+  it('selects the full-thread sentinel and loads the cumulative file list', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('all.ts'));
 
     await checkpointStore.selectFullThread(SID);
 
     expect(checkpointStore.getSelected(SID)).toBe(FULL_THREAD_UUID);
-    expect(mockGroveBench.getFullThreadDiff).toHaveBeenCalledWith(SID);
-    expect(mockGroveBench.getTurnDiff).not.toHaveBeenCalled();
-    expect(checkpointStore.getDiff(SID)).toBe('cumulative diff');
+    expect(mockGroveBench.getCheckpointFiles).toHaveBeenCalledWith(SID, FULL_THREAD_UUID, 'full');
+    expect(checkpointStore.getFiles(SID)).toEqual(files('all.ts'));
+    expect(checkpointStore.getScope(SID)).toBe('full');
   });
 });
 
 describe('setDiffMode()', () => {
-  it('reloads the diff for the current checkpoint selection', async () => {
-    mockGroveBench.getTurnDiff.mockResolvedValueOnce('turn diff');
+  it('reloads the file list for the current checkpoint selection', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('turn.ts'));
     await checkpointStore.selectCheckpoint(SID, 'uuid-1');
 
-    mockGroveBench.getCheckpointDiff.mockResolvedValueOnce('since diff');
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('since.ts'));
     await checkpointStore.setDiffMode(SID, 'since');
 
     expect(checkpointStore.getDiffMode(SID)).toBe('since');
-    expect(mockGroveBench.getCheckpointDiff).toHaveBeenCalledWith(SID, 'uuid-1');
-    expect(checkpointStore.getDiff(SID)).toBe('since diff');
+    expect(mockGroveBench.getCheckpointFiles).toHaveBeenLastCalledWith(SID, 'uuid-1', 'since');
+    expect(checkpointStore.getFiles(SID)).toEqual(files('since.ts'));
   });
 
   it('is a no-op when the mode is unchanged', async () => {
-    mockGroveBench.getTurnDiff.mockResolvedValueOnce('turn diff');
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files());
     await checkpointStore.selectCheckpoint(SID, 'uuid-1');
-    mockGroveBench.getTurnDiff.mockClear();
+    mockGroveBench.getCheckpointFiles.mockClear();
 
     await checkpointStore.setDiffMode(SID, 'turn');
 
-    expect(mockGroveBench.getTurnDiff).not.toHaveBeenCalled();
+    expect(mockGroveBench.getCheckpointFiles).not.toHaveBeenCalled();
   });
 
   it('does not reload while the full-thread diff is selected', async () => {
-    mockGroveBench.getFullThreadDiff.mockResolvedValueOnce('cumulative diff');
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('all.ts'));
     await checkpointStore.selectFullThread(SID);
+    mockGroveBench.getCheckpointFiles.mockClear();
 
     await checkpointStore.setDiffMode(SID, 'since');
 
     expect(checkpointStore.getDiffMode(SID)).toBe('since');
-    expect(mockGroveBench.getCheckpointDiff).not.toHaveBeenCalled();
-    expect(checkpointStore.getDiff(SID)).toBe('cumulative diff');
+    expect(mockGroveBench.getCheckpointFiles).not.toHaveBeenCalled();
+    expect(checkpointStore.getFiles(SID)).toEqual(files('all.ts'));
   });
 });
 
 describe('clearSelection()', () => {
-  it('clears selected and diff', async () => {
-    mockGroveBench.getTurnDiff.mockResolvedValueOnce('diff');
+  it('clears selected and files', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValueOnce(files('a.ts'));
     await checkpointStore.selectCheckpoint(SID, 'uuid-1');
 
     checkpointStore.clearSelection(SID);
 
     expect(checkpointStore.getSelected(SID)).toBeNull();
-    expect(checkpointStore.getDiff(SID)).toBeNull();
+    expect(checkpointStore.getFiles(SID)).toBeNull();
     expect(checkpointStore.isDiffLoading(SID)).toBe(false);
   });
 });
@@ -252,7 +267,7 @@ describe('clear()', () => {
   it('removes all state for session', async () => {
     mockGroveBench.listCheckpoints.mockResolvedValueOnce(MOCK_CHECKPOINTS);
     mockGroveBench.getDiffHistory.mockResolvedValueOnce(MOCK_HISTORY);
-    mockGroveBench.getTurnDiff.mockResolvedValueOnce('diff');
+    mockGroveBench.getCheckpointFiles.mockResolvedValue(files('a.ts'));
 
     await checkpointStore.refresh(SID);
     await checkpointStore.selectCheckpoint(SID, 'uuid-1');
@@ -263,7 +278,7 @@ describe('clear()', () => {
     expect(checkpointStore.getCheckpoints(SID)).toEqual([]);
     expect(checkpointStore.isLoading(SID)).toBe(false);
     expect(checkpointStore.getSelected(SID)).toBeNull();
-    expect(checkpointStore.getDiff(SID)).toBeNull();
+    expect(checkpointStore.getFiles(SID)).toBeNull();
     expect(checkpointStore.getHistory(SID)).toEqual(EMPTY_HISTORY);
     expect(checkpointStore.getDiffMode(SID)).toBe('turn');
   });

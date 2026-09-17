@@ -1,9 +1,10 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { git, gitEnv } from './git.js';
+import { git, gitEnv, detectBinaryDiff, imageExtFor } from './git.js';
+import { parseDiffRaw, parseNumstat as parseNumstatRows } from './git-status-parser.js';
 import { logger } from './logger.js';
-import type { DiffHistoryEntry, DiffHistoryResult, DiffStats } from '../shared/types.js';
+import type { CheckpointDiffScope, DiffHistoryEntry, DiffHistoryResult, DiffStats, FileDiffResult, FileLinesResult, GitStatusResult } from '../shared/types.js';
 
 const BASELINE_UUID = '__baseline__';
 /** Sentinel checkpoint captured when the conversation is cleared. It marks
@@ -235,19 +236,99 @@ export class CheckpointManager {
     return output || '(no changes)';
   }
 
+  /** Recent working-tree snapshots. The review UI asks for the file list and
+   *  then several per-file diffs within a few hundred ms; those calls opt in
+   *  to reusing one tree object so they stay consistent with each other and
+   *  don't re-add the whole tree each time. Everything else (history stats,
+   *  whole-diff previews) always snapshots fresh. */
+  private workingTreeMemo = new Map<string, { oid: string; at: number }>();
+  private static WORKING_TREE_REUSE_MS = 1000;
+
   /**
    * Build a tree object for the current working tree (incl. untracked files,
-   * excl. ignored) using a temporary index, and return its oid.
+   * excl. ignored) using a temporary index, and return its oid. With
+   * `reuseRecent`, a snapshot taken within the last second is returned as is.
    */
-  private async writeWorkingTree(sessionId: string, cwd: string): Promise<string> {
+  private async writeWorkingTree(sessionId: string, cwd: string, reuseRecent = false): Promise<string> {
+    const memo = this.workingTreeMemo.get(sessionId);
+    if (reuseRecent && memo && Date.now() - memo.at < CheckpointManager.WORKING_TREE_REUSE_MS) return memo.oid;
     const tmpIndex = path.join(os.tmpdir(), `grove-diff-${sessionId}-${Date.now()}`);
     try {
       const env = { GIT_INDEX_FILE: tmpIndex };
       await gitEnv(['read-tree', 'HEAD'], cwd, env);
       await gitEnv(['add', '-A'], cwd, env);
-      return (await gitEnv(['write-tree'], cwd, env)).trim();
+      const oid = (await gitEnv(['write-tree'], cwd, env)).trim();
+      this.workingTreeMemo.set(sessionId, { oid, at: Date.now() });
+      return oid;
     } finally {
       try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * The two trees a checkpoint comparison spans. `turn` = this checkpoint to
+   * the next one (or the working tree for the latest turn); `since` = this
+   * checkpoint to the working tree; `full` = the session's oldest checkpoint
+   * to the working tree. Null when the checkpoint cannot be found.
+   */
+  async range(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope): Promise<{ from: string; to: string } | null> {
+    if (scope === 'full') {
+      await this.waitForPending(sessionId);
+      let refs: CheckpointRef[] = [];
+      try { refs = await this.listRefs(sessionId, cwd); } catch { /* no refs */ }
+      if (refs.length === 0) return null;
+      return { from: refs[0].ref, to: await this.writeWorkingTree(sessionId, cwd, true) };
+    }
+    const ref = await this.resolveRef(sessionId, cwd, uuid);
+    if (!ref) return null;
+    if (scope === 'since') return { from: ref, to: await this.writeWorkingTree(sessionId, cwd, true) };
+    let refs: CheckpointRef[] = [];
+    try { refs = await this.listRefs(sessionId, cwd); } catch { /* fall through */ }
+    const idx = refs.findIndex(r => r.ref === ref);
+    const next = idx >= 0 ? refs[idx + 1] : undefined;
+    return { from: ref, to: next ? next.ref : await this.writeWorkingTree(sessionId, cwd, true) };
+  }
+
+  /** Files changed across a checkpoint comparison, with line counts and the
+   *  new-side blob id as content hash. */
+  async files(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult> {
+    const range = await this.range(sessionId, cwd, uuid, scope);
+    if (!range) return { entries: [], scopeError: scope === 'full' ? 'No checkpoints found for this session' : 'No checkpoint found for this message' };
+    const entries = parseDiffRaw(await git(['diff', '--raw', '-z', '--no-abbrev', range.from, range.to, '--', '.'], cwd));
+    if (entries.length === 0) return { entries };
+    try {
+      const stats = new Map(parseNumstatRows(await git(['diff', '--numstat', range.from, range.to, '--', '.'], cwd)).map(s => [s.path, s]));
+      for (const e of entries) {
+        const st = stats.get(e.filePath);
+        if (st && !st.binary) { e.additions = st.additions; e.deletions = st.deletions; }
+      }
+    } catch { /* best-effort */ }
+    return { entries };
+  }
+
+  /** Unified diff of one file across a checkpoint comparison. */
+  async fileDiff(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope, relPath: string): Promise<FileDiffResult> {
+    const imgExt = imageExtFor(relPath);
+    if (imgExt) return { kind: 'image', ext: imgExt };
+    const range = await this.range(sessionId, cwd, uuid, scope);
+    if (!range) return { kind: 'text', patch: '' };
+    const diff = await git(['diff', range.from, range.to, '--', relPath], cwd);
+    if (detectBinaryDiff(diff)) return { kind: 'binary' };
+    return { kind: 'text', patch: diff };
+  }
+
+  /** New-side content of one file across a checkpoint comparison, as lines. */
+  async fileLines(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope, relPath: string): Promise<FileLinesResult> {
+    const range = await this.range(sessionId, cwd, uuid, scope);
+    if (!range) return null;
+    try {
+      const content = await git(['show', `${range.to}:${relPath}`], cwd);
+      if (content.includes('\0')) return null;
+      const lines = content.split('\n');
+      if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+      return { lines };
+    } catch {
+      return null;
     }
   }
 

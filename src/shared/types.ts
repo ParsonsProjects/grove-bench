@@ -212,11 +212,42 @@ export interface GitStatusEntry {
   /** Line counts from `git diff --numstat` (combined vs HEAD); absent for untracked files. */
   additions?: number;
   deletions?: number;
+  /** Blob hash of the working-tree content (`git hash-object`), or 'deleted'.
+   *  Lets the UI tell when a file changed since the user last viewed it. */
+  contentHash?: string;
+}
+
+/** What the Changes tab compares against: the uncommitted working tree
+ *  (staged / unstaged / untracked, like a git client) or everything on the
+ *  branch since it diverged from the base (like a pull request). */
+export type DiffScope = 'working' | 'branch';
+
+export interface GitStatusOptions {
+  scope?: DiffScope;
+  /** Base branch for `scope: 'branch'` (merge-base with HEAD is the comparison point). */
+  base?: string;
 }
 
 export interface GitStatusResult {
   entries: GitStatusEntry[];
+  /** The ref the branch scope resolved (`main` or `origin/main`). */
+  baseRef?: string;
+  /** Set when the branch scope could not find a merge base with `base`. */
+  scopeError?: string;
 }
+
+export interface FileDiffOptions {
+  /** Diff against the merge-base with this branch instead of HEAD/index. */
+  base?: string;
+}
+
+/** Lines of the "new side" of a file (working tree, or the index for a staged
+ *  diff), used to expand context around hunks. Null when unreadable / binary. */
+export type FileLinesResult = { lines: string[] } | null;
+
+/** Which checkpoint comparison to show: what one turn changed, everything
+ *  since a checkpoint (rewind preview), or the whole session. */
+export type CheckpointDiffScope = 'turn' | 'since' | 'full';
 
 /** Result of a single-file diff request. Text files carry a unified patch; binary
  *  and image files are flagged so the UI can show a card / thumbnails instead of garbled text. */
@@ -714,7 +745,8 @@ export interface GroveBenchAPI {
 
   // File revert (for changes review)
   revertFile(sessionId: string, filePath: string, staged?: boolean): Promise<void>;
-  getFileDiff(sessionId: string, filePath: string, staged?: boolean): Promise<FileDiffResult>;
+  getFileDiff(sessionId: string, filePath: string, staged?: boolean, opts?: FileDiffOptions): Promise<FileDiffResult>;
+  getFileLines(sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult>;
   getImageDiffContent(sessionId: string, filePath: string): Promise<ImageDiffContent>;
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
@@ -742,9 +774,12 @@ export interface GroveBenchAPI {
   getDiffHistory(sessionId: string): Promise<DiffHistoryResult>;
   getTurnDiff(sessionId: string, userMessageId: string): Promise<string>;
   getFullThreadDiff(sessionId: string): Promise<string>;
+  getCheckpointFiles(sessionId: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult>;
+  getCheckpointFileDiff(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileDiffResult>;
+  getCheckpointFileLines(sessionId: string, uuid: string, scope: CheckpointDiffScope, filePath: string): Promise<FileLinesResult>;
 
   // Git status
-  getGitStatus(sessionId: string): Promise<GitStatusResult>;
+  getGitStatus(sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult>;
 
   // PR info
   getPrInfo(sessionId: string): Promise<PrInfo | null>;
@@ -1153,6 +1188,7 @@ export const IPC = {
   OPEN_EXTERNAL: 'shell:openExternal',
   FILE_REVERT: 'file:revert',
   FILE_DIFF: 'file:diff',
+  FILE_LINES: 'file:lines',
   FILE_CONTENT_DATA_URL: 'file:contentDataUrl',
   FILE_STAGE: 'file:stage',
   FILE_UNSTAGE: 'file:unstage',
@@ -1249,6 +1285,9 @@ export const IPC = {
   AGENT_DIFF_HISTORY: 'agent:diffHistory',
   AGENT_TURN_DIFF: 'agent:turnDiff',
   AGENT_FULL_THREAD_DIFF: 'agent:fullThreadDiff',
+  AGENT_CHECKPOINT_FILES: 'agent:checkpointFiles',
+  AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
+  AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',

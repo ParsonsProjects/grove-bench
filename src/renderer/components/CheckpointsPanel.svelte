@@ -1,15 +1,16 @@
 <script lang="ts">
   import { checkpointStore, FULL_THREAD_UUID } from '../stores/checkpoints.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
-  import DiffView, { type DiffLine } from './DiffView.svelte';
-  import type { DiffStats } from '../../shared/types.js';
+  import ReviewDiffPanel from './ReviewDiffPanel.svelte';
+  import type { DiffStats, GitStatusEntry } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
   let checkpoints = $derived(checkpointStore.getCheckpoints(sessionId));
   let isLoading = $derived(checkpointStore.isLoading(sessionId));
   let selectedUuid = $derived(checkpointStore.getSelected(sessionId));
-  let diff = $derived(checkpointStore.getDiff(sessionId));
+  let files = $derived(checkpointStore.getFiles(sessionId));
+  let sourceKey = $derived(checkpointStore.getSourceKey(sessionId));
   let isDiffLoading = $derived(checkpointStore.isDiffLoading(sessionId));
   let rewindPoints = $derived(messageStore.getRewindPoints(sessionId));
   let history = $derived(checkpointStore.getHistory(sessionId));
@@ -28,18 +29,6 @@
     if (cp?.text) return cp.text;
     const point = rewindPoints.find(p => p.uuid === uuid);
     return point?.text ?? `Turn checkpoint`;
-  }
-
-  function parseDiffLines(raw: string): DiffLine[] {
-    if (!raw || raw === '(no changes)') return [];
-    return raw.split('\n').map(line => {
-      if (line.startsWith('@@')) return { type: 'hunk' as const, text: line };
-      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff '))
-        return { type: 'header' as const, text: line };
-      if (line.startsWith('+')) return { type: 'add' as const, text: line };
-      if (line.startsWith('-')) return { type: 'del' as const, text: line };
-      return { type: 'context' as const, text: line };
-    });
   }
 
   async function handleRewind(mode: 'files' | 'all' | 'conversation') {
@@ -70,6 +59,17 @@
   let selectedBeforeClear = $derived(!!selectedCheckpoint?.beforeClear);
   /** Index of the first pre-clear entry in the newest-first list (divider position). */
   let firstBeforeClearIdx = $derived(checkpoints.findIndex(c => c.beforeClear));
+
+  function loadDiff(entry: GitStatusEntry) { return checkpointStore.loadFileDiff(sessionId, entry); }
+  function loadFileLines(entry: GitStatusEntry) { return checkpointStore.loadFileLines(sessionId, entry); }
+
+  let comparisonLabel = $derived(
+    isFullThread ? 'all turns' : `checkpoint #${selectedCheckpoint?.turn ?? '?'}, ${diffMode === 'turn' ? 'this turn' : 'since here'}`,
+  );
+  let emptyTitle = $derived(
+    files?.scopeError
+      ?? (isFullThread ? 'No file changes in this session' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
+  );
 </script>
 
 {#snippet statsBadge(stats: DiffStats | undefined)}
@@ -228,28 +228,25 @@
           </div>
         {/if}
 
-        <!-- Diff content -->
-        <div class="flex-1 flex flex-col overflow-y-auto">
-          {#if isDiffLoading}
-            <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-              Loading diff...
-            </div>
-          {:else if diff && diff !== '(no changes)' && !diff.startsWith('No checkpoint')}
-            <DiffView lines={parseDiffLines(diff)} />
-          {:else}
-            <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-              {#if diff?.startsWith('No checkpoint')}
-                {diff}
-              {:else if isFullThread}
-                No file changes in this session
-              {:else if diffMode === 'turn'}
-                No file changes in this turn
-              {:else}
-                No file changes since this checkpoint
-              {/if}
-            </div>
-          {/if}
-        </div>
+        <!-- Diff content: the shared review panel (file sidebar + diff) -->
+        {#if isDiffLoading && !files}
+          <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
+            Loading diff...
+          </div>
+        {:else}
+          <ReviewDiffPanel
+            {sessionId}
+            {sourceKey}
+            entries={files?.entries ?? []}
+            loading={isDiffLoading}
+            changesLabel={isFullThread ? 'Changed this session' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
+            {loadDiff}
+            {loadFileLines}
+            onRefresh={() => checkpointStore.reloadFiles(sessionId)}
+            commentContext={comparisonLabel}
+            {emptyTitle}
+          />
+        {/if}
       {/if}
     </div>
   </div>

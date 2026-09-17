@@ -317,6 +317,38 @@ export async function fileDiff(
   return git(args, cwd);
 }
 
+/** Diff a single file against an arbitrary ref (working tree vs `ref`). */
+export async function fileDiffAgainst(cwd: string, relPath: string, ref: string): Promise<string> {
+  return git(['diff', ref, '--', relPath], cwd);
+}
+
+/** Resolve the merge base between HEAD and `base`, trying the local branch
+ *  first and the remote-tracking name second (the base is often only fetched). */
+export async function resolveMergeBase(cwd: string, base: string): Promise<{ ref: string; mergeBase: string } | null> {
+  for (const ref of [base, `origin/${base}`]) {
+    try {
+      const mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
+      if (mergeBase) return { ref, mergeBase };
+    } catch { /* ref missing — try the next name */ }
+  }
+  return null;
+}
+
+/** Working-tree content of a file as the index sees it (`git show :path`). */
+export async function indexFileContent(cwd: string, relPath: string): Promise<string> {
+  return git(['show', `:${relPath}`], cwd);
+}
+
+/** Blob hashes of the working-tree content of `relPaths`, in one git call,
+ *  one line per path in input order. Git fails the whole call on a path it
+ *  cannot open, so callers pass only files that exist and treat a failure as
+ *  "hashes unavailable this round". */
+export async function hashWorkingFiles(cwd: string, relPaths: string[]): Promise<string> {
+  if (relPaths.length === 0) return '';
+  const result = await execa('git', ['hash-object', '--stdin-paths'], { cwd, input: relPaths.join('\n') + '\n' });
+  return result.stdout;
+}
+
 /** True when a git diff describes a binary change rather than a text patch. */
 export function detectBinaryDiff(diffOutput: string): boolean {
   return /^Binary files .* differ$/m.test(diffOutput) || diffOutput.includes('GIT binary patch');

@@ -149,3 +149,53 @@ describe('parseNumstat', () => {
     ]);
   });
 });
+
+import { parseNameStatus, parseHashObjectOutput, parseDiffRaw } from './git-status-parser.js';
+
+describe('parseNameStatus', () => {
+  it('parses modified, added, deleted, and renamed records', () => {
+    const raw = ['M', 'src/a.ts', 'A', 'src/new.ts', 'D', 'gone.ts', 'R100', 'old.ts', 'renamed.ts', ''].join('\0');
+    expect(parseNameStatus(raw)).toEqual([
+      { filePath: 'src/a.ts', status: 'modified', staged: false },
+      { filePath: 'src/new.ts', status: 'added', staged: false },
+      { filePath: 'gone.ts', status: 'deleted', staged: false },
+      { filePath: 'renamed.ts', status: 'renamed', staged: false, origPath: 'old.ts' },
+    ]);
+  });
+
+  it('returns nothing for empty output', () => {
+    expect(parseNameStatus('')).toEqual([]);
+  });
+});
+
+describe('parseHashObjectOutput', () => {
+  it('maps hashes to paths in order', () => {
+    expect(parseHashObjectOutput('aaa\nbbb\n', ['x', 'y'])).toEqual(new Map([['x', 'aaa'], ['y', 'bbb']]));
+  });
+});
+
+describe('parseDiffRaw', () => {
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const Z = '0'.repeat(40);
+
+  it('parses status and attaches the new-side blob id as content hash', () => {
+    const raw = [`:100644 100644 ${A} ${B} M`, 'src/a.ts', `:000000 100644 ${Z} ${B} A`, 'new.ts', `:100644 000000 ${A} ${Z} D`, 'gone.ts', ''].join('\0');
+    expect(parseDiffRaw(raw)).toEqual([
+      { filePath: 'src/a.ts', status: 'modified', staged: false, contentHash: B },
+      { filePath: 'new.ts', status: 'added', staged: false, contentHash: B },
+      { filePath: 'gone.ts', status: 'deleted', staged: false, contentHash: 'deleted' },
+    ]);
+  });
+
+  it('parses renames with their two paths', () => {
+    const raw = [`:100644 100644 ${A} ${B} R100`, 'old.ts', 'renamed.ts', ''].join('\0');
+    expect(parseDiffRaw(raw)).toEqual([
+      { filePath: 'renamed.ts', status: 'renamed', staged: false, origPath: 'old.ts', contentHash: B },
+    ]);
+  });
+
+  it('returns nothing for empty output', () => {
+    expect(parseDiffRaw('')).toEqual([]);
+  });
+});

@@ -1463,7 +1463,7 @@ class MessageStore {
       this.toolProgressBySession[sessionId] = { ...prog };
     }
     // Refresh git status after file-modifying tool calls
-    if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit'].includes(matchedToolName)) {
+    if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit'].includes(matchedToolName)) {
       gitStatusStore.scheduleRefresh(sessionId, 300);
     }
   }

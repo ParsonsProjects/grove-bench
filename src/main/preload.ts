@@ -122,8 +122,10 @@ const api: GroveBenchAPI = {
   // File revert & diff (for changes review)
   revertFile: (sessionId: string, filePath: string, staged?: boolean) =>
     ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged),
-  getFileDiff: (sessionId: string, filePath: string, staged?: boolean) =>
-    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged),
+  getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged, opts),
+  getFileLines: (sessionId: string, filePath: string, staged?: boolean) =>
+    ipcRenderer.invoke(IPC.FILE_LINES, sessionId, filePath, staged),
   getImageDiffContent: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath),
   stageFile: (sessionId: string, filePath: string) =>
@@ -165,10 +167,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_TURN_DIFF, sessionId, userMessageId),
   getFullThreadDiff: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_FULL_THREAD_DIFF, sessionId),
+  getCheckpointFiles: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full') =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILES, sessionId, uuid, scope),
+  getCheckpointFileDiff: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_DIFF, sessionId, uuid, scope, filePath),
+  getCheckpointFileLines: (sessionId: string, uuid: string, scope: 'turn' | 'since' | 'full', filePath: string) =>
+    ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_LINES, sessionId, uuid, scope, filePath),
 
   // Git status
-  getGitStatus: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.GIT_STATUS, sessionId),
+  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string }) =>
+    ipcRenderer.invoke(IPC.GIT_STATUS, sessionId, opts),
 
   // PR info
   getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),

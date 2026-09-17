@@ -1,10 +1,15 @@
-import type { GitStatusResult } from '../../shared/types.js';
+import type { DiffScope, GitStatusResult } from '../../shared/types.js';
+
+export interface ScopeState { scope: DiffScope; base?: string }
 
 const THROTTLE_MS = 500;
 
 class GitStatusStore {
   statusBySession = $state<Record<string, GitStatusResult>>({});
   loadingBySession = $state<Record<string, boolean>>({});
+  /** What each session's Changes tab compares against (default: the
+   *  uncommitted working tree). The branch scope needs a base branch name. */
+  scopeBySession = $state<Record<string, ScopeState>>({});
 
   /** Sessions whose refreshes are currently suppressed (e.g. during history
    *  replay). Per-session rather than a single flag so concurrently-mounting
@@ -28,6 +33,17 @@ class GitStatusStore {
     return this.statusBySession[sessionId] ?? { entries: [] };
   }
 
+  getScope(sessionId: string): ScopeState {
+    return this.scopeBySession[sessionId] ?? { scope: 'working' };
+  }
+
+  /** Switch scope and refetch right away (bypassing the throttle). */
+  async setScope(sessionId: string, scope: DiffScope, base?: string): Promise<void> {
+    this.scopeBySession = { ...this.scopeBySession, [sessionId]: { scope, base } };
+    this.lastFetch.delete(sessionId);
+    await this.refresh(sessionId);
+  }
+
   isLoading(sessionId: string): boolean {
     return this.loadingBySession[sessionId] ?? false;
   }
@@ -44,7 +60,10 @@ class GitStatusStore {
     this.loadingBySession = { ...this.loadingBySession, [sessionId]: true };
 
     try {
-      const result = await window.groveBench.getGitStatus(sessionId);
+      const { scope, base } = this.getScope(sessionId);
+      const result = scope === 'branch'
+        ? await window.groveBench.getGitStatus(sessionId, { scope, base })
+        : await window.groveBench.getGitStatus(sessionId);
       this.statusBySession = { ...this.statusBySession, [sessionId]: result };
     } catch (e) {
       console.error('Failed to fetch git status:', e);
@@ -107,6 +126,8 @@ class GitStatusStore {
     this.statusBySession = restStatus;
     const { [sessionId]: _l, ...restLoading } = this.loadingBySession;
     this.loadingBySession = restLoading;
+    const { [sessionId]: _sc, ...restScope } = this.scopeBySession;
+    this.scopeBySession = restScope;
   }
 }
 

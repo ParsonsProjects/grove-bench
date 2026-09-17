@@ -66,3 +66,45 @@ describe('hunkLineIndices', () => {
     expect(hunkLineIndices([{ type: 'add', text: 'x' }])).toEqual([]);
   });
 });
+
+import { intralineRanges, markRanges, textFingerprint } from './diff-highlight.js';
+
+describe('intralineRanges', () => {
+  it('marks only the changed words on each side', () => {
+    const r = intralineRanges('const a = foo(1);', 'const a = bar(1);')!;
+    expect(r.del).toEqual([[10, 13]]);
+    expect(r.add).toEqual([[10, 13]]);
+  });
+
+  it('returns null for lines that were mostly rewritten', () => {
+    expect(intralineRanges('alpha beta gamma', 'one two three')).toBeNull();
+  });
+
+  it('returns null for blank lines', () => {
+    expect(intralineRanges('   ', 'x')).toBeNull();
+  });
+});
+
+describe('markRanges', () => {
+  it('wraps ranges in mark elements without breaking existing spans', () => {
+    const html = '<span class="hljs-keyword">const</span> a = foo(1);';
+    const out = markRanges(html, [[10, 13]]);
+    expect(out).toBe('<span class="hljs-keyword">const</span> a = <mark class="diff-mark">foo</mark>(1);');
+  });
+
+  it('splits a range that crosses a span boundary', () => {
+    const html = '<span>ab</span>cd';
+    expect(markRanges(html, [[1, 3]])).toBe('<span>a<mark class="diff-mark">b</mark></span><mark class="diff-mark">c</mark>d');
+  });
+
+  it('leaves html alone with no ranges', () => {
+    expect(markRanges('<b>x</b>', [])).toBe('<b>x</b>');
+  });
+});
+
+describe('textFingerprint', () => {
+  it('differs for different text and is stable', () => {
+    expect(textFingerprint('a')).toBe(textFingerprint('a'));
+    expect(textFingerprint('a')).not.toBe(textFingerprint('b'));
+  });
+});
