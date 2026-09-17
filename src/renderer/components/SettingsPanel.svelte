@@ -188,7 +188,8 @@
     { value: 'default', label: 'Default' },
     { value: 'acceptEdits', label: 'Accept Edits' },
     { value: 'plan', label: 'Plan (read-only)' },
-    { value: 'auto', label: 'Auto (edits + read-only commands)' },
+    { value: 'readSafe', label: 'Read-safe (edits + read-only commands)' },
+    { value: 'auto', label: 'Auto (Claude classifier approves actions)' },
     { value: 'bypassPermissions', label: 'Bypass Permissions' },
   ];
 

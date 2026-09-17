@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, McpServerInfo, McpAuthStartResult, ProviderUsage, SessionControls } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS } from '../shared/types.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -21,15 +21,19 @@ import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
 
 /**
- * Sandbox settings for Auto-mode queries: OS-level enforcement layered under
- * the read-only classifier (see read-only-tools.ts). Writes are confined to
- * the worktree, Bash approval stays with the classifier (no blanket
+ * Sandbox settings for Read-safe-mode queries: OS-level enforcement layered
+ * under the read-only classifier (see read-only-tools.ts). Writes are confined
+ * to the worktree, Bash approval stays with the classifier (no blanket
  * auto-allow), and the model cannot opt commands out of the sandbox. Degrades
  * gracefully — with a warning, running unsandboxed — on machines where
  * sandbox dependencies are unavailable; the classifier remains the approval
  * gate either way.
+ *
+ * The provider's native 'auto' mode gets no Grove-imposed sandbox: its
+ * classifier is the approval layer, and any sandbox the user configured in
+ * their own Claude settings still applies.
  */
-function autoModeSandbox(worktreePath: string): Record<string, unknown> {
+function readSafeSandbox(worktreePath: string): Record<string, unknown> {
   return {
     enabled: true,
     failIfUnavailable: false,
@@ -124,7 +128,7 @@ interface ManagedSession {
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
   /** Permission mode for the SDK query. */
-  permissionMode: 'default' | 'plan' | 'acceptEdits' | 'auto';
+  permissionMode: PermissionMode;
   /** Extra system prompt appended to the adapter's default prompt. */
   appendSystemPrompt: string | null;
   /** Fully custom system prompt — overrides the adapter's default entirely. */
@@ -144,7 +148,7 @@ interface ManagedSession {
   /** Values for the adapter's declared controls (thinking, speed, ...) keyed
    *  by control id — survive stop/restart so query restarts keep them.
    *  permissionMode lives in its own field because the session manager
-   *  layers app-level behaviour (auto mode) on top of it. */
+   *  layers app-level behaviour (read-safe mode) on top of it. */
   controls: Record<string, string>;
   /** Set when the user clicks Stop — prevents runQuery from sending SESSION_STATUS 'stopped'. */
   stoppedByUser: boolean;
@@ -383,7 +387,7 @@ class AgentSessionManager {
     repoPath: string;
     window: BrowserWindow;
     resumeSessionId?: string;
-    permissionMode?: 'default' | 'plan' | 'acceptEdits' | 'auto';
+    permissionMode?: PermissionMode;
     appendSystemPrompt?: string | null;
     customSystemPrompt?: string | null;
     allowedTools?: string[] | null;
@@ -405,9 +409,16 @@ class AgentSessionManager {
 
     // Apply settings defaults for values not explicitly provided
     const appSettings = settings.getSettings();
-    const effectivePermissionMode = opts.permissionMode
+    const initialModel = opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null);
+    const requestedMode: PermissionMode = opts.permissionMode
       || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
       || 'default';
+    // A saved default the adapter does not offer on this model (e.g. native
+    // auto mode on Haiku) falls back to the adapter's default mode.
+    const modeDescriptor = adapter.getControls(initialModel).find((d) => d.id === CONTROL_IDS.permissionMode);
+    const effectivePermissionMode: PermissionMode = modeDescriptor && !modeDescriptor.options.some((o) => o.value === requestedMode)
+      ? (modeDescriptor.default as PermissionMode)
+      : requestedMode;
     // Inject project memory into the system prompt
     const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
     const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
@@ -423,8 +434,6 @@ class AgentSessionManager {
 
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
-
-    const initialModel = opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null);
 
     const session: ManagedSession = {
       id,
@@ -588,11 +597,11 @@ class AgentSessionManager {
       allowedTools: session.allowedTools,
       skills: skillsFilter ?? null,
       outputFormat: session.outputFormat,
-      // Auto mode gets OS-level sandbox enforcement as a backstop beneath the
-      // read-only classifier (explicit per-session sandbox settings win).
-      // Mode is read at query start: switching into auto mid-query keeps
+      // Read-safe mode gets OS-level sandbox enforcement as a backstop beneath
+      // the read-only classifier (explicit per-session sandbox settings win).
+      // Mode is read at query start: switching into read-safe mid-query keeps
       // classifier-only protection until the next query (re)start.
-      sandbox: session.sandbox ?? (session.permissionMode === 'auto' ? autoModeSandbox(session.worktreePath) : null),
+      sandbox: session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox(session.worktreePath) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),
@@ -607,12 +616,13 @@ class AgentSessionManager {
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
       onPermissionRequest: async (request) => {
-        // Auto mode: read-only tool calls scoped to the worktree (file reads,
-        // git reads) run without prompting. Mutating, out-of-worktree, or
-        // unrecognized calls fall through to the normal permission prompt
+        // Read-safe mode: read-only tool calls scoped to the worktree (file
+        // reads, git reads) run without prompting. Mutating, out-of-worktree,
+        // or unrecognized calls fall through to the normal permission prompt
         // below. session.permissionMode is read live so mid-query mode
-        // switches take effect immediately.
-        if (session.permissionMode === 'auto' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath)) {
+        // switches take effect immediately. (Native auto mode never reaches
+        // here for classifier-approved calls; only its escalations do.)
+        if (session.permissionMode === 'readSafe' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath)) {
           return { behavior: 'allow', updatedInput: request.toolInput };
         }
         const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1017,24 +1027,24 @@ class AgentSessionManager {
     // stop/restart cycles — even when queryHandle is temporarily null.
     session.permissionMode = mode as ManagedSession['permissionMode'];
 
-    // When leaving an edit-accepting mode (acceptEdits or auto), clear
-    // always-allowed edit tools so switching back to default/plan re-enables
-    // permission prompts for edits.
+    // When leaving an edit-accepting mode (acceptEdits, readSafe or auto),
+    // clear always-allowed edit tools so switching back to default/plan
+    // re-enables permission prompts for edits.
     // These tool names must match the adapter's 'edit' category (see categorizeToolName).
-    const acceptsEdits = (m: string) => m === 'acceptEdits' || m === 'auto';
+    const acceptsEdits = (m: string) => m === 'acceptEdits' || m === 'readSafe' || m === 'auto';
     if (acceptsEdits(prevMode) && !acceptsEdits(mode)) {
       for (const tool of ['Edit', 'Write', 'MultiEdit']) {
         session.alwaysAllowedTools.delete(tool);
       }
     }
 
-    // Entering auto mode with a live query: the sandbox is only applied at
-    // query start, so until the next (re)start the read-only classifier is
+    // Entering read-safe mode with a live query: the sandbox is only applied
+    // at query start, so until the next (re)start the read-only classifier is
     // the sole protection layer. Surface that honestly.
-    if (mode === 'auto' && prevMode !== 'auto' && session.queryHandle && !session.sandbox) {
+    if (mode === 'readSafe' && prevMode !== 'readSafe' && session.queryHandle && !session.sandbox) {
       session.emit?.({
         type: 'status',
-        message: 'Auto mode on — read-only tool calls run without prompting; sandbox enforcement applies from the next query restart.',
+        message: 'Read-safe mode on — read-only tool calls run without prompting; sandbox enforcement applies from the next query restart.',
       });
     }
 
@@ -1100,7 +1110,16 @@ class AgentSessionManager {
     const descriptors = session.adapter.getControls(session.model);
     const values: Record<string, string> = {};
     for (const d of descriptors) {
-      if (d.id === CONTROL_IDS.permissionMode) continue;
+      if (d.id === CONTROL_IDS.permissionMode) {
+        // The permission mode lives in its own field, but it is still a
+        // per-model option (native auto mode is not offered on every model),
+        // so it falls back the same way — and the SDK and renderer are told.
+        if (!d.options.some((o) => o.value === session.permissionMode)) {
+          this.setMode(session.id, d.default);
+          session.emit?.({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
+        }
+        continue;
+      }
       const current = session.controls[d.id];
       values[d.id] = current !== undefined && d.options.some((o) => o.value === current) ? current : d.default;
     }

@@ -126,10 +126,13 @@ class MockAdapter implements AgentAdapter {
   /** Two universal controls plus one ('speed') that only the full model offers,
    *  so tests can cover per-model reconciliation. */
   getControls(model?: string | null) {
+    // Like Claude's Haiku, the lite model does not offer native auto mode.
+    const modeOptions = [
+      { value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
+      { value: 'readSafe', label: 'Read-safe' }, { value: 'auto', label: 'Auto' },
+    ].filter((o) => o.value !== 'auto' || model !== 'mock-lite');
     const controls = [
-      { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-        { value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' }, { value: 'auto', label: 'Auto' },
-      ] },
+      { id: 'permissionMode', label: 'Mode', default: 'default', options: modeOptions },
       { id: 'thinking', label: 'Thinking', default: 'high', options: [
         { value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' },
       ] },
@@ -293,8 +296,8 @@ describe('AgentSessionManager.createSession()', () => {
   });
 });
 
-describe('Auto mode sandbox enforcement', () => {
-  it('passes a hardened sandbox config when the session starts in auto mode', async () => {
+describe('Read-safe mode sandbox enforcement', () => {
+  it('passes a hardened sandbox config when the session starts in read-safe mode', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
       id: 'test-auto-sandbox',
@@ -303,7 +306,7 @@ describe('Auto mode sandbox enforcement', () => {
       repoPath: '/repo',
       window: win,
       adapterType: 'mock',
-      permissionMode: 'auto',
+      permissionMode: 'readSafe',
     });
 
     await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
@@ -321,7 +324,46 @@ describe('Auto mode sandbox enforcement', () => {
     await sessionManager.destroySession('test-auto-sandbox');
   });
 
-  it('does not set a sandbox for non-auto modes', async () => {
+  it('passes native auto mode to the adapter without a Grove sandbox', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-native-auto',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      permissionMode: 'auto',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.permissionMode).toBe('auto');
+    expect(mockAdapter.lastConfig?.sandbox).toBeNull();
+
+    await sessionManager.destroySession('test-native-auto');
+  });
+
+  it('falls a requested mode back to the adapter default when the model does not offer it', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-auto-unsupported',
+      branch: 'main',
+      cwd: '/repo-wt',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      model: 'mock-lite',
+      permissionMode: 'auto',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.permissionMode).toBe('default');
+    expect(sessionManager.getSession('test-auto-unsupported')?.permissionMode).toBe('default');
+
+    await sessionManager.destroySession('test-auto-unsupported');
+  });
+
+  it('does not set a sandbox for non-read-safe modes', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
       id: 'test-no-sandbox',
@@ -339,7 +381,7 @@ describe('Auto mode sandbox enforcement', () => {
     await sessionManager.destroySession('test-no-sandbox');
   });
 
-  it('explicit per-session sandbox settings win over the auto-mode sandbox', async () => {
+  it('explicit per-session sandbox settings win over the read-safe sandbox', async () => {
     const win = makeMockWindow();
     const explicit = { enabled: true, autoAllowBashIfSandboxed: true };
     await sessionManager.createSession({
@@ -349,7 +391,7 @@ describe('Auto mode sandbox enforcement', () => {
       repoPath: '/repo',
       window: win,
       adapterType: 'mock',
-      permissionMode: 'auto',
+      permissionMode: 'readSafe',
       sandbox: explicit,
     });
 
@@ -1777,6 +1819,27 @@ describe('AgentSessionManager session controls', () => {
     expect(syncs.at(-1)?.values).toEqual({ thinking: 'high' });
 
     await sessionManager.destroySession('ctl-model');
+  });
+
+  it('setModel falls the permission mode back to the default when the new model does not offer it', async () => {
+    const session = await createWithHandle('ctl-mode-model');
+    sessionManager.setMode('ctl-mode-model', 'auto');
+    expect(session.permissionMode).toBe('auto');
+    expect(session.queryHandle!.setPermissionMode).toHaveBeenLastCalledWith('auto');
+
+    await sessionManager.setModel('ctl-mode-model', 'mock-lite');
+
+    expect(session.permissionMode).toBe('default');
+    expect(session.queryHandle!.setPermissionMode).toHaveBeenLastCalledWith('default');
+    const syncs = sessionManager.getEventHistory('ctl-mode-model').filter((e) => e.type === 'mode_sync') as Extract<AgentEvent, { type: 'mode_sync' }>[];
+    expect(syncs.at(-1)).toEqual({ type: 'mode_sync', mode: 'default', source: 'session' });
+
+    // A mode the new model still offers is left alone.
+    sessionManager.setMode('ctl-mode-model', 'readSafe');
+    await sessionManager.setModel('ctl-mode-model', 'mock-model');
+    expect(session.permissionMode).toBe('readSafe');
+
+    await sessionManager.destroySession('ctl-mode-model');
   });
 
   it('getUsage returns the live handle usage, and null without a handle or when it throws', async () => {

@@ -1,7 +1,7 @@
 /**
- * Read-only tool-call classifier for Auto permission mode.
+ * Read-only tool-call classifier for Read-safe permission mode.
  *
- * Auto mode auto-approves tool calls that only READ, and falls back to a
+ * Read-safe mode auto-approves tool calls that only READ, and falls back to a
  * normal permission prompt for anything that mutates state or that this
  * classifier does not recognize. The classifier is deliberately conservative:
  * it is an allowlist, so an unknown command is never auto-approved, it just
@@ -245,7 +245,7 @@ export function isReadOnlyBashCommand(command: string, cwd?: string): boolean {
 
 /**
  * True when a tool call is recognizably read-only, scoped to the worktree at
- * `cwd`, and safe to auto-approve in Auto mode. Anything unrecognized returns
+ * `cwd`, and safe to auto-approve in Read-safe mode. Anything unrecognized returns
  * false and prompts normally.
  */
 export function isReadOnlyToolCall(toolName: string, toolInput: unknown, cwd?: string): boolean {

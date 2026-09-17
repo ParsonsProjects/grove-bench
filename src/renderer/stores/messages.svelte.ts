@@ -723,7 +723,7 @@ class MessageStore {
       ?.options.map((o) => o.value as PermissionMode);
     const modes: readonly PermissionMode[] = declared && declared.length > 0
       ? declared
-      : ['default', 'plan', 'acceptEdits', 'auto'];
+      : ['default', 'plan', 'acceptEdits', 'readSafe', 'auto'];
     const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);

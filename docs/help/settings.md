@@ -6,7 +6,7 @@ Open Settings from the gear icon in the sidebar bottom controls. Settings are or
 
 Control how the agent handles actions that need approval:
 
-- **Default permission mode** — Choose between allowing all actions, requiring approval for potentially destructive actions, or requiring approval for everything
+- **Default permission mode** — The mode new sessions start in: Default (ask before edits and non-trivial commands), Accept Edits, Plan (read-only), Read-safe (edits and read-only commands run without asking; everything else prompts), Auto (Claude's classifier approves or blocks each action), or Bypass Permissions. See [Status bar](status-bar.md#mode) for what each mode allows
 - **Tool allow / deny rules** — Rules the app applies before the agent asks. Deny rules win. A rule is `<tool>` or `<tool>(<glob>)`, where `<tool>` is a neutral keyword that works for every agent: `shell` (the glob matches the command), `edit` and `read` (the file path), `web` (the URL), `agent` (the sub-agent prompt), `question`, or `mcp` (the tool name after `mcp__`). A provider's own tool name also works, e.g. `Bash(git push *)`. `*` matches anything. Examples: `shell(npm run *)`, `edit(src/**)`, `read(**/.env*)`, `web(*github.com*)`, `mcp(github__*)`
 
 ## Agent

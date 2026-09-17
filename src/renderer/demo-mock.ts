@@ -345,7 +345,8 @@ const api: Record<string, unknown> = {
     descriptors: [
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
         { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
-        { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'success' },
+        { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'readSafe', label: 'Read-safe', tone: 'success' },
+        { value: 'auto', label: 'Auto', tone: 'highlight' },
       ] },
       { id: 'thinking', label: 'Thinking', default: 'high', options: [
         { value: 'off', label: 'Off', tone: 'muted' }, { value: 'low', label: 'Low', tone: 'accent-soft' },

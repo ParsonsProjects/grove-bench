@@ -63,7 +63,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -101,6 +101,14 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
     }
     return rest;
   },
+  // 2 → 3: the app-level "auto-accept edits + read-only commands" mode was
+  // renamed from 'auto' to 'readSafe' so that 'auto' can mean the provider's
+  // native auto mode (Claude Code's classifier). A saved 'auto' predates the
+  // native mode, so it keeps its old meaning.
+  (raw) => {
+    if (raw.defaultPermissionMode === 'auto') raw.defaultPermissionMode = 'readSafe';
+    return raw;
+  },
 ];
 
 // ─── Validation ───
@@ -111,7 +119,7 @@ const hexColor = z.string();
 /** Field-level validation: an invalid value falls back to its default rather
  *  than rejecting the whole file (`.catch`). Unknown keys are dropped. */
 const settingsSchema = z.object({
-  defaultPermissionMode: z.enum(['default', 'plan', 'acceptEdits', 'auto', 'bypassPermissions']).catch(DEFAULT_SETTINGS.defaultPermissionMode),
+  defaultPermissionMode: z.enum(['default', 'plan', 'acceptEdits', 'readSafe', 'auto', 'bypassPermissions']).catch(DEFAULT_SETTINGS.defaultPermissionMode),
   toolAllowRules: z.array(toolRuleSchema).catch(DEFAULT_SETTINGS.toolAllowRules),
   toolDenyRules: z.array(toolRuleSchema).catch(DEFAULT_SETTINGS.toolDenyRules),
   disableBypassMode: z.boolean().catch(DEFAULT_SETTINGS.disableBypassMode),

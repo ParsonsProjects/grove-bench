@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import { THINKING_LEVELS } from '../../shared/types.js';
 import type { AgentEvent } from '../../shared/types.js';
 
@@ -66,8 +66,16 @@ describe('getControls()', () => {
 
   it('offers every Grove permission mode in the status-bar order', () => {
     const mode = adapter.getControls('claude-opus-5').find((d) => d.id === 'permissionMode')!;
-    expect(mode.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'auto']);
+    expect(mode.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'readSafe', 'auto']);
     expect(mode.default).toBe('default');
+  });
+
+  it('drops native auto mode on models the provider does not support it on', () => {
+    const haiku = adapter.getControls('claude-haiku-4-5-20251001').find((d) => d.id === 'permissionMode')!;
+    expect(haiku.options.map((o) => o.value)).toEqual(['default', 'plan', 'acceptEdits', 'readSafe']);
+    expect(supportsAutoMode('claude-haiku-4-5-20251001')).toBe(false);
+    expect(supportsAutoMode('claude-sonnet-4-6')).toBe(true);
+    expect(supportsAutoMode(null)).toBe(true);
   });
 
   it('offers the full thinking ladder on adaptive-capable models and drops adaptive on Haiku', () => {
@@ -389,6 +397,41 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'sdk' });
+    });
+
+    it('reports SDK acceptEdits as readSafe while Grove is in read-safe mode', () => {
+      const ctx = { ...makeCtx(), groveMode: 'readSafe' as const };
+      const events = transformMessage(
+        { type: 'system', subtype: 'status', permissionMode: 'acceptEdits' } as any,
+        ctx,
+      );
+      expect(events).toContainEqual({ type: 'mode_sync', mode: 'readSafe', source: 'sdk' });
+      // Outside read-safe mode the SDK's acceptEdits is just acceptEdits.
+      expect(fromSdkSyncMode('acceptEdits', makeCtx())).toBe('acceptEdits');
+    });
+
+    it('passes native auto mode through to and from the SDK untouched', () => {
+      expect(toSdkPermissionMode('auto')).toBe('auto');
+      expect(toSdkPermissionMode('readSafe')).toBe('acceptEdits');
+      expect(toSdkPermissionMode('plan')).toBe('plan');
+      const events = transformMessage(
+        { type: 'system', subtype: 'status', permissionMode: 'auto' } as any,
+        { ...makeCtx(), groveMode: 'auto' as const },
+      );
+      expect(events).toContainEqual({ type: 'mode_sync', mode: 'auto', source: 'sdk' });
+    });
+
+    it('surfaces classifier denials as a status line with ANSI stripped', () => {
+      const events = transformMessage(
+        {
+          type: 'system', subtype: 'permission_denied', tool_name: 'Bash',
+          decision_reason_type: 'classifier', decision_reason: '\x1b[31mforce push\x1b[0m outside scope',
+          message: 'denied',
+        } as any,
+        makeCtx(),
+      );
+      expect(events).toContainEqual({ type: 'status', message: 'Auto mode blocked Bash: force push outside scope' });
+      expect(stripAnsi('plain')).toBe('plain');
     });
 
     it('detects plan mode from local_command_output', () => {
