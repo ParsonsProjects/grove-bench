@@ -1,13 +1,34 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
+import type { ActivityViewMode } from '../../shared/types.js';
 
-/**
- * Activity panel view modes:
- * - 'detailed': everything (tool calls, thinking, system, ...)
- * - 'summary':  hides thinking and non-essential tool calls
- * - 'focus':    only user prompts, the final assistant text of each turn,
- *               unanswered permission/question blocks, and errors
- */
-export type MessageViewMode = 'detailed' | 'summary' | 'focus';
+/** See ActivityViewMode in shared/types.ts for what each mode shows. */
+export type MessageViewMode = ActivityViewMode;
+
+export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
+  detailed: 'Detailed',
+  summary: 'Summary',
+  focus: 'Focus',
+};
+
+/** Short description of what each mode shows, for pickers and hints. */
+export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
+  detailed: 'Everything: thinking, every tool call, system notes',
+  summary: 'Hides thinking and most tool calls (edits, writes and shell commands stay)',
+  focus: 'Final output and pending questions only',
+};
+
+/** Cycle order for the status-bar toggle: Summary → Focus → Detailed → Summary. */
+export const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
+  summary: 'focus',
+  focus: 'detailed',
+  detailed: 'summary',
+};
+
+export const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
+  detailed: 'Showing everything — click for Summary',
+  summary: 'Hiding thinking & most tool calls — click for Focus (final output only)',
+  focus: 'Showing final output & pending questions only — click for Detailed',
+};
 
 /** Tool calls shown in summary mode (everything else is hidden when details are off). */
 const SUMMARY_VISIBLE_TOOLS = new Set(['Edit', 'Write', 'Bash']);

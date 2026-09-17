@@ -10,6 +10,8 @@
   import { Label } from '$lib/components/ui/label/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
+  import { VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '$lib/message-view.js';
+  import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import type { SettingsPermissionMode, CavemanMode, McpConfigScope, ControlDescriptor } from '../../shared/types.js';
   import { CONTROL_IDS } from '../../shared/types.js';
@@ -637,6 +639,27 @@
                 Badge the taskbar icon with the number of sessions needing attention
               </label>
             </div>
+          </div>
+
+          <Separator />
+
+          <!-- Default Activity View -->
+          <div>
+            <Label class="mb-1 block">Default Activity View</Label>
+            <Select.Root type="single" value={settingsStore.draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
+              <Select.Trigger class="w-48">
+                {VIEW_MODE_LABELS[settingsStore.draft.defaultActivityView] ?? 'Summary'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each ACTIVITY_VIEW_MODES as mode (mode)}
+                  <Select.Item value={mode} label={VIEW_MODE_LABELS[mode]} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground mt-1">
+              {VIEW_MODE_DESCRIPTIONS[settingsStore.draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}.
+              New sessions start in this view. Each session can still switch from the toggle in its status bar.
+            </p>
           </div>
 
           <Separator />

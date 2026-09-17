@@ -43,6 +43,7 @@ const SETTINGS = {
   alwaysOnTop: false,
   repoColors: {},
   diffViewMode: 'unified',
+  defaultActivityView: 'summary',
   spellcheck: true,
   notifyOnTurnComplete: true,
   notifyOnPermission: true,

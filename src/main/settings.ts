@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Editor
   diffViewMode: 'unified',
+  defaultActivityView: 'summary',
   spellcheck: true,
 
   // Notifications
@@ -148,6 +149,7 @@ const settingsSchema = z.object({
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
 
   diffViewMode: z.enum(['unified', 'side-by-side']).catch(DEFAULT_SETTINGS.diffViewMode),
+  defaultActivityView: z.enum(['detailed', 'summary', 'focus']).catch(DEFAULT_SETTINGS.defaultActivityView),
   spellcheck: z.boolean().catch(DEFAULT_SETTINGS.spellcheck),
 
   notifyOnTurnComplete: z.boolean().catch(DEFAULT_SETTINGS.notifyOnTurnComplete),

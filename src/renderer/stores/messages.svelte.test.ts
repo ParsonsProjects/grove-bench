@@ -6,6 +6,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'test-session';
@@ -35,6 +36,31 @@ beforeEach(() => {
   messageStore.paginationBySession = {};
   messageStore.queuedBySession = {};
   messageStore.queuePausedBySession = {};
+  messageStore.viewModeBySession = {};
+  settingsStore.current = { ...settingsStore.current, defaultActivityView: 'summary' };
+});
+
+describe('view mode', () => {
+  it('falls back to the global default when the session has not chosen one', () => {
+    expect(messageStore.getViewMode(SID)).toBe('summary');
+    settingsStore.current = { ...settingsStore.current, defaultActivityView: 'focus' };
+    expect(messageStore.getViewMode(SID)).toBe('focus');
+  });
+
+  it('keeps a per-session choice over the global default', () => {
+    settingsStore.current = { ...settingsStore.current, defaultActivityView: 'focus' };
+    messageStore.setViewMode(SID, 'detailed');
+    expect(messageStore.getViewMode(SID)).toBe('detailed');
+    // A different session still follows the default.
+    expect(messageStore.getViewMode('other')).toBe('focus');
+  });
+
+  it('tracks a later change to the default for sessions that never overrode it', () => {
+    messageStore.setViewMode(SID, 'detailed');
+    settingsStore.current = { ...settingsStore.current, defaultActivityView: 'focus' };
+    expect(messageStore.getViewMode(SID)).toBe('detailed');
+    expect(messageStore.getViewMode('fresh')).toBe('focus');
+  });
 });
 
 describe('ingestEvent — system_init', () => {

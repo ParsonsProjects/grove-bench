@@ -965,6 +965,9 @@ export interface GroveBenchSettings {
   // Editor
   /** Default diff view mode in the Changes tab. */
   diffViewMode: 'unified' | 'side-by-side';
+  /** Activity view a session starts in. Each session can still switch from
+   *  the status bar; that choice is per session and not persisted. Default 'summary'. */
+  defaultActivityView: ActivityViewMode;
   /** Enable spell checking in the prompt textarea. */
   spellcheck: boolean;
 
@@ -991,6 +994,16 @@ export interface GroveBenchSettings {
    *  analyticsEnabled is on. Off by default. */
   crashReportsEnabled: boolean;
 }
+
+/**
+ * Activity panel view modes:
+ * - 'detailed': everything (tool calls, thinking, system, ...)
+ * - 'summary':  hides thinking and non-essential tool calls
+ * - 'focus':    only user prompts, the final assistant text of each turn,
+ *               unanswered permission/question blocks, and errors
+ */
+export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
+export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];
 
 // ─── Error reporting ───
 
