@@ -2,6 +2,7 @@ import type { PrInfo, GitSyncStatus, PrCreateOpts } from '../../shared/types.js'
 import { messageStore } from './messages.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { buildFixCiPrompt, buildAddressReviewsPrompt } from '../lib/pr-prompt.js';
+import { notifyOs } from '../lib/os-notify.js';
 import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr-watch.js';
 import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
 
@@ -229,13 +230,12 @@ class PrStore {
       ...this.alertsBySession,
       [sessionId]: [...rest, { ...alert, id: this.nextAlertId++ }],
     };
-    // Surface beyond the status-bar chip by flashing the sidebar row for
-    // background sessions. Deliberately no desktop notification: the poll
-    // often fires right after a turn-complete toast for the same session,
-    // and a PR alert isn't urgent enough to interrupt for.
+    // Surface beyond the status-bar chip: flash the sidebar row for background
+    // sessions, and raise a desktop notification while the window is unfocused.
     if (sessionStore.activeSessionId !== sessionId) {
       sessionStore.markNeedsAttention(sessionId);
     }
+    notifyOs('pr_alert', sessionId, prAlertBody(alert));
   }
 
   private clearAlerts(sessionId: string, kind: PrAlert['kind']): void {
@@ -274,6 +274,17 @@ class PrStore {
     this.autoBySession = restAuto;
     const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
     this.fetchFailedBySession = restFailed;
+  }
+}
+
+function prAlertBody(alert: PrAlertInput): string {
+  switch (alert.kind) {
+    case 'ci_failed':
+      return alert.checks.length > 0 ? `CI failing: ${alert.checks.join(', ')}` : 'CI checks are failing';
+    case 'new_comments':
+      return `${alert.count} new review comment${alert.count === 1 ? '' : 's'} on the PR`;
+    case 'needs_human':
+      return alert.reason;
   }
 }
 

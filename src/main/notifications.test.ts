@@ -10,7 +10,8 @@ function makeSettings(overrides: Partial<GroveBenchSettings> = {}): GroveBenchSe
   return {
     notifyOnTurnComplete: true,
     notifyOnPermission: true,
-      notifyTaskbarFlash: true,
+    notifyOnPrAlert: true,
+    notifyTaskbarFlash: true,
     ...overrides,
   } as GroveBenchSettings;
 }
@@ -43,9 +44,10 @@ beforeEach(() => {
 
 describe('kindEnabled()', () => {
   it('maps each kind to its settings flag', () => {
-    const s = makeSettings({ notifyOnTurnComplete: false, notifyOnPermission: true });
+    const s = makeSettings({ notifyOnTurnComplete: false, notifyOnPermission: true, notifyOnPrAlert: false });
     expect(kindEnabled(s, 'turn_complete')).toBe(false);
     expect(kindEnabled(s, 'permission_request')).toBe(true);
+    expect(kindEnabled(s, 'pr_alert')).toBe(false);
   });
 });
 
@@ -59,7 +61,7 @@ describe('shouldNotify()', () => {
   });
 
   it('respects the per-kind setting', () => {
-    expect(shouldNotify(makeSettings({ notifyOnPermission: false }), 'permission_request', false)).toBe(false);
+    expect(shouldNotify(makeSettings({ notifyOnPrAlert: false }), 'pr_alert', false)).toBe(false);
   });
 });
 
