@@ -4,9 +4,14 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
-  import type { DiffLine } from './DiffView.svelte';
+  import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
   import { hunkLineIndices } from '../lib/diff-highlight.js';
-  import type { GitStatusEntry, FileDiffResult } from '../../shared/types.js';
+  import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
+  import { buildReviewPrompt } from '../lib/review-prompt.js';
+  import { reviewStore } from '../stores/review.svelte.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
+  import { store as sessionStore } from '../stores/sessions.svelte.js';
+  import type { GitStatusEntry, FileDiffResult, DiffScope } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
   import ImageDiffView from './ImageDiffView.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
@@ -24,10 +29,63 @@
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
 
+  // Scope: uncommitted working tree (git-client view) or everything on the
+  // branch since it left the base (pull-request view).
+  let scopeState = $derived(gitStatusStore.getScope(sessionId));
+  let isBranchScope = $derived(scopeState.scope === 'branch');
+  let switchingScope = $state(false);
+
+  async function setScope(scope: DiffScope) {
+    if (scope === scopeState.scope || switchingScope) return;
+    switchingScope = true;
+    try {
+      let base = scopeState.base;
+      if (scope === 'branch' && !base) {
+        const session = sessionStore.sessions.find(s => s.id === sessionId);
+        base = await resolveBaseBranch(session?.repoPath ?? '');
+      }
+      await gitStatusStore.setScope(sessionId, scope, base);
+    } finally {
+      switchingScope = false;
+    }
+  }
+
   // Group entries by section
   let stagedEntries = $derived(gitStatus.entries.filter(e => e.staged));
   let unstagedEntries = $derived(gitStatus.entries.filter(e => !e.staged && e.status !== 'untracked'));
   let untrackedEntries = $derived(gitStatus.entries.filter(e => e.status === 'untracked'));
+
+  // ── Viewed tracking ──
+  let reviewState = $derived(reviewStore.bySession[sessionId]);
+  function isViewed(entry: GitStatusEntry): boolean {
+    reviewState;
+    return reviewStore.isViewed(sessionId, entry.filePath, entry.contentHash);
+  }
+  function changedSinceViewed(entry: GitStatusEntry): boolean {
+    reviewState;
+    return reviewStore.changedSinceViewed(sessionId, entry.filePath, entry.contentHash);
+  }
+  let viewedCount = $derived.by(() => { reviewState; return reviewStore.viewedCount(sessionId, gitStatus.entries); });
+
+  /** Toggle viewed; marking a file viewed moves on to the next unviewed file
+   *  (like GitHub collapsing the file you just ticked). */
+  function toggleViewed(entry: GitStatusEntry) {
+    const next = !isViewed(entry);
+    reviewStore.setViewed(sessionId, entry.filePath, entry.contentHash, next);
+    if (next) {
+      const ordered = visibleEntries;
+      const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
+      const following = ordered.slice(idx + 1).find(e => !isViewed(e)) ?? ordered.slice(0, idx).find(e => !isViewed(e));
+      if (following) { selectFile(following); scrollSidebarItemIntoView(fileKey(following)); }
+    }
+  }
+
+  // ── Review comments (line-anchored, batched into one prompt) ──
+  let comments = $derived.by(() => { reviewState; return reviewStore.getComments(sessionId); });
+  let composer = $state<CommentAnchor | null>(null);
+  function commentCountFor(filePath: string): number {
+    return comments.filter(c => c.filePath === filePath).length;
+  }
 
   // Edit history from tool calls (for the expandable sub-section)
   let editHistory = $derived(messageStore.getLastTurnFileChanges(sessionId));
@@ -126,16 +184,24 @@
   // patch stays on screen until the new one arrives (stale-while-revalidate),
   // so a working tree that changes mid-turn updates like a live diff view
   // instead of blanking and reloading on every git status refresh.
+  let lastScopeKey = '';
   $effect(() => {
     const entries = gitStatus.entries;
+    const scopeKey = `${scopeState.scope}:${scopeState.base ?? ''}`;
     const currentKeys = new Set(entries.map(e => fileKey(e)));
 
     untrack(() => {
+      // A scope switch changes what every diff means; drop the cache wholesale.
+      const scopeChanged = scopeKey !== lastScopeKey;
+      lastScopeKey = scopeKey;
       const kept: Record<string, FileDiffResult> = {};
-      for (const [key, diff] of Object.entries(fileDiffs)) {
-        if (currentKeys.has(key)) kept[key] = diff;
+      if (!scopeChanged) {
+        for (const [key, diff] of Object.entries(fileDiffs)) {
+          if (currentKeys.has(key)) kept[key] = diff;
+        }
       }
       fileDiffs = kept;
+      if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; }
 
       // Auto-select first file if no selection or selection no longer exists
       if (entries.length > 0 && (selectedFileKey === null || !currentKeys.has(selectedFileKey))) {
@@ -192,7 +258,10 @@
     try {
       // Pass `staged` so the index-vs-HEAD and working-tree-vs-index diffs differ
       // for a path that appears in both the Staged and Changes sections.
-      diff = await window.groveBench.getFileDiff(sessionId, entry.filePath, entry.staged);
+      diff = await window.groveBench.getFileDiff(
+        sessionId, entry.filePath, entry.staged,
+        isBranchScope && scopeState.base ? { base: scopeState.base } : undefined,
+      );
     } catch {
       diff = { kind: 'text', patch: '' };
     }
@@ -308,7 +377,8 @@
       case 'n': e.preventDefault(); gotoHunk(1); break;
       case 'p': e.preventDefault(); gotoHunk(-1); break;
       case 'v': e.preventDefault(); sideBySide = !sideBySide; break;
-      case 's': e.preventDefault(); selectedEntry.staged ? unstageEntry(selectedEntry) : stageEntry(selectedEntry); break;
+      case 's': if (!isBranchScope) { e.preventDefault(); selectedEntry.staged ? unstageEntry(selectedEntry) : stageEntry(selectedEntry); } break;
+      case 'x': e.preventDefault(); toggleViewed(selectedEntry); break;
     }
   }
 
@@ -352,6 +422,115 @@
     return lines;
   });
   let selectedHunkCount = $derived(hunkLineIndices(selectedDiffLines).length);
+
+  // ── Expandable context ──
+  // Revealed new-side line ranges and the new-side file lines, per file key.
+  // Both reset when that file's patch changes (the line numbers would be stale).
+  let revealedByKey = $state<Record<string, RevealedRanges>>({});
+  let fileLinesByKey = $state<Record<string, string[] | null>>({});
+  let patchSeen: Record<string, string> = {};
+  $effect(() => {
+    const entry = selectedEntry;
+    if (!entry) return;
+    const key = fileKey(entry);
+    const result = fileDiffs[key];
+    const patch = result?.kind === 'text' ? result.patch : '';
+    untrack(() => {
+      if (patchSeen[key] !== undefined && patchSeen[key] !== patch) {
+        const { [key]: _r, ...restR } = revealedByKey; revealedByKey = restR;
+        const { [key]: _f, ...restF } = fileLinesByKey; fileLinesByKey = restF;
+      }
+      patchSeen[key] = patch;
+    });
+  });
+  let displayLines = $derived.by((): DiffLine[] => {
+    const entry = selectedEntry;
+    if (!entry) return [];
+    const key = fileKey(entry);
+    return withExpandableContext(selectedDiffLines, fileLinesByKey[key] ?? null, revealedByKey[key] ?? []);
+  });
+
+  async function expandContext(gap: ContextGap, dir: 'up' | 'down' | 'all') {
+    const entry = selectedEntry;
+    if (!entry) return;
+    const key = fileKey(entry);
+    if (fileLinesByKey[key] === undefined) {
+      try {
+        const res = await window.groveBench.getFileLines(sessionId, entry.filePath, entry.staged);
+        fileLinesByKey = { ...fileLinesByKey, [key]: res?.lines ?? null };
+      } catch {
+        fileLinesByKey = { ...fileLinesByKey, [key]: null };
+      }
+    }
+    const lines = fileLinesByKey[key];
+    if (!lines) return;
+    // Clamp the gap to the real file length now that we know it.
+    const clamped: ContextGap = { ...gap, toNew: Math.min(gap.toNew, lines.length) };
+    if (clamped.toNew < clamped.fromNew) return;
+    const [from, to] = expansionFor(clamped, dir);
+    revealedByKey = { ...revealedByKey, [key]: reveal(revealedByKey[key] ?? [], from, to) };
+  }
+
+  // ── Review comment handlers ──
+  function lineTextFor(side: 'old' | 'new', from: number, to: number): string {
+    const out: string[] = [];
+    for (const l of displayLines) {
+      const n = side === 'old' ? l.oldLineNum : l.newLineNum;
+      if (n === undefined || n < from || n > to) continue;
+      if (side === 'old' && l.type === 'add') continue;
+      if (side === 'new' && l.type === 'del') continue;
+      out.push(l.text);
+    }
+    return out.join('\n');
+  }
+
+  function onAddComment(anchor: { side: 'old' | 'new'; lineNum: number; text: string; shiftKey: boolean }) {
+    if (composer && anchor.shiftKey && composer.side === anchor.side) {
+      composer = {
+        side: composer.side,
+        startLine: Math.min(composer.startLine, anchor.lineNum),
+        endLine: Math.max(composer.endLine, anchor.lineNum),
+      };
+      return;
+    }
+    composer = { side: anchor.side, startLine: anchor.lineNum, endLine: anchor.lineNum };
+  }
+
+  function saveComment(body: string) {
+    const entry = selectedEntry;
+    const c = composer;
+    if (!entry || !c) return;
+    reviewStore.addComment(sessionId, {
+      filePath: entry.filePath,
+      side: c.side,
+      startLine: c.startLine,
+      endLine: c.endLine,
+      snippet: lineTextFor(c.side, c.startLine, c.endLine),
+      body,
+    });
+    composer = null;
+  }
+
+  let sendingReview = $state(false);
+  function sendReview() {
+    if (comments.length === 0 || sendingReview) return;
+    sendingReview = true;
+    try {
+      const prompt = buildReviewPrompt(comments);
+      messageStore.submitMessage(sessionId, { displayText: prompt, outgoing: prompt });
+      reviewStore.clearComments(sessionId);
+      composer = null;
+      messageStore.setActiveTab(sessionId, 'activity');
+    } finally {
+      sendingReview = false;
+    }
+  }
+  function reviewToPrompt() {
+    if (comments.length === 0) return;
+    messageStore.appendToPrompt(sessionId, buildReviewPrompt(comments));
+    reviewStore.clearComments(sessionId);
+    composer = null;
+  }
 
   function openInEditor(filePath: string) {
     window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
@@ -409,6 +588,23 @@
   }
 </script>
 
+{#snippet scopeToggle()}
+  <div class="inline-flex border border-border/60 text-[10px]" role="group" aria-label="Diff scope">
+    <button
+      onclick={() => setScope('working')}
+      disabled={switchingScope}
+      class="px-2 py-0.5 transition-colors {!isBranchScope ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+      title="Uncommitted changes in the working tree (staged, unstaged, untracked)"
+    >Uncommitted</button>
+    <button
+      onclick={() => setScope('branch')}
+      disabled={switchingScope}
+      class="px-2 py-0.5 border-l border-border/60 transition-colors {isBranchScope ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
+      title="Everything changed on this branch since it left the base branch, committed or not (like a pull request)"
+    >Branch</button>
+  </div>
+{/snippet}
+
 {#snippet diffStat(entry: GitStatusEntry)}
   {#if entry.additions !== undefined || entry.deletions !== undefined}
     <span class="shrink-0 text-[10px] tabular-nums flex items-center gap-1">
@@ -422,11 +618,17 @@
   {@const key = fileKey(entry)}
   {@const badge = statusBadge(entry.status)}
   {@const isSelected = key === selectedFileKey}
+  {@const viewed = isViewed(entry)}
+  {@const changed = changedSinceViewed(entry)}
+  {@const nComments = commentCountFor(entry.filePath)}
   <button
     onclick={() => selectFile(entry)}
     data-file-key={key}
+    data-viewed={viewed ? 'true' : undefined}
+    data-changed-since-viewed={changed ? 'true' : undefined}
     class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left border-l-2 transition-colors
-      {isSelected ? 'bg-sidebar-accent text-sidebar-accent-foreground border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}"
+      {isSelected ? 'bg-sidebar-accent text-sidebar-accent-foreground border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}
+      {viewed && !isSelected ? 'opacity-60' : ''}"
   >
     <span class="font-bold {badge.color} shrink-0 w-3 text-center">{badge.label}</span>
     <div class="min-w-0 flex-1">
@@ -435,9 +637,19 @@
         <div class="truncate text-[10px] text-muted-foreground/60">{dirPath(entry.filePath)}</div>
       {/if}
     </div>
+    {#if nComments > 0}
+      <span class="shrink-0 text-[10px] text-primary flex items-center gap-0.5" title="{nComments} review comment{nComments === 1 ? '' : 's'}">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h8m-8 4h5m-9 6l3-3h11a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14z"/></svg>{nComments}
+      </span>
+    {/if}
     {@render diffStat(entry)}
     {#if entry.staged}
       <span class="text-[10px] text-green-400 shrink-0">S</span>
+    {/if}
+    {#if changed}
+      <span class="shrink-0 w-1.5 h-1.5 bg-yellow-400" title="Changed since you viewed it"></span>
+    {:else if viewed}
+      <svg class="w-3 h-3 shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Viewed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
     {/if}
   </button>
 {/snippet}
@@ -479,8 +691,13 @@
         "
       ></span>
     {/each}
-    <div class="relative z-10 flex flex-col items-center gap-1">
-      <span>Working tree clean</span>
+    <div class="relative z-10 flex flex-col items-center gap-2">
+      {#if isBranchScope}
+        <span>{gitStatus.scopeError ?? `No changes on this branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}`}</span>
+      {:else}
+        <span>Working tree clean</span>
+      {/if}
+      {@render scopeToggle()}
       {#if isRunning}
         <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
           <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
@@ -555,7 +772,13 @@
             {filteredTotal} of {gitStatus.entries.length} files
           </div>
         {/if}
-        <div class="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-2">
+        <div class="mt-1.5 flex items-center gap-2">
+          {@render scopeToggle()}
+          {#if isBranchScope && gitStatus.baseRef}
+            <span class="text-[10px] text-muted-foreground truncate" title="Compared against the merge base with {gitStatus.baseRef}">vs {gitStatus.baseRef}</span>
+          {/if}
+        </div>
+        <div class="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
           <button
             onclick={() => gitOpsOpen = true}
             class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors shrink-0"
@@ -574,6 +797,12 @@
             <span class="text-muted-foreground/60">{untrackedEntries.length}?</span>
           {/if}
         </div>
+        {#if viewedCount > 0}
+          <div class="text-[10px] text-green-400/80 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+            {viewedCount} of {gitStatus.entries.length} viewed
+          </div>
+        {/if}
       </div>
 
       <!-- Scrollable file list -->
@@ -588,9 +817,9 @@
           {/if}
         {/if}
 
-        <!-- Unstaged -->
+        <!-- Unstaged (or, in branch scope, everything tracked since the base) -->
         {#if filteredUnstagedEntries.length > 0}
-          {@render sidebarSectionHeader('Changes', 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400', filteredUnstagedEntries, 'stage')}
+          {@render sidebarSectionHeader(isBranchScope ? 'Changed on branch' : 'Changes', 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400', filteredUnstagedEntries, isBranchScope ? 'none' : 'stage')}
           {#if !collapsedSections.has('unstaged')}
             {#each filteredUnstagedEntries as entry (entry.filePath + ':unstaged')}
               {@render sidebarFileItem(entry)}
@@ -600,7 +829,7 @@
 
         <!-- Untracked -->
         {#if filteredUntrackedEntries.length > 0}
-          {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground', filteredUntrackedEntries, 'stage')}
+          {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground', filteredUntrackedEntries, isBranchScope ? 'none' : 'stage')}
           {#if !collapsedSections.has('untracked')}
             {#each filteredUntrackedEntries as entry (entry.filePath + ':untracked')}
               {@render sidebarFileItem(entry)}
@@ -712,7 +941,16 @@
                 </button>
               </div>
             {/if}
-            {#if selectedEntry.staged}
+            <label class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none" title="Mark this file as viewed (x). Clears automatically if the file changes again.">
+              <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
+              Viewed
+              {#if changedSinceViewed(selectedEntry)}
+                <span class="text-[10px] text-yellow-400">· changed since</span>
+              {/if}
+            </label>
+            {#if isBranchScope}
+              <!-- No staging in branch scope: the diff spans commits, so stage/revert against the index would mislead. -->
+            {:else if selectedEntry.staged}
               <button
                 onclick={() => unstageEntry(selectedEntry)}
                 class="text-xs px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
@@ -745,6 +983,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
+            {#if !isBranchScope}
             <button
               onclick={() => confirmEntry = selectedEntry}
               disabled={reverting}
@@ -757,6 +996,7 @@
                 {isUntracked ? 'Discard' : 'Revert'}
               {/if}
             </button>
+            {/if}
           </div>
         </div>
 
@@ -772,7 +1012,20 @@
               Binary file — no text diff to display.
             </div>
           {:else if diffLines.length > 0}
-            <DiffView lines={diffLines} {sideBySide} maxHeight="none" filePath={selectedEntry.filePath} />
+            <DiffView
+              lines={displayLines}
+              {sideBySide}
+              maxHeight="none"
+              filePath={selectedEntry.filePath}
+              onExpand={expandContext}
+              comments={comments.filter(c => c.filePath === selectedEntry.filePath)}
+              {composer}
+              {onAddComment}
+              onSaveComment={saveComment}
+              onCancelComment={() => composer = null}
+              onUpdateComment={(id, body) => reviewStore.updateComment(sessionId, id, body)}
+              onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
+            />
           {:else}
             <div class="text-xs text-muted-foreground py-2">No diff available</div>
           {/if}
@@ -796,6 +1049,19 @@
             </div>
           {/if}
         </div>
+        {#if comments.length > 0}
+          <div data-review-bar class="border-t border-primary/30 bg-card/60 px-4 py-1.5 shrink-0 flex items-center gap-2 text-xs">
+            <span class="text-foreground/80">{comments.length} review comment{comments.length === 1 ? '' : 's'}</span>
+            <span class="text-muted-foreground/60">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
+            <div class="ml-auto flex items-center gap-1.5">
+              <button onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }} class="px-2 py-0.5 text-muted-foreground hover:text-destructive">Discard</button>
+              <button onclick={reviewToPrompt} class="px-2 py-0.5 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground" title="Put the batched comments into the prompt so you can edit before sending">To prompt</button>
+              <button onclick={sendReview} disabled={sendingReview} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40" title="Send all comments to the agent as one prompt (queued if it is busy)">
+                Send to agent
+              </button>
+            </div>
+          </div>
+        {/if}
       {:else}
         <!-- No file selected -->
         <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">

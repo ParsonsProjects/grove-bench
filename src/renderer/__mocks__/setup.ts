@@ -63,6 +63,7 @@ const mockGroveBench = {
   getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
   getFileDiff: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve({ kind: 'text', patch: '' } as import('../../shared/types.js').FileDiffResult)),
   openInEditor: vi.fn(() => Promise.resolve()),
+  getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
   notify: vi.fn(),
   getSettings: vi.fn(),

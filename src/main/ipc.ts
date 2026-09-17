@@ -9,12 +9,12 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
 import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
-import type { FileDiffResult, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
+import type { FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
-import { parseGitStatusPorcelain, parseNumstat } from './git-status-parser.js';
+import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
@@ -65,6 +65,45 @@ function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relP
     throw new Error('Path traversal not allowed');
   }
   return { relPath, resolved };
+}
+
+/** Attach per-file line counts (`git diff <base> --numstat`) as a sidebar hint.
+ *  Scoped to the changed paths so this doesn't walk the whole tree after every
+ *  agent edit; falls back to the full diff when the path list would be
+ *  unreasonably long for a command line. Best-effort (e.g. no HEAD yet). */
+async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: string): Promise<void> {
+  try {
+    const paths = new Set<string>();
+    for (const e of entries) {
+      paths.add(e.filePath);
+      if (e.origPath) paths.add(e.origPath);
+    }
+    const numstatArgs = ['diff', base, '--numstat'];
+    if (paths.size <= 200) numstatArgs.push('--', ...paths);
+    const numstatRaw = await git(numstatArgs, cwd);
+    const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
+    for (const entry of entries) {
+      const stat = stats.get(entry.filePath);
+      if (stat && !stat.binary) {
+        entry.additions = stat.additions;
+        entry.deletions = stat.deletions;
+      }
+    }
+  } catch { /* numstat is best-effort */ }
+}
+
+/** Attach working-tree blob hashes so the UI can tell a file changed since the
+ *  user marked it viewed. One `git hash-object --stdin-paths` call; deleted
+ *  files get a fixed marker. Best-effort. */
+async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Promise<void> {
+  try {
+    const present = [...new Set(entries.filter(e => e.status !== 'deleted').map(e => e.filePath))];
+    if (present.length > 200) return;
+    const hashes = parseHashObjectOutput(await hashWorkingFiles(cwd, present), present);
+    for (const entry of entries) {
+      entry.contentHash = entry.status === 'deleted' ? 'deleted' : hashes.get(entry.filePath);
+    }
+  } catch { /* hashes are best-effort */ }
 }
 
 export function registerHandlers() {
@@ -665,7 +704,7 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean): Promise<FileDiffResult> => {
+  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }): Promise<FileDiffResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
@@ -674,9 +713,18 @@ export function registerHandlers() {
     const imgExt = imageExtFor(relPath);
     if (imgExt) return { kind: 'image', ext: imgExt };
 
-    // Staged diff = index vs HEAD; unstaged diff = working tree vs index.
+    // Branch scope: working tree vs the merge base with the base branch, so
+    // commits the agent already made on the branch stay in the diff.
+    // Otherwise staged diff = index vs HEAD; unstaged diff = working tree vs index.
     try {
-      const diff = await fileDiff(worktree.path, relPath, { staged });
+      let diff: string;
+      if (opts?.base) {
+        const mb = await resolveMergeBase(worktree.path, opts.base);
+        if (!mb) throw new Error(`no merge base with ${opts.base}`);
+        diff = await fileDiffAgainst(worktree.path, relPath, mb.mergeBase);
+      } else {
+        diff = await fileDiff(worktree.path, relPath, { staged });
+      }
       if (detectBinaryDiff(diff)) return { kind: 'binary' };
       if (diff) return { kind: 'text', patch: diff };
       // A staged-but-empty diff genuinely has no changes; don't synthesize for it.
@@ -695,6 +743,30 @@ export function registerHandlers() {
       } catch {
         return { kind: 'text', patch: '' };
       }
+    }
+  });
+
+  // Lines of the new side of a file, for expanding context around hunks.
+  // Staged diffs compare against the index, so serve the index version there.
+  ipcMain.handle(IPC.FILE_LINES, async (_event, sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult> => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) return null;
+    const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    try {
+      let content: string;
+      if (staged) {
+        content = await indexFileContent(worktree.path, relPath);
+      } else {
+        const buf = await fs.readFile(resolved);
+        if (buf.length > 4 * 1024 * 1024 || looksBinary(buf)) return null;
+        content = buf.toString('utf-8');
+      }
+      const lines = content.split('\n');
+      // A trailing newline yields an empty final element that is not a real line.
+      if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+      return { lines };
+    } catch {
+      return null;
     }
   });
 
@@ -844,36 +916,33 @@ export function registerHandlers() {
 
   // ─── Git status ───
 
-  ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string) => {
+  ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return { entries: [] };
+    const cwd = worktree.path;
 
     try {
-      const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], worktree.path);
-      const result = parseGitStatusPorcelain(raw);
+      let result: GitStatusResult;
+      let numstatBase = 'HEAD';
+      if (opts?.scope === 'branch') {
+        const base = opts.base?.trim();
+        const mb = base ? await resolveMergeBase(cwd, base) : null;
+        if (!mb) {
+          return { entries: [], scopeError: base ? `No merge base with ${base}` : 'No base branch' };
+        }
+        numstatBase = mb.mergeBase;
+        // Tracked changes (committed or not) since the merge base, plus untracked files.
+        const tracked = parseNameStatus(await git(['diff', '--name-status', '-z', mb.mergeBase], cwd));
+        const status = parseGitStatusPorcelain(await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd));
+        const untracked = status.entries.filter(e => e.status === 'untracked');
+        result = { entries: [...tracked, ...untracked], baseRef: mb.ref };
+      } else {
+        const raw = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd);
+        result = parseGitStatusPorcelain(raw);
+      }
       if (result.entries.length === 0) return result;
-      // Attach per-file line counts (combined working-tree-vs-HEAD) as a sidebar hint.
-      // Scope the diff to the changed paths so this doesn't walk the whole tree
-      // after every agent edit; fall back to the full diff when the path list
-      // would be unreasonably long for a command line.
-      try {
-        const paths = new Set<string>();
-        for (const e of result.entries) {
-          paths.add(e.filePath);
-          if (e.origPath) paths.add(e.origPath);
-        }
-        const numstatArgs = ['diff', 'HEAD', '--numstat'];
-        if (paths.size <= 200) numstatArgs.push('--', ...paths);
-        const numstatRaw = await git(numstatArgs, worktree.path);
-        const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
-        for (const entry of result.entries) {
-          const stat = stats.get(entry.filePath);
-          if (stat && !stat.binary) {
-            entry.additions = stat.additions;
-            entry.deletions = stat.deletions;
-          }
-        }
-      } catch { /* numstat is best-effort (e.g. no HEAD yet) */ }
+      await attachNumstat(cwd, result.entries, numstatBase);
+      await attachContentHashes(cwd, result.entries);
       return result;
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
