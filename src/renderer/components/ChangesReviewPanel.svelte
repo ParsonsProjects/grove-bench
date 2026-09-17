@@ -121,15 +121,21 @@
     ...(collapsedSections.has('untracked') ? [] : filteredUntrackedEntries),
   ]);
 
-  // On status change: invalidate cached diffs (they may be stale) and fix the selection.
-  // Diffs are then loaded lazily for the selected file only (see the effect below) instead
-  // of eagerly fetching every changed file's diff up front.
+  // On status change: drop cached diffs for entries that disappeared, fix the
+  // selection, and re-fetch the selected file's diff in place. The previous
+  // patch stays on screen until the new one arrives (stale-while-revalidate),
+  // so a working tree that changes mid-turn updates like a live diff view
+  // instead of blanking and reloading on every git status refresh.
   $effect(() => {
     const entries = gitStatus.entries;
     const currentKeys = new Set(entries.map(e => fileKey(e)));
 
     untrack(() => {
-      fileDiffs = {};
+      const kept: Record<string, FileDiffResult> = {};
+      for (const [key, diff] of Object.entries(fileDiffs)) {
+        if (currentKeys.has(key)) kept[key] = diff;
+      }
+      fileDiffs = kept;
 
       // Auto-select first file if no selection or selection no longer exists
       if (entries.length > 0 && (selectedFileKey === null || !currentKeys.has(selectedFileKey))) {
@@ -137,41 +143,62 @@
       } else if (entries.length === 0) {
         selectedFileKey = null;
       }
+
+      loadSelectedAndNeighbors(true);
     });
   });
 
-  // Lazily load the selected file's diff (plus its immediate neighbors, so arrow-key
-  // navigation feels instant) whenever the selection or the file list changes.
+  // When the user moves to another file: reset hunk position and lazily load
+  // its diff (plus immediate neighbors, so arrow-key navigation feels instant).
+  // Keyed on the file key rather than the entry object so a status refresh that
+  // keeps the same file selected doesn't reset the hunk position.
   $effect(() => {
-    const entry = selectedEntry;
-    const ordered = visibleEntries;
+    selectedFileKey;
     untrack(() => {
       hunkIdx = 0;
-      if (!entry) return;
-      loadDiff(entry);
-      const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
-      if (idx >= 0) {
-        if (ordered[idx + 1]) loadDiff(ordered[idx + 1]);
-        if (ordered[idx - 1]) loadDiff(ordered[idx - 1]);
-      }
+      loadSelectedAndNeighbors(false);
     });
   });
+
+  function loadSelectedAndNeighbors(forceReload: boolean) {
+    const entry = selectedEntry;
+    if (!entry) return;
+    loadDiff(entry, forceReload);
+    const ordered = visibleEntries;
+    const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
+    if (idx >= 0) {
+      if (ordered[idx + 1]) loadDiff(ordered[idx + 1], forceReload);
+      if (ordered[idx - 1]) loadDiff(ordered[idx - 1], forceReload);
+    }
+  }
 
   function fileKey(entry: GitStatusEntry): string {
     return `${entry.filePath}:${entry.staged}`;
   }
 
+  // Per-file request sequence so an older in-flight fetch can't overwrite a
+  // newer one when refreshes overlap. A key is in flight while its latest
+  // request has not resolved yet.
+  const diffRequestSeq = new Map<string, number>();
+  const diffInFlight = new Set<string>();
+
   async function loadDiff(entry: GitStatusEntry, forceReload = false) {
     const key = fileKey(entry);
-    if (!forceReload && fileDiffs[key] !== undefined) return;
+    if (!forceReload && (fileDiffs[key] !== undefined || diffInFlight.has(key))) return;
+    const seq = (diffRequestSeq.get(key) ?? 0) + 1;
+    diffRequestSeq.set(key, seq);
+    diffInFlight.add(key);
+    let diff: FileDiffResult;
     try {
       // Pass `staged` so the index-vs-HEAD and working-tree-vs-index diffs differ
       // for a path that appears in both the Staged and Changes sections.
-      const diff = await window.groveBench.getFileDiff(sessionId, entry.filePath, entry.staged);
-      fileDiffs = { ...fileDiffs, [key]: diff };
+      diff = await window.groveBench.getFileDiff(sessionId, entry.filePath, entry.staged);
     } catch {
-      fileDiffs = { ...fileDiffs, [key]: { kind: 'text', patch: '' } };
+      diff = { kind: 'text', patch: '' };
     }
+    if (diffRequestSeq.get(key) !== seq) return;
+    diffInFlight.delete(key);
+    fileDiffs = { ...fileDiffs, [key]: diff };
   }
 
   function selectFile(entry: GitStatusEntry) {
@@ -439,7 +466,7 @@
 
 <svelte:window onkeydown={handleShortcuts} />
 
-{#if isRunning && gitStatus.entries.length === 0}
+{#if gitStatus.entries.length === 0}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
     {#each Array(20) as _, i}
       <span
@@ -452,25 +479,15 @@
         "
       ></span>
     {/each}
-    <div class="flex items-center gap-2 relative z-10">
-      <span class="w-2.5 h-2.5 bg-primary animate-pulse"></span>
-      Agent is working... changes will appear when the turn completes.
+    <div class="relative z-10 flex flex-col items-center gap-1">
+      <span>Working tree clean</span>
+      {#if isRunning}
+        <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
+          Edits show up here as the agent makes them
+        </span>
+      {/if}
     </div>
-  </div>
-{:else if gitStatus.entries.length === 0}
-  <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
-    {#each Array(20) as _, i}
-      <span
-        class="blue-pixel absolute"
-        style="
-          width: 4px; height: 4px;
-          top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
-          left: {Math.round((5 + (((i * 53 + 7) * 11) % 90)) / 100 * 1400 / 6) * 6}px;
-          animation-delay: {(i * 1.3) % 6}s;
-        "
-      ></span>
-    {/each}
-    <span class="relative z-10">Working tree clean</span>
   </div>
 {:else}
   <div class="flex-1 flex overflow-hidden">
