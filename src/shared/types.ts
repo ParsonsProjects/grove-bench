@@ -98,7 +98,7 @@ export interface PrerequisiteStatus {
  * Adapters map their provider-specific tool names to these categories
  * so the renderer doesn't need to know provider-specific tool names.
  */
-export type ToolCategory = 'edit' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
+export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
 
 // ─── Agent Events (renderer-side, serializable) ───
 
@@ -154,7 +154,7 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
-  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean };
+  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean };
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
@@ -231,11 +231,24 @@ export interface ImageDiffContent {
   head: string | null;
 }
 
+/** How far a rewind reaches. Default (neither flag) restores files AND
+ *  truncates the conversation. `conversationOnly` keeps the files on disk;
+ *  `filesOnly` keeps the conversation (used for checkpoints from before a
+ *  `/clear`, whose messages no longer exist to rewind to). */
+export interface RewindOptions {
+  conversationOnly?: boolean;
+  filesOnly?: boolean;
+}
+
 export interface CheckpointListItem {
   uuid: string;
   turn: number;
   ref: string;
   text?: string;
+  /** True when this checkpoint was captured before the most recent `/clear`.
+   *  Its files can still be restored, but its message is no longer part of
+   *  the conversation, so a conversation rewind to it is not offered. */
+  beforeClear?: boolean;
 }
 
 /** Aggregate diff statistics (git diff --numstat totals). */
@@ -315,6 +328,22 @@ export interface GitSyncStatus {
 export interface BranchCommit {
   subject: string;
   body: string;
+}
+
+/** A commit with its id, for pickers (cherry-pick source lists). */
+export interface CommitEntry {
+  sha: string;
+  shortSha: string;
+  subject: string;
+}
+
+/** Outcome of a branch operation (rebase / cherry-pick / squash). A failed
+ *  operation is always unwound (`--abort`) before returning, so the worktree
+ *  is never left mid-operation; `conflicts` lists the files that clashed. */
+export interface GitOpResult {
+  success: boolean;
+  conflicts?: string[];
+  error?: string;
 }
 
 // ─── Thinking Level ───
@@ -691,9 +720,17 @@ export interface GroveBenchAPI {
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
   getBranchCommits(sessionId: string, base: string): Promise<BranchCommit[]>;
+  /** Commits on `ref` (a branch name or commit) that aren't on `base`, newest first, with ids. */
+  gitLogCommits(sessionId: string, ref: string, base: string): Promise<CommitEntry[]>;
+  /** Rebase the session branch onto another branch. Conflicts are aborted and reported. */
+  gitRebase(sessionId: string, onto: string): Promise<GitOpResult>;
+  /** Apply one commit onto the session branch. Conflicts are aborted and reported. */
+  gitCherryPick(sessionId: string, sha: string): Promise<GitOpResult>;
+  /** Squash every commit since the merge base with `base` into one. */
+  gitSquash(sessionId: string, base: string, message: string): Promise<GitOpResult>;
 
   // Checkpoint rewind
-  rewindSession(sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }): Promise<void>;
+  rewindSession(sessionId: string, userMessageId: string, options?: RewindOptions): Promise<void>;
   getCheckpointDiff(sessionId: string, userMessageId: string): Promise<string>;
   listCheckpoints(sessionId: string): Promise<CheckpointListItem[]>;
 
@@ -772,10 +809,26 @@ export interface GroveBenchAPI {
   setSessionSort(sort: SessionSortState): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
+  /** Sessions flagged unread (finished a turn / got a PR alert while not
+   *  focused) when the app last ran, so the flag survives a restart. */
+  getUnreadSessions(): Promise<string[]>;
+  setUnreadSessions(ids: string[]): void;
 
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
   onPowerResume(callback: (resumeIds: string[]) => void): () => void;
+
+  // Error reporting
+  /** Uncaught main-process errors, forwarded so the UI can surface them. */
+  onAppError(callback: (report: AppErrorReport) => void): () => void;
+  /** Send an uncaught renderer error to main for the file log. */
+  reportError(report: AppErrorReport): void;
+
+  // Taskbar attention badge
+  /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
+   *  badge, Linux badge count). `dataUrl` is a renderer-drawn PNG used for the
+   *  Windows overlay; 0 clears the badge. */
+  setAttentionBadge(count: number, dataUrl: string | null): void;
 
   // OS notifications
   notify(req: OsNotificationRequest): void;
@@ -790,6 +843,10 @@ export interface GroveBenchAPI {
 
   // Agent adapters
   listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
+  /** Control descriptors an adapter declares for `model` (null = its default
+   *  model), without needing a session. Used by Settings for per-adapter
+   *  defaults. Unknown adapter = []. */
+  getAdapterControls(adapterType?: string, model?: string | null): Promise<ControlDescriptor[]>;
   getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string; contextWindow?: number }>>;
 
   // Auto-update
@@ -805,9 +862,36 @@ export type CavemanMode = 'off' | 'lite' | 'full' | 'ultra';
 
 // ─── Settings ───
 
+/**
+ * A tool allow/deny rule: `<tool>` or `<tool>(<glob>)`.
+ *
+ * `<tool>` is preferably one of the adapter-neutral keywords below (so the
+ * same rule works for every agent), or a provider tool name for anything the
+ * keywords don't cover (Claude: `Bash`, `NotebookEdit`, `mcp__github__*`).
+ * The glob matches the call's specifier — the command for `shell`, the file
+ * path for `edit`/`read`, the URL for `web`, the prompt for `agent`, and the
+ * server/tool name after `mcp__` for `mcp`. `*` matches anything.
+ *
+ *   shell(npm run *)   edit(src/**)   read(**\/.env*)   web(*github.com*)
+ *   mcp(github__*)     question       Bash(git push *)
+ */
 export interface ToolRule {
-  pattern: string; // e.g. "Bash(npm run *)", "Read(/src/**)", "mcp__*"
+  pattern: string;
 }
+
+/** Neutral rule keywords → the tool category they stand for. `mcp` is
+ *  special-cased by the matcher (provider tools prefixed `mcp__`). */
+export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
+  shell: 'bash',
+  bash: 'bash',
+  edit: 'edit',
+  write: 'edit',
+  read: 'read',
+  web: 'web_fetch',
+  fetch: 'web_fetch',
+  agent: 'agent',
+  question: 'question',
+};
 
 export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions';
 
@@ -828,8 +912,12 @@ export interface GroveBenchSettings {
 
   // Agent Defaults
   defaultModel: string;
-  /** Default thinking level for new sessions. 'high' = provider default. */
-  defaultThinkingLevel: ThinkingLevel;
+  /** Default values for each adapter's declared session controls (thinking,
+   *  speed, ...), keyed by adapter id then control id. Only ids the adapter
+   *  actually offers for the session's model are applied; anything else is
+   *  ignored, so a stale entry never breaks a session. Permission mode is
+   *  not here — see defaultPermissionMode. */
+  adapterDefaults: Record<string, Record<string, string>>;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
@@ -885,12 +973,36 @@ export interface GroveBenchSettings {
   notifyOnPrAlert: boolean;
   /** Flash the taskbar button alongside a notification. Default true. */
   notifyTaskbarFlash: boolean;
+  /** Overlay a badge on the taskbar icon with the number of sessions that
+   *  need attention (blocked on input, or finished while unfocused). Default true. */
+  notifyTaskbarBadge: boolean;
 
   // Privacy
   /** Enable anonymous usage analytics (PostHog). Off by default. */
   analyticsEnabled: boolean;
   /** Whether the user has been shown the analytics consent prompt. */
   analyticsPrompted: boolean;
+  /** Send uncaught exceptions (message + stack, no code or paths beyond the
+   *  stack itself) to the analytics backend. Only effective while
+   *  analyticsEnabled is on. Off by default. */
+  crashReportsEnabled: boolean;
+}
+
+// ─── Error reporting ───
+
+/** An uncaught error captured in either process. Main-process errors are
+ *  forwarded to the renderer for display; renderer errors are forwarded to
+ *  main for the file log. */
+export interface AppErrorReport {
+  source: 'main' | 'renderer';
+  /** What surfaced it: 'uncaughtException', 'unhandledRejection', 'error',
+   *  'boundary', ... */
+  kind: string;
+  message: string;
+  stack?: string;
+  /** Session whose view raised it, when known (renderer error boundaries). */
+  sessionId?: string;
+  timestamp: number;
 }
 
 // ─── Memory ───
@@ -1039,6 +1151,10 @@ export const IPC = {
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',
+  GIT_LOG_COMMITS: 'git:logCommits',
+  GIT_REBASE: 'git:rebase',
+  GIT_CHERRY_PICK: 'git:cherryPick',
+  GIT_SQUASH: 'git:squash',
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_INFO: 'pr:info',
   PR_CREATE: 'pr:create',
@@ -1080,6 +1196,13 @@ export const IPC = {
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
+  APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
+  /** Main → renderer: an uncaught main-process error. */
+  APP_ERROR: 'app:error',
+  /** Renderer → main: an uncaught renderer error, for the file log. */
+  APP_REPORT_ERROR: 'app:reportError',
+  WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARK_ADD: 'bookmarks:add',
@@ -1117,6 +1240,7 @@ export const IPC = {
   AGENT_TURN_DIFF: 'agent:turnDiff',
   AGENT_FULL_THREAD_DIFF: 'agent:fullThreadDiff',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater
   UPDATE_CHECK: 'update:check',

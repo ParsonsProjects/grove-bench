@@ -13,7 +13,7 @@ import type {
   PermissionResponse,
   UserMessage,
 } from './types.js';
-import { cleanEnv, isPathInside, matchToolRule, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { logger } from '../logger.js';
@@ -103,6 +103,11 @@ function categorizeToolName(toolName: string): ToolCategory {
       return 'edit';
     case 'Bash':
       return 'bash';
+    case 'Read':
+    case 'Grep':
+    case 'Glob':
+    case 'NotebookRead':
+      return 'read';
     case 'AskUserQuestion':
       return 'question';
     case 'WebFetch':
@@ -866,19 +871,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return { behavior: 'deny' as const, message: `Tool "${toolName}" is not allowed in this session` };
       }
 
+      // Settings rules are written in neutral terms (shell(...), edit(...),
+      // read(...), ...) or with Claude's tool names; both match here.
+      const category = categorizeToolName(toolName);
+      const specifier = toolCallSpecifier(toolName, input, category);
+      const toolCall = specifier ? `${toolName}(${specifier})` : toolName;
+
       // Deny rules
-      const toolCall = typeof (input as any)?.command === 'string'
-        ? `${toolName}(${(input as any).command})`
-        : toolName;
       for (const rule of config.toolDenyRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall)) {
+        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
           return { behavior: 'deny' as const, message: `Denied by settings rule: ${rule.pattern}` };
         }
       }
 
       // Allow rules
       for (const rule of config.toolAllowRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall)) {
+        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
           return { behavior: 'allow' as const, updatedInput: input };
         }
       }

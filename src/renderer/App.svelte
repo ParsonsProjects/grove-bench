@@ -4,7 +4,9 @@
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
   import { prStore } from './stores/pr.svelte.js';
-  import { setAnalyticsEnabled, trackEvent } from './lib/analytics.js';
+  import { setAnalyticsEnabled, setCrashReportsEnabled, trackEvent, reportCrash } from './lib/analytics.js';
+  import { installRendererErrorHandlers, reportFromError, shortMessage, ErrorDeduper } from './lib/error-handling.js';
+  import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { orderTabsForResume, RESUME_STAGGER_MS } from './lib/resume-order.js';
   import { startIdleManager } from './lib/idle-manager.js';
@@ -21,8 +23,32 @@
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import type { AppErrorReport } from '../shared/types.js';
 
   let showAnalyticsConsent = $state(false);
+
+  // ── Global error handling ──
+  // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
+  // error boundary) and forwarded main-process errors all land here: one
+  // toast, one file-log line, and an opt-in crash report.
+  const errorDeduper = new ErrorDeduper();
+  function handleErrorReport(report: AppErrorReport) {
+    if (!errorDeduper.accept(report)) return;
+    console.error(`[${report.source}:${report.kind}]`, report.message, report.stack ?? '');
+    store.setError(shortMessage(report));
+    if (report.source === 'renderer') {
+      try { window.groveBench.reportError(report); } catch { /* main may be gone */ }
+    }
+    reportCrash(report);
+  }
+
+  /** onerror callback for a session pane's <svelte:boundary>. */
+  function paneError(sessionId: string) {
+    return (error: unknown) => handleErrorReport(reportFromError('boundary', error, sessionId));
+  }
+  function sidebarError(error: unknown) {
+    handleErrorReport(reportFromError('boundary', error));
+  }
 
   let restored = $state(false);
 
@@ -66,6 +92,16 @@
       if (i > 0) await new Promise((r) => setTimeout(r, RESUME_STAGGER_MS));
       resumeStoppedSession(store.sessions.find((s) => s.id === ordered[i]));
     }
+
+    // Bring back the unread flags from the previous run. The active tab's
+    // flag is cleared straight away by the focus effect below, same as if
+    // the user had just clicked it.
+    try {
+      const unread = await window.groveBench.getUnreadSessions();
+      for (const id of unread) {
+        if (store.sessions.find((s) => s.id === id)) store.markNeedsAttention(id);
+      }
+    } catch { /* best-effort */ }
 
     restored = true;
     window.groveBench.notifyRestoreComplete();
@@ -130,12 +166,40 @@
     }
   });
 
+  // Persist the unread flags so they survive a restart
+  $effect(() => {
+    const ids = Object.keys(store.needsAttention);
+    if (restored) {
+      window.groveBench.setUnreadSessions(ids);
+    }
+  });
+
+  // Taskbar badge: sessions blocked on input or finished while unfocused.
+  // Reads the same signals as the sidebar's triage so the numbers agree.
+  let lastBadgeCount = -1;
+  $effect(() => {
+    const enabled = settingsStore.current.notifyTaskbarBadge;
+    const count = enabled
+      ? attentionCount(
+        store.sessions,
+        (id) => messageStore.needsInput(id),
+        (id) => !!store.needsAttention[id],
+      )
+      : 0;
+    if (count === lastBadgeCount) return;
+    lastBadgeCount = count;
+    try {
+      window.groveBench.setAttentionBadge(count, renderBadgeDataUrl(count));
+    } catch { /* badge is cosmetic */ }
+  });
+
   // Sync analytics opt-in/out when setting changes (no restart needed).
   // Also fires app_launched once after consent has been resolved.
   let appLaunchedTracked = false;
   $effect(() => {
-    const { analyticsEnabled, analyticsPrompted } = settingsStore.current;
+    const { analyticsEnabled, analyticsPrompted, crashReportsEnabled } = settingsStore.current;
     setAnalyticsEnabled(analyticsEnabled);
+    setCrashReportsEnabled(crashReportsEnabled);
     if (analyticsEnabled && analyticsPrompted && !appLaunchedTracked) {
       trackEvent('app_launched');
       appLaunchedTracked = true;
@@ -219,6 +283,9 @@
   });
 
   onMount(() => {
+    const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
+    const unsubAppError = window.groveBench.onAppError(handleErrorReport);
+
     settingsStore.load();
     bookmarkStore.load();
     memoryStore.init();
@@ -285,6 +352,8 @@
       unsub();
       unsubPower();
       unsubFocus();
+      unsubAppError();
+      uninstallErrors();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };
@@ -292,12 +361,32 @@
 
 </script>
 
+{#snippet crashed(what: string, error: unknown, reset: () => void)}
+  <div class="flex-1 h-full flex items-center justify-center p-6 text-center">
+    <div class="max-w-md border border-destructive/60 bg-destructive/10 p-4">
+      <p class="text-sm text-foreground mb-1">{what} hit an error.</p>
+      <p class="text-xs text-muted-foreground mb-3 break-words">{error instanceof Error ? error.message : String(error)}</p>
+      <button
+        onclick={reset}
+        class="text-xs px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+      >
+        Reload view
+      </button>
+    </div>
+  </div>
+{/snippet}
+
 <PrerequisiteCheck />
 
 <div class="flex flex-col h-screen bg-background text-foreground font-mono">
 <TitleBar />
 <div class="flex flex-1 min-h-0">
-  <Sidebar />
+  <svelte:boundary onerror={sidebarError}>
+    <Sidebar />
+    {#snippet failed(error, reset)}
+      {@render crashed('The sidebar', error, reset)}
+    {/snippet}
+  </svelte:boundary>
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
     {#if store.sessions.length === 0}
@@ -330,7 +419,14 @@
       {#each store.sessions as session (session.id)}
         <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
           {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
-            <WorkspacePane sessionId={session.id} />
+            <!-- A render/effect error in one session's pane must not take the
+                 whole window down; show a reload affordance for that pane only. -->
+            <svelte:boundary onerror={paneError(session.id)}>
+              <WorkspacePane sessionId={session.id} />
+              {#snippet failed(error, reset)}
+                {@render crashed('This session view', error, reset)}
+              {/snippet}
+            </svelte:boundary>
           {:else}
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
               {#each Array(20) as _, i}

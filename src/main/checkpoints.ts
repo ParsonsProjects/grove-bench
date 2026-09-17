@@ -6,6 +6,15 @@ import { logger } from './logger.js';
 import type { DiffHistoryEntry, DiffHistoryResult, DiffStats } from '../shared/types.js';
 
 const BASELINE_UUID = '__baseline__';
+/** Sentinel checkpoint captured when the conversation is cleared. It marks
+ *  the boundary between conversations so earlier turns can be listed as
+ *  "before /clear" (files restorable, conversation not rewindable), and it
+ *  snapshots the working tree at that moment so the last pre-clear turn's
+ *  diff has a fixed end point. */
+const CLEAR_UUID = '__clear__';
+
+/** Internal checkpoints that never show in the list. */
+const SENTINEL_UUIDS: ReadonlySet<string> = new Set([BASELINE_UUID, CLEAR_UUID]);
 
 /** Sum a `git diff --numstat` output into aggregate stats. Binary files count
  *  toward filesChanged but contribute no line counts (numstat prints `-`). */
@@ -54,6 +63,9 @@ export interface CheckpointInfo {
   uuid: string;
   turn: number;
   ref: string;
+  text?: string;
+  /** Captured before the most recent /clear (see CheckpointListItem). */
+  beforeClear?: boolean;
 }
 
 export class CheckpointManager {
@@ -82,6 +94,16 @@ export class CheckpointManager {
       logger.warn(`[checkpoints] capture failed session=${sessionId} uuid=${uuid}:`, err);
     });
     return s.captureQueue;
+  }
+
+  /**
+   * Record a conversation clear. Checkpoint refs are kept — the user can
+   * still restore files to any earlier turn — and a sentinel checkpoint is
+   * captured so list() can tell pre-clear turns apart from the new
+   * conversation's. Turn numbering continues across the boundary.
+   */
+  async markCleared(sessionId: string, cwd: string): Promise<void> {
+    return this.capture(sessionId, cwd, CLEAR_UUID);
   }
 
   /**
@@ -307,7 +329,7 @@ export class CheckpointManager {
       const entries: DiffHistoryEntry[] = [];
       for (let i = 0; i < refs.length; i++) {
         const r = refs[i];
-        if (r.uuid === BASELINE_UUID) continue;
+        if (SENTINEL_UUIDS.has(r.uuid)) continue;
         let stats: DiffStats = { filesChanged: 0, additions: 0, deletions: 0 };
         try {
           stats = await numstat(r, refs[i + 1] ?? currentTree);
@@ -493,18 +515,26 @@ export class CheckpointManager {
   }
 
   /**
-   * List all checkpoints for a session, sorted newest-first.
+   * List all checkpoints for a session, sorted newest-first. Turns captured
+   * before the most recent /clear are flagged `beforeClear`.
    */
-  async list(sessionId: string, cwd: string): Promise<(CheckpointInfo & { text?: string })[]> {
+  async list(sessionId: string, cwd: string): Promise<CheckpointInfo[]> {
     // Wait for any in-flight capture so the latest checkpoint is included
     await this.waitForPending(sessionId);
 
     try {
       const items = await this.listRefs(sessionId, cwd);
-      // Filter out internal baseline checkpoint; sort newest first
-      const visible: (CheckpointInfo & { text?: string })[] = items
-        .filter(i => i.uuid !== BASELINE_UUID)
-        .map(({ uuid, turn, ref, text }) => ({ uuid, turn, ref, text }));
+      let lastClearTurn = -1;
+      for (const i of items) {
+        if (i.uuid === CLEAR_UUID && i.turn > lastClearTurn) lastClearTurn = i.turn;
+      }
+      // Filter out internal sentinel checkpoints; sort newest first
+      const visible: CheckpointInfo[] = items
+        .filter(i => !SENTINEL_UUIDS.has(i.uuid))
+        .map(({ uuid, turn, ref, text }) => ({
+          uuid, turn, ref, text,
+          ...(turn < lastClearTurn ? { beforeClear: true } : {}),
+        }));
       visible.sort((a, b) => b.turn - a.turn);
       return visible;
     } catch {

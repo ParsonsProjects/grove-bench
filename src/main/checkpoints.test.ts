@@ -323,6 +323,27 @@ describe('CheckpointManager', () => {
       expect(result[1].uuid).toBe('uuid-a');
     });
 
+    it('flags turns before the latest __clear__ marker and hides the marker itself', async () => {
+      const SEP = '@@GROVE_SEP@@';
+      mockGit.mockResolvedValueOnce(
+        `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=old\n` +
+        `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=__clear__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/4${SEP}grove checkpoint turn=4 uuid=uuid-b${SEP}text=older-clear\n` +
+        `refs/grove/checkpoints/sess1/turn/5${SEP}grove checkpoint turn=5 uuid=__clear__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/6${SEP}grove checkpoint turn=6 uuid=uuid-c${SEP}text=new`
+      );
+
+      const mgr = new CheckpointManager();
+      const result = await mgr.list('sess1', '/repo');
+
+      expect(result.map(c => [c.uuid, c.beforeClear ?? false])).toEqual([
+        ['uuid-c', false],
+        ['uuid-b', true],
+        ['uuid-a', true],
+      ]);
+    });
+
     it('calls git for-each-ref with correct args', async () => {
       mockGit.mockResolvedValueOnce('');
       const mgr = new CheckpointManager();
@@ -413,6 +434,29 @@ describe('CheckpointManager', () => {
       const msg = getWrittenCommitMsg();
       expect(msg).not.toContain('text=');
       expect(msg).not.toContain('\n\n');
+    });
+  });
+
+  describe('markCleared()', () => {
+    it('captures a __clear__ sentinel through the normal capture path, continuing the turn count', async () => {
+      mockGitEnv.mockResolvedValue('');
+      mockGitEnv.mockResolvedValueOnce('').mockResolvedValueOnce('').mockResolvedValueOnce('tree1');
+      mockGit.mockResolvedValueOnce('commit1').mockResolvedValueOnce('');
+      const mgr = new CheckpointManager();
+      await mgr.capture('sess1', '/repo', 'uuid-1');
+
+      mockGitEnv.mockResolvedValueOnce('').mockResolvedValueOnce('').mockResolvedValueOnce('tree2');
+      mockGit.mockResolvedValueOnce('commit2').mockResolvedValueOnce('');
+      await mgr.markCleared('sess1', '/repo');
+
+      expect(mockGit).toHaveBeenCalledWith(
+        ['update-ref', 'refs/grove/checkpoints/sess1/turn/2', 'commit2'], '/repo'
+      );
+      const msg = mockFs.writeFileSync.mock.calls.at(-1)![1] as string;
+      expect(msg).toContain('uuid=__clear__');
+      // Real refs are never deleted by a clear
+      expect(mockGit).not.toHaveBeenCalledWith(expect.arrayContaining(['update-ref', '-d']), expect.anything());
+      expect(mgr.has('sess1', 'uuid-1')).toBe(true);
     });
   });
 
@@ -606,6 +650,28 @@ describe('CheckpointManager', () => {
       // Cumulative total anchors at the oldest ref (baseline)
       expect(mockGit).toHaveBeenCalledWith(
         ['diff', '--numstat', 'refs/grove/checkpoints/sess1/turn/1', 'wtTree', '--', '.'],
+        '/repo'
+      );
+    });
+
+    it('skips the __clear__ sentinel as an entry but uses it as the end of the preceding turn', async () => {
+      const mgr = new CheckpointManager();
+      mockGit.mockResolvedValueOnce(
+        `refs/grove/checkpoints/sess1/turn/1${SEP}grove checkpoint turn=1 uuid=__baseline__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/2${SEP}grove checkpoint turn=2 uuid=uuid-a${SEP}text=first\n` +
+        `refs/grove/checkpoints/sess1/turn/3${SEP}grove checkpoint turn=3 uuid=__clear__${SEP}\n` +
+        `refs/grove/checkpoints/sess1/turn/4${SEP}grove checkpoint turn=4 uuid=uuid-b${SEP}text=after`
+      );
+      mockGitEnv.mockResolvedValueOnce('').mockResolvedValueOnce('').mockResolvedValueOnce('wtTree');
+      mockGit.mockResolvedValueOnce('1\t0\ta'); // turn/2 → turn/3 (clear marker)
+      mockGit.mockResolvedValueOnce('2\t0\tb'); // turn/4 → working tree
+      mockGit.mockResolvedValueOnce('3\t0\tc'); // total
+
+      const result = await mgr.history('sess1', '/repo');
+
+      expect(result.entries.map(e => e.uuid)).toEqual(['uuid-b', 'uuid-a']);
+      expect(mockGit).toHaveBeenCalledWith(
+        ['diff', '--numstat', 'refs/grove/checkpoints/sess1/turn/2', 'refs/grove/checkpoints/sess1/turn/3', '--', '.'],
         '/repo'
       );
     });

@@ -140,8 +140,18 @@ const api: GroveBenchAPI = {
   getBranchCommits: (sessionId: string, base: string) =>
     ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base),
 
+  // Branch operations
+  gitLogCommits: (sessionId: string, ref: string, base: string) =>
+    ipcRenderer.invoke(IPC.GIT_LOG_COMMITS, sessionId, ref, base),
+  gitRebase: (sessionId: string, onto: string) =>
+    ipcRenderer.invoke(IPC.GIT_REBASE, sessionId, onto),
+  gitCherryPick: (sessionId: string, sha: string) =>
+    ipcRenderer.invoke(IPC.GIT_CHERRY_PICK, sessionId, sha),
+  gitSquash: (sessionId: string, base: string, message: string) =>
+    ipcRenderer.invoke(IPC.GIT_SQUASH, sessionId, base, message),
+
   // Checkpoint rewind
-  rewindSession: (sessionId: string, userMessageId: string, options?: { conversationOnly?: boolean }) =>
+  rewindSession: (sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) =>
     ipcRenderer.invoke(IPC.AGENT_REWIND, sessionId, userMessageId, options),
   getCheckpointDiff: (sessionId: string, userMessageId: string) =>
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_DIFF, sessionId, userMessageId),
@@ -300,6 +310,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
   setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
+  getUnreadSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_UNREAD) as Promise<string[]>,
+  setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
   getSidebarWidth: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>
@@ -331,6 +343,22 @@ const api: GroveBenchAPI = {
     };
   },
 
+  // Error reporting
+  onAppError: (callback: (report: import('../shared/types.js').AppErrorReport) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, report: import('../shared/types.js').AppErrorReport) =>
+      callback(report);
+    ipcRenderer.on(IPC.APP_ERROR, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.APP_ERROR, handler);
+    };
+  },
+  reportError: (report: import('../shared/types.js').AppErrorReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
+
+  // Taskbar attention badge
+  setAttentionBadge: (count: number, dataUrl: string | null) =>
+    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl),
+
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),
   winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
@@ -339,6 +367,8 @@ const api: GroveBenchAPI = {
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  getAdapterControls: (adapterType?: string, model?: string | null) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_ADAPTER_CONTROLS, adapterType, model),
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
 
   // Auto-update

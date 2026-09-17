@@ -1,3 +1,5 @@
+import type { AppErrorReport } from '../../shared/types.js';
+
 type PostHog = typeof import('posthog-js').default;
 
 const API_KEY = import.meta.env.VITE_POSTHOG_API_KEY as string | undefined;
@@ -9,6 +11,7 @@ const HOST = (import.meta.env.VITE_POSTHOG_HOST as string | undefined) || 'https
 let posthog: PostHog | null = null;
 let loading: Promise<PostHog | null> | null = null;
 let desiredEnabled = false;
+let crashReportsEnabled = false;
 
 function ensureInitialized(): Promise<PostHog | null> {
   if (posthog) return Promise.resolve(posthog);
@@ -47,9 +50,35 @@ export function setAnalyticsEnabled(enabled: boolean): void {
   }
 }
 
+/** Crash reports ride on the analytics connection, so they need both this
+ *  and setAnalyticsEnabled(true). */
+export function setCrashReportsEnabled(enabled: boolean): void {
+  crashReportsEnabled = enabled;
+}
+
+/** Whether a crash report would be sent right now. Exported for tests. */
+export function crashReportingActive(): boolean {
+  return desiredEnabled && crashReportsEnabled && posthog !== null;
+}
+
 export function trackEvent(event: string, properties?: Record<string, unknown>): void {
   if (!posthog) return;
   posthog.capture(event, properties);
+}
+
+/**
+ * Send an uncaught error as a PostHog exception event. Only the message,
+ * stack, source process and kind are sent — no session ids, repo paths, or
+ * prompt content.
+ */
+export function reportCrash(report: AppErrorReport): void {
+  if (!crashReportingActive() || !posthog) return;
+  try {
+    const err = new Error(report.message);
+    err.name = report.kind;
+    if (report.stack) err.stack = report.stack;
+    posthog.captureException(err, { source: report.source, kind: report.kind });
+  } catch { /* reporting is best-effort */ }
 }
 
 export function shutdownAnalytics(): void {

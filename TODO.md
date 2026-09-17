@@ -9,8 +9,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Agent settings popover — one two-line status-bar trigger (agent on top; model, mode, and any non-default control beneath) opening a column-per-setting popover for agent, model, and every declared control (`SessionControlsPopover.svelte`). Alt+M / Alt+T still cycle.
 - [ ] Codex adapter — implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; the popover, shortcuts, triage, and session manager need no changes
 - [ ] Grok Build adapter
-- [ ] Per-adapter defaults in Settings — the Agent tab's default thinking level is still Claude's hand-written list; read the adapter's descriptors instead
-- [ ] Neutral form for tool allow/deny rules — the syntax is currently Claude's (`Bash(npm run *)`)
+- [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
+- [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
 - [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
 - [ ] Agent discovery/install marketplace ("app store")
 - [ ] Agent Client Protocol for custom agent integration
@@ -19,13 +19,13 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Full working shell with color support and interactive command execution
 - [x] Persistent shell state (env vars, directory changes across commands)
 - [x] Per-session PTY terminals (split, toggle, resize, clear, restart)
-- [ ] Attach terminal output as context to AI messages
+- [x] Attach terminal output as context to AI messages — "To prompt" in the terminal toolbar inserts the selection (or the last 200 lines of scrollback) into the prompt as a fenced block and switches to Activity
 
 ### Checkpointing & Revert
 - [x] Git-based snapshots at each agent turn
 - [x] Per-turn diff viewing (what changed in each turn)
 - [x] Revert workspace to any previous turn's checkpoint
-- [ ] Preserve checkpoints across `/clear` — currently checkpoints are reset on clear; a better solution would keep git checkpoint refs and rebuild the checkpoint list independently of message history
+- [x] Preserve checkpoints across `/clear` — the git refs are kept and a `__clear__` sentinel checkpoint marks the boundary; `list()` flags earlier turns `beforeClear`, the Checkpoints tab shows them under a "Before /clear" divider with a files-only Restore (the conversation they belonged to is gone, so no conversation rewind is offered)
 
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)
@@ -33,26 +33,26 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Merge-Back Workflow
 - ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
-- [ ] Rebase / cherry-pick / squash between agent branches (DESIGN.md §14 "Git operations UI")
+- [x] Rebase / cherry-pick / squash between agent branches — "Branch…" in the Changes tab opens `GitOpsDialog` (rebase onto the base or another session's branch, squash every commit since the base into one, cherry-pick a commit from another session's branch); operations refuse on a dirty tree and any conflict is aborted and reported with the file list, so the branch is never left mid-operation
 
 ### OS Notifications
 - [x] Native notification when an agent finishes a turn while the window is unfocused
 - [x] Native notification when an agent is blocked on a permission prompt or question, and for PR-watch alerts (new CI failure / review comments / needs-human)
 - [x] Taskbar flash while a notification is pending (cleared on focus); clicking a notification jumps to the session
 - [x] Sidebar attention flash extended to PR alerts (previously only status-bar chips)
-- [ ] Overlay badge on the taskbar icon showing the count of sessions needing attention
+- [x] Overlay badge on the taskbar icon showing the count of sessions needing attention — renderer draws the count bitmap (`attention-badge.ts`), main applies it via `setOverlayIcon` (Windows) / dock badge (macOS) / `setBadgeCount` (Linux); toggle in Settings → Notifications
 
 ### Attention Triage
 - [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
 - [x] Per-repo attention counts on each Projects header
 - [x] Mark Completed / Reopen in the session context menu — persisted as `completedAt` in the worktree manifest, hidden behind a "Show completed" toggle, reopened automatically by the next user message
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
-- [ ] Persist the unread flag across restarts (in-memory only today)
+- [x] Persist the unread flag across restarts — `unreadSessionIds` in app-state.json, restored after worktree restore
 
 ### Robustness
-- [ ] Global error handling — `uncaughtException` handler in main; `window.onerror` / `unhandledrejection` + error boundary in renderer
-- [ ] Opt-in crash reporting (exception capture alongside existing PostHog analytics)
-- [ ] Schema versioning + migration for persisted state (`settings.ts` `validate()` is an empty stub; `app-state.ts` raw-parses JSON with no upgrade path)
+- [x] Global error handling — `crash-handling.ts` installs `uncaughtException` / `unhandledRejection` handlers in main (file log + forwarded to the renderer as a toast); `error-handling.ts` hooks `window.onerror` / `unhandledrejection` in the renderer (toast + file log via IPC); `<svelte:boundary>` around the sidebar and each session pane with a Reload view button
+- [x] Opt-in crash reporting — "Send crash reports" toggle under Privacy (requires analytics on); uncaught errors from either process go to PostHog `captureException` with message, stack, source and kind only
+- [x] Schema versioning + migration for persisted state — `persisted-state.ts` (top-level `schemaVersion`, ordered migration table, newer-file handling); settings.json and app-state.json are migrated on load, then validated field by field with Zod so one corrupt value resets to its default instead of dropping the file. Worktree manifest still unversioned.
 
 ## Priority 2 — Notable Gaps
 

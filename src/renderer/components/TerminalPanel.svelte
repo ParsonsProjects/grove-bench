@@ -4,6 +4,8 @@
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -115,6 +117,21 @@
     terminal?.clear();
   }
 
+  /** Attach the terminal selection (or the tail of the scrollback) to the
+   *  prompt as fenced context, and jump to the Activity tab to send it. */
+  function handleAttachToPrompt() {
+    if (!terminal) return;
+    const selection = terminal.getSelection();
+    const selected = selection.trim().length > 0;
+    const raw = selected ? selection : collectTailLines(terminal.buffer.active, DEFAULT_TAIL_LINES).join('\n');
+    const context = formatTerminalContext(raw, { selected });
+    if (!context) return;
+    // The prompt editor is not mounted while the Terminal tab is showing, so
+    // go through the draft as well as the live insert request.
+    messageStore.appendToPrompt(sessionId, context);
+    messageStore.setActiveTab(sessionId, 'activity');
+  }
+
   onMount(async () => {
     terminalStore.subscribe(sessionId);
     createTerminal();
@@ -144,6 +161,13 @@
       {/if}
     </span>
     <div class="flex-1"></div>
+    <button
+      onclick={handleAttachToPrompt}
+      class="text-[10px] px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
+      title="Attach the selected text (or the last {DEFAULT_TAIL_LINES} lines of output) to the next message"
+    >
+      To prompt
+    </button>
     {#if isAlive}
       <button
         onclick={handleKill}

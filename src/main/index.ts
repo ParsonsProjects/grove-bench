@@ -11,6 +11,7 @@ import { terminalManager } from './terminal.js';
 import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
+import { installProcessErrorHandlers } from './crash-handling.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -30,6 +31,10 @@ registerHandlers();
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+
+// Log uncaught errors and forward them to the renderer instead of letting
+// Electron's crash dialog take every agent session down with it.
+installProcessErrorHandlers({ getWindow: () => mainWindow });
 
 function createWindow() {
   const state = loadWindowState();

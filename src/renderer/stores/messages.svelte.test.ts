@@ -137,12 +137,13 @@ describe('ingestEvent — system_init', () => {
     expect(messageStore.olderEventCount(SID)).toBe(0);
   });
 
-  it('resets checkpoint store after /clear', () => {
+  it('drops the checkpoint selection after /clear but keeps the list (refs survive a clear)', () => {
     // Simulate checkpoints existing for this session
     checkpointStore.checkpointsBySession[SID] = [
       { uuid: 'uuid-1', turn: 1, ref: 'refs/grove/checkpoints/s/turn/1' },
     ];
     checkpointStore.selectedBySession[SID] = 'uuid-1';
+    const refresh = vi.spyOn(checkpointStore, 'scheduleRefresh');
 
     messageStore.pendingClear[SID] = true;
     messageStore.ingestEvent(SID, {
@@ -152,8 +153,10 @@ describe('ingestEvent — system_init', () => {
       tools: [],
     } as AgentEvent);
 
-    expect(checkpointStore.getCheckpoints(SID)).toEqual([]);
+    expect(checkpointStore.getCheckpoints(SID)).toHaveLength(1);
     expect(checkpointStore.getSelected(SID)).toBeNull();
+    // The list is re-read once main has recorded the clear marker
+    return vi.waitFor(() => expect(refresh).toHaveBeenCalledWith(SID)).finally(() => refresh.mockRestore());
   });
 
   it('stores system info (tools, agents, skills)', () => {
@@ -1362,6 +1365,25 @@ describe('ingestEvent — rewind', () => {
     expect(messageStore.getStreamingThinking(SID)).toBe('');
   });
 
+  it('filesOnly leaves messages, draft and running state untouched', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'prompt', uuid: 'cp-1' },
+      { kind: 'text', id: '2', text: 'response', uuid: 'r-1' },
+    ] as any;
+    messageStore.isRunning[SID] = true;
+    messageStore.setDraft(SID, 'typing');
+
+    messageStore.ingestEvent(SID, {
+      type: 'rewind',
+      toMessageId: 'cp-1',
+      filesOnly: true,
+    } as AgentEvent);
+
+    expect(messageStore.getMessages(SID)).toHaveLength(2);
+    expect(messageStore.getDraft(SID)).toBe('typing');
+    expect(messageStore.getIsRunning(SID)).toBe(true);
+  });
+
   it('does nothing when target UUID is not found', () => {
     messageStore.messagesBySession[SID] = [
       { kind: 'user', id: '1', text: 'prompt', uuid: 'cp-1' },
@@ -1683,5 +1705,18 @@ describe('destroySession', () => {
     messageStore.subscribe(SID);
     // onAgentEvent called twice: once per subscribe, proving the guard was cleared
     expect(mockGroveBench.onAgentEvent).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('appendToPrompt', () => {
+  it('updates the draft and raises an insert request', () => {
+    messageStore.setDraft(SID, '');
+    messageStore.appendToPrompt(SID, 'first');
+    expect(messageStore.getDraft(SID)).toBe('first');
+    expect(messageStore.promptInsertBySession[SID]).toEqual({ text: 'first', nonce: 1 });
+
+    messageStore.appendToPrompt(SID, 'second');
+    expect(messageStore.getDraft(SID)).toBe('first\nsecond');
+    expect(messageStore.promptInsertBySession[SID].nonce).toBe(2);
   });
 });

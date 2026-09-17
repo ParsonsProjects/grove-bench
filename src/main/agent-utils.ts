@@ -3,6 +3,8 @@
  */
 
 import path from 'node:path';
+import { TOOL_RULE_KEYWORDS } from '../shared/types.js';
+import type { ToolCategory } from '../shared/types.js';
 
 /**
  * True if `child` resolves to a location inside (or equal to) `parent`.
@@ -33,29 +35,87 @@ export function cleanEnv(env: Record<string, string | undefined> = process.env):
   );
 }
 
+/** Split `Tool(spec)` / `Tool` into its parts; null when malformed. */
+export function parseToolRule(pattern: string): { tool: string; specifier: string | null } | null {
+  const trimmed = pattern.trim();
+  if (!trimmed) return null;
+  if (!trimmed.includes('(')) return { tool: trimmed, specifier: null };
+  const match = trimmed.match(/^([^(]+)\((.*)\)$/s);
+  if (!match) return null;
+  return { tool: match[1].trim(), specifier: match[2] };
+}
+
+function globToRegExp(glob: string): RegExp | null {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  try {
+    return new RegExp(`^${escaped}$`, 's');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The part of a tool call a rule's glob is matched against, in neutral
+ * terms: the command for shell tools, the target path for edit/read tools,
+ * the URL for web fetches, the prompt for sub-agents. Adapters call this so
+ * the same rule text works whatever the provider names its fields.
+ */
+export function toolCallSpecifier(
+  toolName: string,
+  input: Record<string, unknown> | null | undefined,
+  category?: ToolCategory,
+): string {
+  const str = (key: string): string | null => {
+    const v = input?.[key];
+    return typeof v === 'string' && v ? v : null;
+  };
+  switch (category) {
+    case 'bash': return str('command') ?? '';
+    case 'edit':
+    case 'read': return str('file_path') ?? str('notebook_path') ?? str('path') ?? str('pattern') ?? '';
+    case 'web_fetch': return str('url') ?? '';
+    case 'agent': return str('prompt') ?? str('description') ?? '';
+    default:
+      // Unknown category: fall back to the most common fields so provider-
+      // named rules like Bash(...) keep working for tools we don't classify.
+      return str('command') ?? str('file_path') ?? str('url') ?? '';
+  }
+}
+
 /**
  * Match a tool rule pattern against a tool call.
- * Patterns: "Bash" matches all Bash, "Bash(npm run *)" matches commands starting with "npm run ".
- * Glob-style * wildcards are supported.
+ *
+ * `pattern` is `<tool>` or `<tool>(<glob>)` where `<tool>` is a neutral
+ * keyword (see TOOL_RULE_KEYWORDS: `shell`, `edit`, `read`, `web`, `agent`,
+ * `question`, or `mcp` for any `mcp__*` tool) matched via `category`, or a
+ * provider tool name matched by exact name / prefix. `toolCall` is
+ * `Name(specifier)` (or just `Name`); the glob matches the specifier, except
+ * for `mcp(...)` where it matches the tool name after `mcp__`.
  */
-export function matchToolRule(pattern: string, toolName: string, toolCall: string): boolean {
-  // Simple tool name match (no parentheses)
-  if (!pattern.includes('(')) {
-    return toolName === pattern || toolName.startsWith(pattern);
-  }
-  // Pattern with specifier: ToolName(specifier)
-  const match = pattern.match(/^([^(]+)\((.+)\)$/);
-  if (!match) return false;
-  const [, ruleTool, specifier] = match;
-  if (ruleTool !== toolName) return false;
-  if (specifier === '*') return true;
-  // Convert glob pattern to regex
-  const escaped = specifier.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  try {
-    return new RegExp(`^${escaped}$`).test(toolCall.slice(toolName.length + 1, -1) || '');
-  } catch {
-    return false;
-  }
+export function matchToolRule(pattern: string, toolName: string, toolCall: string, category?: ToolCategory): boolean {
+  const rule = parseToolRule(pattern);
+  if (!rule) return false;
+  const keyword = rule.tool.toLowerCase();
+  const isMcpKeyword = keyword === 'mcp';
+  const neutralCategory = TOOL_RULE_KEYWORDS[keyword];
+
+  const toolMatches = isMcpKeyword
+    ? toolName.startsWith('mcp__')
+    : (neutralCategory !== undefined && category !== undefined && neutralCategory === category)
+      || toolName === rule.tool
+      || toolName.startsWith(rule.tool);
+  if (!toolMatches) return false;
+
+  if (rule.specifier === null) return true;
+  if (rule.specifier === '*') return true;
+
+  const subject = isMcpKeyword
+    ? toolName.slice('mcp__'.length)
+    : (toolCall.startsWith(toolName + '(') && toolCall.endsWith(')')
+      ? toolCall.slice(toolName.length + 1, -1)
+      : '');
+  const re = globToRegExp(rule.specifier);
+  return re ? re.test(subject) : false;
 }
 
 /**

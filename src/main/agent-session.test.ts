@@ -70,6 +70,7 @@ vi.mock('./checkpoints.js', () => {
     pruneAfter = vi.fn().mockResolvedValue(undefined);
     resume = vi.fn().mockResolvedValue(undefined);
     cleanup = vi.fn().mockResolvedValue(undefined);
+    markCleared = vi.fn().mockResolvedValue(undefined);
     list = vi.fn().mockResolvedValue([]);
     diff = vi.fn().mockResolvedValue('');
   }
@@ -579,7 +580,7 @@ describe('AgentSessionManager event processing', () => {
     expect(sessionManager.getSession('test-destroy-autosave')).toBeUndefined();
   });
 
-  it('clearEventHistory also cleans up checkpoint refs (so /clear does not leak stale checkpoints)', async () => {
+  it('clearEventHistory keeps checkpoint refs and records a clear marker (pre-/clear turns stay restorable)', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
       id: 'test-clear-cp',
@@ -594,7 +595,8 @@ describe('AgentSessionManager event processing', () => {
     const session = sessionManager.getSession('test-clear-cp')!;
     sessionManager.clearEventHistory('test-clear-cp');
 
-    expect(session.checkpoints.cleanup).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
+    expect(session.checkpoints.markCleared).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
+    expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
 
     await sessionManager.destroySession('test-clear-cp');
   });
@@ -1332,6 +1334,51 @@ describe('AgentSessionManager.rewindFiles()', () => {
     await sessionManager.destroySession('test-rewind-emit');
   });
 
+  it('filesOnly restores the working tree and leaves the conversation, history and refs alone', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-files-only',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'keep-me', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.sendMessage('test-rewind-files-only', 'Hello');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-files-only')!;
+    const historyBefore = session.eventHistory.length;
+    const providerBefore = session.providerSessionId;
+    expect(providerBefore).not.toBeNull();
+    const control = mockAdapter.control;
+
+    await sessionManager.rewindFiles('test-rewind-files-only', 'pre-clear-uuid', { filesOnly: true });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(session.checkpoints.restore).toHaveBeenCalledWith('test-rewind-files-only', expect.any(String), 'pre-clear-uuid');
+    expect(session.checkpoints.pruneAfter).not.toHaveBeenCalled();
+    expect(session.providerSessionId).toBe(providerBefore);
+    // Nothing truncated: only the rewind marker itself was appended
+    expect(session.eventHistory.length).toBe(historyBefore + 1);
+    expect(session.eventHistory.at(-1)).toMatchObject({ type: 'rewind', filesOnly: true });
+    expect(session.eventHistory.some((e) => e.type === 'user_message')).toBe(true);
+    // The query was not restarted
+    expect(mockAdapter.control).toBe(control);
+
+    const rewindEvent = win._send.mock.calls.find(
+      (c: any[]) => c[0].includes('agent:event') && c[1]?.type === 'rewind',
+    );
+    expect(rewindEvent![1]).toMatchObject({ type: 'rewind', toMessageId: 'pre-clear-uuid', filesOnly: true });
+
+    await sessionManager.destroySession('test-rewind-files-only');
+  });
+
   it('forks the provider conversation at the last kept assistant message', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -1645,8 +1692,8 @@ describe('AgentSessionManager session controls', () => {
     return sessionManager.getSession(id)!;
   }
 
-  it('starts from descriptor defaults, overlaid with the settings thinking level, and passes them to the adapter', async () => {
-    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, defaultThinkingLevel: 'low' });
+  it('starts from descriptor defaults, overlaid with the adapter\'s saved defaults, and passes them to the adapter', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
 
     await sessionManager.createSession({ id: 'ctl-defaults', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
@@ -1659,8 +1706,8 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-defaults');
   });
 
-  it('ignores a settings thinking level the adapter does not offer', async () => {
-    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, defaultThinkingLevel: 'adaptive' });
+  it('ignores saved defaults the adapter does not offer, and other adapters\' defaults', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'adaptive', bogus: 'x' }, other: { thinking: 'low' } } });
 
     await sessionManager.createSession({ id: 'ctl-unknown-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
