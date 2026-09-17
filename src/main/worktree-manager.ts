@@ -12,6 +12,8 @@ const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
 const NPM_CACHE_DIR = '.npm-cache';
 const DEFAULT_COPY_PATTERNS = ['.env', '.env.local', '.env.development', '.npmrc', '.nvmrc'];
+/** Cap on `git fetch` when pulling the base branch — a dead network must not block session creation. */
+const FETCH_TIMEOUT_MS = 30_000;
 
 interface ManifestEntry {
   repoPath: string;
@@ -127,21 +129,8 @@ export class WorktreeManager {
     if (useExisting) {
       await git(['worktree', 'add', wtPath, branchName], repoPath);
     } else {
-      // Pull latest changes for the base branch so the worktree starts up-to-date
-      if (baseBranch) {
-        const hasRemote = await branchHasRemote(repoPath, baseBranch);
-        if (hasRemote) {
-          try {
-            await git(['fetch', 'origin', `${baseBranch}:${baseBranch}`], repoPath);
-          } catch {
-            // fetch may fail if baseBranch is currently checked out (can't update checked-out branch
-            // via fetch refspec) — fall back to fetch + merge approach
-            try {
-              await git(['fetch', 'origin', baseBranch], repoPath);
-            } catch { /* offline or no remote — proceed with local state */ }
-          }
-        }
-      }
+      // Pull the latest base branch so the new agent starts from what's on origin
+      const startPoint = baseBranch ? await this.pullBaseBranch(repoPath, baseBranch) : undefined;
 
       // Delete stale branch from a previous run if it exists (e.g. orch retry)
       const exists = await branchExists(repoPath, branchName);
@@ -163,7 +152,7 @@ export class WorktreeManager {
           await git(['branch', '-D', branchName], repoPath);
         } catch { /* best effort */ }
       }
-      await git(['worktree', 'add', '-b', branchName, wtPath, ...(baseBranch ? [baseBranch] : [])], repoPath);
+      await git(['worktree', 'add', '-b', branchName, wtPath, ...(startPoint ? [startPoint] : [])], repoPath);
     }
 
     // Generate agent-specific settings (e.g. .claude/settings.local.json)
@@ -197,6 +186,93 @@ export class WorktreeManager {
     });
 
     return info;
+  }
+
+  /**
+   * Bring `base` up to date with `origin/<base>` and return the ref the new
+   * worktree should branch from.
+   *
+   * Fetches origin, then fast-forwards the local branch: via `merge --ff-only`
+   * when it is checked out in the main repo, via `branch -f` when it is not
+   * checked out anywhere. When the local branch cannot be moved (dirty
+   * checkout, checked out in another agent's worktree) the freshly fetched
+   * remote commit is returned instead, so the agent still gets the latest
+   * changes. Offline, missing remote, or a diverged local branch fall back to
+   * the local ref — this never blocks session creation.
+   */
+  private async pullBaseBranch(repoPath: string, base: string): Promise<string> {
+    if (!(await branchHasRemote(repoPath, base))) return base;
+
+    const remote = `origin/${base}`;
+    try {
+      await git(['fetch', 'origin', base], repoPath, { timeout: FETCH_TIMEOUT_MS });
+    } catch (e) {
+      logger.warn(`Could not fetch ${remote}; starting from local ${base}`, e);
+      return base;
+    }
+
+    // Local already has everything upstream has (equal or ahead) — nothing to do
+    if (await this.isAncestor(repoPath, remote, base)) return base;
+
+    // Local has commits origin doesn't: can't fast-forward, and branching from
+    // origin would silently drop them — keep the user's ref and say so.
+    if (!(await this.isAncestor(repoPath, base, remote))) {
+      logger.warn(`${base} has diverged from ${remote}; starting from local ${base}`);
+      return base;
+    }
+
+    // Local is strictly behind. Fast-forward it if we safely can.
+    const headBranch = await git(['symbolic-ref', '--short', '-q', 'HEAD'], repoPath)
+      .then((s) => s.trim())
+      .catch(() => '');
+    let updated = false;
+    if (headBranch === base) {
+      try {
+        await git(['merge', '--ff-only', remote], repoPath);
+        updated = true;
+      } catch (e) {
+        logger.warn(`Could not fast-forward checked-out ${base} (uncommitted changes?)`, e);
+      }
+    } else if (!(await this.isCheckedOutInWorktree(repoPath, base))) {
+      try {
+        await git(['branch', '-f', base, remote], repoPath);
+        updated = true;
+      } catch (e) {
+        logger.warn(`Could not fast-forward ${base}`, e);
+      }
+    } else {
+      logger.info(`${base} is checked out in another worktree; not touching it`);
+    }
+    if (updated) {
+      logger.info(`Fast-forwarded ${base} to ${remote}`);
+      return base;
+    }
+
+    // Couldn't move the local ref: branch from the remote commit directly.
+    // Use the SHA rather than the ref name so the new branch doesn't get
+    // origin/<base> configured as its upstream.
+    const sha = (await git(['rev-parse', '--verify', `${remote}^{commit}`], repoPath)).trim();
+    logger.info(`Starting from ${remote} (${sha.slice(0, 8)}) instead of stale local ${base}`);
+    return sha;
+  }
+
+  private async isAncestor(repoPath: string, ancestor: string, descendant: string): Promise<boolean> {
+    try {
+      await git(['merge-base', '--is-ancestor', ancestor, descendant], repoPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** True when `branch` is checked out in any worktree of the repo (main checkout included). */
+  private async isCheckedOutInWorktree(repoPath: string, branch: string): Promise<boolean> {
+    try {
+      const list = await git(['worktree', 'list', '--porcelain'], repoPath);
+      return list.split('\n').some((line) => line.trim() === `branch refs/heads/${branch}`);
+    } catch {
+      return false;
+    }
   }
 
   /**

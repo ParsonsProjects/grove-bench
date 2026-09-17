@@ -24,6 +24,11 @@ vi.mock('./git.js', () => ({
   branchHasRemote: vi.fn(),
   validateBranchName: vi.fn(),
   branchExists: vi.fn(),
+  getGitIdentity: vi.fn(),
+}));
+
+vi.mock('./adapters/index.js', () => ({
+  adapterRegistry: { get: vi.fn(), getDefault: vi.fn(() => ({ generateSettings: undefined })) },
 }));
 
 vi.mock('./logger.js', () => ({
@@ -37,7 +42,7 @@ const mockFsUtils = vi.hoisted(() => ({
 }));
 vi.mock('./fs-utils.js', () => mockFsUtils);
 
-import { git } from './git.js';
+import { git, branchExists, branchHasRemote, getGitIdentity } from './git.js';
 import { WorktreeManager } from './worktree-manager.js';
 
 const mockGit = vi.mocked(git);
@@ -469,5 +474,124 @@ describe('registerDirect (direct + attached sessions)', () => {
     expect(info?.path).toBe(wtPath);
     expect(info?.branch).toBe('feature-x');
     expect(info?.direct).toBe(true);
+  });
+});
+
+describe('create — pulling the base branch', () => {
+  const wtAddCall = () => mockGit.mock.calls.find((c) => c[0][0] === 'worktree' && c[0][1] === 'add');
+  const calledWith = (...prefix: string[]) =>
+    mockGit.mock.calls.some((c) => prefix.every((p, i) => c[0][i] === p));
+
+  /** Drive git responses by command prefix; unmatched commands resolve to ''. */
+  function scriptGit(handlers: Record<string, () => Promise<string> | string>) {
+    mockGit.mockImplementation(async (args: string[]) => {
+      for (const [key, fn] of Object.entries(handlers)) {
+        if (args.join(' ').startsWith(key)) return fn();
+      }
+      return '';
+    });
+  }
+
+  beforeEach(() => {
+    mockFsUtils.pathExists.mockResolvedValue(false);
+    vi.mocked(branchExists).mockResolvedValue(false);
+    vi.mocked(branchHasRemote).mockResolvedValue(true);
+    vi.mocked(getGitIdentity).mockResolvedValue({ name: 'u', email: 'u@x' });
+  });
+
+  it('skips the network entirely when the base branch has no remote', async () => {
+    vi.mocked(branchHasRemote).mockResolvedValue(false);
+    scriptGit({});
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(calledWith('fetch')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'main']);
+  });
+
+  it('fetches origin with a timeout and falls back to the local branch when offline', async () => {
+    scriptGit({ 'fetch origin main': () => { throw new Error('network down'); } });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(mockGit).toHaveBeenCalledWith(['fetch', 'origin', 'main'], '/repo', { timeout: expect.any(Number) });
+    expect(calledWith('merge')).toBe(false);
+    expect(calledWith('branch', '-f')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'main']);
+  });
+
+  it('leaves the local branch alone when it already contains origin', async () => {
+    // origin/main is an ancestor of main → up to date (or ahead)
+    scriptGit({ 'merge-base --is-ancestor origin/main main': () => '' });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(calledWith('merge', '--ff-only')).toBe(false);
+    expect(calledWith('branch', '-f')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'main']);
+  });
+
+  it('fast-forwards the checked-out base branch in the main repo when it is behind', async () => {
+    scriptGit({
+      'merge-base --is-ancestor origin/main main': () => { throw new Error('exit 1'); },
+      'merge-base --is-ancestor main origin/main': () => '',
+      'symbolic-ref --short -q HEAD': () => 'main\n',
+    });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(mockGit).toHaveBeenCalledWith(['merge', '--ff-only', 'origin/main'], '/repo');
+    expect(calledWith('branch', '-f')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'main']);
+  });
+
+  it('branches from the fetched origin commit when the checked-out base cannot be fast-forwarded', async () => {
+    scriptGit({
+      'merge-base --is-ancestor origin/main main': () => { throw new Error('exit 1'); },
+      'merge-base --is-ancestor main origin/main': () => '',
+      'symbolic-ref --short -q HEAD': () => 'main\n',
+      'merge --ff-only origin/main': () => { throw new Error('local changes would be overwritten'); },
+      'rev-parse --verify origin/main^{commit}': () => 'abcdef1234567890\n',
+    });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'abcdef1234567890']);
+  });
+
+  it('moves a base branch that is not checked out anywhere with branch -f', async () => {
+    scriptGit({
+      'merge-base --is-ancestor origin/main main': () => { throw new Error('exit 1'); },
+      'merge-base --is-ancestor main origin/main': () => '',
+      'symbolic-ref --short -q HEAD': () => 'other\n',
+      'worktree list --porcelain': () => 'worktree /repo\nHEAD 111\nbranch refs/heads/other\n',
+    });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-f', 'main', 'origin/main'], '/repo');
+    expect(calledWith('merge', '--ff-only')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'main']);
+  });
+
+  it('does not touch a base branch checked out in another worktree; branches from origin instead', async () => {
+    scriptGit({
+      'merge-base --is-ancestor origin/main main': () => { throw new Error('exit 1'); },
+      'merge-base --is-ancestor main origin/main': () => '',
+      'symbolic-ref --short -q HEAD': () => 'other\n',
+      'worktree list --porcelain': () =>
+        'worktree /repo\nHEAD 111\nbranch refs/heads/other\n\nworktree /wt/x\nHEAD 222\nbranch refs/heads/main\n',
+      'rev-parse --verify origin/main^{commit}': () => 'fedcba0987654321\n',
+    });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(calledWith('branch', '-f')).toBe(false);
+    expect(calledWith('merge', '--ff-only')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'fedcba0987654321']);
+  });
+
+  it('keeps the local branch when it has diverged from origin', async () => {
+    scriptGit({
+      'merge-base --is-ancestor': () => { throw new Error('exit 1'); },
+    });
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(calledWith('merge', '--ff-only')).toBe(false);
+    expect(calledWith('branch', '-f')).toBe(false);
+    expect(calledWith('rev-parse')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', '-b', 'feat', expect.any(String), 'main']);
+  });
+
+  it('does not pull anything when reusing an existing branch', async () => {
+    scriptGit({});
+    await manager.create({ repoPath: '/repo', branchName: 'feat', useExisting: true, id: 'a1' });
+    expect(calledWith('fetch')).toBe(false);
+    expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', expect.any(String), 'feat']);
   });
 });
