@@ -585,7 +585,7 @@
       title="Search conversations (Ctrl+R)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-      <span class="text-xs truncate">Search chats…</span>
+      <span class="text-xs truncate">Search conversations…</span>
       <span class="ml-auto text-[10px] text-muted-foreground/40 shrink-0">Ctrl+R</span>
     </button>
   </div>
