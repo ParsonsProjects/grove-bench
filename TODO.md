@@ -67,6 +67,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Call `gh pr create` from within the app (auto-pushes the branch first)
 - [x] One-click Create PR sends a turn to the session's agent (commit → push → PR); manual dialog is the fallback for stopped sessions
 - [x] PR status watching — state, checks rollup, review decision polled in the status bar (all sessions, not just the open tab)
+- [x] Multiple PRs per session — every PR on the session's branch and on branches checked out in it (via the HEAD reflog) is listed; one primary PR (open first, newest first, or user-picked) drives alerts and auto turns
 - [x] One-click fix turns — clickable failing-checks / changes-requested badges send the agent to read CI logs or review comments and fix
 - [x] New-failure / new-comment detection with pulsing alert chips (baseline seeded on startup, one alert per pushed commit)
 - [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 attempts per commit then "needs human", collaborator-authored comments only)

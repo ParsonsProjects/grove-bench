@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, summarizeChecks, failingCheckNames, commentSignature, prStatus, prCreate, prReviewComments, GH_TIMEOUT_MS } from './gh.js';
+import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, GH_TIMEOUT_MS } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
@@ -99,7 +99,7 @@ describe('prStatus()', () => {
     const result = await prStatus('/repo', 'feat/x');
     expect(mockExeca).toHaveBeenCalledWith(
       'gh',
-      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews'],
+      ['pr', 'view', 'feat/x', '--json', 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName'],
       { cwd: '/repo', timeout: GH_TIMEOUT_MS },
     );
     expect(result).toEqual({
@@ -158,6 +158,80 @@ describe('prStatus()', () => {
   it('returns null on malformed output', async () => {
     mockExeca.mockResolvedValue({ stdout: 'not json' } as any);
     expect(await prStatus('/repo', 'feat/x')).toBeNull();
+  });
+});
+
+describe('prList()', () => {
+  const FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName';
+
+  it('lists every PR for the head branch, in any state, with head and base names', async () => {
+    mockExeca.mockResolvedValue({
+      stdout: JSON.stringify([
+        { number: 50, url: 'u50', state: 'OPEN', headRefName: 'feat/x', baseRefName: 'main', statusCheckRollup: [] },
+        { number: 41, url: 'u41', state: 'MERGED', headRefName: 'feat/x', baseRefName: 'release' },
+      ]),
+    } as any);
+
+    const result = await prList('/repo', 'feat/x');
+    expect(mockExeca).toHaveBeenCalledWith(
+      'gh',
+      ['pr', 'list', '--head', 'feat/x', '--state', 'all', '--limit', '20', '--json', FIELDS],
+      { cwd: '/repo', timeout: GH_TIMEOUT_MS },
+    );
+    expect(result.map((pr) => [pr.number, pr.state, pr.headRefName, pr.baseRefName])).toEqual([
+      [50, 'OPEN', 'feat/x', 'main'],
+      [41, 'MERGED', 'feat/x', 'release'],
+    ]);
+  });
+
+  it('returns an empty list when the branch has no PRs', async () => {
+    mockExeca.mockResolvedValue({ stdout: '[]' } as any);
+    expect(await prList('/repo', 'feat/x')).toEqual([]);
+  });
+
+  it('drops entries that are not PRs and tolerates malformed output', async () => {
+    mockExeca.mockResolvedValue({ stdout: JSON.stringify([{ number: 1, url: 'u' }, { title: 'no number' }, null]) } as any);
+    expect((await prList('/repo', 'feat/x')).map((pr) => pr.number)).toEqual([1]);
+    mockExeca.mockResolvedValue({ stdout: 'not json' } as any);
+    expect(await prList('/repo', 'feat/x')).toEqual([]);
+  });
+
+  it('throws on a gh failure so the caller keeps its last snapshot', async () => {
+    mockExeca.mockRejectedValue(Object.assign(new Error('Command failed'), { stderr: 'error connecting to api.github.com' }));
+    await expect(prList('/repo', 'feat/x')).rejects.toThrow(/gh pr list failed: error connecting/);
+  });
+});
+
+describe('sortPrs()', () => {
+  it('puts open PRs first, newest first within each group', () => {
+    const sorted = sortPrs([
+      { number: 40, url: 'u', state: 'MERGED' },
+      { number: 44, url: 'u', state: 'OPEN' },
+      { number: 47, url: 'u', state: 'CLOSED' },
+      { number: 45, url: 'u', state: 'OPEN' },
+    ]);
+    expect(sorted.map((pr) => pr.number)).toEqual([45, 44, 47, 40]);
+  });
+});
+
+describe('prsForBranches()', () => {
+  it('queries each distinct branch once and merges the results, deduplicated and sorted', async () => {
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) => {
+      const head = args[args.indexOf('--head') + 1];
+      const rows = head === 'feat/x'
+        ? [{ number: 40, url: 'u', state: 'MERGED', headRefName: 'feat/x' }, { number: 45, url: 'u', state: 'OPEN', headRefName: 'feat/x' }]
+        : [{ number: 48, url: 'u', state: 'OPEN', headRefName: 'feat/x-part-2' }];
+      return Promise.resolve({ stdout: JSON.stringify(rows) });
+    }) as any);
+
+    const result = await prsForBranches('/repo', ['feat/x', 'feat/x-part-2', 'feat/x', '']);
+    expect(mockExeca).toHaveBeenCalledTimes(2);
+    expect(result.map((pr) => pr.number)).toEqual([48, 45, 40]);
+  });
+
+  it('returns an empty list when no branch has a PR', async () => {
+    mockExeca.mockResolvedValue({ stdout: '[]' } as any);
+    expect(await prsForBranches('/repo', ['feat/x'])).toEqual([]);
   });
 });
 

@@ -7,6 +7,10 @@ The Activity tab (`Alt+1`) is the primary view for interacting with your agent. 
 ### User Messages
 Your messages appear with a blue left border. These are the instructions and follow-ups you send to the agent.
 
+Hover a message to reveal **Rewind**. It opens the rewind dialog with that message selected and a preview of everything that would be undone: files go back to how they were just before that message, and the message plus every turn after it are dropped. The message text is placed back in the prompt box so you can rephrase it and try again. Tick **Conversation only** in the dialog to keep the files and only reset the conversation. The Checkpoints tab (`Alt+3`) offers the same rewind with a full per-file diff.
+
+A checkpoint is taken every time you send a message, before the agent starts working. If one could not be taken (for example a git error in the worktree), a notice appears under the message and Rewind is not offered for it.
+
 ### Assistant Responses
 The agent's text responses are rendered as markdown with syntax highlighting for code blocks.
 

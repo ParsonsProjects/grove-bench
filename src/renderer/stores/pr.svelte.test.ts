@@ -24,8 +24,9 @@ function setStatus(status: SessionStatus) {
   sessionStore.sessions = [{ id: SID, branch: 'feat/x', repoPath: 'C:/repo', status }];
 }
 
-async function refreshWith(info: PrInfo) {
-  mockGroveBench.getPrInfo.mockResolvedValue(info);
+/** Refresh with one or more PRs (primary first, as main sorts them). */
+async function refreshWith(...prs: PrInfo[]) {
+  mockGroveBench.getPrs.mockResolvedValue(prs);
   await prStore.refresh(SID, true);
 }
 
@@ -89,7 +90,7 @@ describe('refresh — partial failure', () => {
     await refreshWith(pr({ number: 7 }));
     expect(prStore.getPr(SID)?.number).toBe(7);
 
-    mockGroveBench.getPrInfo.mockRejectedValue(new Error('gh pr view failed: timed out'));
+    mockGroveBench.getPrs.mockRejectedValue(new Error('gh pr list failed: timed out'));
     mockGroveBench.getGitSyncStatus.mockResolvedValue({ upstream: 'origin/feat/x', ahead: 2, behind: 0 });
     await prStore.refresh(SID, true);
 
@@ -101,7 +102,7 @@ describe('refresh — partial failure', () => {
 
   it('clears the stale flag on the next successful fetch', async () => {
     setStatus('running');
-    mockGroveBench.getPrInfo.mockRejectedValue(new Error('offline'));
+    mockGroveBench.getPrs.mockRejectedValue(new Error('offline'));
     await prStore.refresh(SID, true);
     expect(prStore.fetchFailedBySession[SID]).toBe(true);
 
@@ -113,10 +114,96 @@ describe('refresh — partial failure', () => {
   it('still records a "no PR" answer as null', async () => {
     setStatus('running');
     await refreshWith(pr({ number: 7 }));
-    mockGroveBench.getPrInfo.mockResolvedValue(null);
-    await prStore.refresh(SID, true);
+    await refreshWith();
     expect(prStore.getPr(SID)).toBeNull();
+    expect(prStore.getPrs(SID)).toEqual([]);
     expect(prStore.fetchFailedBySession[SID]).toBeFalsy();
+  });
+});
+
+describe('multiple PRs per session', () => {
+  const open = () => pr({ number: 50, state: 'OPEN', headRefName: 'feat/x', baseRefName: 'main', commentSignature: ['c50'] });
+  const merged = () => pr({ number: 41, state: 'MERGED', headRefName: 'feat/x', baseRefName: 'main', commentSignature: ['c41'] });
+  const stacked = () => pr({ number: 52, state: 'OPEN', headRefName: 'feat/x-part-2', baseRefName: 'feat/x', commentSignature: ['c52'] });
+
+  it('follows the first (main-sorted) PR as primary and lists the rest', async () => {
+    setStatus('running');
+    await refreshWith(open(), merged());
+    expect(prStore.getPr(SID)?.number).toBe(50);
+    expect(prStore.getPrs(SID).map((p) => p.number)).toEqual([50, 41]);
+  });
+
+  it('lets the user pick another PR as primary and forgets the pick once it is gone', async () => {
+    setStatus('running');
+    await refreshWith(open(), merged());
+    prStore.setPrimary(SID, 41);
+    expect(prStore.getPr(SID)?.number).toBe(41);
+
+    prStore.setPrimary(SID, 999); // unknown → ignored
+    expect(prStore.getPr(SID)?.number).toBe(41);
+
+    await refreshWith(open()); // 41 dropped off the list → back to the head
+    expect(prStore.getPr(SID)?.number).toBe(50);
+  });
+
+  it('only watches the primary PR: feedback on another PR raises no alert', async () => {
+    setStatus('running');
+    await refreshWith(open(), stacked()); // seeds #50 only
+    await refreshWith(open(), pr({ ...stacked(), commentSignature: ['c52', 'c52b'] }));
+    expect(prStore.getAlerts(SID)).toEqual([]);
+    expect(mockGroveBench.notify).not.toHaveBeenCalled();
+  });
+
+  it('seeds a newly chosen primary from its current feedback instead of replaying it', async () => {
+    setStatus('running');
+    await refreshWith(open(), pr({ ...stacked(), commentSignature: ['c52', 'c52b'] }));
+    prStore.setPrimary(SID, 52); // seeds #52 silently
+    expect(prStore.getAlerts(SID)).toEqual([]);
+
+    await refreshWith(open(), pr({ ...stacked(), commentSignature: ['c52', 'c52b', 'c52c'] }));
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'new_comments', count: 1, prNumber: 52 }]);
+  });
+
+  it('keeps alerts with their PR: switching primary hides them, switching back shows them', async () => {
+    setStatus('running');
+    await refreshWith(open(), stacked());
+    await refreshWith(pr({ ...open(), commentSignature: ['c50', 'c50b'] }), stacked());
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'new_comments', prNumber: 50 }]);
+
+    prStore.setPrimary(SID, 52);
+    expect(prStore.getAlerts(SID)).toEqual([]);
+    prStore.setPrimary(SID, 50);
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'new_comments', prNumber: 50 }]);
+  });
+
+  it('remembers each PR\'s own baseline across primary switches', async () => {
+    setStatus('running');
+    await refreshWith(open(), stacked()); // #50 seeded with c50
+    prStore.setPrimary(SID, 52); // #52 seeded with c52
+    prStore.setPrimary(SID, 50);
+    await refreshWith(open(), stacked()); // nothing new on #50
+    expect(prStore.getAlerts(SID)).toEqual([]);
+  });
+
+  it('addresses the primary PR on its own head branch, not the session branch', async () => {
+    setStatus('running');
+    await refreshWith(stacked(), open());
+    mockGroveBench.getPrReviewComments.mockResolvedValue([
+      { id: 'r1', author: 'reviewer', authorAssociation: 'MEMBER', body: 'please rename this' },
+    ]);
+    expect(await prStore.addressReviewsWithAgent(SID)).toBe('sent');
+    expect(mockGroveBench.getPrReviewComments).toHaveBeenCalledWith(SID, 52);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, expect.stringContaining('PR #52 for this branch (feat/x-part-2)'));
+  });
+
+  it('makes a PR created from the app the primary, ahead of any pick', async () => {
+    setStatus('running');
+    await refreshWith(open(), merged());
+    prStore.setPrimary(SID, 41);
+    mockGroveBench.createPr.mockResolvedValue(pr({ number: 60, state: 'OPEN' }));
+    await prStore.createPr(SID, { title: 't', body: 'b', base: 'main' });
+    expect(prStore.getPr(SID)?.number).toBe(60);
+    expect(prStore.getPrs(SID).map((p) => p.number)).toEqual([60, 50, 41]);
   });
 });
 
@@ -143,8 +230,8 @@ describe('global sweep', () => {
   });
 
   it('moves on to the next session when one fetch never resolves', async () => {
-    mockGroveBench.getPrInfo.mockImplementation((id: string) =>
-      id === A ? new Promise<never>(() => {}) : Promise.resolve(pr({ number: 42 })));
+    mockGroveBench.getPrs.mockImplementation((id: string) =>
+      id === A ? new Promise<never>(() => {}) : Promise.resolve([pr({ number: 42 })]));
     prStore.startGlobalPolling(() => [A, B]);
 
     await vi.advanceTimersByTimeAsync(60_000); // first sweep starts; A hangs
@@ -156,9 +243,9 @@ describe('global sweep', () => {
 
   it('re-arms the next sweep after a hung session instead of stopping for good', async () => {
     let calls = 0;
-    mockGroveBench.getPrInfo.mockImplementation((id: string) => {
+    mockGroveBench.getPrs.mockImplementation((id: string) => {
       calls++;
-      return id === A ? new Promise<never>(() => {}) : Promise.resolve(pr());
+      return id === A ? new Promise<never>(() => {}) : Promise.resolve([pr()]);
     });
     prStore.startGlobalPolling(() => [A, B]);
 
@@ -169,17 +256,17 @@ describe('global sweep', () => {
   });
 
   it('skips sweeps while hidden and runs one immediately when shown again', async () => {
-    mockGroveBench.getPrInfo.mockResolvedValue(pr({ number: 9 }));
+    mockGroveBench.getPrs.mockResolvedValue([pr({ number: 9 })]);
     prStore.startGlobalPolling(() => [A]);
 
     hidden = true;
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(mockGroveBench.getPrInfo).not.toHaveBeenCalled();
+    expect(mockGroveBench.getPrs).not.toHaveBeenCalled();
 
     hidden = false;
     document.dispatchEvent(new Event('visibilitychange'));
     await vi.advanceTimersByTimeAsync(0);
-    expect(mockGroveBench.getPrInfo).toHaveBeenCalledWith(A);
+    expect(mockGroveBench.getPrs).toHaveBeenCalledWith(A);
     expect(prStore.getPr(A)?.number).toBe(9);
   });
 });
