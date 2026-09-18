@@ -631,11 +631,11 @@ export class WorktreeManager {
       const manifest = await this.loadManifest();
       const entry = manifest[id];
       if (!entry) throw new Error(`Worktree ${id} not found`);
-      throw new Error(`Session ${id} is not active`);
+      throw new Error(`Conversation ${id} is not active`);
     }
 
     if (info.direct) {
-      throw new Error('Cannot rename branch for direct sessions');
+      throw new Error('Cannot rename branch for direct conversations');
     }
 
     const oldName = info.branch;

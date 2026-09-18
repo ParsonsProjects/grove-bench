@@ -35,8 +35,8 @@ describe('formatMcpActionError', () => {
   });
 
   it('passes through other errors with the IPC prefix stripped', () => {
-    const err = new Error("Error invoking remote method 'agent:mcpToggle': Error: MCP server control is not available for this session");
-    expect(formatMcpActionError(err, 'disable', 'x')).toBe('MCP server control is not available for this session');
+    const err = new Error("Error invoking remote method 'agent:mcpToggle': Error: MCP server control is not available for this conversation");
+    expect(formatMcpActionError(err, 'disable', 'x')).toBe('MCP server control is not available for this conversation');
   });
 
   it('handles non-Error and empty throws', () => {

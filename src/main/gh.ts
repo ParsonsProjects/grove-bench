@@ -59,7 +59,10 @@ export function resetGhLoginCacheForTests(): void {
   cachedLogin = null;
 }
 
-const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews';
+const PR_VIEW_FIELDS = 'number,url,state,isDraft,title,reviewDecision,statusCheckRollup,headRefOid,comments,reviews,headRefName,baseRefName';
+/** Upper bound on PRs read per head branch. A branch rarely has more than a
+ *  handful (GitHub allows one open PR per head+base pair); the rest are history. */
+const PR_LIST_LIMIT = 20;
 
 const PASSED_VERDICTS = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
 const FAILED_VERDICTS = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -112,10 +115,31 @@ export function summarizeChecks(rollup: unknown): PrChecksSummary | null {
   return summary;
 }
 
+/** Shape one gh PR JSON object into PrInfo; null when it isn't a PR. */
+function parsePr(data: Record<string, any>, selfLogin?: string | null): PrInfo | null {
+  if (!data || typeof data !== 'object' || !data.number || !data.url) return null;
+  return {
+    number: data.number,
+    url: data.url,
+    state: data.state,
+    isDraft: data.isDraft === true,
+    title: data.title,
+    reviewDecision: data.reviewDecision ?? '',
+    checks: summarizeChecks(data.statusCheckRollup),
+    headSha: data.headRefOid,
+    failingChecks: failingCheckNames(data.statusCheckRollup),
+    commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
+    ...(typeof data.headRefName === 'string' && data.headRefName ? { headRefName: data.headRefName } : {}),
+    ...(typeof data.baseRefName === 'string' && data.baseRefName ? { baseRefName: data.baseRefName } : {}),
+  };
+}
+
 /** PR state for a branch; null when no PR exists. Any other gh failure
  *  (offline, auth, timeout) throws so the caller can keep its last good
  *  snapshot and flag it stale, rather than showing "no PR" for a branch
  *  that has one.
+ *  When the branch has several PRs, gh picks one for us: open ones first,
+ *  then newest created. Use prsForBranches to see them all.
  *  selfLogin (when known) excludes that user's own comments/reviews from the
  *  new-feedback signature — see commentSignature. */
 export async function prStatus(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo | null> {
@@ -128,23 +152,54 @@ export async function prStatus(repoPath: string, branch: string, selfLogin?: str
     throw new Error(`gh pr view failed: ${err.stderr?.trim() || err.message || String(e)}`);
   }
   try {
-    const data = JSON.parse(stdout);
-    if (!data.number || !data.url) return null;
-    return {
-      number: data.number,
-      url: data.url,
-      state: data.state,
-      isDraft: data.isDraft === true,
-      title: data.title,
-      reviewDecision: data.reviewDecision ?? '',
-      checks: summarizeChecks(data.statusCheckRollup),
-      headSha: data.headRefOid,
-      failingChecks: failingCheckNames(data.statusCheckRollup),
-      commentSignature: commentSignature(data.comments, data.reviews, selfLogin),
-    };
+    return parsePr(JSON.parse(stdout), selfLogin);
   } catch {
     return null;
   }
+}
+
+/** Every PR (open, merged, or closed) whose head is `branch`. Empty when
+ *  none exist; throws on any gh failure, like prStatus. */
+export async function prList(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo[]> {
+  let stdout: string;
+  try {
+    stdout = await gh(['pr', 'list', '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT), '--json', PR_VIEW_FIELDS], repoPath);
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string };
+    throw new Error(`gh pr list failed: ${err.stderr?.trim() || err.message || String(e)}`);
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  return data.map((item) => parsePr(item, selfLogin)).filter((pr): pr is PrInfo => pr !== null);
+}
+
+/** Order PRs primary-first: open before merged/closed, newest (highest
+ *  number) first within each group. Mirrors how gh itself picks a PR for a
+ *  branch, so the first entry is what `gh pr view <branch>` would show. */
+export function sortPrs(prs: PrInfo[]): PrInfo[] {
+  return [...prs].sort((a, b) => {
+    const aOpen = a.state === 'OPEN' ? 0 : 1;
+    const bOpen = b.state === 'OPEN' ? 0 : 1;
+    return aOpen - bOpen || b.number - a.number;
+  });
+}
+
+/** All PRs for a set of head branches (deduplicated by number), sorted with
+ *  sortPrs. One gh call per branch, in sequence, so a session with a few
+ *  branches doesn't fan out into parallel gh processes. */
+export async function prsForBranches(repoPath: string, branches: string[], selfLogin?: string | null): Promise<PrInfo[]> {
+  const byNumber = new Map<number, PrInfo>();
+  for (const branch of [...new Set(branches.filter(Boolean))]) {
+    for (const pr of await prList(repoPath, branch, selfLogin)) {
+      if (!byNumber.has(pr.number)) byNumber.set(pr.number, pr);
+    }
+  }
+  return sortPrs([...byNumber.values()]);
 }
 
 /** Inline review comments, submitted review bodies, and PR conversation comments,

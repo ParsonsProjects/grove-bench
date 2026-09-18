@@ -337,6 +337,11 @@ export interface PrInfo {
   failingChecks?: string[];
   /** Opaque ids of conversation comments + submitted reviews — diffed to detect new feedback. */
   commentSignature?: string[];
+  /** Branch the PR merges from. Not always the session's recorded branch: the
+   *  agent may open a PR from another branch it checked out in the session. */
+  headRefName?: string;
+  /** Branch the PR merges into. Two open PRs from one head differ only here. */
+  baseRefName?: string;
 }
 
 /** A review comment or review body on a PR (flattened for prompts/UI). */
@@ -795,7 +800,10 @@ export interface GroveBenchAPI {
   getGitStatus(sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult>;
 
   // PR info
-  getPrInfo(sessionId: string): Promise<PrInfo | null>;
+  /** Every PR tied to the session — its branch plus branches checked out in
+   *  it since it started — ordered primary first (open before closed/merged,
+   *  newest first within each). Empty when none exist. */
+  getPrs(sessionId: string): Promise<PrInfo[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
 
@@ -1230,7 +1238,7 @@ export const IPC = {
   GIT_CHERRY_PICK: 'git:cherryPick',
   GIT_SQUASH: 'git:squash',
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
-  PR_INFO: 'pr:info',
+  PR_LIST: 'pr:list',
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   AGENT_SET_MODEL: 'agent:setModel',

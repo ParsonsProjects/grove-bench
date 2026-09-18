@@ -25,7 +25,10 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
+  /** The primary PR — what the pill, alerts, and automation follow. */
   let prInfo = $derived(prStore.getPr(sessionId));
+  /** The session's other PRs (replaced, stacked, or from another branch). */
+  let otherPrs = $derived(prStore.getPrs(sessionId).filter((p) => p.number !== prInfo?.number));
   let gitSync = $derived(prStore.getSync(sessionId));
   let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
   let createPrOpen = $state(false);
@@ -464,7 +467,7 @@
       name: s.name,
       description: s.description,
       scope: 'project',
-      notes: `${s.draftInstructions}\n\nEvidence from past sessions (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
+      notes: `${s.draftInstructions}\n\nEvidence from past conversations (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
     });
     messageStore.addUserMessage(sessionId, prompt);
     window.groveBench.sendMessage(sessionId, prompt);
@@ -518,7 +521,9 @@
     if (createPrMenuOpen && branchStackRef && !branchStackRef.contains(target)) {
       createPrMenuOpen = false;
     }
-    if (prPopoverOpen && branchStackRef && !branchStackRef.contains(target)) {
+    // Same isConnected guard: "watch" on another PR re-keys the list, so the
+    // clicked row is gone from the DOM by the time the click bubbles here.
+    if (prPopoverOpen && branchStackRef && target.isConnected && !branchStackRef.contains(target)) {
       prPopoverOpen = false;
     }
   }
@@ -844,7 +849,7 @@
                     onclick={() => mcpAction(server.name, 'disable')}
                     disabled={mcpBusy[server.name]}
                     class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
-                    title="Disconnect this server for the rest of the session"
+                    title="Disconnect this server for the rest of the conversation"
                   >
                     Disconnect
                   </button>
@@ -873,7 +878,7 @@
             : 'bg-green-500'}"></span>
         Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
         {#if suggestions.length > 0}
-          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your sessions">+{suggestions.length}</span>
+          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your conversations">+{suggestions.length}</span>
         {/if}
       </button>
 
@@ -886,7 +891,7 @@
                 onclick={analyzeSuggestions}
                 disabled={analyzingSuggestions}
                 class="text-blue-400/80 hover:text-blue-300 transition-colors disabled:opacity-50"
-                title="Mine this repo's session history for recurring workflows and suggest skills"
+                title="Mine this project's conversation history for recurring workflows and suggest skills"
               >
                 {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
               </button>
@@ -907,7 +912,7 @@
           {#if suggestions.length > 0}
             <div class="mb-2 pb-2 border-b border-border">
               <div class="text-[10px] uppercase tracking-wide text-blue-400/80 mb-1.5">
-                Suggested from your sessions
+                Suggested from your conversations
               </div>
               <div class="space-y-1.5">
                 {#each suggestions as suggestion (suggestion.id)}
@@ -930,7 +935,7 @@
                         class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
                         title={canAskAgent
                           ? 'Ask the agent to write this skill, with the mined evidence as notes'
-                          : 'Needs a running, idle agent session'}
+                          : 'Needs a running, idle conversation'}
                       >
                         Agent
                       </button>
@@ -996,7 +1001,7 @@
 
           <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
             <span class="text-muted-foreground/50 text-[10px] flex-1">
-              Applies to all repos, when a session's agent (re)starts — running turns keep their current skills.
+              Applies to all projects, when a conversation's agent (re)starts — running turns keep their current skills.
             </span>
             <button
               onclick={() => { skillsExpanded = false; addSkillOpen = true; }}
@@ -1059,11 +1064,14 @@
           <button
             onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { addressReviewsNotice = null; fixCiNotice = null; } }}
             class="flex items-center gap-1.5 {prColor} transition-colors"
-            title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}: click for checks, reviews, and automation"
+            title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}{otherPrs.length > 0 ? ` (+${otherPrs.length} more in this session)` : ''}: click for checks, reviews, and automation"
           >
             <!-- One dot: color = worst condition, pulse = unseen activity -->
             <span class="w-1.5 h-1.5 {prHealthDot} {prAlerts.length > 0 ? 'animate-pulse' : ''}"></span>
             PR #{prInfo.number}
+            {#if otherPrs.length > 0}
+              <span class="text-muted-foreground/60">+{otherPrs.length}</span>
+            {/if}
           </button>
         {:else if showCreatePr}
           <span class="flex items-center">
@@ -1110,8 +1118,8 @@
             Open ↗
           </button>
         </div>
-        <div class="text-muted-foreground/70 mt-0.5">
-          {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}
+        <div class="text-muted-foreground/70 mt-0.5 truncate" title={prInfo.headRefName ? `${prInfo.headRefName} → ${prInfo.baseRefName ?? '?'}` : undefined}>
+          {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{#if prInfo.headRefName}{' · '}{prInfo.headRefName} → {prInfo.baseRefName ?? '?'}{/if}
         </div>
         {#if prFetchFailed}
           <div class="text-orange-400/80 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
@@ -1218,6 +1226,51 @@
           {/if}
         </div>
 
+        <!-- Other PRs tied to this session: a replaced PR on the same branch,
+             a stacked PR into another base, or one the agent opened from a
+             second branch. Only the primary is watched; "watch" swaps it. -->
+        {#if otherPrs.length > 0}
+          <div class="border-t border-border pt-2 mt-2 space-y-0.5">
+            <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this session</div>
+            {#each otherPrs as other (other.number)}
+              {@const otherDot =
+                other.state === 'MERGED' ? 'bg-purple-400'
+                : other.state === 'CLOSED' ? 'bg-red-500'
+                : (other.checks?.failed ?? 0) > 0 ? 'bg-red-500'
+                : (other.checks?.pending ?? 0) > 0 ? 'bg-yellow-400'
+                : 'bg-green-500'}
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
+                <span class="w-1.5 h-1.5 {otherDot} shrink-0"></span>
+                <span
+                  class="flex-1 min-w-0 truncate"
+                  title="{other.title ? `${other.title} — ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'}"
+                >
+                  <span class="text-foreground">#{other.number}</span>
+                  <span class="text-muted-foreground/70">{other.isDraft ? 'draft' : (other.state ?? 'open').toLowerCase()}</span>
+                  {#if other.title}<span class="text-muted-foreground"> — {other.title}</span>{/if}
+                </span>
+                <button
+                  onclick={() => prStore.setPrimary(sessionId, other.number)}
+                  class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
+                  title="Follow this PR instead: the pill, alerts, and auto turns switch to it"
+                >
+                  watch
+                </button>
+                <button
+                  onclick={() => window.groveBench.openExternal(other.url)}
+                  class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
+                  title="Open on GitHub"
+                >
+                  ↗
+                </button>
+              </div>
+            {/each}
+            <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+              Alerts and auto turns follow one PR at a time.
+            </p>
+          </div>
+        {/if}
+
         <!-- Automation -->
         <div class="border-t border-border pt-2 mt-2">
           <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
@@ -1235,7 +1288,7 @@
             </label>
             <label
               class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
-              title="When repo collaborators leave new review feedback, send a turn to address it automatically"
+              title="When repository collaborators leave new review feedback, send a turn to address it automatically"
             >
               <Checkbox
                 class="size-3.5"
@@ -1246,7 +1299,7 @@
             </label>
           </div>
           <p class="text-[10px] text-muted-foreground/60 mt-1.5">
-            Auto turns run only while the session is idle; git push / gh may need to be allowed.
+            Auto turns run only while the conversation is idle; git push / gh may need to be allowed.
           </p>
         </div>
       </div>
@@ -1374,7 +1427,7 @@
           <!-- System info breakdown -->
           {#if systemInfo.tools.length > 0 || systemInfo.agents.length > 0 || systemInfo.skills.length > 0 || systemInfo.mcpServers.length > 0}
             <div class="border-t border-border pt-2.5 mt-2.5">
-              <div class="font-medium text-foreground mb-2">Session Info</div>
+              <div class="font-medium text-foreground mb-2">Conversation Info</div>
               <div class="space-y-1.5 text-muted-foreground">
                 {#if systemInfo.tools.length > 0}
                   <div class="flex justify-between">
@@ -1472,7 +1525,7 @@
       <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-56 z-50">
         <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
         <div class="space-y-1.5 text-muted-foreground">
-          <div class="flex justify-between"><span>Session finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
+          <div class="flex justify-between"><span>Conversation finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
           <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
           <div class="flex justify-between"><span>Cycle thinking level</span><kbd class="text-foreground">Alt+T</kbd></div>

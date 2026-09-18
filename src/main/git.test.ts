@@ -37,6 +37,9 @@ import {
   squashSince,
   logCommits,
   parseLogCommits,
+  currentBranch,
+  recentCheckouts,
+  parseCheckoutBranches,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -664,5 +667,61 @@ describe('branch operations', () => {
       expect(r).toEqual([{ sha: 'cccc', shortSha: 'c1', subject: 'Third' }]);
       expect(mockExeca).toHaveBeenLastCalledWith('git', ['log', '--format=%H%x1f%h%x1f%s%x1e', 'origin/main..feat/x'], { cwd: '/repo' });
     });
+  });
+});
+
+describe('currentBranch()', () => {
+  it('returns the checked-out branch name', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'feat/x\n' } as any);
+    expect(await currentBranch('/wt')).toBe('feat/x');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: '/wt' });
+  });
+
+  it('returns null when HEAD is detached or git fails', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'HEAD\n' } as any);
+    expect(await currentBranch('/wt')).toBeNull();
+    mockExeca.mockRejectedValue(new Error('not a git repo'));
+    expect(await currentBranch('/wt')).toBeNull();
+  });
+});
+
+describe('parseCheckoutBranches()', () => {
+  const raw = [
+    'HEAD@{1700000400}\tcommit: tweak',
+    'HEAD@{1700000300}\tcheckout: moving from feat/x to feat/x-part-2',
+    'HEAD@{1700000200}\tcheckout: moving from 0123456789abcdef0123456789abcdef01234567 to feat/x',
+    'HEAD@{1700000100}\tcheckout: moving from main to 0123456789abcdef0123456789abcdef01234567',
+    'HEAD@{1699999000}\tcheckout: moving from old/branch to main',
+  ].join('\n');
+
+  it('collects distinct branches from checkouts within the window, most recent first', () => {
+    expect(parseCheckoutBranches(raw, 1700000000 * 1000)).toEqual(['feat/x-part-2', 'feat/x', 'main']);
+  });
+
+  it('skips detached-HEAD SHAs and entries older than the window', () => {
+    const names = parseCheckoutBranches(raw, 1700000000 * 1000);
+    expect(names).not.toContain('old/branch');
+    expect(names.some((n) => /^[0-9a-f]{40}$/.test(n))).toBe(false);
+  });
+
+  it('includes everything when the window starts before the reflog', () => {
+    expect(parseCheckoutBranches(raw, 0)).toEqual(['feat/x-part-2', 'feat/x', 'main', 'old/branch']);
+  });
+
+  it('returns an empty list for an empty reflog', () => {
+    expect(parseCheckoutBranches('', 0)).toEqual([]);
+  });
+});
+
+describe('recentCheckouts()', () => {
+  it('reads the HEAD reflog with unix dates and parses it', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'HEAD@{1700000300}\tcheckout: moving from feat/x to feat/y\n' } as any);
+    expect(await recentCheckouts('/wt', 1700000000 * 1000)).toEqual(['feat/y', 'feat/x']);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['reflog', 'show', '--date=unix', '--format=%gd%x09%gs', 'HEAD'], { cwd: '/wt' });
+  });
+
+  it('returns an empty list when git fails', async () => {
+    mockExeca.mockRejectedValue(new Error('boom'));
+    expect(await recentCheckouts('/wt', 0)).toEqual([]);
   });
 });

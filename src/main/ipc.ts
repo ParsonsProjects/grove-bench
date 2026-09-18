@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
@@ -9,8 +9,8 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
-import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
@@ -115,7 +115,7 @@ export function registerHandlers() {
 
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
-      title: 'Select Git Repository',
+      title: 'Select a project folder (git repository)',
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
@@ -140,7 +140,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
     const activeSessions = sessionManager.getSessionsByRepo(repoPath);
     if (activeSessions.length > 0) {
-      throw new Error('Cannot remove repo while it has active sessions');
+      throw new Error('Cannot remove a project while it has active conversations');
     }
 
     const orphans = await worktreeManager.cleanupOrphans(repoPath);
@@ -163,7 +163,7 @@ export function registerHandlers() {
       let checkoutPath = opts.repoPath;
       if (opts.attachToSessionId) {
         const src = await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId);
-        if (!src) throw new Error(`Session ${opts.attachToSessionId} not found`);
+        if (!src) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
         branch = src.branch;
         checkoutPath = src.path;
       } else {
@@ -452,7 +452,7 @@ export function registerHandlers() {
         if (event.sender.isDestroyed()) return;
         event.sender.send(channel, {
           type: 'error',
-          message: 'Message not delivered: the agent is not connected. Send it again once the session shows as connected.',
+          message: 'Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.',
         } as import('../shared/types.js').AgentEvent);
         event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
       }
@@ -515,7 +515,7 @@ export function registerHandlers() {
       throw new Error(`${adapter.displayName} does not support adding skills`);
     }
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
-    if (!root) throw new Error('No project root available for this session');
+    if (!root) throw new Error('No project root available for this conversation');
     return adapter.addSkill(root, def);
   });
 
@@ -694,7 +694,7 @@ export function registerHandlers() {
       await shell.openPath(wt.path);
       return;
     }
-    throw new Error('Session not found');
+    throw new Error('Conversation not found');
   });
 
   // ─── File revert & diff (for changes review panel) ───
@@ -984,14 +984,32 @@ export function registerHandlers() {
 
   // ─── PR info ───
 
-  ipcMain.handle(IPC.PR_INFO, async (_event, sessionId: string) => {
+  /** Head branches whose PRs belong to this session: the recorded branch,
+   *  whatever is checked out now, and every branch switched to inside the
+   *  checkout since the session started (the agent may open a PR from a
+   *  second branch). The repo's default branch is left out — it is never a
+   *  PR head for session work, and in direct mode it is checked out often.
+   *  Capped so a long-lived direct session doesn't turn into a gh call per
+   *  branch it ever visited. */
+  const MAX_SESSION_PR_BRANCHES = 5;
+  async function sessionPrBranches(worktree: WorktreeInfo): Promise<string[]> {
+    const [current, recent, defaultBranch] = await Promise.all([
+      currentBranch(worktree.path),
+      recentCheckouts(worktree.path, worktree.createdAt),
+      getDefaultBranch(worktree.repoPath).catch(() => null),
+    ]);
+    const ordered = [worktree.branch, current, ...recent].filter((b): b is string => !!b && b !== defaultBranch);
+    return [...new Set(ordered)].slice(0, MAX_SESSION_PR_BRANCHES);
+  }
+
+  ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return null;
+    if (!worktree) return [];
     // Own comments are excluded from the feedback signature so the agent
     // replying on the PR doesn't trigger (and then auto-answer) a "new
     // comments" event about itself.
     const selfLogin = await ghLogin();
-    return prStatus(worktree.repoPath, worktree.branch, selfLogin);
+    return prsForBranches(worktree.repoPath, await sessionPrBranches(worktree), selfLogin);
   });
 
   ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {

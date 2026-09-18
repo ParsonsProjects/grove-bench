@@ -96,7 +96,7 @@
     <Dialog.Header>
       <Dialog.Title>Add Skill</Dialog.Title>
       <Dialog.Description>
-        Package instructions the agent can invoke by name. Loaded when a session's agent (re)starts.
+        Package instructions the agent can invoke by name. Loaded when a conversation's agent (re)starts.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -120,7 +120,7 @@
               type="button"
               onclick={() => scope = 'project'}
               class="px-2.5 py-1.5 text-xs transition-colors {scope === 'project' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
-              title="Written into this session's worktree — ships with the branch and gets code review"
+              title="Written into this conversation's worktree — ships with the branch and gets code review"
             >
               Project
             </button>
@@ -128,7 +128,7 @@
               type="button"
               onclick={() => scope = 'user'}
               class="px-2.5 py-1.5 text-xs transition-colors border-l border-input {scope === 'user' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:text-foreground'}"
-              title="Written to your user profile — applies to every repo immediately"
+              title="Written to your user profile — applies to every project immediately"
             >
               User
             </button>
@@ -161,7 +161,7 @@
         <p class="text-[10px] text-muted-foreground mt-1">
           {scope === 'project'
             ? 'Project skills are written into the worktree and show up in the Changes tab.'
-            : 'User skills apply to every repo on this machine.'}
+            : 'User skills apply to every project on this machine.'}
         </p>
       </div>
 
@@ -181,7 +181,7 @@
           disabled={!canSendToAgent}
           title={canAskAgent
             ? 'Send a turn asking the agent to draft and write the skill itself (instructions above become optional notes)'
-            : 'Needs a running, idle agent session'}
+            : 'Needs a running, idle conversation'}
         >
           Ask Agent to Write It
         </Button>

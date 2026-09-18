@@ -1,14 +1,14 @@
 # Grove Bench
 
-Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A Windows-native Electron desktop app that manages concurrent AI coding sessions, each in an isolated git worktree with a dedicated PTY terminal.
+Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). A Windows-native Electron desktop app that manages concurrent AI coding conversations, each in an isolated git worktree with a dedicated PTY terminal.
 
 ## Features
 
-- **Concurrent agent sessions** — Run multiple Claude Code instances in parallel, each in its own git worktree
-- **Isolated worktrees** — Every session gets a dedicated worktree so agents never conflict
+- **Concurrent conversations** — Run multiple Claude Code instances in parallel, one per conversation, each in its own git worktree
+- **Isolated worktrees** — Every conversation gets a dedicated worktree so agents never conflict
 - **Integrated terminal** — Built-in xterm.js terminals with full PTY support
-- **Session management** — Start, monitor, and stop agent sessions from a single UI
-- **Project memory** — Persistent memory system across sessions
+- **Conversation management** — Start, monitor, and stop conversations across projects from a single UI
+- **Project memory** — Persistent notes per project, shared across conversations
 
 ## Tech Stack
 

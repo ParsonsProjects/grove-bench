@@ -1,14 +1,14 @@
 # Getting Started
 
-Grove Bench is a multi-agent git worktree orchestrator for Claude Code. It lets you run multiple AI coding sessions simultaneously, each in an isolated git worktree with its own terminal.
+Grove Bench is a multi-agent git worktree orchestrator for Claude Code. It lets you run multiple AI coding conversations at the same time, each in an isolated git worktree with its own terminal.
 
-## Adding a Repository
+## Adding a Project
 
-Click the **+ Add Repo** button at the bottom of the sidebar to add a git repository. Browse to the folder containing your project and select it. The repository will appear in the sidebar, ready for creating agent sessions.
+Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to the folder containing your git repository and select it. The project will appear in the sidebar, ready for new conversations. A project must be a git repository for now.
 
-## Creating an Agent Session
+## Starting a Conversation
 
-Click the **+ Agent** button to create a new session. You have three options:
+Click the **+ Agent** button to start a new conversation. You have three options:
 
 - **New Worktree** — Creates a new git branch and worktree for isolated work. This is the recommended approach for most tasks, as changes are completely isolated from your main branch.
 - **Existing Worktree** — Attach to a worktree that already exists on disk.
@@ -18,7 +18,7 @@ When creating a new worktree, you'll choose a base branch (e.g. `main`) and name
 
 ## Interacting with an Agent
 
-Once a session is running, type your instructions in the **prompt editor** at the bottom of the workspace. The agent will:
+Once a conversation is running, type your instructions in the **prompt editor** at the bottom of the workspace. The agent will:
 
 1. Read and understand your request
 2. Explore your codebase as needed

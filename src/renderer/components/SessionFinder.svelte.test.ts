@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 async function typeQuery(text: string) {
-  const input = screen.getByPlaceholderText('Search sessions and conversations...');
+  const input = screen.getByPlaceholderText('Search conversations and messages...');
   await fireEvent.input(input, { target: { value: text } });
   // Debounce (250ms) then the resolved promise
   await new Promise((r) => setTimeout(r, 300));
@@ -57,7 +57,7 @@ describe('SessionFinder', () => {
     await typeQuery('parser');
 
     expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledWith(['s1', 's2'], 'parser', 3);
-    expect(screen.getByText('In conversations')).toBeInTheDocument();
+    expect(screen.getByText('In messages')).toBeInTheDocument();
     // Snippet is split into highlight segments; match on the mark element
     expect(screen.getByText('parser', { selector: 'mark' })).toBeInTheDocument();
   });

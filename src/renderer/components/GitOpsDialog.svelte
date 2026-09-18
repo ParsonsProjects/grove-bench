@@ -156,7 +156,7 @@
           <Input id="gitops-onto" type="text" bind:value={rebaseOnto} placeholder={baseBranch || 'main'} list="gitops-branches" />
           <p class="text-[10px] text-muted-foreground mt-1">
             Replays this branch's commits on top of the target. Pick the base branch to catch up, or another
-            session's branch to build on its work.
+            conversation's branch to build on its work.
           </p>
         </div>
       {:else if mode === 'squash'}
@@ -196,7 +196,7 @@
       {:else}
         <div>
           <Label for="gitops-source" class="mb-1 block">Pick from branch</Label>
-          <Input id="gitops-source" type="text" bind:value={pickSource} placeholder="another session's branch" list="gitops-branches" />
+          <Input id="gitops-source" type="text" bind:value={pickSource} placeholder="another conversation's branch" list="gitops-branches" />
         </div>
         <div>
           <div class="text-[10px] text-muted-foreground mb-1">

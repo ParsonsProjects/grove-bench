@@ -390,6 +390,55 @@ export async function push(cwd: string, branch: string): Promise<void> {
   }
 }
 
+/** The branch HEAD points at, or null when detached. */
+export async function currentBranch(cwd: string): Promise<string | null> {
+  try {
+    const name = (await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).trim();
+    return name && name !== 'HEAD' ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Branches checked out in this checkout since `sinceMs` (epoch ms), most
+ *  recent first, from the HEAD reflog. Each worktree keeps its own HEAD
+ *  reflog, so this only sees switches made inside that worktree. Detached
+ *  checkouts (SHAs) are skipped. */
+export async function recentCheckouts(cwd: string, sinceMs: number): Promise<string[]> {
+  try {
+    const raw = await git(['reflog', 'show', '--date=unix', '--format=%gd%x09%gs', 'HEAD'], cwd);
+    return parseCheckoutBranches(raw, sinceMs);
+  } catch {
+    return [];
+  }
+}
+
+const REFLOG_CHECKOUT = /^HEAD@\{(\d+)\}\tcheckout: moving from (\S+) to (\S+)$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+/** Parse `git reflog show --date=unix --format=%gd%x09%gs HEAD` output into
+ *  the distinct branch names checked out at or after `sinceMs`, most recent
+ *  first. Both sides of a checkout count: the "from" branch was checked out
+ *  during the window too. */
+export function parseCheckoutBranches(raw: string, sinceMs: number): string[] {
+  const sinceSec = Math.floor(sinceMs / 1000);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (name: string) => {
+    if (name === 'HEAD' || FULL_SHA.test(name) || seen.has(name)) return;
+    seen.add(name);
+    out.push(name);
+  };
+  for (const line of raw.split('\n')) {
+    const m = REFLOG_CHECKOUT.exec(line.trim());
+    if (!m) continue;
+    if (parseInt(m[1], 10) < sinceSec) continue;
+    add(m[3]);
+    add(m[2]);
+  }
+  return out;
+}
+
 /** Local branch position vs its upstream — no network access, so `behind`
  *  reflects the last fetch. No upstream → the branch was never pushed. */
 export async function syncStatus(cwd: string): Promise<GitSyncStatus> {

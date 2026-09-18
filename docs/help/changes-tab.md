@@ -1,6 +1,6 @@
 # Changes Tab
 
-The Changes tab (`Alt+2`) shows the git status of your session's worktree, letting you review all file modifications the agent has made.
+The Changes tab (`Alt+2`) shows the git status of your conversation's worktree, letting you review all file modifications the agent has made.
 
 ## File Categories
 

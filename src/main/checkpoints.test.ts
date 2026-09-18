@@ -938,7 +938,7 @@ describe('CheckpointManager', () => {
       mockGit.mockResolvedValueOnce('');
       const mgr = new CheckpointManager();
       const result = await mgr.fullThreadDiff('sess1', '/repo');
-      expect(result).toBe('No checkpoints found for this session');
+      expect(result).toBe('No checkpoints found for this conversation');
     });
 
     it('returns "(no changes)" when the cumulative diff is empty', async () => {
