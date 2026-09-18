@@ -1045,12 +1045,14 @@ class AgentSessionManager {
       });
     }
 
-    // Notify renderer authoritatively
+    // Notify renderer authoritatively. The deny message is the user's reply
+    // to a question, so persist it with the event for history replay.
     session.emit?.({
       type: 'permission_resolved',
       requestId: decision.requestId,
       toolUseId: pending.toolUseId,
       decision: resolvedDecision,
+      ...(resolvedDecision === 'deny' && decision.message ? { message: decision.message } : {}),
     });
 
     return true;

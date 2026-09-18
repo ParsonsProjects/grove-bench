@@ -87,13 +87,17 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible({ kind: 'system', id: '3', text: 'hi' }, 'focus')).toBe(false);
   });
 
-  it('in focus mode shows only unresolved permissions and questions', () => {
+  it('in focus mode shows only unresolved permissions', () => {
     expect(isMessageVisible(permission('1', false), 'focus')).toBe(true);
     expect(isMessageVisible(permission('2', true), 'focus')).toBe(false);
-    expect(isMessageVisible(question('3', false), 'focus')).toBe(true);
-    expect(isMessageVisible(question('4', true), 'focus')).toBe(false);
     // ...but summary mode keeps resolved ones visible
     expect(isMessageVisible(permission('5', true), 'summary')).toBe(true);
+  });
+
+  it('in focus mode keeps questions whether or not they have been answered', () => {
+    expect(isMessageVisible(question('3', false), 'focus')).toBe(true);
+    // An answered question block renders the user's reply, so it stays.
+    expect(isMessageVisible(question('4', true), 'focus')).toBe(true);
   });
 
   it('in focus mode keeps user prompts, errors, and turn results', () => {
@@ -137,17 +141,18 @@ describe('filterVisibleMessages', () => {
     expect(visible).toEqual(['u1', 't1', 't2', 't3', 'r1', 'u2', 't4']);
   });
 
-  it('focus mode keeps unresolved permission/question blocks and drops resolved ones', () => {
+  it('focus mode keeps every question, unresolved permissions, and drops resolved permissions', () => {
     const turn: ChatMessage[] = [
       { kind: 'user', id: 'u1', text: 'go' },
       permission('p1', true),
       tool({ id: 'tc1', toolName: 'Bash' }),
+      question('q0', true),
       permission('p2', false),
       question('q1', false),
       text('t1'),
     ];
     const visible = filterVisibleMessages(turn, 'focus').map((m) => m.id);
-    expect(visible).toEqual(['u1', 'p2', 'q1', 't1']);
+    expect(visible).toEqual(['u1', 'q0', 'p2', 'q1', 't1']);
   });
 });
 
