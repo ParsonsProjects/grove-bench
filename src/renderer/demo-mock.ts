@@ -317,6 +317,15 @@ const api: Record<string, unknown> = {
     : null,
   getGitSyncStatus: async (id: string) => ({ upstream: id === 's-readme' ? null : 'origin', ahead: id === 's-sidebar' ? 3 : id === 's-oauth' ? 1 : 0, behind: id === 's-oauth' ? 2 : 0 }),
   listCheckpoints: async () => [],
+  getCheckpointDiff: async () => [
+    'diff --git a/src/renderer/components/Sidebar.svelte b/src/renderer/components/Sidebar.svelte',
+    '--- a/src/renderer/components/Sidebar.svelte',
+    '+++ b/src/renderer/components/Sidebar.svelte',
+    '@@ -12,7 +12,9 @@',
+    '-  <div class="w-56 flex flex-col">',
+    '+  <div class="w-72 flex flex-col">',
+    '+    <SessionSearch />',
+  ].join('\n'),
   listMcpServers: async () => [],
   listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
   getAdapterControls: async () => [
@@ -409,7 +418,7 @@ async function seedConversations() {
     ...messageStore.messagesBySession,
     // Working: mid-turn, running a test command
     's-sidebar': [
-      { kind: 'user', id: 'd1', text: 'Improve the left menu — richer context per agent, search across chats, and more space like the Grok side panel' },
+      { kind: 'user', id: 'd1', text: 'Improve the left menu — richer context per agent, search across chats, and more space like the Grok side panel', uuid: 'demo-uuid-1' },
       { kind: 'text', id: 'd2', text: 'I\'ve widened the sidebar and turned each session row into a two-line card: name on top, live context underneath. Running the test suite now to verify the new subtitle logic.', uuid: '' },
       { kind: 'tool_call', id: 'd3', toolName: 'Bash', toolInput: { command: 'npm test' }, toolUseId: 'dt1', uuid: '', pending: true },
     ],
