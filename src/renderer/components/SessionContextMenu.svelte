@@ -7,6 +7,9 @@
     action: () => void;
     variant?: 'default' | 'destructive';
     separator?: boolean;
+    /** Greyed out and inert; `title` explains why. */
+    disabled?: boolean;
+    title?: string;
   }
 
   let {
@@ -71,8 +74,11 @@
       <div class="border-t border-border my-1"></div>
     {/if}
     <button
-      onclick={() => { item.action(); onclose(); }}
+      onclick={() => { if (item.disabled) return; item.action(); onclose(); }}
+      disabled={item.disabled}
+      title={item.title}
       class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors hover:bg-accent hover:text-accent-foreground
+        disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent
         {item.variant === 'destructive' ? 'text-destructive hover:text-destructive' : ''}"
     >
       {#if item.icon === 'add'}

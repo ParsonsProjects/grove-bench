@@ -215,6 +215,16 @@ describe('Sidebar project header', () => {
     await waitFor(() => expect(screen.getByTitle('/repo-a')).toHaveTextContent('Grove Bench'));
   });
 
+  it('disables Remove Project in the menu while the project has conversations', async () => {
+    store.projects = [{ id: 'p1', name: 'repo-a', workspaces: [{ id: 'w1', path: '/repo-a', kind: 'git' }], createdAt: 1 }];
+    render(Sidebar);
+
+    await fireEvent.contextMenu(await screen.findByTitle('/repo-a'));
+    const remove = await screen.findByRole('button', { name: 'Remove Project' });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAttribute('title', 'Destroy all conversations first');
+  });
+
   it('removes a project by id once confirmed', async () => {
     store.projects = [{ id: 'p1', name: 'repo-a', workspaces: [{ id: 'w1', path: '/repo-a', kind: 'git' }], createdAt: 1 }];
     store.sessions = [];

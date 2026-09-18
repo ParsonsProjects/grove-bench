@@ -135,6 +135,8 @@
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
+    disabled?: boolean;
+    title?: string;
   }
 
   function getContextMenuItems(sessionId: string): MenuItem[] {
@@ -353,11 +355,13 @@
       { label: 'New Conversation', icon: 'add', action: () => openNewAgent(repo) },
       { label: 'Rename Project', icon: 'rename', action: () => startProjectRename(repo) },
       {
-        label: canRemove ? 'Remove Project' : 'Remove Project (destroy all conversations first)',
+        label: 'Remove Project',
         icon: 'destroy',
-        action: () => { if (canRemove) confirmRemoveRepo = repo; },
+        action: () => { confirmRemoveRepo = repo; },
         variant: 'destructive',
         separator: true,
+        disabled: !canRemove,
+        title: canRemove ? undefined : 'Destroy all conversations first',
       },
     ];
   }
