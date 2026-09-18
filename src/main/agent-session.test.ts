@@ -204,6 +204,7 @@ class MockAdapter implements AgentAdapter {
         // Interrupt keeps the process alive — the event stream stays open and
         // the handle remains valid for follow-up messages.
       }),
+      stopTask: vi.fn(async (_taskId: string) => {}),
       close: vi.fn(() => {
         done = true;
         resolveIter?.();
@@ -952,6 +953,55 @@ describe('AgentSessionManager.stopQuery()', () => {
     expect(mockAdapter.startCallCount).toBe(2);
 
     await sessionManager.destroySession('test-restart');
+  });
+});
+
+describe('AgentSessionManager.stopTask()', () => {
+  it('forwards the task id to the live handle without touching the turn', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-stop-task',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const handle = sessionManager.getSession('test-stop-task')?.queryHandle;
+
+    await sessionManager.stopTask('test-stop-task', 'bg-42');
+
+    expect((handle as any).stopTask).toHaveBeenCalledWith('bg-42');
+    expect((handle as any).interrupt).not.toHaveBeenCalled();
+    expect((handle as any).abort).not.toHaveBeenCalled();
+    expect(mockAdapter.startCallCount).toBe(1);
+    expect(sessionManager.getSession('test-stop-task')?.queryHandle).toBe(handle);
+
+    await sessionManager.destroySession('test-stop-task');
+  });
+
+  it('rejects for an unknown session', async () => {
+    await expect(sessionManager.stopTask('nope', 'bg-1')).rejects.toThrow(/not found/i);
+  });
+
+  it('rejects when the handle cannot stop tasks', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-stop-task-unsupported',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('test-stop-task-unsupported')!;
+    delete (session.queryHandle as any).stopTask;
+
+    await expect(sessionManager.stopTask('test-stop-task-unsupported', 'bg-1')).rejects.toThrow(/cannot stop/i);
+
+    await sessionManager.destroySession('test-stop-task-unsupported');
   });
 });
 

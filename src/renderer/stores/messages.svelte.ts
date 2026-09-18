@@ -1292,6 +1292,10 @@ class MessageStore {
         backgroundTaskStore.progress(sessionId, event);
         break;
 
+      case 'background_tasks_changed':
+        backgroundTaskStore.reconcile(sessionId, event);
+        break;
+
       case 'task_notification':
         this.onTaskNotification(sessionId, event);
         break;
@@ -1585,7 +1589,9 @@ class MessageStore {
       isError: event.isError,
       errors: event.errors,
     });
-    backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
+    // Background tasks are not resolved here: they outlive the turn (and an
+    // interrupt), and the SDK reports their end via task_notification /
+    // background_tasks_changed. Only process_exit drops them as stale.
     gitStatusStore.scheduleRefresh(sessionId, 100);
 
     // Turn finished — the agent is free for the next queued prompt.

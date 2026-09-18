@@ -141,6 +141,9 @@ export interface AgentQueryHandle {
    *  or resume). Optional — adapters that can't interrupt in place are stopped
    *  via close()/abort() and a fresh query instead. */
   interrupt?(): Promise<void>;
+  /** Stop a single running background task by id. The adapter emits a
+   *  task_notification with taskStatus 'stopped' once it is gone. Optional. */
+  stopTask?(taskId: string): Promise<void>;
   /** The provider-specific session ID (for resumption), available after system_init */
   getSessionId(): string | null;
   /** Signal no more messages — for single-shot sessions */

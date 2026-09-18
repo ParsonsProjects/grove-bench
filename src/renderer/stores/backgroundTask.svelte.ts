@@ -7,6 +7,8 @@ export interface BackgroundTask {
   summary?: string;
   lastToolName?: string;
   status: 'running' | 'completed' | 'failed' | 'stopped';
+  /** A stop request is in flight; cleared when the task ends or the request fails. */
+  stopping?: boolean;
   totalTokens: number;
   toolUses: number;
   durationMs: number;
@@ -52,6 +54,57 @@ class BackgroundTaskStore {
     this.tasksBySession[sessionId] = { ...tasks };
   }
 
+  /**
+   * Ask the main process to stop one running task. The task stays listed as
+   * running (with `stopping` set) until the SDK's task_notification arrives.
+   * Rethrows so the caller can surface the failure.
+   */
+  async stop(sessionId: string, taskId: string): Promise<void> {
+    const task = this.tasksBySession[sessionId]?.[taskId];
+    if (!task || task.status !== 'running' || task.stopping) return;
+    this.setStopping(sessionId, taskId, true);
+    try {
+      await window.groveBench.stopBackgroundTask(sessionId, taskId);
+    } catch (err) {
+      this.setStopping(sessionId, taskId, false);
+      throw err;
+    }
+  }
+
+  private setStopping(sessionId: string, taskId: string, stopping: boolean): void {
+    const tasks = this.tasksBySession[sessionId];
+    const task = tasks?.[taskId];
+    if (!task) return;
+    this.tasksBySession[sessionId] = { ...tasks, [taskId]: { ...task, stopping } };
+  }
+
+  /**
+   * Apply the SDK's authoritative live-task list (replace semantics): running
+   * tasks it no longer lists are dropped, unknown ones it lists are added.
+   * Finished tasks are left alone; their auto-remove timer handles them.
+   */
+  reconcile(sessionId: string, event: Extract<AgentEvent, { type: 'background_tasks_changed' }>): void {
+    const tasks = this.tasksBySession[sessionId] ?? {};
+    const live = new Map(event.tasks.map((t) => [t.taskId, t]));
+    const next: Record<string, BackgroundTask> = {};
+    for (const [id, task] of Object.entries(tasks)) {
+      if (task.status !== 'running' || live.has(id)) next[id] = task;
+    }
+    for (const [id, t] of live) {
+      if (next[id]) continue;
+      next[id] = {
+        taskId: id,
+        description: t.description,
+        taskType: t.taskType,
+        status: 'running',
+        totalTokens: 0,
+        toolUses: 0,
+        durationMs: 0,
+      };
+    }
+    this.tasksBySession[sessionId] = next;
+  }
+
   progress(sessionId: string, event: Extract<AgentEvent, { type: 'task_progress' }>): void {
     const tasks = this.tasksBySession[sessionId] ?? {};
     const existing = tasks[event.taskId];
@@ -80,6 +133,7 @@ class BackgroundTaskStore {
     tasks[event.taskId] = {
       ...(prev ?? { taskId: event.taskId, description: '' }),
       status: event.taskStatus,
+      stopping: false,
       summary: event.summary,
       totalTokens: event.totalTokens ?? prev?.totalTokens ?? 0,
       toolUses: event.toolUses ?? prev?.toolUses ?? 0,
@@ -103,8 +157,10 @@ class BackgroundTaskStore {
   }
 
   /**
-   * Remove tasks still marked 'running' after the session has gone idle. Handles
-   * cases where the agent exited without a task_notification for in-flight tasks.
+   * Remove tasks still marked 'running' once the agent process is gone (exit
+   * or history replay of a dead session). Not called on a plain turn result:
+   * background tasks legitimately outlive the turn that started them, and an
+   * interrupt spares them (perTaskStopAffordance), so they must stay listed.
    */
   resolveStale(sessionId: string, isRunning: boolean): void {
     if (isRunning) return;

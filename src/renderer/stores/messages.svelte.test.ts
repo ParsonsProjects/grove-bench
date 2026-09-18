@@ -668,6 +668,36 @@ describe('ingestEvent — background tasks', () => {
     expect(tasks[0].status).toBe('completed');
     expect(tasks[0].summary).toBe('Found 3 endpoints');
   });
+
+  it('keeps running tasks across a turn result (they outlive the turn and survive an interrupt)', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'Long job' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 1 } as AgentEvent);
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    const tasks = backgroundTaskStore.get(SID);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].status).toBe('running');
+  });
+
+  it('drops running tasks once the agent process exits', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'Long job' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);
+
+    expect(backgroundTaskStore.get(SID)).toHaveLength(0);
+  });
+
+  it('applies background_tasks_changed as the authoritative task list', () => {
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', description: 'One' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-2', description: 'Two' } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'background_tasks_changed',
+      tasks: [{ taskId: 'bg-2', description: 'Two' }],
+    } as AgentEvent);
+
+    expect(backgroundTaskStore.get(SID).map((t) => t.taskId)).toEqual(['bg-2']);
+  });
 });
 
 describe('ingestEvent — prompt_suggestion', () => {
@@ -1152,14 +1182,26 @@ describe('resolveStaleToolCalls', () => {
 
 describe('background task cleanup (delegates to backgroundTaskStore)', () => {
   // resolveStale's own logic is covered in backgroundTask.svelte.test.ts; this
-  // guards that a result event still triggers cleanup of orphaned running tasks.
-  it('result event cleans up orphaned running bg tasks', () => {
+  // guards that only a process exit (not a turn result) cleans up orphaned
+  // running tasks, since background tasks outlive the turn and an interrupt.
+  it('result event leaves running bg tasks alone', () => {
+    backgroundTaskStore.tasksBySession[SID] = {
+      't1': { taskId: 't1', description: 'still alive', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
+    };
+    messageStore.setIsRunning(SID, true);
+
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 100 } as any);
+
+    expect(backgroundTaskStore.get(SID)).toHaveLength(1);
+  });
+
+  it('process_exit cleans up orphaned running bg tasks', () => {
     backgroundTaskStore.tasksBySession[SID] = {
       't1': { taskId: 't1', description: 'orphan', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 },
     };
     messageStore.setIsRunning(SID, true);
 
-    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', result: '', totalCostUsd: 0, durationMs: 100 } as any);
+    messageStore.ingestEvent(SID, { type: 'process_exit' } as any);
 
     expect(backgroundTaskStore.get(SID)).toHaveLength(0);
   });

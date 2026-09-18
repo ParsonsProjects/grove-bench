@@ -1338,6 +1338,21 @@ class AgentSessionManager {
   }
 
   /**
+   * Stop a single background task without touching the current turn. Throws
+   * when the session has no live handle or the adapter can't stop tasks, so
+   * the renderer can surface the failure instead of silently doing nothing.
+   */
+  async stopTask(id: string, taskId: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session not found: ${id}`);
+    const handle = session.queryHandle;
+    if (!handle || typeof handle.stopTask !== 'function') {
+      throw new Error('This session cannot stop background tasks');
+    }
+    await handle.stopTask(taskId);
+  }
+
+  /**
    * Stop the current query but keep the session alive so the user can send
    * follow-up messages without losing state or remounting the UI.
    */
