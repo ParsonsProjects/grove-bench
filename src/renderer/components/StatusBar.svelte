@@ -521,7 +521,9 @@
     if (createPrMenuOpen && branchStackRef && !branchStackRef.contains(target)) {
       createPrMenuOpen = false;
     }
-    if (prPopoverOpen && branchStackRef && !branchStackRef.contains(target)) {
+    // Same isConnected guard: "watch" on another PR re-keys the list, so the
+    // clicked row is gone from the DOM by the time the click bubbles here.
+    if (prPopoverOpen && branchStackRef && target.isConnected && !branchStackRef.contains(target)) {
       prPopoverOpen = false;
     }
   }
@@ -1117,8 +1119,7 @@
           </button>
         </div>
         <div class="text-muted-foreground/70 mt-0.5 truncate" title={prInfo.headRefName ? `${prInfo.headRefName} → ${prInfo.baseRefName ?? '?'}` : undefined}>
-          {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{#if prInfo.headRefName}
-            · {prInfo.headRefName} → {prInfo.baseRefName ?? '?'}{/if}
+          {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{#if prInfo.headRefName}{' · '}{prInfo.headRefName} → {prInfo.baseRefName ?? '?'}{/if}
         </div>
         {#if prFetchFailed}
           <div class="text-orange-400/80 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
