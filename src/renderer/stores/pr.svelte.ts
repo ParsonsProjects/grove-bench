@@ -23,7 +23,9 @@ type PrAlertInput =
   | { kind: 'new_comments'; count: number }
   | { kind: 'needs_human'; reason: string };
 
-export type PrAlert = PrAlertInput & { id: number };
+/** Alerts belong to the PR they were raised for, so switching the primary
+ *  PR hides the other PR's alerts rather than mislabelling them. */
+export type PrAlert = PrAlertInput & { id: number; prNumber: number };
 
 export interface PrAutoConfig {
   fixCi: boolean;
@@ -32,9 +34,19 @@ export interface PrAutoConfig {
 
 /** PR + branch-sync state per session. Polls all sessions once App starts the
  *  global sweep; detects new CI failures / review feedback and either surfaces
- *  an alert or (when auto mode is on) sends a fix turn to the session's agent. */
+ *  an alert or (when auto mode is on) sends a fix turn to the session's agent.
+ *
+ *  A session can have several PRs: one replaced by another on the same
+ *  branch, stacked PRs from one branch into different bases, or a PR the
+ *  agent opened from a second branch. All are listed, but only the *primary*
+ *  PR is watched — alerts, auto-fix, and the agent actions target it. The
+ *  primary is the first entry of the (main-sorted) list: open before
+ *  merged/closed, newest first — unless the user picks another one. */
 class PrStore {
-  prBySession = $state<Record<string, PrInfo | null>>({});
+  prsBySession = $state<Record<string, PrInfo[]>>({});
+  /** User-chosen primary PR number per session; falls back to the list head
+   *  when unset or no longer in the list. */
+  primaryBySession = $state<Record<string, number>>({});
   syncBySession = $state<Record<string, GitSyncStatus>>({});
   alertsBySession = $state<Record<string, PrAlert[]>>({});
   autoBySession = $state<Record<string, PrAutoConfig>>({});
@@ -42,24 +54,50 @@ class PrStore {
   fetchFailedBySession = $state<Record<string, boolean>>({});
 
   private lastFetch = new Map<string, number>();
-  private watchStates = new Map<string, PrWatchState>();
-  /** Auto-fix attempts on the current head commit, per session. */
-  private autoFixAttempts = new Map<string, { sha: string; attempts: number }>();
+  /** Watch state per session, per PR number. Kept per PR so switching the
+   *  primary back and forth doesn't replay a PR's old feedback as new. */
+  private watchStates = new Map<string, Map<number, PrWatchState>>();
+  /** Auto-fix attempts on the current head commit of the primary PR, per session. */
+  private autoFixAttempts = new Map<string, { prNumber: number; sha: string; attempts: number }>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private sweeping = false;
   private getPolledSessionIds: (() => string[]) | null = null;
   private nextAlertId = 1;
 
+  /** Every PR tied to the session, primary first. */
+  getPrs(sessionId: string): PrInfo[] {
+    return this.prsBySession[sessionId] ?? [];
+  }
+
+  /** The primary PR — the one alerts and automation act on. */
   getPr(sessionId: string): PrInfo | null {
-    return this.prBySession[sessionId] ?? null;
+    const prs = this.getPrs(sessionId);
+    const chosen = this.primaryBySession[sessionId];
+    if (chosen !== undefined) {
+      const match = prs.find((pr) => pr.number === chosen);
+      if (match) return match;
+    }
+    return prs[0] ?? null;
+  }
+
+  /** Make one of the session's PRs the primary. Ignored for unknown numbers. */
+  setPrimary(sessionId: string, prNumber: number): void {
+    if (!this.getPrs(sessionId).some((pr) => pr.number === prNumber)) return;
+    this.primaryBySession = { ...this.primaryBySession, [sessionId]: prNumber };
+    // The newly primary PR seeds its own baseline on the next fetch; run
+    // detection now so a PR already fetched doesn't wait a poll interval.
+    this.handleDetection(sessionId);
   }
 
   getSync(sessionId: string): GitSyncStatus {
     return this.syncBySession[sessionId] ?? EMPTY_SYNC;
   }
 
+  /** Alerts for the session's primary PR. */
   getAlerts(sessionId: string): PrAlert[] {
-    return this.alertsBySession[sessionId] ?? [];
+    const primary = this.getPr(sessionId)?.number;
+    if (primary === undefined) return [];
+    return (this.alertsBySession[sessionId] ?? []).filter((a) => a.prNumber === primary);
   }
 
   getAuto(sessionId: string): PrAutoConfig {
@@ -76,7 +114,7 @@ class PrStore {
   dismissAlert(sessionId: string, id: number): void {
     this.alertsBySession = {
       ...this.alertsBySession,
-      [sessionId]: this.getAlerts(sessionId).filter((a) => a.id !== id),
+      [sessionId]: (this.alertsBySession[sessionId] ?? []).filter((a) => a.id !== id),
     };
   }
 
@@ -91,14 +129,14 @@ class PrStore {
     // succeeded is stored; a failure keeps the previous snapshot and flags
     // it stale rather than showing "no PR" for a branch that has one.
     const [pr, sync] = await Promise.allSettled([
-      window.groveBench.getPrInfo(sessionId),
+      window.groveBench.getPrs(sessionId),
       window.groveBench.getGitSyncStatus(sessionId),
     ]);
     if (sync.status === 'fulfilled') {
       this.syncBySession = { ...this.syncBySession, [sessionId]: sync.value };
     }
     if (pr.status === 'fulfilled') {
-      this.prBySession = { ...this.prBySession, [sessionId]: pr.value };
+      this.prsBySession = { ...this.prsBySession, [sessionId]: pr.value };
     }
     const failed = pr.status === 'rejected' || sync.status === 'rejected';
     if (failed !== (this.fetchFailedBySession[sessionId] ?? false)) {
@@ -178,7 +216,12 @@ class PrStore {
   /** Push the branch and open a PR via the gh CLI (manual dialog path). */
   async createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo> {
     const pr = await window.groveBench.createPr(sessionId, opts);
-    this.prBySession = { ...this.prBySession, [sessionId]: pr };
+    // The new PR becomes primary: it goes to the head of the list and any
+    // user override is dropped in its favour.
+    const rest = this.getPrs(sessionId).filter((p) => p.number !== pr.number);
+    this.prsBySession = { ...this.prsBySession, [sessionId]: [pr, ...rest] };
+    const { [sessionId]: _chosen, ...restPrimary } = this.primaryBySession;
+    this.primaryBySession = restPrimary;
     this.refresh(sessionId, true);
     return pr;
   }
@@ -190,7 +233,7 @@ class PrStore {
   fixCiWithAgent(sessionId: string): boolean {
     const pr = this.getPr(sessionId);
     if (!pr || !this.sessionIdle(sessionId)) return false;
-    this.sendTurn(sessionId, buildFixCiPrompt(pr.number, this.branchOf(sessionId), pr.failingChecks ?? []));
+    this.sendTurn(sessionId, buildFixCiPrompt(pr.number, this.branchOfPr(sessionId, pr), pr.failingChecks ?? []));
     this.clearAlerts(sessionId, 'ci_failed');
     return true;
   }
@@ -205,7 +248,7 @@ class PrStore {
     const comments = opts.trustedOnly ? all.filter((c) => isTrustedAssociation(c.authorAssociation)) : all;
     if (comments.length === 0) return 'empty';
     if (!this.sessionIdle(sessionId)) return 'busy'; // may have changed during the fetch
-    this.sendTurn(sessionId, buildAddressReviewsPrompt(pr.number, this.branchOf(sessionId), comments));
+    this.sendTurn(sessionId, buildAddressReviewsPrompt(pr.number, this.branchOfPr(sessionId, pr), comments));
     this.clearAlerts(sessionId, 'new_comments');
     return 'sent';
   }
@@ -221,37 +264,49 @@ class PrStore {
     const status = sessionStore.sessions.find((s) => s.id === sessionId)?.status;
     if (status !== 'running') return;
 
-    let state = this.watchStates.get(sessionId);
+    // Only the primary PR is watched. Each PR keeps its own state so that
+    // becoming primary later seeds from its current feedback, not from
+    // whatever the previous primary had seen.
+    const pr = this.getPr(sessionId);
+    if (!pr) return;
+    let states = this.watchStates.get(sessionId);
+    if (!states) {
+      states = new Map();
+      this.watchStates.set(sessionId, states);
+    }
+    let state = states.get(pr.number);
     if (!state) {
       state = newPrWatchState();
-      this.watchStates.set(sessionId, state);
+      states.set(pr.number, state);
     }
-    for (const event of detectPrEvents(state, this.getPr(sessionId))) {
-      this.handleEvent(sessionId, event);
+    for (const event of detectPrEvents(state, pr)) {
+      this.handleEvent(sessionId, pr.number, event);
     }
   }
 
-  private handleEvent(sessionId: string, event: PrWatchEvent): void {
+  /** prNumber is the PR the event was detected on; alerts are pinned to it
+   *  even if the primary changes while an auto action is in flight. */
+  private handleEvent(sessionId: string, prNumber: number, event: PrWatchEvent): void {
     const auto = this.getAuto(sessionId);
 
     if (event.kind === 'ci_failed') {
       if (auto.fixCi) {
         const sha = this.getPr(sessionId)?.headSha ?? 'unknown';
         const prev = this.autoFixAttempts.get(sessionId);
-        const attempts = prev?.sha === sha ? prev.attempts : 0;
+        const attempts = prev?.prNumber === prNumber && prev.sha === sha ? prev.attempts : 0;
         if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
-          this.addAlert(sessionId, {
+          this.addAlert(sessionId, prNumber, {
             kind: 'needs_human',
             reason: `Auto-fix attempted ${attempts}× on this commit without CI going green — take a look`,
           });
           return;
         }
         if (this.fixCiWithAgent(sessionId)) {
-          this.autoFixAttempts.set(sessionId, { sha, attempts: attempts + 1 });
+          this.autoFixAttempts.set(sessionId, { prNumber, sha, attempts: attempts + 1 });
           return;
         }
       }
-      this.addAlert(sessionId, { kind: 'ci_failed', checks: event.checks });
+      this.addAlert(sessionId, prNumber, { kind: 'ci_failed', checks: event.checks });
       return;
     }
 
@@ -259,22 +314,22 @@ class PrStore {
       if (auto.addressReviews) {
         this.addressReviewsWithAgent(sessionId, { trustedOnly: true }).then((result) => {
           // Nothing sent (busy, or all comments from non-collaborators) → surface it
-          if (result !== 'sent') this.addAlert(sessionId, { kind: 'new_comments', count: event.count });
+          if (result !== 'sent') this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });
         }).catch(() => {
-          this.addAlert(sessionId, { kind: 'new_comments', count: event.count });
+          this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });
         });
         return;
       }
-      this.addAlert(sessionId, { kind: 'new_comments', count: event.count });
+      this.addAlert(sessionId, prNumber, { kind: 'new_comments', count: event.count });
     }
   }
 
-  private addAlert(sessionId: string, alert: PrAlertInput): void {
-    // Replace any existing alert of the same kind rather than stacking duplicates
-    const rest = this.getAlerts(sessionId).filter((a) => a.kind !== alert.kind);
+  private addAlert(sessionId: string, prNumber: number, alert: PrAlertInput): void {
+    // Replace any existing alert of the same kind on this PR rather than stacking duplicates
+    const rest = (this.alertsBySession[sessionId] ?? []).filter((a) => a.kind !== alert.kind || a.prNumber !== prNumber);
     this.alertsBySession = {
       ...this.alertsBySession,
-      [sessionId]: [...rest, { ...alert, id: this.nextAlertId++ }],
+      [sessionId]: [...rest, { ...alert, id: this.nextAlertId++, prNumber }],
     };
     // Surface beyond the status-bar chip: flash the sidebar row for background
     // sessions, and raise a desktop notification while the window is unfocused.
@@ -284,10 +339,12 @@ class PrStore {
     notifyOs('pr_alert', sessionId, prAlertBody(alert));
   }
 
+  /** Drop alerts of one kind on the primary PR (the one just acted on). */
   private clearAlerts(sessionId: string, kind: PrAlert['kind']): void {
+    const prNumber = this.getPr(sessionId)?.number;
     this.alertsBySession = {
       ...this.alertsBySession,
-      [sessionId]: this.getAlerts(sessionId).filter((a) => a.kind !== kind),
+      [sessionId]: (this.alertsBySession[sessionId] ?? []).filter((a) => a.kind !== kind || a.prNumber !== prNumber),
     };
   }
 
@@ -302,16 +359,21 @@ class PrStore {
       && sessionStore.sessions.find((s) => s.id === sessionId)?.status === 'running';
   }
 
-  private branchOf(sessionId: string): string {
-    return sessionStore.sessions.find((s) => s.id === sessionId)?.branch ?? '';
+  /** The PR's own head branch — it may not be the session's recorded branch
+   *  when the agent opened the PR from another branch — falling back to the
+   *  session branch for PR data that predates headRefName. */
+  private branchOfPr(sessionId: string, pr: PrInfo): string {
+    return pr.headRefName || (sessionStore.sessions.find((s) => s.id === sessionId)?.branch ?? '');
   }
 
   clear(sessionId: string): void {
     this.lastFetch.delete(sessionId);
     this.watchStates.delete(sessionId);
     this.autoFixAttempts.delete(sessionId);
-    const { [sessionId]: _p, ...restPr } = this.prBySession;
-    this.prBySession = restPr;
+    const { [sessionId]: _p, ...restPrs } = this.prsBySession;
+    this.prsBySession = restPrs;
+    const { [sessionId]: _pri, ...restPrimary } = this.primaryBySession;
+    this.primaryBySession = restPrimary;
     const { [sessionId]: _s, ...restSync } = this.syncBySession;
     this.syncBySession = restSync;
     const { [sessionId]: _a, ...restAlerts } = this.alertsBySession;

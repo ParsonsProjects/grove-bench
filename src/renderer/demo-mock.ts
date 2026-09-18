@@ -310,11 +310,15 @@ const api: Record<string, unknown> = {
   gitCherryPick: async () => ({ success: false, conflicts: ['src/auth/session.ts'] }),
   gitSquash: async () => ({ success: true }),
   getGitStatus: async (id: string) => GIT_STATUS[id] ?? { entries: [] },
-  // Branch stack states: s-oauth has an open PR with a failing check; the
-  // others show the "Create PR" link (s-sidebar with unpushed commits).
-  getPrInfo: async (id: string) => id === 's-oauth'
-    ? { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], headSha: 'b2c3d4e' }
-    : null,
+  // Branch stack states: s-oauth has an open PR with a failing check plus an
+  // earlier, merged PR on the same branch; the others show the "Create PR"
+  // link (s-sidebar with unpushed commits).
+  getPrs: async (id: string) => id === 's-oauth'
+    ? [
+      { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], headSha: 'b2c3d4e', headRefName: 'feat/oauth-refresh', baseRefName: 'main' },
+      { number: 38, url: 'https://github.com/example/api-service/pull/38', state: 'MERGED', title: 'OAuth: add refresh token storage', reviewDecision: 'APPROVED', checks: { total: 3, passed: 3, failed: 0, pending: 0 }, failingChecks: [], headSha: 'a1b2c3d', headRefName: 'feat/oauth-refresh', baseRefName: 'main' },
+    ]
+    : [],
   getGitSyncStatus: async (id: string) => ({ upstream: id === 's-readme' ? null : 'origin', ahead: id === 's-sidebar' ? 3 : id === 's-oauth' ? 1 : 0, behind: id === 's-oauth' ? 2 : 0 }),
   listCheckpoints: async () => [],
   listMcpServers: async () => [],

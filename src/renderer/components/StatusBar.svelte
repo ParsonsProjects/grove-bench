@@ -25,7 +25,10 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
+  /** The primary PR — what the pill, alerts, and automation follow. */
   let prInfo = $derived(prStore.getPr(sessionId));
+  /** The session's other PRs (replaced, stacked, or from another branch). */
+  let otherPrs = $derived(prStore.getPrs(sessionId).filter((p) => p.number !== prInfo?.number));
   let gitSync = $derived(prStore.getSync(sessionId));
   let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
   let createPrOpen = $state(false);
@@ -1059,11 +1062,14 @@
           <button
             onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { addressReviewsNotice = null; fixCiNotice = null; } }}
             class="flex items-center gap-1.5 {prColor} transition-colors"
-            title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}: click for checks, reviews, and automation"
+            title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}{otherPrs.length > 0 ? ` (+${otherPrs.length} more in this session)` : ''}: click for checks, reviews, and automation"
           >
             <!-- One dot: color = worst condition, pulse = unseen activity -->
             <span class="w-1.5 h-1.5 {prHealthDot} {prAlerts.length > 0 ? 'animate-pulse' : ''}"></span>
             PR #{prInfo.number}
+            {#if otherPrs.length > 0}
+              <span class="text-muted-foreground/60">+{otherPrs.length}</span>
+            {/if}
           </button>
         {:else if showCreatePr}
           <span class="flex items-center">
@@ -1110,8 +1116,9 @@
             Open ↗
           </button>
         </div>
-        <div class="text-muted-foreground/70 mt-0.5">
-          {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}
+        <div class="text-muted-foreground/70 mt-0.5 truncate" title={prInfo.headRefName ? `${prInfo.headRefName} → ${prInfo.baseRefName ?? '?'}` : undefined}>
+          {prInfo.isDraft ? 'draft' : (prInfo.state ?? 'open').toLowerCase()}{#if prInfo.headRefName}
+            · {prInfo.headRefName} → {prInfo.baseRefName ?? '?'}{/if}
         </div>
         {#if prFetchFailed}
           <div class="text-orange-400/80 mt-0.5" title="The last gh fetch failed — check network and gh auth status">
@@ -1217,6 +1224,51 @@
             </div>
           {/if}
         </div>
+
+        <!-- Other PRs tied to this session: a replaced PR on the same branch,
+             a stacked PR into another base, or one the agent opened from a
+             second branch. Only the primary is watched; "watch" swaps it. -->
+        {#if otherPrs.length > 0}
+          <div class="border-t border-border pt-2 mt-2 space-y-0.5">
+            <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this session</div>
+            {#each otherPrs as other (other.number)}
+              {@const otherDot =
+                other.state === 'MERGED' ? 'bg-purple-400'
+                : other.state === 'CLOSED' ? 'bg-red-500'
+                : (other.checks?.failed ?? 0) > 0 ? 'bg-red-500'
+                : (other.checks?.pending ?? 0) > 0 ? 'bg-yellow-400'
+                : 'bg-green-500'}
+              <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
+                <span class="w-1.5 h-1.5 {otherDot} shrink-0"></span>
+                <span
+                  class="flex-1 min-w-0 truncate"
+                  title="{other.title ? `${other.title} — ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'}"
+                >
+                  <span class="text-foreground">#{other.number}</span>
+                  <span class="text-muted-foreground/70">{other.isDraft ? 'draft' : (other.state ?? 'open').toLowerCase()}</span>
+                  {#if other.title}<span class="text-muted-foreground"> — {other.title}</span>{/if}
+                </span>
+                <button
+                  onclick={() => prStore.setPrimary(sessionId, other.number)}
+                  class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
+                  title="Follow this PR instead: the pill, alerts, and auto turns switch to it"
+                >
+                  watch
+                </button>
+                <button
+                  onclick={() => window.groveBench.openExternal(other.url)}
+                  class="text-blue-400 hover:text-blue-300 hover:underline shrink-0"
+                  title="Open on GitHub"
+                >
+                  ↗
+                </button>
+              </div>
+            {/each}
+            <p class="text-[10px] text-muted-foreground/60 mt-1.5">
+              Alerts and auto turns follow one PR at a time.
+            </p>
+          </div>
+        {/if}
 
         <!-- Automation -->
         <div class="border-t border-border pt-2 mt-2">
