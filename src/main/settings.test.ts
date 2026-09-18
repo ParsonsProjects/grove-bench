@@ -32,6 +32,7 @@ describe('loadSettings', () => {
     expect(s.theme).toBe('system');
     expect(s.defaultBaseBranch).toBe(''); // empty = auto-detect
     expect(s.alwaysOnTop).toBe(false);
+    expect(s.closeToTray).toBe(true);
   });
 
   it('treats the legacy defaultBaseBranch default of "main" as unset', () => {

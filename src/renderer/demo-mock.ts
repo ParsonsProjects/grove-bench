@@ -41,6 +41,7 @@ const SETTINGS = {
   defaultBaseBranch: '',
   theme: 'dark',
   alwaysOnTop: false,
+  closeToTray: true,
   repoColors: {},
   diffViewMode: 'unified',
   defaultActivityView: 'summary',

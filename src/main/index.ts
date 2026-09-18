@@ -12,6 +12,8 @@ import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
+import { ensureTray, destroyTray, restoreWindow, showFirstHideBalloon } from './tray.js';
+import type { GroveBenchSettings } from '../shared/types.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -24,6 +26,16 @@ app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
 // shortcut with the running application (prevents icon from disappearing).
 app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
+// One running copy per user data directory. With close-to-tray the window
+// can be hidden while the app runs, so launching it again from the Start
+// menu must surface the existing window rather than start a second copy
+// fighting over the same state files and worktrees. The lock is keyed on
+// userData, so it must come after setPath above.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
 // Register built-in agent adapters before anything else uses them
 initAdapters();
 
@@ -31,6 +43,33 @@ registerHandlers();
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+/** Set when the app should really exit: the window `close` intercept below
+ *  hides to the tray unless this is true. */
+let forceQuit = false;
+
+function quitForReal() {
+  forceQuit = true;
+  app.quit();
+}
+
+function iconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico');
+}
+
+/** Create or remove the tray icon to match the setting. */
+function syncTray(appSettings: GroveBenchSettings) {
+  if (appSettings.closeToTray) {
+    ensureTray({
+      iconPath: iconPath(),
+      show: () => restoreWindow(mainWindow),
+      quit: quitForReal,
+    });
+  } else {
+    destroyTray();
+  }
+}
 
 // Log uncaught errors and forward them to the renderer instead of letting
 // Electron's crash dialog take every agent session down with it.
@@ -47,9 +86,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
-    icon: app.isPackaged
-      ? path.join(process.resourcesPath, 'icon.ico')
-      : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
+    icon: iconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -113,6 +150,22 @@ function createWindow() {
 
   initAutoUpdater(mainWindow);
 
+  // Close to tray: hide instead of closing so conversations keep running.
+  // Every listener on `close` still runs (window-state saves its bounds);
+  // preventDefault only stops the window from actually closing.
+  mainWindow.on('close', (event) => {
+    if (forceQuit || !settings.getSettings().closeToTray) return;
+    event.preventDefault();
+    mainWindow?.hide();
+    showFirstHideBalloon();
+  });
+
+  // Windows is shutting down or the user is logging off: let the close
+  // through so the normal quit cleanup runs instead of hiding the window.
+  mainWindow.on('session-end', () => {
+    forceQuit = true;
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -120,8 +173,15 @@ function createWindow() {
   logger.info('Grove Bench started');
 }
 
+app.on('second-instance', () => {
+  restoreWindow(mainWindow);
+});
+
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return; // quitting: another copy owns this userData
   createWindow();
+  syncTray(settings.getSettings());
+  appEvents.on('settings-changed', syncTray);
 
   // Background worktree sweep. The first run waits until the renderer has
   // finished restoring sessions (disk and CPU are busiest then), with a
@@ -166,6 +226,10 @@ app.on('window-all-closed', () => {
 
 // Graceful shutdown: destroy all sessions and clean up worktrees
 app.on('before-quit', (event) => {
+  // app.quit() closes every window before exiting; the close intercept must
+  // let them through or the quit is cancelled and the window just hides.
+  // This also covers quits we did not start (auto-updater install, Ctrl+C).
+  forceQuit = true;
   if (isQuitting) return;
 
   if (sessionManager.count > 0) {
@@ -188,11 +252,13 @@ app.on('before-quit', (event) => {
       } catch (e) {
         logger.error('Cleanup error during quit:', e);
       } finally {
+        destroyTray();
         logger.close();
         app.quit();
       }
     })();
   } else {
+    destroyTray();
     logger.close();
   }
 });

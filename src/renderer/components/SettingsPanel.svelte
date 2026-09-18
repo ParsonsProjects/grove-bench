@@ -605,6 +605,14 @@
 
           <Separator />
 
+          <!-- Close to Tray -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.closeToTray} />
+            Keep running in the system tray when the window is closed
+          </label>
+
+          <Separator />
+
           <!-- Spell Check -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.spellcheck} />

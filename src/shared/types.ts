@@ -1013,6 +1013,9 @@ export interface GroveBenchSettings {
   defaultBaseBranch: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+  /** Closing the window hides it to the system tray instead of quitting, so
+   *  conversations keep running. Quit from the tray menu. Default true. */
+  closeToTray: boolean;
 
   // Appearance
   /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */

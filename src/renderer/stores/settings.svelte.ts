@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultBaseBranch: '',
   theme: 'system',
   alwaysOnTop: false,
+  closeToTray: true,
   repoColors: {},
   diffViewMode: 'unified',
   defaultActivityView: 'summary',

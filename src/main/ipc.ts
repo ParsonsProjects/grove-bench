@@ -26,13 +26,15 @@ import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, clearPrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { setTrayAttention } from './tray.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-/** App-level lifecycle signals from the renderer (e.g. 'restore-complete'). */
+/** App-level lifecycle signals from the renderer (e.g. 'restore-complete',
+ *  'settings-changed'). */
 export const appEvents = new EventEmitter();
 
 /** Buffer for events emitted before the session object exists (worktree creation, npm install).
@@ -1248,6 +1250,7 @@ export function registerHandlers() {
     settings.saveSettings(data);
     const win = BrowserWindow.fromWebContents(event.sender);
     settings.applyImmediateEffects(win, data);
+    appEvents.emit('settings-changed', settings.getSettings());
   });
 
   // ─── App State ───
@@ -1341,6 +1344,7 @@ export function registerHandlers() {
     if (!win || win.isDestroyed()) return;
     const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
+    setTrayAttention(n);
   });
 
   // ─── Window controls ───

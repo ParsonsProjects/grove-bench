@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultBaseBranch: '', // empty = auto-detect the repo's default branch
   theme: 'system',
   alwaysOnTop: false,
+  closeToTray: true,
 
   // Appearance
   repoColors: {},
@@ -145,6 +146,7 @@ const settingsSchema = z.object({
   defaultBaseBranch: z.string().catch(DEFAULT_SETTINGS.defaultBaseBranch),
   theme: z.enum(['system', 'dark', 'light']).catch(DEFAULT_SETTINGS.theme),
   alwaysOnTop: z.boolean().catch(DEFAULT_SETTINGS.alwaysOnTop),
+  closeToTray: z.boolean().catch(DEFAULT_SETTINGS.closeToTray),
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
 

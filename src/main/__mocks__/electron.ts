@@ -9,11 +9,27 @@ export const app = {
   quit: vi.fn(),
   setBadgeCount: vi.fn(),
   dock: { setBadge: vi.fn() },
+  requestSingleInstanceLock: vi.fn(() => true),
 };
 
 export const nativeImage = {
   createFromDataURL: vi.fn(() => ({ isEmpty: () => false })),
+  createFromPath: vi.fn(() => ({ isEmpty: () => false })),
 };
+
+export const Menu = {
+  buildFromTemplate: vi.fn((template: unknown) => ({ template })),
+};
+
+export const Tray = vi.fn(function (this: Record<string, unknown>, image: unknown) {
+  this.image = image;
+  this.setToolTip = vi.fn();
+  this.setContextMenu = vi.fn();
+  this.displayBalloon = vi.fn();
+  this.on = vi.fn();
+  this.destroy = vi.fn();
+  this.isDestroyed = vi.fn(() => false);
+});
 
 export const BrowserWindow = vi.fn().mockImplementation(() => ({
   loadURL: vi.fn(),
@@ -79,4 +95,7 @@ export default {
   nativeTheme,
   contextBridge,
   Notification,
+  nativeImage,
+  Menu,
+  Tray,
 };

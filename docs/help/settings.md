@@ -23,6 +23,7 @@ Configure agent behavior:
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
 - **Project Colors** — Customize the accent color for each project in the sidebar
 - **Always on Top** — Keep the Grove Bench window above other windows
+- **Keep running in the system tray** — The close button hides the window to the system tray instead of quitting, so your conversations keep running. Click the tray icon to reopen the window, or right-click it and choose Quit. The tray tooltip shows how many conversations need attention while the window is hidden. On by default
 - **Spell Check** — Enable or disable spell checking in the prompt editor
 - **Default Diff View** — Choose between unified or side-by-side diffs
 - **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation. The taskbar-flash toggle controls whether the taskbar button also flashes; it stops as soon as the window regains focus
