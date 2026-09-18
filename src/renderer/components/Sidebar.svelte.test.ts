@@ -206,18 +206,22 @@ describe('Sidebar clean-up dialog', () => {
     ] as any;
     store.activeSessionId = 'live';
     store.prerequisites = { git: { available: true }, agent: { available: true }, gh: { available: true } } as any;
-    mockGroveBench.getPrInfo.mockImplementation(async (id: string) => {
-      if (id === 'merged') return { number: 12, url: 'https://example.test/pr/12', state: 'MERGED', title: 'Merged work' } as any;
-      if (id === 'open') return { number: 13, url: 'https://example.test/pr/13', state: 'OPEN' } as any;
-      return null;
+    mockGroveBench.getPrs.mockImplementation(async (id: string) => {
+      // Primary first, as main sorts them: an older merged PR behind the open one.
+      if (id === 'merged') return [{ number: 12, url: 'https://example.test/pr/12', state: 'MERGED', title: 'Merged work' }] as any;
+      if (id === 'open') return [
+        { number: 13, url: 'https://example.test/pr/13', state: 'OPEN' },
+        { number: 9, url: 'https://example.test/pr/9', state: 'MERGED' },
+      ] as any;
+      return [];
     });
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
   });
 
   afterEach(() => {
     store.prerequisites = null;
-    mockGroveBench.getPrInfo.mockReset();
-    mockGroveBench.getPrInfo.mockResolvedValue(null);
+    mockGroveBench.getPrs.mockReset();
+    mockGroveBench.getPrs.mockResolvedValue([]);
     mockGroveBench.getGitStatus.mockReset();
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
   });
@@ -228,14 +232,14 @@ describe('Sidebar clean-up dialog', () => {
     return await screen.findByRole('dialog');
   }
 
-  it('flags each stopped candidate with the state of its pull request', async () => {
+  it('flags each stopped candidate with the state of its primary pull request', async () => {
     await openDialog();
 
     expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR #12 merged');
     expect(await screen.findByTestId('cleanup-pr-open')).toHaveTextContent('PR #13 open');
     expect(await screen.findByTestId('cleanup-pr-nopr')).toHaveTextContent('no PR');
     // Running sessions are not candidates, so no gh call is spent on them.
-    expect(mockGroveBench.getPrInfo).not.toHaveBeenCalledWith('live');
+    expect(mockGroveBench.getPrs).not.toHaveBeenCalledWith('live');
   });
 
   it('"Select merged" ticks only conversations whose PR has been merged', async () => {
@@ -284,7 +288,7 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
     expect(screen.getByLabelText(/Merged one/)).toBeChecked();
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3);
-    expect(mockGroveBench.getPrInfo).toHaveBeenCalledTimes(3);
+    expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(3);
   });
 
   it('checks only the newly listed conversations when the cutoff changes', async () => {
@@ -323,13 +327,13 @@ describe('Sidebar clean-up dialog', () => {
     await openDialog();
 
     await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
-    expect(mockGroveBench.getPrInfo).not.toHaveBeenCalled();
+    expect(mockGroveBench.getPrs).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /Select merged/ })).not.toBeInTheDocument();
     expect(screen.queryByTestId('cleanup-pr-merged')).not.toBeInTheDocument();
   });
 
   it('shows "PR unknown" when gh cannot answer for a branch', async () => {
-    mockGroveBench.getPrInfo.mockRejectedValue(new Error('gh: offline'));
+    mockGroveBench.getPrs.mockRejectedValue(new Error('gh: offline'));
     await openDialog();
 
     expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR unknown');

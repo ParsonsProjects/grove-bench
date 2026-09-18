@@ -186,9 +186,10 @@
 
   /** sessionId → has uncommitted changes in its worktree. Absent = still checking / unknown. */
   let cleanupDirty = $state<Record<string, boolean>>({});
-  /** sessionId → PR on the session's branch: the PR when one exists, null
-   *  when there is none, 'unknown' when gh couldn't answer (offline, not
-   *  logged in). Absent = still checking, or gh isn't available at all. */
+  /** sessionId → the session's primary PR (list head: open before merged or
+   *  closed, newest first), null when it has none, 'unknown' when gh couldn't
+   *  answer (offline, not logged in). Absent = still checking, or gh isn't
+   *  available at all. */
   let cleanupPr = $state<Record<string, PrInfo | null | 'unknown'>>({});
   /** Candidates whose checks have started this dialog session (not reactive:
    *  read inside the effect without becoming a dependency). */
@@ -277,7 +278,7 @@
         for (let s = queue.shift(); s; s = queue.shift()) {
           let result: PrInfo | null | 'unknown';
           try {
-            result = await window.groveBench.getPrInfo(s.id);
+            result = (await window.groveBench.getPrs(s.id))[0] ?? null;
           } catch {
             result = 'unknown';
           }
