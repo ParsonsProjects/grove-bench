@@ -1536,7 +1536,9 @@ class MessageStore {
       }
       if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
         changed = true;
-        return { ...m, resolved: true as const };
+        // On replay the optimistic resolveQuestion() update never ran, so the
+        // reply only exists on the event.
+        return { ...m, resolved: true as const, response: m.response ?? event.message };
       }
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
         changed = true;

@@ -29,7 +29,8 @@
   let activity = $derived(messageStore.getActivity(sessionId));
 
   // View mode — Detailed shows everything; Summary hides thinking & most tool
-  // calls; Focus shows only assistant text + unanswered permissions/questions.
+  // calls; Focus shows only assistant text, questions (with answers) and
+  // unanswered permissions.
   // The toggle lives in the status bar; the default comes from settings.
   let viewMode = $derived(messageStore.getViewMode(sessionId));
   let filteredMessages = $derived(filterVisibleMessages(allMessages, viewMode));

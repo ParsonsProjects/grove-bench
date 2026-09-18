@@ -14,7 +14,7 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
   summary: 'Hides thinking and most tool calls (edits, writes and shell commands stay)',
-  focus: 'Agent responses and pending questions only (no tool calls or thinking)',
+  focus: 'Agent responses, questions and your answers only (no tool calls or thinking)',
 };
 
 /** Cycle order for the status-bar toggle: Summary → Focus → Detailed → Summary. */
@@ -26,8 +26,8 @@ export const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
 
 export const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
   detailed: 'Showing everything — click for Summary',
-  summary: 'Hiding thinking & most tool calls — click for Focus (responses only)',
-  focus: 'Showing agent responses & pending questions only — click for Detailed',
+  summary: 'Hiding thinking & most tool calls — click for Focus (responses & questions only)',
+  focus: 'Showing agent responses, questions & your answers only — click for Detailed',
 };
 
 /** Tool calls shown in summary mode (everything else is hidden when details are off). */
@@ -59,8 +59,11 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
     case 'system':
       return false;
     case 'permission':
-    case 'question':
       return !msg.resolved;
+    case 'question':
+      // Questions stay visible once answered: the block shows the user's
+      // reply, which is part of the conversation the user needs to follow.
+      return true;
     default:
       // user, text, error, result. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next

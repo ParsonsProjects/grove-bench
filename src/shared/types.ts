@@ -150,7 +150,15 @@ export type AgentEvent =
   // their current values — emitted on query start, model switch, and control change
   | { type: 'controls_sync'; descriptors: ControlDescriptor[]; values: Record<string, string> }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
-  | { type: 'permission_resolved'; requestId: string; toolUseId: string; decision: 'allow' | 'deny' }
+  | {
+      type: 'permission_resolved';
+      requestId: string;
+      toolUseId: string;
+      decision: 'allow' | 'deny';
+      /** The user's typed reply for a question (AskUserQuestion) or deny
+       *  reason, so replayed history can still show what was answered. */
+      message?: string;
+    }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
@@ -1034,8 +1042,9 @@ export interface GroveBenchSettings {
  * Activity panel view modes:
  * - 'detailed': everything (tool calls, thinking, system, ...)
  * - 'summary':  hides thinking and non-essential tool calls
- * - 'focus':    only user prompts, assistant text, unanswered
- *               permission/question blocks, errors and turn results
+ * - 'focus':    only user prompts, assistant text, question blocks (with
+ *               the answer given), unanswered permission blocks, errors
+ *               and turn results
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];

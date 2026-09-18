@@ -707,6 +707,48 @@ describe('AgentSessionManager.respondToPermission()', () => {
     await sessionManager.destroySession('test-perm');
   });
 
+  it('carries the deny message on permission_resolved so question answers replay', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-perm-msg',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    const permPromise = mockAdapter.control!.permissionHandler!({
+      requestId: 'adapter_q',
+      toolName: 'AskUserQuestion',
+      toolUseId: 'tu_q',
+      toolInput: { questions: [] },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-perm-msg');
+    const requestId = [...session!.pendingPermissions.keys()][0];
+
+    expect(sessionManager.respondToPermission('test-perm-msg', {
+      requestId,
+      behavior: 'deny',
+      message: 'Option B',
+    })).toBe(true);
+    await permPromise;
+
+    const history = sessionManager.getEventHistory('test-perm-msg');
+    const resolved = history.filter((e) => e.type === 'permission_resolved');
+    expect(resolved[resolved.length - 1]).toMatchObject({
+      requestId,
+      decision: 'deny',
+      message: 'Option B',
+    });
+
+    await sessionManager.destroySession('test-perm-msg');
+  });
+
   it('adds tool to alwaysAllowedTools on allowAlways', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({

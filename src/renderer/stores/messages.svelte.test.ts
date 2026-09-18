@@ -811,6 +811,29 @@ describe('ingestEvent — permission_resolved', () => {
     expect(perm.decision).toBe('allow');
   });
 
+  it('stores the answer from a replayed question resolution', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }] },
+      toolUseId: 'tu-q',
+      requestId: 'req-q',
+      toolCategory: 'question',
+    } as AgentEvent);
+
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-q',
+      toolUseId: 'tu-q',
+      decision: 'deny',
+      message: 'B',
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question') as any;
+    expect(q.resolved).toBe(true);
+    expect(q.response).toBe('B');
+  });
+
   it('clears awaitingPermission on matching tool_call', () => {
     // Add a tool_call that's awaiting permission
     messageStore.ingestEvent(SID, {
