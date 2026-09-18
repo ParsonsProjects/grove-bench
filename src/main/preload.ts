@@ -181,7 +181,7 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId, opts),
 
   // PR info
-  getPrInfo: (sessionId: string) => ipcRenderer.invoke(IPC.PR_INFO, sessionId),
+  getPrs: (sessionId: string) => ipcRenderer.invoke(IPC.PR_LIST, sessionId),
   createPr: (sessionId: string, opts: import('../shared/types.js').PrCreateOpts) =>
     ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
   getPrReviewComments: (sessionId: string, prNumber: number) =>

@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition } from '../shared/types.js';
+import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
@@ -9,8 +9,8 @@ import { worktreeManager } from './worktree-manager.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince } from './git.js';
-import { prStatus, prCreate, prReviewComments, ghLogin } from './gh.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
@@ -984,14 +984,32 @@ export function registerHandlers() {
 
   // ─── PR info ───
 
-  ipcMain.handle(IPC.PR_INFO, async (_event, sessionId: string) => {
+  /** Head branches whose PRs belong to this session: the recorded branch,
+   *  whatever is checked out now, and every branch switched to inside the
+   *  checkout since the session started (the agent may open a PR from a
+   *  second branch). The repo's default branch is left out — it is never a
+   *  PR head for session work, and in direct mode it is checked out often.
+   *  Capped so a long-lived direct session doesn't turn into a gh call per
+   *  branch it ever visited. */
+  const MAX_SESSION_PR_BRANCHES = 5;
+  async function sessionPrBranches(worktree: WorktreeInfo): Promise<string[]> {
+    const [current, recent, defaultBranch] = await Promise.all([
+      currentBranch(worktree.path),
+      recentCheckouts(worktree.path, worktree.createdAt),
+      getDefaultBranch(worktree.repoPath).catch(() => null),
+    ]);
+    const ordered = [worktree.branch, current, ...recent].filter((b): b is string => !!b && b !== defaultBranch);
+    return [...new Set(ordered)].slice(0, MAX_SESSION_PR_BRANCHES);
+  }
+
+  ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return null;
+    if (!worktree) return [];
     // Own comments are excluded from the feedback signature so the agent
     // replying on the PR doesn't trigger (and then auto-answer) a "new
     // comments" event about itself.
     const selfLogin = await ghLogin();
-    return prStatus(worktree.repoPath, worktree.branch, selfLogin);
+    return prsForBranches(worktree.repoPath, await sessionPrBranches(worktree), selfLogin);
   });
 
   ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {
