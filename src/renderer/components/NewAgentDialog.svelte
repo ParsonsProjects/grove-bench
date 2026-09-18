@@ -187,7 +187,7 @@
 
     <div class="flex flex-col gap-3 mt-4">
       <div>
-        <Label for="repo" class="mb-1 block">Repository</Label>
+        <Label for="repo" class="mb-1 block">Project</Label>
         {#if store.repos.length === 1}
           <div class="w-full bg-secondary text-muted-foreground px-3 py-2 text-sm border border-input">
             {store.repoDisplayName(store.repos[0])}
@@ -195,7 +195,7 @@
         {:else}
           <Select.Root type="single" value={selectedRepo} onValueChange={(v) => { selectedRepo = v; }}>
             <Select.Trigger class="w-full">
-              {store.repoDisplayName(selectedRepo) || 'Select repository'}
+              {store.repoDisplayName(selectedRepo) || 'Select project'}
             </Select.Trigger>
             <Select.Content>
               {#each store.repos as repo}

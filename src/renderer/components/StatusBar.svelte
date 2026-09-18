@@ -464,7 +464,7 @@
       name: s.name,
       description: s.description,
       scope: 'project',
-      notes: `${s.draftInstructions}\n\nEvidence from past sessions (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
+      notes: `${s.draftInstructions}\n\nEvidence from past conversations (${s.rationale}):\n${s.evidence.map((e) => `- ${e}`).join('\n')}`,
     });
     messageStore.addUserMessage(sessionId, prompt);
     window.groveBench.sendMessage(sessionId, prompt);
@@ -844,7 +844,7 @@
                     onclick={() => mcpAction(server.name, 'disable')}
                     disabled={mcpBusy[server.name]}
                     class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
-                    title="Disconnect this server for the rest of the session"
+                    title="Disconnect this server for the rest of the conversation"
                   >
                     Disconnect
                   </button>
@@ -873,7 +873,7 @@
             : 'bg-green-500'}"></span>
         Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
         {#if suggestions.length > 0}
-          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your sessions">+{suggestions.length}</span>
+          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your conversations">+{suggestions.length}</span>
         {/if}
       </button>
 
@@ -886,7 +886,7 @@
                 onclick={analyzeSuggestions}
                 disabled={analyzingSuggestions}
                 class="text-blue-400/80 hover:text-blue-300 transition-colors disabled:opacity-50"
-                title="Mine this repo's session history for recurring workflows and suggest skills"
+                title="Mine this project's conversation history for recurring workflows and suggest skills"
               >
                 {analyzingSuggestions ? 'Scanning…' : 'Suggest'}
               </button>
@@ -907,7 +907,7 @@
           {#if suggestions.length > 0}
             <div class="mb-2 pb-2 border-b border-border">
               <div class="text-[10px] uppercase tracking-wide text-blue-400/80 mb-1.5">
-                Suggested from your sessions
+                Suggested from your conversations
               </div>
               <div class="space-y-1.5">
                 {#each suggestions as suggestion (suggestion.id)}
@@ -930,7 +930,7 @@
                         class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
                         title={canAskAgent
                           ? 'Ask the agent to write this skill, with the mined evidence as notes'
-                          : 'Needs a running, idle agent session'}
+                          : 'Needs a running, idle conversation'}
                       >
                         Agent
                       </button>
@@ -996,7 +996,7 @@
 
           <div class="flex items-center gap-2 mt-2 pt-2 border-t border-border">
             <span class="text-muted-foreground/50 text-[10px] flex-1">
-              Applies to all repos, when a session's agent (re)starts — running turns keep their current skills.
+              Applies to all projects, when a conversation's agent (re)starts — running turns keep their current skills.
             </span>
             <button
               onclick={() => { skillsExpanded = false; addSkillOpen = true; }}
@@ -1235,7 +1235,7 @@
             </label>
             <label
               class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
-              title="When repo collaborators leave new review feedback, send a turn to address it automatically"
+              title="When repository collaborators leave new review feedback, send a turn to address it automatically"
             >
               <Checkbox
                 class="size-3.5"
@@ -1246,7 +1246,7 @@
             </label>
           </div>
           <p class="text-[10px] text-muted-foreground/60 mt-1.5">
-            Auto turns run only while the session is idle; git push / gh may need to be allowed.
+            Auto turns run only while the conversation is idle; git push / gh may need to be allowed.
           </p>
         </div>
       </div>
@@ -1374,7 +1374,7 @@
           <!-- System info breakdown -->
           {#if systemInfo.tools.length > 0 || systemInfo.agents.length > 0 || systemInfo.skills.length > 0 || systemInfo.mcpServers.length > 0}
             <div class="border-t border-border pt-2.5 mt-2.5">
-              <div class="font-medium text-foreground mb-2">Session Info</div>
+              <div class="font-medium text-foreground mb-2">Conversation Info</div>
               <div class="space-y-1.5 text-muted-foreground">
                 {#if systemInfo.tools.length > 0}
                   <div class="flex justify-between">
@@ -1472,7 +1472,7 @@
       <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-56 z-50">
         <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
         <div class="space-y-1.5 text-muted-foreground">
-          <div class="flex justify-between"><span>Session finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
+          <div class="flex justify-between"><span>Conversation finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
           <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
           <div class="flex justify-between"><span>Cycle thinking level</span><kbd class="text-foreground">Alt+T</kbd></div>

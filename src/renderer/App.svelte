@@ -399,7 +399,7 @@
         {/each}
         <div class="text-center relative z-10">
           <p class="text-sm mb-2">No active agents</p>
-          <p class="text-xs">Add a repository and create an agent to get started.</p>
+          <p class="text-xs">Add a project and start a conversation to get started.</p>
         </div>
       </div>
     {:else if !store.activeSessionId}
@@ -411,7 +411,7 @@
           ></span>
         {/each}
         <div class="text-center relative z-10">
-          <p class="text-sm">Select a session from the sidebar.</p>
+          <p class="text-sm">Select a conversation from the sidebar.</p>
         </div>
       </div>
     {:else}
@@ -424,7 +424,7 @@
             <svelte:boundary onerror={paneError(session.id)}>
               <WorkspacePane sessionId={session.id} />
               {#snippet failed(error, reset)}
-                {@render crashed('This session view', error, reset)}
+                {@render crashed('This conversation view', error, reset)}
               {/snippet}
             </svelte:boundary>
           {:else}

@@ -181,7 +181,7 @@
   <button
     onclick={() => gitOpsOpen = true}
     class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors shrink-0"
-    title="Rebase, squash, or cherry-pick between this branch and other sessions' branches"
+    title="Rebase, squash, or cherry-pick between this branch and other conversations' branches"
   >
     Branch…
   </button>

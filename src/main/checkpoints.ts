@@ -293,7 +293,7 @@ export class CheckpointManager {
    *  new-side blob id as content hash. */
   async files(sessionId: string, cwd: string, uuid: string, scope: CheckpointDiffScope): Promise<GitStatusResult> {
     const range = await this.range(sessionId, cwd, uuid, scope);
-    if (!range) return { entries: [], scopeError: scope === 'full' ? 'No checkpoints found for this session' : 'No checkpoint found for this message' };
+    if (!range) return { entries: [], scopeError: scope === 'full' ? 'No checkpoints found for this conversation' : 'No checkpoint found for this message' };
     const entries = parseDiffRaw(await git(['diff', '--raw', '-z', '--no-abbrev', range.from, range.to, '--', '.'], cwd));
     if (entries.length === 0) return { entries };
     try {
@@ -471,7 +471,7 @@ export class CheckpointManager {
     try {
       refs = await this.listRefs(sessionId, cwd);
     } catch { /* no refs */ }
-    if (refs.length === 0) return 'No checkpoints found for this session';
+    if (refs.length === 0) return 'No checkpoints found for this conversation';
 
     const currentTree = await this.writeWorkingTree(sessionId, cwd);
     const output = await git(['diff', refs[0].ref, currentTree, '--', '.'], cwd);

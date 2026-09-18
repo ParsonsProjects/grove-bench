@@ -20,12 +20,12 @@
   size="sm"
   class="w-full text-muted-foreground"
   onclick={addRepo}
-  title="Add a repository"
-  aria-label="Add a repository"
+  title="Add a project"
+  aria-label="Add a project"
 >
   {#if compact}
     <FolderPlusIcon aria-hidden="true" />
   {:else}
-    + Repository
+    + Project
   {/if}
 </Button>

@@ -180,7 +180,7 @@
         bind:this={inputEl}
         bind:value={query}
         type="text"
-        placeholder="Search sessions and conversations..."
+        placeholder="Search conversations and messages..."
         class="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
     </div>
@@ -190,7 +190,7 @@
         <div class="px-3 py-4 text-xs text-muted-foreground text-center">No matches found</div>
       {:else}
         {#if sessionResults.length > 0}
-          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Sessions</div>
+          <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Conversations</div>
           {#each sessionResults as entry, i}
             {@const isActive = store.activeSessionId === entry.id}
             <button
@@ -229,7 +229,7 @@
 
         {#if query.trim().length >= 2 && (contentHits.length > 0 || contentLoading)}
           <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50 border-t border-border/50 flex items-center gap-2">
-            In conversations
+            In messages
             {#if contentLoading}
               <span class="normal-case tracking-normal text-muted-foreground/40">searching…</span>
             {/if}

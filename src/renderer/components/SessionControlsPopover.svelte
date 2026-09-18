@@ -132,7 +132,7 @@
   <button
     onclick={() => open = !open}
     class="flex items-center gap-2 pl-1.5 pr-1 py-0.5 border border-border whitespace-nowrap text-left transition-colors hover:bg-accent {open ? 'bg-accent' : ''}"
-    title="Agent settings — agent, model, and session controls"
+    title="Agent settings — agent, model, and conversation controls"
     aria-haspopup="dialog"
     aria-expanded={open}
   >
@@ -181,7 +181,7 @@
               disabled={!current}
               class="w-full text-left px-2 py-1 border-l-2 transition-colors
                 {current ? 'border-primary text-foreground bg-accent/50' : 'border-transparent text-muted-foreground/50 cursor-not-allowed'}"
-              title={current ? 'Current agent' : 'The agent is chosen when a session is created'}
+              title={current ? 'Current agent' : 'The agent is chosen when a conversation is created'}
             >
               {a.displayName}
             </button>
