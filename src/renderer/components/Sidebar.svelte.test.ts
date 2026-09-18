@@ -77,7 +77,7 @@ describe('Sidebar session rows', () => {
 
   it('opens the session finder from the search field', async () => {
     render(Sidebar);
-    await fireEvent.click(screen.getByTitle('Search sessions and conversations (Ctrl+R)'));
+    await fireEvent.click(screen.getByTitle('Search conversations (Ctrl+R)'));
     expect(store.finderOpen).toBe(true);
   });
 });
@@ -109,7 +109,7 @@ describe('Sidebar attention triage', () => {
   it('shows filter chips with mutually exclusive counts', async () => {
     render(Sidebar);
 
-    const group = screen.getByRole('group', { name: 'Filter sessions' });
+    const group = screen.getByRole('group', { name: 'Filter conversations' });
     expect(group).toHaveTextContent('All 4');
     expect(group).toHaveTextContent('Needs you 1');
     expect(group).toHaveTextContent('Working 1');
@@ -143,7 +143,7 @@ describe('Sidebar attention triage', () => {
     render(Sidebar);
 
     expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
-    expect(screen.getByRole('group', { name: 'Filter sessions' })).toHaveTextContent('All 3');
+    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('All 3');
 
     await fireEvent.click(screen.getByText('Show completed (1)'));
     expect(screen.getByText('Quiet one')).toBeInTheDocument();
@@ -176,7 +176,7 @@ describe('Sidebar bottom buttons', () => {
     render(Sidebar);
     const newConversation = await screen.findByRole('button', { name: 'New conversation' });
     expect(newConversation).toHaveTextContent('+ Conversation');
-    expect(screen.getByRole('button', { name: 'Add a repository' })).toHaveTextContent('+ Repository');
+    expect(screen.getByRole('button', { name: 'Add a project' })).toHaveTextContent('+ Project');
   });
 
   it('collapses to icons when the sidebar is narrow', async () => {
@@ -185,7 +185,7 @@ describe('Sidebar bottom buttons', () => {
     const newConversation = await screen.findByRole('button', { name: 'New conversation' });
     await waitFor(() => expect(newConversation).not.toHaveTextContent('Conversation'));
     expect(newConversation.querySelector('svg')).not.toBeNull();
-    const addRepo = screen.getByRole('button', { name: 'Add a repository' });
+    const addRepo = screen.getByRole('button', { name: 'Add a project' });
     expect(addRepo).not.toHaveTextContent('Repository');
     expect(addRepo.querySelector('svg')).not.toBeNull();
   });

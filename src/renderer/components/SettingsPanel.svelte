@@ -96,8 +96,8 @@
 
   const mcpScopes: { value: McpConfigScope; label: string; description: string }[] = [
     { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
-    { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the repo' },
-    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen repo' },
+    { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the project repository' },
+    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
   ];
 
   const mcpCanAdd = $derived(
@@ -257,7 +257,7 @@
     <Dialog.Header>
       <Dialog.Title>Settings</Dialog.Title>
       <Dialog.Description>
-        Configure defaults for agent sessions, permissions, plugins, and more.
+        Configure defaults for conversations, permissions, plugins, and more.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -324,7 +324,7 @@
                 </Select.Group>
               </Select.Content>
             </Select.Root>
-            <p class="text-xs text-muted-foreground mt-1">Controls how tools are approved in new sessions.</p>
+            <p class="text-xs text-muted-foreground mt-1">Controls how tools are approved in new conversations.</p>
           </div>
 
           <!-- Disable Bypass Mode -->
@@ -421,7 +421,7 @@
             <div>
               <div class="text-sm font-medium text-foreground mb-2">{adapter.displayName} defaults</div>
               {#if adapter.controls.length === 0}
-                <p class="text-xs text-muted-foreground">This agent declares no adjustable session controls.</p>
+                <p class="text-xs text-muted-foreground">This agent declares no adjustable conversation controls.</p>
               {:else}
                 <div class="flex flex-col gap-3">
                   {#each adapter.controls as control (control.id)}
@@ -451,7 +451,7 @@
               {/if}
             </div>
           {/each}
-          <p class="text-xs text-muted-foreground -mt-2">Options depend on the default model above. Applied to new sessions only.</p>
+          <p class="text-xs text-muted-foreground -mt-2">Options depend on the default model above. Applied to new conversations only.</p>
 
           <Separator />
 
@@ -484,7 +484,7 @@
             <textarea
               id="settings-prompt"
               bind:value={settingsStore.draft.defaultSystemPromptAppend}
-              placeholder="Additional instructions appended to every agent session..."
+              placeholder="Additional instructions appended to every conversation..."
               class="w-full bg-background border border-input px-3 py-2 text-sm min-h-[80px] max-h-[200px] resize-y focus:outline-none focus:ring-1 focus:ring-ring"
             ></textarea>
           </div>
@@ -494,7 +494,7 @@
           <!-- Working Directories -->
           <div>
             <Label class="mb-1 block">Additional Working Directories</Label>
-            <p class="text-xs text-muted-foreground mb-2">Extra directories agents can access beyond the repo root.</p>
+            <p class="text-xs text-muted-foreground mb-2">Extra directories agents can access beyond the project root.</p>
             {#if settingsStore.draft.workingDirectories.length > 0}
               <div class="flex flex-col gap-1 mb-2">
                 {#each settingsStore.draft.workingDirectories as dir, i (i)}
@@ -533,7 +533,7 @@
               class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <p class="text-xs text-muted-foreground mt-1">
-              Leave empty to use each repository's default branch (e.g. main or master).
+              Leave empty to use each project's default branch (e.g. main or master).
             </p>
           </div>
 
@@ -559,8 +559,8 @@
           <!-- Repository Accent Colors -->
           {#if store.repos.length > 0}
             <div>
-              <Label class="mb-1 block">Repository Colors</Label>
-              <p class="text-xs text-muted-foreground mb-2">Accent colors help identify which tabs belong to each repository.</p>
+              <Label class="mb-1 block">Project Colors</Label>
+              <p class="text-xs text-muted-foreground mb-2">Accent colors help identify which tabs belong to each project.</p>
               <div class="flex flex-col gap-2">
                 {#each store.repos as repo, i (repo)}
                   {@const currentColor = settingsStore.draft.repoColors[repo] || DEFAULT_REPO_COLORS[i % DEFAULT_REPO_COLORS.length]}
@@ -616,7 +616,7 @@
           <!-- Desktop Notifications -->
           <div>
             <Label class="mb-1 block">Desktop Notifications</Label>
-            <p class="text-xs text-muted-foreground mb-2">Shown only while the Grove Bench window is unfocused. Clicking a notification jumps to the session.</p>
+            <p class="text-xs text-muted-foreground mb-2">Shown only while the Grove Bench window is unfocused. Clicking a notification jumps to the conversation.</p>
             <div class="space-y-2">
               <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
                 <Checkbox bind:checked={settingsStore.draft.notifyOnTurnComplete} />
@@ -636,7 +636,7 @@
               </label>
               <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
                 <Checkbox bind:checked={settingsStore.draft.notifyTaskbarBadge} />
-                Badge the taskbar icon with the number of sessions needing attention
+                Badge the taskbar icon with the number of conversations needing attention
               </label>
             </div>
           </div>
@@ -658,7 +658,7 @@
             </Select.Root>
             <p class="text-xs text-muted-foreground mt-1">
               {VIEW_MODE_DESCRIPTIONS[settingsStore.draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}.
-              New sessions start in this view. Each session can still switch from the toggle in its status bar.
+              New conversations start in this view. Each conversation can still switch from the toggle in its status bar.
             </p>
           </div>
 
@@ -694,13 +694,13 @@
             <Checkbox bind:checked={settingsStore.draft.memoryAutoSave} />
             Auto-save project memory
           </label>
-          <p class="text-xs text-muted-foreground -mt-2 ml-6">After substantial sessions, extract project knowledge and session notes into memory automatically. On by default.</p>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">After substantial conversations, extract project knowledge and conversation notes into memory automatically. On by default.</p>
 
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.memoryAutoCompact} />
             Auto-compact project memory
           </label>
-          <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old session notes in the background. A backup is taken first. Costs an extra model call, so off by default.</p>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">When memory outgrows the agent's prompt budget, merge duplicates, resolve contradictions, and prune old conversation notes in the background. A backup is taken first. Costs an extra model call, so off by default.</p>
 
           <div class="ml-6">
             <Label class="mb-1 block">Compaction timeout</Label>
@@ -734,15 +734,15 @@
           <!-- Skill Suggestions -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.autoSkillSuggestions} />
-            Automatically suggest skills from session patterns
+            Automatically suggest skills from conversation patterns
           </label>
-          <p class="text-xs text-muted-foreground -mt-2 ml-6">After each finished turn, mine session history for recurring requests and commands and refresh skill suggestions — a background model call per run. Off by default; the "Suggest" button in the status bar's Skills popover runs the same analysis on demand.</p>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">After each finished turn, mine conversation history for recurring requests and commands and refresh skill suggestions — a background model call per run. Off by default; the "Suggest" button in the status bar's Skills popover runs the same analysis on demand.</p>
 
           <Separator />
 
           <!-- Idle Auto-Stop -->
           <div>
-            <Label class="mb-1 block">Auto-stop idle sessions</Label>
+            <Label class="mb-1 block">Auto-stop idle conversations</Label>
             <div class="flex items-center gap-2">
               <input
                 type="number"
@@ -752,7 +752,7 @@
               />
               <span class="text-sm text-muted-foreground">minutes</span>
             </div>
-            <p class="text-xs text-muted-foreground mt-1">Disconnect a session after it's been idle this long (it auto-resumes when you click it). Set to 0 to disable. Default 30.</p>
+            <p class="text-xs text-muted-foreground mt-1">Disconnect a conversation after it's been idle this long (it auto-resumes when you click it). Set to 0 to disable. Default 30.</p>
           </div>
 
           <Separator />
@@ -767,7 +767,7 @@
             <Checkbox bind:checked={settingsStore.draft.crashReportsEnabled} disabled={!settingsStore.draft.analyticsEnabled} />
             Send crash reports
           </label>
-          <p class="text-xs text-muted-foreground -mt-2 ml-6">When something goes wrong, send the error message and stack trace along with the usage data. Requires usage data to be on. Never includes prompts, code, or repository paths.</p>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">When something goes wrong, send the error message and stack trace along with the usage data. Requires usage data to be on. Never includes prompts, code, or project paths.</p>
         </div>
 
       {:else if tab === 'mcp'}
@@ -776,7 +776,7 @@
           <div>
             <div class="text-sm font-medium text-foreground">MCP Servers</div>
             <p class="text-xs text-muted-foreground mt-0.5">
-              Servers from your Claude Code configuration. New and restarted sessions pick them up automatically.
+              Servers from your Claude Code configuration. New and restarted conversations pick them up automatically.
             </p>
           </div>
           <Button variant="ghost" size="sm" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading} class="text-xs shrink-0">
@@ -912,10 +912,10 @@
             </div>
             {#if mcpScope !== 'user'}
               <div>
-                <Label class="mb-1 block">Repository</Label>
+                <Label class="mb-1 block">Project</Label>
                 <Select.Root type="single" value={mcpRepo} onValueChange={(v) => { if (v) mcpRepo = v; }}>
                   <Select.Trigger class="w-full">
-                    <span class="truncate">{mcpRepo || 'Select a repository...'}</span>
+                    <span class="truncate">{mcpRepo || 'Select a project...'}</span>
                   </Select.Trigger>
                   <Select.Content>
                     {#each mcpRepos as repo (repo)}
@@ -937,7 +937,7 @@
             </Button>
             {#if mcpAdded}
               <span class="text-xs text-green-400">
-                Added "{mcpAdded}" — restart sessions to connect it.
+                Added "{mcpAdded}" — restart conversations to connect it.
               </span>
             {/if}
           </div>

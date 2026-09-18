@@ -123,7 +123,7 @@ describe('suggestionFromPattern', () => {
     });
     expect(suggestion.name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
     expect(suggestion.id).toBe(suggestionId('Update the changelog with merged PRs'));
-    expect(suggestion.rationale).toContain('4 sessions');
+    expect(suggestion.rationale).toContain('4 conversations');
   });
 });
 

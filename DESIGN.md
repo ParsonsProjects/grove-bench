@@ -6,6 +6,17 @@
 >
 > v0.2 changes: Fixed fabricated CLAUDE_CODE_PROJECT_DIR env var with real Claude Code config. Added worktree dependency/config file handling (Section 6). Replaced simple-git with execa + git CLI. Added Windows file locking handling to cleanup flows. Switched to short IDs for PATH_MAX safety. Added git version check and shell detection. Added error handling strategy (Section 13). Pinned Electron version.
 
+## 0. Terminology
+
+This document uses the internal names. In the UI, help pages and user docs the same things are called:
+
+| Internal (this doc, code) | User-facing |
+|---|---|
+| session, `AgentSession`, `session:*` IPC | conversation |
+| repo, `repoPath` | project |
+
+"Session" stays internal because it also names the provider's resumable session (`providerSessionId`). "Project" stays out of the code because Claude Code already uses it as a config scope (`project` / `user` / `local`). The plan for projects that are not a single git repository is in `docs/projects-plan.md`.
+
 ## 1. Problem Statement
 
 Running multiple AI coding agents (starting with Claude Code) on the same repository requires manual git worktree setup, multiple terminal windows, and careful branch management. There's no unified Windows-native tool that handles worktree lifecycle and provides a multi-pane terminal environment for parallel agent work.

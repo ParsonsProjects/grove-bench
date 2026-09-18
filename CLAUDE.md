@@ -74,6 +74,15 @@ npm run test:main      # Tests for main process only
 npm run test:renderer  # Tests for renderer only
 ```
 
+## Terminology
+
+User-facing names and internal names differ on purpose:
+
+- **Conversation** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`).
+- **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
+
+Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.
+
 ## Architecture Notes
 
 - Main process manages AgentSessions, each with a node-pty instance and git worktree

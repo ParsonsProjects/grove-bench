@@ -1,10 +1,10 @@
 # Terminal Tab
 
-The Terminal tab (`Alt+4`) provides a full terminal emulator connected to your session's worktree directory.
+The Terminal tab (`Alt+4`) provides a full terminal emulator connected to your conversation's worktree directory.
 
 ## Overview
 
-Each agent session has its own dedicated terminal (PTY). The terminal opens in the worktree directory for that session, so you can run commands directly in the same environment the agent is working in.
+Each conversation has its own dedicated terminal (PTY). The terminal opens in the worktree directory for that conversation, so you can run commands directly in the same environment the agent is working in.
 
 ## Features
 

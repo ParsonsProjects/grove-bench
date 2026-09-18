@@ -141,7 +141,7 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     const items: MenuItem[] = [
-      { label: 'New Session', icon: 'add', action: () => store.createAttachedSession(session.id, session.repoPath) },
+      { label: 'New Conversation', icon: 'add', action: () => store.createAttachedSession(session.id, session.repoPath) },
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
       // Completed sessions leave the working set (hidden unless "Show completed")
@@ -582,7 +582,7 @@
     <button
       onclick={() => store.finderOpen = true}
       class="w-full flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
-      title="Search sessions and conversations (Ctrl+R)"
+      title="Search conversations (Ctrl+R)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <span class="text-xs truncate">Search chats…</span>
@@ -599,7 +599,7 @@
     </div>
 
     <!-- Triage filter: what needs me, what is working, what finished while I was away -->
-    <div class="flex items-center gap-1 mb-2 px-1 flex-wrap" role="group" aria-label="Filter sessions">
+    <div class="flex items-center gap-1 mb-2 px-1 flex-wrap" role="group" aria-label="Filter conversations">
       {#each TRIAGE_FILTERS as f (f)}
         {@const n = counts[f]}
         {@const active = triageFilter === f}
@@ -644,7 +644,7 @@
             onclick={toggleShowCompleted}
             aria-pressed={showCompleted}
             class="flex items-center gap-1 hover:text-foreground transition-colors"
-            title="{showCompleted ? 'Hide' : 'Show'} sessions you marked completed"
+            title="{showCompleted ? 'Hide' : 'Show'} conversations you marked completed"
           >
             <span class="w-2.5 h-2.5 border border-current flex items-center justify-center">
               {#if showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
@@ -669,7 +669,7 @@
             type="button"
             onclick={() => toggleRepoCollapsed(repo)}
             class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
-            title={collapsed ? 'Expand repository' : 'Collapse repository'}
+            title={collapsed ? 'Expand project' : 'Collapse project'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={collapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
             {#if repoColor}
@@ -697,7 +697,7 @@
               <button
                 onclick={() => openNewAgent(repo)}
                 class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
-                title="New conversation in this repo"
+                title="New conversation in this project"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               </button>
@@ -706,7 +706,7 @@
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
               class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-              title={canRemove ? 'Remove repository' : 'Destroy all sessions first'}
+              title={canRemove ? 'Remove project' : 'Destroy all conversations first'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
@@ -726,21 +726,21 @@
                   <span class="text-muted-foreground/40">({sessions.length})</span>
                 </div>
                 {#each sessions as session, i (session.id)}
-                  {@render sessionRow(session, false, session.displayName || `session ${i + 1}`, session.status !== 'stopped')}
+                  {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, session.status !== 'stopped')}
                 {/each}
               </div>
             {/if}
           {/each}
 
           {#if inactiveGroups.length === 0}
-            <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No sessions in this project' : `No sessions match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
+            <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No conversations in this project' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
           {/if}
         {/if}
       </div>
     {/each}
 
     {#if store.repos.length === 0}
-      <p class="text-xs text-muted-foreground/50 mt-2">Add a repository to get started.</p>
+      <p class="text-xs text-muted-foreground/50 mt-2">Add a project to get started.</p>
     {/if}
   </div>
 
@@ -789,7 +789,7 @@
         variant="ghost"
         size="sm"
         class="px-2 shrink-0"
-        title="Clean up old sessions"
+        title="Clean up old conversations"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
       </Button>
@@ -862,9 +862,9 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !cleaningUp) showCleanup = false; }}>
     <Dialog.Content class="max-w-md">
       <Dialog.Header>
-        <Dialog.Title>Clean Up Old Sessions</Dialog.Title>
+        <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
         <Dialog.Description>
-          Remove stopped sessions you no longer need. Removing a session kills its shell and deletes its worktree. Sessions with uncommitted changes are flagged and left unselected — tick them only if you're sure. Branches are kept unless you choose otherwise. Running sessions are never listed.
+          Remove stopped conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Branches are kept unless you choose otherwise. Running conversations are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -891,7 +891,7 @@
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No stopped sessions inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No stopped conversations inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
           {#each cleanupCandidates as session (session.id)}
@@ -930,7 +930,7 @@
         >
           {cleaningUp
             ? 'Removing…'
-            : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'session' : 'sessions'}`}
+            : `Remove ${cleanupSelectedIds.length} ${cleanupSelectedIds.length === 1 ? 'conversation' : 'conversations'}`}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>
@@ -942,9 +942,9 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmCleanup = false; }}>
     <Dialog.Content class="max-w-xs">
       <Dialog.Header>
-        <Dialog.Title>Remove Sessions?</Dialog.Title>
+        <Dialog.Title>Remove Conversations?</Dialog.Title>
         <Dialog.Description>
-          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'session' : 'sessions'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}?
+          Permanently remove {cleanupSelectedIds.length} {cleanupSelectedIds.length === 1 ? 'conversation' : 'conversations'} and {cleanupSelectedIds.length === 1 ? 'its worktree' : 'their worktrees'}{cleanupDeleteBranches ? ', and delete their branches' : ' (branches are kept)'}?
           {#if cleanupSelectedDirtyCount > 0}
             <span class="text-amber-500 font-medium">
               {cleanupSelectedDirtyCount} of them {cleanupSelectedDirtyCount === 1 ? 'has' : 'have'} uncommitted changes that will be lost.
@@ -969,7 +969,7 @@
         <Dialog.Title>Destroy Agent?</Dialog.Title>
         <Dialog.Description>
           {#if session?.direct}
-            This will stop the agent session on branch
+            This will stop the conversation on branch
             <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
             No files will be deleted.
           {:else}
@@ -1001,7 +1001,7 @@
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmRemoveRepo = null; }}>
     <Dialog.Content class="max-w-xs">
       <Dialog.Header>
-        <Dialog.Title>Remove Repository?</Dialog.Title>
+        <Dialog.Title>Remove Project?</Dialog.Title>
         <Dialog.Description>
           Remove <span class="text-foreground font-medium">{store.repoDisplayName(confirmRemoveRepo)}</span> from Grove Bench?
           This won't delete any files on disk.

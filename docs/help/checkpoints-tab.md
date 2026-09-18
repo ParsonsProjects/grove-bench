@@ -1,12 +1,12 @@
 # Checkpoints Tab
 
-The Checkpoints tab (`Alt+3`) lets you track how your files changed turn by turn and rewind your session to a previous point in the conversation. Each checkpoint represents a snapshot taken before a significant agent action.
+The Checkpoints tab (`Alt+3`) lets you track how your files changed turn by turn and rewind to a previous point in the conversation. Each checkpoint represents a snapshot taken before a significant agent action.
 
 ## Checkpoint List
 
 The left panel shows a numbered list of checkpoints. Each entry includes a brief description of what the agent was about to do at that point, along with `+added`/`−deleted` line counts showing how much that turn changed. Click a checkpoint to preview it.
 
-At the top of the list, **All turns** shows the cumulative diff of everything that changed since the session started — the full thread diff across every turn.
+At the top of the list, **All turns** shows the cumulative diff of everything that changed since the conversation started — the full thread diff across every turn.
 
 ## Diff Preview
 

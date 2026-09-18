@@ -68,7 +68,7 @@
   );
   let emptyTitle = $derived(
     files?.scopeError
-      ?? (isFullThread ? 'No file changes in this session' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
+      ?? (isFullThread ? 'No file changes in this conversation' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
   );
 </script>
 
@@ -102,7 +102,7 @@
         onclick={() => checkpointStore.selectFullThread(sessionId)}
         class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border transition-colors
           {isFullThread ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
-        title="Cumulative diff of everything changed since the session started"
+        title="Cumulative diff of everything changed since the conversation started"
       >
         <svg class="w-3 h-3 shrink-0 mt-0.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
@@ -239,7 +239,7 @@
             {sourceKey}
             entries={files?.entries ?? []}
             loading={isDiffLoading}
-            changesLabel={isFullThread ? 'Changed this session' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
+            changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
             {loadDiff}
             {loadFileLines}
             onRefresh={() => checkpointStore.reloadFiles(sessionId)}

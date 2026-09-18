@@ -115,7 +115,7 @@ export function registerHandlers() {
 
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
-      title: 'Select Git Repository',
+      title: 'Select a project folder (git repository)',
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
@@ -140,7 +140,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
     const activeSessions = sessionManager.getSessionsByRepo(repoPath);
     if (activeSessions.length > 0) {
-      throw new Error('Cannot remove repo while it has active sessions');
+      throw new Error('Cannot remove a project while it has active conversations');
     }
 
     const orphans = await worktreeManager.cleanupOrphans(repoPath);
@@ -163,7 +163,7 @@ export function registerHandlers() {
       let checkoutPath = opts.repoPath;
       if (opts.attachToSessionId) {
         const src = await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId);
-        if (!src) throw new Error(`Session ${opts.attachToSessionId} not found`);
+        if (!src) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
         branch = src.branch;
         checkoutPath = src.path;
       } else {
@@ -447,7 +447,7 @@ export function registerHandlers() {
         if (event.sender.isDestroyed()) return;
         event.sender.send(channel, {
           type: 'error',
-          message: 'Message not delivered: the agent is not connected. Send it again once the session shows as connected.',
+          message: 'Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.',
         } as import('../shared/types.js').AgentEvent);
         event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
       }
@@ -510,7 +510,7 @@ export function registerHandlers() {
       throw new Error(`${adapter.displayName} does not support adding skills`);
     }
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
-    if (!root) throw new Error('No project root available for this session');
+    if (!root) throw new Error('No project root available for this conversation');
     return adapter.addSkill(root, def);
   });
 
@@ -689,7 +689,7 @@ export function registerHandlers() {
       await shell.openPath(wt.path);
       return;
     }
-    throw new Error('Session not found');
+    throw new Error('Conversation not found');
   });
 
   // ─── File revert & diff (for changes review panel) ───

@@ -14,7 +14,7 @@
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+F` | Search in Activity tab |
-| `Ctrl+R` | Open session finder (quick-switch between sessions) |
+| `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
 
 ## Agent Controls
 

@@ -73,7 +73,7 @@ describe('deleteFiles', () => {
     expect(mockGroveBench.memoryDelete).toHaveBeenCalledWith('/repo', 'sessions/a.md');
     expect(mockGroveBench.memoryDelete).toHaveBeenCalledWith('/repo', 'sessions/b.md');
     expect(memoryStore.files).toEqual(remaining);
-    expect(memoryStore.compactMessage).toBe('Deleted 2 session notes');
+    expect(memoryStore.compactMessage).toBe('Deleted 2 conversation notes');
   });
 
   it('clears the selected file when it was among those deleted', async () => {

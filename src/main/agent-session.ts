@@ -1231,7 +1231,7 @@ class AgentSessionManager {
   async reconnectMcpServer(id: string, serverName: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.reconnectMcpServer) {
-      throw new Error('MCP server control is not available for this session');
+      throw new Error('MCP server control is not available for this conversation');
     }
     try {
       await session.queryHandle.reconnectMcpServer(serverName);
@@ -1244,7 +1244,7 @@ class AgentSessionManager {
   async authenticateMcpServer(id: string, serverName: string): Promise<McpAuthStartResult> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.authenticateMcpServer) {
-      throw new Error('MCP sign-in is not available for this session');
+      throw new Error('MCP sign-in is not available for this conversation');
     }
     try {
       return await session.queryHandle.authenticateMcpServer(serverName);
@@ -1257,7 +1257,7 @@ class AgentSessionManager {
   async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.setMcpServerEnabled) {
-      throw new Error('MCP server control is not available for this session');
+      throw new Error('MCP server control is not available for this conversation');
     }
     try {
       await session.queryHandle.setMcpServerEnabled(serverName, enabled);
@@ -1580,7 +1580,7 @@ class AgentSessionManager {
    *  messages are gone). */
   async rewindFiles(id: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Conversation ${id} not found`);
 
     if (options?.filesOnly) {
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
@@ -1654,7 +1654,7 @@ class AgentSessionManager {
   /** Dry-run rewind to get the diff of what would change. */
   async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Conversation ${id} not found`);
 
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
@@ -1676,27 +1676,27 @@ class AgentSessionManager {
   /** Unified diff of what a single turn changed. */
   async getTurnDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Conversation ${id} not found`);
     return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
   }
 
   /** Cumulative diff from the session baseline to the current working tree. */
   async getFullThreadDiff(id: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Conversation ${id} not found`);
     return session.checkpoints.fullThreadDiff(id, session.worktreePath);
   }
 
   /** Files changed across a checkpoint comparison (for the review panel). */
   async getCheckpointFiles(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope): Promise<import('../shared/types.js').GitStatusResult> {
     const session = this.sessions.get(id);
-    if (!session) return { entries: [], scopeError: 'Session not found' };
+    if (!session) return { entries: [], scopeError: 'Conversation not found' };
     return session.checkpoints.files(id, session.worktreePath, uuid, scope);
   }
 
   async getCheckpointFileDiff(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileDiffResult> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Session ${id} not found`);
+    if (!session) throw new Error(`Conversation ${id} not found`);
     return session.checkpoints.fileDiff(id, session.worktreePath, uuid, scope, relPath);
   }
 
