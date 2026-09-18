@@ -988,6 +988,7 @@
               Select all
             </button>
             {#if cleanupGhAvailable}
+              <span class="text-muted-foreground/40" aria-hidden="true">·</span>
               <button
                 type="button"
                 onclick={cleanupSelectMerged}
