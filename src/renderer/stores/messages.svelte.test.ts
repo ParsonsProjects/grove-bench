@@ -1569,6 +1569,19 @@ describe('rewind dialog', () => {
     messageStore.closeRewindDialog(SID);
     expect(messageStore.rewindDialogOpen[SID]).toBe(false);
   });
+
+  it('openRewindDialog remembers the message it was opened on, until closed', () => {
+    messageStore.openRewindDialog(SID, 'uuid-target');
+    expect(messageStore.rewindDialogOpen[SID]).toBe(true);
+    expect(messageStore.getRewindDialogTarget(SID)).toBe('uuid-target');
+
+    messageStore.closeRewindDialog(SID);
+    expect(messageStore.getRewindDialogTarget(SID)).toBeNull();
+
+    // /rewind (no message) opens with no preselection
+    messageStore.openRewindDialog(SID);
+    expect(messageStore.getRewindDialogTarget(SID)).toBeNull();
+  });
 });
 
 describe('sendCommand — /rewind', () => {

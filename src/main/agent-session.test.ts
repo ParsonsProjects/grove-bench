@@ -65,7 +65,8 @@ vi.mock('./git.js', () => ({
 
 vi.mock('./checkpoints.js', () => {
   class MockCheckpointManager {
-    capture = vi.fn().mockResolvedValue(undefined);
+    capture = vi.fn().mockResolvedValue(true);
+    captureBaseline = vi.fn().mockResolvedValue(true);
     restore = vi.fn().mockResolvedValue(undefined);
     pruneAfter = vi.fn().mockResolvedValue(undefined);
     resume = vi.fn().mockResolvedValue(undefined);
@@ -1698,6 +1699,164 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(vi.mocked(autosave.cancelAutoSave)).toHaveBeenCalledWith('test-rewind-autosave');
 
     await sessionManager.destroySession('test-rewind-autosave');
+  });
+
+  it('degrades to a files-only restore for a checkpoint whose message is no longer in the conversation', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-stale',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.sendMessage('test-rewind-stale', 'Hello');
+    const session = sessionManager.getSession('test-rewind-stale')!;
+    const userMessagesBefore = session.eventHistory.filter((e) => e.type === 'user_message');
+    const startsBefore = mockAdapter.startCallCount;
+    win._send.mockClear();
+
+    // A uuid that only exists as a git ref (e.g. the target of an earlier
+    // rewind) must not wipe the conversation by starting a fresh one.
+    await sessionManager.rewindFiles('test-rewind-stale', 'not-in-history');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(session.checkpoints.restore).toHaveBeenCalledWith('test-rewind-stale', expect.any(String), 'not-in-history');
+    expect(session.checkpoints.pruneAfter).not.toHaveBeenCalled();
+    expect(session.eventHistory.filter((e) => e.type === 'user_message')).toEqual(userMessagesBefore);
+    expect(session.providerSessionId).toBe('mock-session-id');
+    expect(mockAdapter.startCallCount).toBe(startsBefore);
+    const rewindEvents = win._send.mock.calls
+      .filter((c: any[]) => String(c[0]).startsWith('agent:event'))
+      .map((c: any[]) => c[1])
+      .filter((e: any) => e?.type === 'rewind');
+    expect(rewindEvents).toEqual([{ type: 'rewind', toMessageId: 'not-in-history', filesOnly: true }]);
+
+    await expect(
+      sessionManager.rewindFiles('test-rewind-stale', 'not-in-history', { conversationOnly: true }),
+    ).rejects.toThrow(/no longer part of the conversation/);
+
+    await sessionManager.destroySession('test-rewind-stale');
+  });
+});
+
+describe('AgentSessionManager checkpoint capture', () => {
+  it('captures the baseline before the query starts and does not resume for a fresh session', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cp-baseline',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('test-cp-baseline')!;
+
+    // Baseline is queued before adapter.start resolves, so no user prompt can
+    // be captured ahead of it.
+    expect(session.checkpoints.captureBaseline).toHaveBeenCalledWith('test-cp-baseline', expect.any(String));
+
+    // system_init sets providerSessionId from the handle; that must not be
+    // mistaken for a resumed session (which would skip the baseline).
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(session.providerSessionId).toBe('mock-session-id');
+    expect(session.checkpoints.resume).not.toHaveBeenCalled();
+    expect(session.checkpoints.captureBaseline).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('test-cp-baseline');
+  });
+
+  it('resumes checkpoint state instead of capturing a baseline for a resumed provider session', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cp-resume',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+      resumeSessionId: 'persisted-provider-id',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const session = sessionManager.getSession('test-cp-resume')!;
+    expect(session.checkpoints.captureBaseline).not.toHaveBeenCalled();
+
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'persisted-provider-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(session.checkpoints.resume).toHaveBeenCalledWith('test-cp-resume', expect.any(String));
+    expect(session.checkpoints.captureBaseline).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-cp-resume');
+  });
+
+  it('waits for the checkpoint before handing the prompt to the agent', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cp-order',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-cp-order')!;
+
+    let finishCapture!: (ok: boolean) => void;
+    vi.mocked(session.checkpoints.capture).mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { finishCapture = resolve; }),
+    );
+
+    const pending = sessionManager.sendMessage('test-cp-order', 'Edit the files');
+    await new Promise((r) => setTimeout(r, 20));
+    // The prompt is in history (the thread shows it) but the agent has not
+    // been given it while `git add -A` is still snapshotting the tree.
+    expect(session.eventHistory.some((e) => e.type === 'user_message' && e.text === 'Edit the files')).toBe(true);
+    expect(session.queryHandle!.sendMessage).not.toHaveBeenCalled();
+
+    finishCapture(true);
+    expect(await pending).toBe(true);
+    expect(session.queryHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Edit the files' }));
+    expect(session.checkpoints.capture).toHaveBeenCalledWith('test-cp-order', expect.any(String), expect.any(String), 'Edit the files');
+
+    await sessionManager.destroySession('test-cp-order');
+  });
+
+  it('still sends the prompt but tells the thread when the checkpoint could not be captured', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-cp-fail',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-cp-fail')!;
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(false);
+    win._send.mockClear();
+
+    expect(await sessionManager.sendMessage('test-cp-fail', 'Hello')).toBe(true);
+    expect(session.queryHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Hello' }));
+
+    const errors = session.eventHistory.filter((e) => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as any).message).toMatch(/Checkpoint could not be captured/);
+
+    await sessionManager.destroySession('test-cp-fail');
   });
 });
 

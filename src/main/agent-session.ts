@@ -596,6 +596,18 @@ class AgentSessionManager {
 
     const skillsFilter = await this.skillsFilterFor(session, currentSettings.disabledSkills ?? []);
 
+    // Fresh conversation: snapshot the working tree as the session's baseline
+    // before the query can accept a prompt, so the baseline is always the
+    // oldest checkpoint and the first turn's diff is measured from it. The
+    // manager skips it if the session already has turns (rewind restart).
+    // Resumed sessions rebuild their checkpoint state on system_init instead.
+    const resumingProviderSession = !!session.providerSessionId;
+    if (!resumingProviderSession) {
+      session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
+        if (!written) logger.warn(`Checkpoint baseline not captured for ${id}`);
+      });
+    }
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -783,16 +795,15 @@ class AgentSessionManager {
             w.webContents.send(IPC.SESSION_STATUS, session.id, 'running');
           }
 
-          // Resume existing checkpoint state if this is a resumed session,
-          // otherwise capture a baseline checkpoint for new sessions.
-          // These are mutually exclusive to avoid turn counter collisions.
-          if (session.providerSessionId) {
+          // A resumed provider session (app restart, stop/restart, rewind
+          // fork) keeps its refs in git: rebuild the uuid map and turn counter
+          // from them. Fresh conversations already captured their baseline
+          // before the query started. providerSessionId is set above from the
+          // handle on every init, so the decision has to use what it was
+          // before this query started.
+          if (resumingProviderSession) {
             session.checkpoints.resume(id, session.worktreePath).catch(err => {
               logger.warn(`Checkpoint resume failed for ${id}:`, err);
-            });
-          } else {
-            session.checkpoints.capture(id, session.worktreePath, '__baseline__').catch(err => {
-              logger.warn(`Checkpoint baseline failed for ${id}:`, err);
             });
           }
         }
@@ -933,28 +944,13 @@ class AgentSessionManager {
     });
   }
 
-  async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
-    let session = this.sessions.get(id);
-
-    // The session object is created at the end of setup; a prompt that
-    // arrives during worktree creation or dependency install has nowhere to
-    // go yet. Wait for setup to settle and look the session up again.
-    if (!session) {
-      const setup = this.pendingSetups.get(id);
-      if (setup) {
-        logger.debug(`[sendMessage] session=${id} waiting for session setup`);
-        await setup;
-        session = this.sessions.get(id);
-      }
-    }
-
-    if (!session) {
-      logger.debug(`[sendMessage] session=${id} no session`);
-      return false;
-    }
-
-    // If queryHandle is not yet available but a new query is being initialized
-    // (e.g. right after stop), wait for it to become ready.
+  /**
+   * Resolve once the session has a live query handle. If none is installed
+   * but a new query is being initialized (e.g. right after stop), waits for it
+   * to become ready. Returns false when there is nothing to send to.
+   */
+  private async awaitQueryHandle(session: ManagedSession): Promise<boolean> {
+    const id = session.id;
     if (!session.queryHandle && session.queryReady) {
       logger.debug(`[sendMessage] session=${id} waiting for queryHandle after stop`);
       const QUERY_READY_TIMEOUT_MS = 30_000;
@@ -978,6 +974,30 @@ class AgentSessionManager {
       logger.debug(`[sendMessage] session=${id} no queryHandle`);
       return false;
     }
+    return true;
+  }
+
+  async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
+    let session = this.sessions.get(id);
+
+    // The session object is created at the end of setup; a prompt that
+    // arrives during worktree creation or dependency install has nowhere to
+    // go yet. Wait for setup to settle and look the session up again.
+    if (!session) {
+      const setup = this.pendingSetups.get(id);
+      if (setup) {
+        logger.debug(`[sendMessage] session=${id} waiting for session setup`);
+        await setup;
+        session = this.sessions.get(id);
+      }
+    }
+
+    if (!session) {
+      logger.debug(`[sendMessage] session=${id} no session`);
+      return false;
+    }
+
+    if (!(await this.awaitQueryHandle(session))) return false;
 
     // A new turn supersedes any pending interrupt: don't let a stale flag
     // sanitize this turn's genuine result.
@@ -989,15 +1009,29 @@ class AgentSessionManager {
     const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
     session.emit?.(userEvent);
 
-    // Capture checkpoint (fire-and-forget), include message text for display
-    session.checkpoints.capture(id, session.worktreePath, uuid, content).catch(err => {
-      logger.warn(`Checkpoint capture failed for ${id}:`, err);
-    });
+    // Snapshot the working tree before the agent gets the prompt. The capture
+    // is awaited on purpose: fired concurrently, the agent could start editing
+    // files while `git add -A` is still scanning, and the "before this turn"
+    // checkpoint would silently include part of the turn. capture() never
+    // throws; a false result means there is no checkpoint for this message,
+    // which the thread shows so a later rewind attempt is not a surprise.
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, content);
+    if (!captured) {
+      logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
+      session.emit?.({
+        type: 'error',
+        message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. See the log for the git error.',
+      });
+    }
+    // The query may have been torn down while the snapshot ran (stop, model
+    // switch); if a replacement is starting, hand the prompt to that one.
+    if (!(await this.awaitQueryHandle(session))) return false;
+    const queryHandle = session.queryHandle!;
 
     const sessionId = session.providerSessionId ?? '';
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
-      session.queryHandle.sendMessage({
+      queryHandle.sendMessage({
         text: content,
         images: images,
       });
@@ -1597,7 +1631,17 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Conversation ${id} not found`);
 
-    if (options?.filesOnly) {
+    // A checkpoint whose message is no longer in the conversation (rewound
+    // away earlier, or from before a /clear) can only have its files restored.
+    // Without this guard the fork point below would come back null and the
+    // "rewind" would silently start a brand-new conversation.
+    const inConversation = session.eventHistory.some(
+      (e) => e.type === 'user_message' && e.uuid === userMessageId,
+    );
+    if (options?.filesOnly || !inConversation) {
+      if (options?.conversationOnly) {
+        throw new Error('That message is no longer part of the conversation, so there is nothing to rewind. Its files can still be restored.');
+      }
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
       session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
       return;
