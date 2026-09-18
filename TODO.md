@@ -9,6 +9,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Agent settings popover — one two-line status-bar trigger (agent on top; model, mode, and any non-default control beneath) opening a column-per-setting popover for agent, model, and every declared control (`SessionControlsPopover.svelte`). Alt+M / Alt+T still cycle.
 - [ ] Codex adapter — implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; the popover, shortcuts, triage, and session manager need no changes
 - [ ] Grok Build adapter
+- [ ] Mistral adapter — prototyped in [PR #50](https://github.com/ParsonsProjects/grove-bench/pull/50) (`adapters/mistral-agent.ts` plus settings and NewAgentDialog wiring); conflicts with main in `settings.ts`, `settings.svelte.ts` and `shared/types.ts` and needs rebasing onto the `getControls` adapter API
 - [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
 - [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
 - [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
@@ -58,7 +59,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Diff Viewer
 - [x] Side-by-side diff view option (toggle in Edit tool header)
-- [ ] Syntax highlighting in diff views across multiple languages
+- [x] Syntax highlighting in diff views — `lib/diff-highlight.ts` maps ~30 file extensions to highlight.js languages and is used by DiffView, DiffBlock and ReviewDiffPanel
 - [x] Full thread diff view (cumulative changes across all turns) — "All turns" entry in the Checkpoints tab, plus per-turn diff stats and a This turn / Since here toggle
 
 ### PR Creation Workflow
@@ -78,11 +79,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Help System
 - [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md` and HelpPanel is mounted; missing piece is the F1 shortcut
-- [ ] Context-aware footer showing relevant keyboard shortcuts
+- [ ] Context-aware footer showing relevant keyboard shortcuts — the status bar already has a static shortcuts popover (session finder, search, cycle mode/thinking, tab switching); missing piece is making it reflect the focused pane
 
 ### Cost & Usage Dashboard
 - [x] Plan usage runway — `AgentQueryHandle.getUsage()` returns a neutral `ProviderUsage` (windows with 0–1 utilization and reset time); the Claude adapter maps the SDK's experimental `/usage` control and probes for it so a rename degrades to "no usage"; `usage.svelte.ts` keeps one snapshot per provider, refreshes on popover open and after turns (throttled), and folds live `rate_limit` events in; shown as bars under the agent in the Agent settings popover
-- [ ] Per-session and cumulative token/cost view — data is already captured per message (`adapters/claude-code.ts`) but only lands in memory notes
+- [ ] Per-session and cumulative token/cost view — the status bar and result messages show the last turn's cost only; per-turn data is captured (`adapters/claude-code.ts`) but nothing sums it across a session or repo
 
 ### Session Export
 - [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action — also the enabler for switching agents mid-conversation
