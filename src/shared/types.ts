@@ -33,6 +33,29 @@ export interface WorktreeRepoConfig {
   copyFiles: string[];
 }
 
+// ─── Project ───
+
+/** A folder a project spans. Only `git` workspaces exist today; `folder` is
+ *  reserved for projects that are not a git repository (docs/projects-plan.md). */
+export interface ProjectWorkspace {
+  id: string;
+  /** Absolute path to the checkout or folder. */
+  path: string;
+  kind: 'git' | 'folder';
+}
+
+/** What the sidebar calls a project. Persisted in projects.json under
+ *  userData, independent of the worktree manifest, so a project survives
+ *  with zero conversations. A project has exactly one workspace for now;
+ *  `workspaces[0].path` is the `repoPath` the rest of the app keys on. */
+export interface Project {
+  id: string;
+  /** User-editable; defaults to the primary workspace's folder name. */
+  name: string;
+  workspaces: ProjectWorkspace[];
+  createdAt: number;
+}
+
 // ─── Session ───
 
 export interface CreateSessionOpts {
@@ -645,9 +668,15 @@ export interface SessionSortState {
 // ─── IPC API (exposed via contextBridge) ───
 
 export interface GroveBenchAPI {
-  // Repo operations
-  addRepo(): Promise<string | null>;
-  removeRepo(repoPath: string): Promise<void>;
+  // Project operations
+  /** All projects, in the order they were added. Also adopts any repo path
+   *  found in the worktree manifest that has no project yet. */
+  listProjects(): Promise<Project[]>;
+  /** Folder picker; null when cancelled or the folder is not a git repository. */
+  addProject(): Promise<Project | null>;
+  renameProject(projectId: string, name: string): Promise<Project>;
+  /** Fails while the project has running conversations. */
+  removeProject(projectId: string): Promise<void>;
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
@@ -662,7 +691,6 @@ export interface GroveBenchAPI {
 
   // Worktree operations
   listWorktrees(repoPath: string): Promise<WorktreeInfo[]>;
-  listRepos(): Promise<string[]>;
 
   // Branch operations
   listBranches(repoPath: string): Promise<string[]>;
@@ -1169,8 +1197,10 @@ export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | '
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
-  REPO_SELECT: 'repo:select',
-  REPO_REMOVE: 'repo:remove',
+  PROJECT_LIST: 'project:list',
+  PROJECT_ADD: 'project:add',
+  PROJECT_RENAME: 'project:rename',
+  PROJECT_REMOVE: 'project:remove',
   REPO_VALIDATE: 'repo:validate',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
@@ -1180,7 +1210,6 @@ export const IPC = {
   SESSION_SET_COMPLETED: 'session:setCompleted',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
-  WORKTREE_LIST_REPOS: 'worktree:listRepos',
   BRANCH_LIST: 'branch:list',
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',

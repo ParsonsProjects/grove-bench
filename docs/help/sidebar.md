@@ -4,7 +4,9 @@ The sidebar on the left has two sections. **Conversations** is the live working 
 
 ## Projects
 
-Each project you have added appears as a group under **Projects**. Today a project is a single git repository. Its name is shown with a colored accent unique to that project.
+Each project you have added appears as a group under **Projects**. Today a project is a single git repository. Its name is shown with a colored accent unique to that project. A project stays in the sidebar until you remove it, even when it has no conversations.
+
+Right-click a project header (or double-click its name) to **Rename Project**, start a **New Conversation** in it, or **Remove Project**. Renaming only changes the label Grove Bench shows; the folder on disk is untouched. Leave the name empty to go back to the folder name.
 
 Conversations within a project are listed below the project name. If multiple conversations share the same branch, they are grouped together under that branch name.
 

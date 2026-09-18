@@ -1,8 +1,18 @@
 # Projects, Workspaces and Scratch Conversations
 
-> **Status: Proposal.** Nothing here is implemented yet. The UI, help and docs
-> already say "conversation" and "project"; the code still says "session" and
+> **Status: Phase 1 implemented, phases 2 and 3 are proposals.** The UI, help
+> and docs say "conversation" and "project"; the code still says "session" and
 > "repo" on purpose (see `CLAUDE.md`, Terminology).
+>
+> Phase 1 shipped `Project` and `ProjectWorkspace` in `src/shared/types.ts`,
+> `src/main/projects.ts` (projects.json, adoption of manifest paths, rename,
+> remove) and the `project:*` IPC channels. Two items the table below listed
+> under phase 1 were deliberately left for phase 3, where they first pay off:
+> stamping manifest entries with `projectId`/`workspaceId`, and re-keying
+> memory, colors and skill caches by project id. With exactly one workspace per
+> project the workspace path already identifies the project, and moving the
+> memory directories is a migration with real failure modes and no benefit
+> until a project can span more than one path.
 
 ## Goals
 
@@ -15,11 +25,13 @@
 
 Everything below is what the code does now, so the plan can be checked against it.
 
-- **A project has no identity of its own.** The sidebar's project list is derived
-  from the worktree manifest: `listRepos()` in `src/main/worktree-manager.ts`
-  collects the distinct `repoPath` values of manifest entries. A repository with
-  no conversations disappears on restart; the renderer only keeps it in memory
-  (`addRepo` in `src/renderer/stores/sessions.svelte.ts`).
+- **A project has an identity of its own (phase 1).** `src/main/projects.ts`
+  persists projects in `projects.json` under `userData`. Before that the list
+  was derived from the worktree manifest (`listRepos()` in
+  `src/main/worktree-manager.ts`), so a repository with no conversations
+  vanished on restart. `listRepos()` still exists: the `project:list` handler
+  adopts any manifest path without a project, which is both the one-off
+  migration and a standing safety net.
 - **Adding a project requires git.** `validateRepo()` is `isGitRepo()`
   (`src/main/worktree-manager.ts`), and the folder picker in `src/main/ipc.ts`
   rejects anything else.
@@ -80,14 +92,15 @@ A conversation then carries `projectId`, `primaryWorkspaceId` and
 stay for one release as derived views of the primary checkout so the renderer
 can move over gradually.
 
-Projects are stored in a new `projects.json` under `userData`, written through
-the same debounced writer pattern as `app-state.ts`. The worktree manifest keeps
-its job (per-checkout bookkeeping) but each entry gains `projectId` and
+Projects are stored in `projects.json` under `userData`. Writes are not
+debounced: project changes are rare and user-initiated, and the record must be
+on disk before the IPC call returns. The worktree manifest keeps its job
+(per-checkout bookkeeping); in phase 3 each entry gains `projectId` and
 `workspaceId`.
 
 ### Migration
 
-On first launch with the new code:
+Step 1 is done (phase 1). Steps 2 to 4 belong to phase 3:
 
 1. For each distinct `repoPath` in the manifest, create a `normal` project with
    one `git` workspace at that path. Name it from the folder name.
@@ -183,9 +196,9 @@ the first version small. Worktrees for every workspace can follow.
 
 | Phase | Scope | User-visible change |
 |---|---|---|
-| 1 | `Project` and `Workspace` entities, `projects.json`, migration, memory re-key | Projects survive with zero conversations; rename a project |
+| 1 (done) | `Project` and `Workspace` entities, `projects.json`, adoption of manifest paths | Projects survive with zero conversations; rename a project |
 | 2 | `folder` workspaces, git-gated panels, scratch projects | Add any folder; start a scratch conversation |
-| 3 | `additionalDirectories` wiring, per-workspace git panels, multi-checkout destroy | Add a second repository to a project; one conversation edits both |
+| 3 | `additionalDirectories` wiring, per-workspace git panels, multi-checkout destroy, manifest stamping, memory and cache re-key by project id | Add a second repository to a project; one conversation edits both |
 
 Phase 1 has no new UI beyond a rename field and can ship on its own. Phase 2 is
 mostly UI gating. Phase 3 is the large one, and nearly all of its cost is in the

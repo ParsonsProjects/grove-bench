@@ -6,6 +6,7 @@ import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
+import * as projects from './projects.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
@@ -107,9 +108,18 @@ async function attachContentHashes(cwd: string, entries: GitStatusEntry[]): Prom
 }
 
 export function registerHandlers() {
-  // ─── Repo ───
+  // ─── Projects ───
 
-  ipcMain.handle(IPC.REPO_SELECT, async (event) => {
+  ipcMain.handle(IPC.PROJECT_LIST, async () => {
+    // Adopt any repo the worktree manifest knows that has no project yet.
+    // This is the one-off migration from the manifest-derived repo list, and
+    // it stays as a safety net: a manifest entry can never be orphaned from
+    // the sidebar because its project row is missing.
+    projects.ensureProjectsForPaths(await worktreeManager.listRepos());
+    return projects.listProjects();
+  });
+
+  ipcMain.handle(IPC.PROJECT_ADD, async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return null;
 
@@ -130,23 +140,36 @@ export function registerHandlers() {
       logger.info(`Cleaned up ${orphans} orphan worktree(s) in ${repoPath}`);
     }
 
-    return repoPath;
+    return projects.ensureProjectForPath(repoPath);
+  });
+
+  ipcMain.handle(IPC.PROJECT_RENAME, async (_event, projectId: string, name: string) => {
+    return projects.renameProject(projectId, name);
+  });
+
+  ipcMain.handle(IPC.PROJECT_REMOVE, async (_event, projectId: string) => {
+    const project = projects.getProject(projectId);
+    if (!project) return;
+
+    for (const workspace of project.workspaces) {
+      const activeSessions = sessionManager.getSessionsByRepo(workspace.path);
+      if (activeSessions.length > 0) {
+        throw new Error('Cannot remove a project while it has active conversations');
+      }
+    }
+
+    for (const workspace of project.workspaces) {
+      const orphans = await worktreeManager.cleanupOrphans(workspace.path);
+      if (orphans > 0) {
+        logger.info(`Cleaned up ${orphans} orphan worktree(s) on project remove for ${workspace.path}`);
+      }
+    }
+
+    projects.removeProject(projectId);
   });
 
   ipcMain.handle(IPC.REPO_VALIDATE, async (_event, repoPath: string) => {
     return worktreeManager.validateRepo(repoPath);
-  });
-
-  ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
-    const activeSessions = sessionManager.getSessionsByRepo(repoPath);
-    if (activeSessions.length > 0) {
-      throw new Error('Cannot remove a project while it has active conversations');
-    }
-
-    const orphans = await worktreeManager.cleanupOrphans(repoPath);
-    if (orphans > 0) {
-      logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
-    }
   });
 
   // ─── Sessions ───
@@ -404,9 +427,6 @@ export function registerHandlers() {
     return worktrees;
   });
 
-  ipcMain.handle(IPC.WORKTREE_LIST_REPOS, async () => {
-    return worktreeManager.listRepos();
-  });
 
   // ─── Prerequisites ───
 

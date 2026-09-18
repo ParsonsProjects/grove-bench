@@ -4,8 +4,10 @@ import { IPC } from '../shared/types.js';
 
 const api: GroveBenchAPI = {
   // Repo operations
-  addRepo: () => ipcRenderer.invoke(IPC.REPO_SELECT),
-  removeRepo: (repoPath: string) => ipcRenderer.invoke(IPC.REPO_REMOVE, repoPath),
+  listProjects: () => ipcRenderer.invoke(IPC.PROJECT_LIST),
+  addProject: () => ipcRenderer.invoke(IPC.PROJECT_ADD),
+  renameProject: (projectId: string, name: string) => ipcRenderer.invoke(IPC.PROJECT_RENAME, projectId, name),
+  removeProject: (projectId: string) => ipcRenderer.invoke(IPC.PROJECT_REMOVE, projectId),
   validateRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_VALIDATE, path),
 
   // Session operations
@@ -25,7 +27,6 @@ const api: GroveBenchAPI = {
 
   // Worktree operations
   listWorktrees: (repoPath: string) => ipcRenderer.invoke(IPC.WORKTREE_LIST, repoPath),
-  listRepos: () => ipcRenderer.invoke(IPC.WORKTREE_LIST_REPOS) as Promise<string[]>,
 
   // Branch operations
   listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),

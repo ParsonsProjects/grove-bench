@@ -72,12 +72,9 @@
     if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
       mcpConfigStore.refresh();
     }
-    if (open && tab === 'mcp' && mcpRepos.length === 0) {
-      window.groveBench.listRepos().then((repos) => { mcpRepos = repos; }).catch(() => {});
-    }
   });
 
-  let mcpRepos = $state<string[]>([]);
+  let mcpRepos = $derived(store.repos);
   let mcpName = $state('');
   let mcpTransport = $state<'stdio' | 'http' | 'sse'>('stdio');
   let mcpCommand = $state('');

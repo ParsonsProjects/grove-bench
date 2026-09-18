@@ -289,8 +289,8 @@
     settingsStore.load();
     bookmarkStore.load();
     memoryStore.init();
-    store.loadRepos().then(() => restoreApp()).catch((e) => {
-      console.error('Failed to load repos:', e);
+    store.loadProjects().then(() => restoreApp()).catch((e) => {
+      console.error('Failed to load projects:', e);
     });
     window.addEventListener('keydown', handleGlobalKeydown);
 

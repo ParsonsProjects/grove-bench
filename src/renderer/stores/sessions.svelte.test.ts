@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { localStorageMock, mockGroveBench } from '../__mocks__/setup.js';
-import { store } from './sessions.svelte.js';
+import { store, projectFromPath } from './sessions.svelte.js';
 import type { SessionStatus } from '../../shared/types.js';
 
 interface SessionEntry {
@@ -27,7 +27,7 @@ describe('SessionStore', () => {
     store.activeSessionId = null;
     store.error = null;
     store.creating = false;
-    store.repos = [];
+    store.projects = [];
     localStorageMock.clear();
   });
 
@@ -249,7 +249,49 @@ describe('SessionStore', () => {
     });
   });
 
+  describe('projects', () => {
+    const project = { id: 'p1', name: 'Grove', workspaces: [{ id: 'w1', path: '/repo/a', kind: 'git' as const }], createdAt: 1 };
+
+    it('loadProjects fills projects and repos from the main process', async () => {
+      mockGroveBench.listProjects.mockResolvedValueOnce([project]);
+      await store.loadProjects();
+      expect(store.projects).toEqual([project]);
+      expect(store.repos).toEqual(['/repo/a']);
+    });
+
+    it('addProject replaces a placeholder for the same path', () => {
+      store.addRepo('/repo/a');
+      expect(store.projects[0].id).toBe('path:/repo/a');
+      store.addProject(project);
+      expect(store.projects).toEqual([project]);
+    });
+
+    it('addProject ignores a duplicate id', () => {
+      store.addProject(project);
+      store.addProject({ ...project, name: 'Other' });
+      expect(store.projects).toHaveLength(1);
+      expect(store.projects[0].name).toBe('Grove');
+    });
+
+    it('removeProject drops the project and its path', () => {
+      store.addProject(project);
+      store.removeProject('p1');
+      expect(store.repos).toEqual([]);
+    });
+
+    it('updateProjectName renames in place', () => {
+      store.addProject(project);
+      store.updateProjectName('p1', 'Renamed');
+      expect(store.projectForPath('/repo/a')?.name).toBe('Renamed');
+    });
+  });
+
   describe('repoDisplayName', () => {
+    it('prefers the project name when the path belongs to a project', () => {
+      store.addProject({ id: 'p1', name: 'My Project', workspaces: [{ id: 'w1', path: '/home/user/my-project', kind: 'git' }], createdAt: 1 });
+      expect(store.repoDisplayName('/home/user/my-project')).toBe('My Project');
+    });
+
     it('extracts last segment from unix path', () => {
       expect(store.repoDisplayName('/home/user/my-project')).toBe('my-project');
     });

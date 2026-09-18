@@ -1,4 +1,4 @@
-import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
+import type { PrerequisiteStatus, Project, SessionStatus } from '../../shared/types.js';
 
 interface SessionEntry {
   id: string;
@@ -19,9 +19,23 @@ interface SessionEntry {
   completedAt?: number | null;
 }
 
+/** A stand-in project for a repo path the main process has not reported a
+ *  project for. Should not happen in the app (the main process adopts every
+ *  manifest path into a project), but keeps the sidebar consistent if a
+ *  session arrives for an unknown path, and gives tests a cheap fixture. */
+export function projectFromPath(path: string): Project {
+  return {
+    id: `path:${path}`,
+    name: path.split(/[/\\]/).pop() || path,
+    workspaces: [{ id: `path:${path}`, path, kind: 'git' }],
+    createdAt: 0,
+  };
+}
+
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
-  repos = $state<string[]>([]);
+  /** Projects in sidebar order, as the main process persists them. */
+  projects = $state<Project[]>([]);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
@@ -47,7 +61,14 @@ class SessionStore {
   }
 
   get canCreate() {
-    return this.repos.length > 0;
+    return this.projects.length > 0;
+  }
+
+  /** Workspace paths of every project, in project order. A project has one
+   *  workspace today, so this is the list the rest of the app keys on
+   *  (colors, memory, worktrees) and the sidebar iterates. */
+  get repos(): string[] {
+    return this.projects.map((p) => p.workspaces[0].path);
   }
 
   get activeSession() {
@@ -69,32 +90,44 @@ class SessionStore {
       .sort((a, b) => a.ts - b.ts);
   }
 
-  /** Load repos from the worktree manifest (main process). Must be called before restoreWorktrees. */
-  async loadRepos() {
-    this.repos = await window.groveBench.listRepos();
-    // Migrate any repos stuck in legacy localStorage
-    try {
-      const legacy = localStorage.getItem('grove-bench:repos');
-      if (legacy) {
-        const legacyRepos: string[] = JSON.parse(legacy);
-        for (const r of legacyRepos) {
-          if (!this.repos.includes(r)) {
-            this.repos = [...this.repos, r];
-          }
-        }
-        localStorage.removeItem('grove-bench:repos');
-      }
-    } catch { /* ignore */ }
+  /** Load projects from the main process. Must be called before restoreWorktrees. */
+  async loadProjects() {
+    this.projects = await window.groveBench.listProjects();
   }
 
+  addProject(project: Project) {
+    if (this.projects.some((p) => p.id === project.id)) return;
+    // A placeholder for the same path (see projectFromPath) gives way to the real record.
+    this.projects = [...this.projects.filter((p) => !this.projectSpans(p, project)), project];
+  }
+
+  /** Make sure `path` belongs to some project. Placeholder only; the main
+   *  process is the source of truth (see projectFromPath). */
   addRepo(path: string) {
-    if (!this.repos.includes(path)) {
-      this.repos = [...this.repos, path];
+    if (!this.projectForPath(path)) {
+      this.projects = [...this.projects, projectFromPath(path)];
     }
   }
 
+  removeProject(projectId: string) {
+    this.projects = this.projects.filter((p) => p.id !== projectId);
+  }
+
   removeRepo(path: string) {
-    this.repos = this.repos.filter((r) => r !== path);
+    const project = this.projectForPath(path);
+    if (project) this.removeProject(project.id);
+  }
+
+  updateProjectName(projectId: string, name: string) {
+    this.projects = this.projects.map((p) => (p.id === projectId ? { ...p, name } : p));
+  }
+
+  projectForPath(path: string): Project | undefined {
+    return this.projects.find((p) => p.workspaces.some((w) => w.path === path));
+  }
+
+  private projectSpans(a: Project, b: Project): boolean {
+    return a.workspaces.some((wa) => b.workspaces.some((wb) => wb.path === wa.path));
   }
 
   canRemoveRepo(path: string): boolean {
@@ -105,8 +138,10 @@ class SessionStore {
     return this.sessions.filter((s) => s.repoPath === path);
   }
 
+  /** The project's name for a workspace path, falling back to the folder
+   *  name when the path belongs to no known project. */
   repoDisplayName(path: string): string {
-    return path.split(/[/\\]/).pop() || path;
+    return this.projectForPath(path)?.name || path.split(/[/\\]/).pop() || path;
   }
 
   addSession(entry: SessionEntry, focus = true) {

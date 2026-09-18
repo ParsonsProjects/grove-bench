@@ -3,13 +3,13 @@ import '@testing-library/jest-dom/vitest';
 import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
 
 import Sidebar from './Sidebar.svelte';
-import { store } from '../stores/sessions.svelte.js';
+import { store, projectFromPath } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 beforeEach(() => {
-  store.repos = ['/repo-a'];
+  store.projects = ['/repo-a'].map(projectFromPath);
   store.sessions = [
     { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
   ] as any;
@@ -26,7 +26,7 @@ afterEach(() => {
   mockGroveBench.getCollapsedRepos.mockReset();
   mockGroveBench.getCollapsedRepos.mockResolvedValue({});
   store.sessions = [];
-  store.repos = [];
+  store.projects = [];
   store.activeSessionId = null;
   store.finderOpen = false;
   messageStore.messagesBySession = {};
@@ -84,7 +84,7 @@ describe('Sidebar session rows', () => {
 
 describe('Sidebar attention triage', () => {
   beforeEach(() => {
-    store.repos = ['/repo-a', '/repo-b'];
+    store.projects = ['/repo-a', '/repo-b'].map(projectFromPath);
     store.sessions = [
       { id: 'working', branch: 'feat-a', repoPath: '/repo-a', status: 'running', displayName: 'Working one' },
       { id: 'blocked', branch: 'feat-b', repoPath: '/repo-a', status: 'running', displayName: 'Blocked one' },
@@ -188,5 +188,42 @@ describe('Sidebar bottom buttons', () => {
     const addRepo = screen.getByRole('button', { name: 'Add a project' });
     expect(addRepo).not.toHaveTextContent('Repository');
     expect(addRepo.querySelector('svg')).not.toBeNull();
+  });
+});
+
+describe('Sidebar project header', () => {
+  it('shows the project name rather than the folder name', async () => {
+    store.projects = [{ id: 'p1', name: 'Grove Bench', workspaces: [{ id: 'w1', path: '/repo-a', kind: 'git' }], createdAt: 1 }];
+    render(Sidebar);
+    expect(await screen.findByTitle('/repo-a')).toHaveTextContent('Grove Bench');
+  });
+
+  it('renames a project from the header context menu', async () => {
+    store.projects = [{ id: 'p1', name: 'repo-a', workspaces: [{ id: 'w1', path: '/repo-a', kind: 'git' }], createdAt: 1 }];
+    mockGroveBench.renameProject.mockResolvedValueOnce({ id: 'p1', name: 'Grove Bench', workspaces: [{ id: 'w1', path: '/repo-a', kind: 'git' }], createdAt: 1 });
+    render(Sidebar);
+
+    await fireEvent.contextMenu(await screen.findByTitle('/repo-a'));
+    await fireEvent.click(await screen.findByText('Rename Project'));
+
+    const input = await screen.findByLabelText('Project name');
+    expect(input).toHaveValue('repo-a');
+    await fireEvent.input(input, { target: { value: 'Grove Bench' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await waitFor(() => expect(mockGroveBench.renameProject).toHaveBeenCalledWith('p1', 'Grove Bench'));
+    await waitFor(() => expect(screen.getByTitle('/repo-a')).toHaveTextContent('Grove Bench'));
+  });
+
+  it('removes a project by id once confirmed', async () => {
+    store.projects = [{ id: 'p1', name: 'repo-a', workspaces: [{ id: 'w1', path: '/repo-a', kind: 'git' }], createdAt: 1 }];
+    store.sessions = [];
+    render(Sidebar);
+
+    await fireEvent.click(await screen.findByTitle('Remove project'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(mockGroveBench.removeProject).toHaveBeenCalledWith('p1'));
+    await waitFor(() => expect(store.projects).toEqual([]));
   });
 });

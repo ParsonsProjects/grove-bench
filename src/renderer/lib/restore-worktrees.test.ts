@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
-import { store } from '../stores/sessions.svelte.js';
+import { store, projectFromPath } from '../stores/sessions.svelte.js';
 import { restoreWorktrees } from './restore-worktrees.js';
 import type { WorktreeInfo, SessionInfo } from '../../shared/types.js';
 
@@ -17,12 +17,12 @@ beforeEach(() => {
   store.sessions = [];
   store.activeSessionId = null;
   store.error = null;
-  store.repos = [];
+  store.projects = [];
 });
 
 describe('restoreWorktrees', () => {
   it('does not remove repo when validateRepo throws', async () => {
-    store.repos = ['/repo/a', '/repo/b'];
+    store.projects = ['/repo/a', '/repo/b'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
     mockGroveBench.validateRepo
@@ -37,7 +37,7 @@ describe('restoreWorktrees', () => {
   });
 
   it('does not remove repo when listWorktrees throws', async () => {
-    store.repos = ['/repo/a'];
+    store.projects = ['/repo/a'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
     mockGroveBench.validateRepo.mockResolvedValueOnce(true);
@@ -49,7 +49,7 @@ describe('restoreWorktrees', () => {
   });
 
   it('does not remove repo when listSessions throws', async () => {
-    store.repos = ['/repo/a'];
+    store.projects = ['/repo/a'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockRejectedValueOnce(new Error('IPC failure'));
 
@@ -59,7 +59,7 @@ describe('restoreWorktrees', () => {
   });
 
   it('keeps repo when validateRepo returns false (e.g. git not in PATH)', async () => {
-    store.repos = ['/repo/a'];
+    store.projects = ['/repo/a'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
     mockGroveBench.validateRepo.mockResolvedValueOnce(false);
@@ -71,7 +71,7 @@ describe('restoreWorktrees', () => {
   });
 
   it('restores worktree sessions from valid repos', async () => {
-    store.repos = ['/repo/a'];
+    store.projects = ['/repo/a'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
     mockGroveBench.validateRepo.mockResolvedValueOnce(true);
@@ -87,7 +87,7 @@ describe('restoreWorktrees', () => {
   });
 
   it('marks session as running when it has a running session', async () => {
-    store.repos = ['/repo/a'];
+    store.projects = ['/repo/a'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockResolvedValueOnce([
       makeSessionInfo({ id: 'wt1', status: 'running', displayName: 'My Session' }),
@@ -106,7 +106,7 @@ describe('restoreWorktrees', () => {
   });
 
   it('continues restoring other repos when one throws', async () => {
-    store.repos = ['/repo/a', '/repo/b'];
+    store.projects = ['/repo/a', '/repo/b'].map(projectFromPath);
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
     mockGroveBench.validateRepo

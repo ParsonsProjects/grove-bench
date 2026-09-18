@@ -25,6 +25,7 @@ src/
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
+    projects.ts        # Projects (projects.json): the sidebar's top-level grouping
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
@@ -79,7 +80,7 @@ npm run test:renderer  # Tests for renderer only
 User-facing names and internal names differ on purpose:
 
 - **Conversation** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`).
-- **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
+- **Project** (UI, help, docs) = a `Project` record (`src/main/projects.ts`) whose single workspace path is the `repoPath` the rest of the code keys on. Keep "repo" for that path internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
 
 Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.
 

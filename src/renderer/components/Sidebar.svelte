@@ -324,13 +324,74 @@
   }
 
   async function handleRemoveRepo(repoPath: string) {
+    const project = store.projectForPath(repoPath);
     try {
-      await window.groveBench.removeRepo(repoPath);
-      store.removeRepo(repoPath);
+      if (project) {
+        await window.groveBench.removeProject(project.id);
+        store.removeProject(project.id);
+      } else {
+        store.removeRepo(repoPath);
+      }
     } catch (e: any) {
       store.setError(e.message || String(e));
     }
     confirmRemoveRepo = null;
+  }
+
+  // ─── Project header context menu + rename ───
+
+  let projectMenu = $state<{ x: number; y: number; repo: string } | null>(null);
+
+  function openProjectMenu(e: MouseEvent, repo: string) {
+    e.preventDefault();
+    projectMenu = { x: e.clientX, y: e.clientY, repo };
+  }
+
+  function getProjectMenuItems(repo: string): MenuItem[] {
+    const canRemove = store.canRemoveRepo(repo);
+    return [
+      { label: 'New Conversation', icon: 'add', action: () => openNewAgent(repo) },
+      { label: 'Rename Project', icon: 'rename', action: () => startProjectRename(repo) },
+      {
+        label: canRemove ? 'Remove Project' : 'Remove Project (destroy all conversations first)',
+        icon: 'destroy',
+        action: () => { if (canRemove) confirmRemoveRepo = repo; },
+        variant: 'destructive',
+        separator: true,
+      },
+    ];
+  }
+
+  let renamingProjectId = $state<string | null>(null);
+  let projectRenameValue = $state('');
+  let projectRenameError = $state<string | null>(null);
+
+  function startProjectRename(repo: string) {
+    const project = store.projectForPath(repo);
+    if (!project) return;
+    renamingProjectId = project.id;
+    projectRenameValue = project.name;
+    projectRenameError = null;
+  }
+
+  async function confirmProjectRename() {
+    if (!renamingProjectId) return;
+    const project = store.projects.find((p) => p.id === renamingProjectId);
+    const newName = projectRenameValue.trim();
+    // An empty name reverts to the folder name; the main process decides what that is.
+    if (project && newName === project.name) { renamingProjectId = null; return; }
+    try {
+      const updated = await window.groveBench.renameProject(renamingProjectId, newName);
+      store.updateProjectName(updated.id, updated.name);
+      renamingProjectId = null;
+      projectRenameError = null;
+    } catch (e: any) {
+      projectRenameError = e.message || String(e);
+    }
+  }
+
+  function handleProjectRenameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') { e.preventDefault(); confirmProjectRename(); }
   }
 
   function sessionLabel(s: { displayName?: string | null; branch: string }): string {
@@ -663,11 +724,12 @@
       {@const rc = repoCounts(repo)}
       {@const collapsed = isRepoCollapsed(collapsedRepos, repo)}
       <div class="mb-3">
-        <!-- Repo header (click to collapse/expand the repo's inactive tree) -->
-        <div class="flex items-center justify-between group px-1 py-1">
+        <!-- Project header (click to collapse/expand the project's inactive tree; right-click for rename/remove) -->
+        <div class="flex items-center justify-between group px-1 py-1" oncontextmenu={(e) => openProjectMenu(e, repo)} role="presentation">
           <button
             type="button"
             onclick={() => toggleRepoCollapsed(repo)}
+            ondblclick={() => startProjectRename(repo)}
             class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
             title={collapsed ? 'Expand project' : 'Collapse project'}
           >
@@ -829,6 +891,43 @@
     items={getContextMenuItems(contextMenu.sessionId)}
     onclose={() => contextMenu = null}
   />
+{/if}
+
+{#if projectMenu}
+  <SessionContextMenu
+    x={projectMenu.x}
+    y={projectMenu.y}
+    items={getProjectMenuItems(projectMenu.repo)}
+    onclose={() => projectMenu = null}
+  />
+{/if}
+
+<!-- Rename project dialog -->
+{#if renamingProjectId}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) renamingProjectId = null; }}>
+    <Dialog.Content class="max-w-xs">
+      <Dialog.Header>
+        <Dialog.Title>Rename Project</Dialog.Title>
+        <Dialog.Description>Shown in the sidebar and on conversation rows. Leave empty to use the folder name.</Dialog.Description>
+      </Dialog.Header>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        type="text"
+        bind:value={projectRenameValue}
+        onkeydown={handleProjectRenameKeydown}
+        aria-label="Project name"
+        class="w-full text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
+        autofocus
+      />
+      {#if projectRenameError}
+        <span class="text-xs text-destructive">{projectRenameError}</span>
+      {/if}
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => renamingProjectId = null}>Cancel</Button>
+        <Button onclick={confirmProjectRename}>Rename</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 {/if}
 
 <!-- Rename dialog -->

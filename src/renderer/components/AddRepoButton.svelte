@@ -6,10 +6,10 @@
   /** Icon-only rendering for narrow sidebars; the label moves to the tooltip. */
   let { compact = false }: { compact?: boolean } = $props();
 
-  async function addRepo() {
-    const selected = await window.groveBench.addRepo();
-    if (selected) {
-      store.addRepo(selected);
+  async function addProject() {
+    const project = await window.groveBench.addProject();
+    if (project) {
+      store.addProject(project);
       store.clearError();
     }
   }
@@ -19,7 +19,7 @@
   variant="outline"
   size="sm"
   class="w-full text-muted-foreground"
-  onclick={addRepo}
+  onclick={addProject}
   title="Add a project"
   aria-label="Add a project"
 >
