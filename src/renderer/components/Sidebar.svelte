@@ -25,8 +25,9 @@
   import { triageState, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
-  import type { SessionSortState } from '../../shared/types.js';
-  import { onMount } from 'svelte';
+  import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
+  import type { SessionSortState, PrInfo } from '../../shared/types.js';
+  import { onMount, untrack } from 'svelte';
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
   // entry wins; otherwise repos default to collapsed (see isRepoCollapsed).
@@ -178,32 +179,80 @@
   let cleaningUp = $state(false);
   const cleanupDayPresets = [7, 14, 30, 90];
 
-  const cleanupDaysNum = $derived(Math.max(0, Math.floor(Number(cleanupDays)) || 0));
-  const cleanupCandidates = $derived(store.stoppedSessionsOlderThan(cleanupDaysNum));
-  const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
-  const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
+  /** gh calls run at most this many at once while the dialog looks up PR
+   *  state, so a long candidate list doesn't spawn a gh process per row in
+   *  one burst (the status bar's poll is sequential for the same reason). */
+  const CLEANUP_PR_CONCURRENCY = 3;
 
   /** sessionId → has uncommitted changes in its worktree. Absent = still checking / unknown. */
   let cleanupDirty = $state<Record<string, boolean>>({});
-  let cleanupDirtyToken = 0;
+  /** sessionId → the session's primary PR (list head: open before merged or
+   *  closed, newest first), null when it has none, 'unknown' when gh couldn't
+   *  answer (offline, not logged in). Absent = still checking, or gh isn't
+   *  available at all. */
+  let cleanupPr = $state<Record<string, PrInfo | null | 'unknown'>>({});
+  /** Candidates whose checks have started this dialog session (not reactive:
+   *  read inside the effect without becoming a dependency). */
+  const cleanupCheckedIds = new Set<string>();
+  /** Bumped each time the dialog opens so results from a previous open are dropped. */
+  let cleanupGeneration = 0;
 
-  // When the dialog opens or the cutoff changes: preselect all candidates, then
-  // check each worktree's git status and deselect the ones with uncommitted
-  // changes — removing those loses work, so they must be opted into explicitly.
+  const cleanupDaysNum = $derived(Math.max(0, Math.floor(Number(cleanupDays)) || 0));
+  const cleanupCandidates = $derived(store.stoppedSessionsOlderThan(cleanupDaysNum));
+  /** Identity of the candidate set. The check effect keys off this rather
+   *  than the array, so an unrelated store update (another session's status
+   *  changing, a rename) doesn't reset the user's ticks or re-run the checks. */
+  const cleanupCandidateKey = $derived(cleanupCandidates.map((s) => s.id).join('\n'));
+  const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
+  const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
+  const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
+  const cleanupGhAvailable = $derived(store.prerequisites?.gh?.available === true);
+
+  function cleanupPrOf(id: string): PrInfo | null {
+    const pr = cleanupPr[id];
+    return pr && pr !== 'unknown' ? pr : null;
+  }
+
+  function openCleanup() {
+    cleanupGeneration++;
+    cleanupCheckedIds.clear();
+    cleanupDirty = {};
+    cleanupPr = {};
+    cleanupSelection = {};
+    showCleanup = true;
+  }
+
+  // When the dialog opens or the candidate set changes (cutoff edited, a
+  // session removed): preselect the newly listed candidates, then check each
+  // one's git status and PR state. Dirty ones are deselected: removing those
+  // loses work, so they must be opted into explicitly. Candidates already
+  // checked keep their results and whatever the user ticked.
+  // Direct conversations skip the git status check: removing one deletes no
+  // files and keeps the branch, so there is nothing to lose.
   $effect(() => {
     if (!showCleanup) return;
-    const candidates = cleanupCandidates;
-    const token = ++cleanupDirtyToken;
+    void cleanupCandidateKey; // the only reactive dependency, on purpose
+    const fresh = untrack(() => cleanupCandidates).filter((s) => !cleanupCheckedIds.has(s.id));
+    if (fresh.length === 0) return;
+    for (const s of fresh) cleanupCheckedIds.add(s.id);
+    const generation = cleanupGeneration;
+    const ghAvailable = untrack(() => cleanupGhAvailable);
 
-    // Preselect everything; the async status check below deselects dirty ones.
-    // (Not reading cleanupDirty here — it would become a dependency and loop.)
-    const sel: Record<string, boolean> = {};
-    for (const s of candidates) sel[s.id] = true;
-    cleanupSelection = sel;
+    // Preselect the new rows; the async status check below deselects dirty ones.
+    // (Reads are untracked so writing the same state here can't loop.)
+    untrack(() => {
+      const sel = { ...cleanupSelection };
+      for (const s of fresh) sel[s.id] = true;
+      cleanupSelection = sel;
+    });
 
     (async () => {
       const dirty: Record<string, boolean> = {};
-      await Promise.all(candidates.map(async (s) => {
+      await Promise.all(fresh.map(async (s) => {
+        if (s.direct) {
+          dirty[s.id] = false;
+          return;
+        }
         try {
           const status = await window.groveBench.getGitStatus(s.id);
           dirty[s.id] = status.entries.length > 0;
@@ -211,16 +260,51 @@
           dirty[s.id] = false; // unreadable worktree — nothing to lose
         }
       }));
-      if (token !== cleanupDirtyToken) return;
-      cleanupDirty = dirty;
+      if (generation !== cleanupGeneration) return;
+      cleanupDirty = { ...cleanupDirty, ...dirty };
       // Deselect dirty sessions without re-checking ones the user unticked
       const next = { ...cleanupSelection };
-      for (const s of candidates) {
+      for (const s of fresh) {
         if (dirty[s.id]) next[s.id] = false;
       }
       cleanupSelection = next;
     })();
+
+    // PR state is looked up separately so a slow gh never delays the dirty
+    // check, and skipped entirely when gh isn't installed (every call would fail).
+    if (ghAvailable) {
+      const queue = [...fresh];
+      const worker = async () => {
+        for (let s = queue.shift(); s; s = queue.shift()) {
+          let result: PrInfo | null | 'unknown';
+          try {
+            result = (await window.groveBench.getPrs(s.id))[0] ?? null;
+          } catch {
+            result = 'unknown';
+          }
+          if (generation !== cleanupGeneration) return;
+          cleanupPr = { ...cleanupPr, [s.id]: result };
+        }
+      };
+      for (let i = 0; i < Math.min(CLEANUP_PR_CONCURRENCY, queue.length); i++) void worker();
+    }
   });
+
+  /** Tick every candidate without uncommitted changes (the initial state). */
+  function cleanupSelectAllClean() {
+    const sel: Record<string, boolean> = {};
+    for (const s of cleanupCandidates) sel[s.id] = !cleanupDirty[s.id];
+    cleanupSelection = sel;
+  }
+
+  /** Tick only candidates whose PR has been merged. Their work has landed,
+   *  so they are the safest to remove. Dirty ones stay unticked, same as the
+   *  initial preselection. */
+  function cleanupSelectMerged() {
+    const sel: Record<string, boolean> = {};
+    for (const s of cleanupCandidates) sel[s.id] = isPrMerged(cleanupPrOf(s.id)) && !cleanupDirty[s.id];
+    cleanupSelection = sel;
+  }
 
   async function runCleanup() {
     const ids = cleanupSelectedIds;
@@ -785,7 +869,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
       </Button>
       <Button
-        onclick={() => { cleanupDirty = {}; showCleanup = true; }}
+        onclick={openCleanup}
         variant="ghost"
         size="sm"
         class="px-2 shrink-0"
@@ -864,7 +948,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
         <Dialog.Description>
-          Remove stopped conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Branches are kept unless you choose otherwise. Running conversations are never listed.
+          Remove stopped conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -893,8 +977,35 @@
       {#if cleanupCandidates.length === 0}
         <p class="text-sm text-muted-foreground/50 py-2">No stopped conversations inactive for {cleanupDaysNum} days.</p>
       {:else}
+        <div class="flex items-center justify-between text-xs text-muted-foreground">
+          <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>
+          <span class="flex items-center gap-2">
+            <button
+              type="button"
+              onclick={cleanupSelectAllClean}
+              class="hover:text-foreground hover:underline"
+              title="Tick every listed conversation without uncommitted changes"
+            >
+              Select all
+            </button>
+            {#if cleanupGhAvailable}
+              <span class="text-muted-foreground/40" aria-hidden="true">·</span>
+              <button
+                type="button"
+                onclick={cleanupSelectMerged}
+                disabled={cleanupMergedCount === 0}
+                class="text-purple-400 hover:text-purple-300 hover:underline disabled:opacity-50 disabled:no-underline"
+                title="Tick only conversations whose pull request has been merged (and that have no uncommitted changes)"
+              >
+                Select merged ({cleanupMergedCount})
+              </button>
+            {/if}
+          </span>
+        </div>
         <div class="flex flex-col gap-1 max-h-64 overflow-auto">
           {#each cleanupCandidates as session (session.id)}
+            {@const pr = cleanupPrOf(session.id)}
+            {@const prFlag = pr ? prStateFlag(pr) : null}
             <label class="flex items-center gap-2 px-2 py-1.5 bg-card border border-border cursor-pointer">
               <input
                 type="checkbox"
@@ -907,6 +1018,13 @@
                 </div>
                 <div class="text-xs text-muted-foreground">
                   {repoShortName(session.repoPath)} · {relativeAge(session.ts)}
+                  {#if pr && prFlag}
+                    <span class="{prFlag.colorClass} font-medium" title={pr.title ? `${pr.title} (${pr.url})` : pr.url} data-testid="cleanup-pr-{session.id}">· PR #{pr.number} {prFlag.label}</span>
+                  {:else if cleanupPr[session.id] === null}
+                    <span class="text-muted-foreground/60" data-testid="cleanup-pr-{session.id}">· no PR</span>
+                  {:else if cleanupPr[session.id] === 'unknown'}
+                    <span class="text-muted-foreground/60" title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
+                  {/if}
                   {#if cleanupDirty[session.id]}
                     <span class="text-amber-500 font-medium">· uncommitted changes</span>
                   {/if}

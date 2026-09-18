@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -188,5 +189,154 @@ describe('Sidebar bottom buttons', () => {
     const addRepo = screen.getByRole('button', { name: 'Add a project' });
     expect(addRepo).not.toHaveTextContent('Repository');
     expect(addRepo.querySelector('svg')).not.toBeNull();
+  });
+});
+
+describe('Sidebar clean-up dialog', () => {
+  const DAY = 86_400_000;
+  const longAgo = Date.now() - 30 * DAY;
+
+  beforeEach(() => {
+    store.repos = ['/repo-a'];
+    store.sessions = [
+      { id: 'live', branch: 'feat-live', repoPath: '/repo-a', status: 'running', displayName: 'Live one' },
+      { id: 'merged', branch: 'feat-merged', repoPath: '/repo-a', status: 'stopped', displayName: 'Merged one', lastActiveAt: longAgo },
+      { id: 'open', branch: 'feat-open', repoPath: '/repo-a', status: 'stopped', displayName: 'Open one', lastActiveAt: longAgo },
+      { id: 'nopr', branch: 'feat-nopr', repoPath: '/repo-a', status: 'stopped', displayName: 'No PR one', lastActiveAt: longAgo },
+    ] as any;
+    store.activeSessionId = 'live';
+    store.prerequisites = { git: { available: true }, agent: { available: true }, gh: { available: true } } as any;
+    mockGroveBench.getPrs.mockImplementation(async (id: string) => {
+      // Primary first, as main sorts them: an older merged PR behind the open one.
+      if (id === 'merged') return [{ number: 12, url: 'https://example.test/pr/12', state: 'MERGED', title: 'Merged work' }] as any;
+      if (id === 'open') return [
+        { number: 13, url: 'https://example.test/pr/13', state: 'OPEN' },
+        { number: 9, url: 'https://example.test/pr/9', state: 'MERGED' },
+      ] as any;
+      return [];
+    });
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
+  });
+
+  afterEach(() => {
+    store.prerequisites = null;
+    mockGroveBench.getPrs.mockReset();
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    mockGroveBench.getGitStatus.mockReset();
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
+  });
+
+  async function openDialog() {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle('Clean up old conversations'));
+    return await screen.findByRole('dialog');
+  }
+
+  it('flags each stopped candidate with the state of its primary pull request', async () => {
+    await openDialog();
+
+    expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR #12 merged');
+    expect(await screen.findByTestId('cleanup-pr-open')).toHaveTextContent('PR #13 open');
+    expect(await screen.findByTestId('cleanup-pr-nopr')).toHaveTextContent('no PR');
+    // Running sessions are not candidates, so no gh call is spent on them.
+    expect(mockGroveBench.getPrs).not.toHaveBeenCalledWith('live');
+  });
+
+  it('"Select merged" ticks only conversations whose PR has been merged', async () => {
+    await openDialog();
+    // Preselection ticks everything that is clean.
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Select merged (1)' }));
+
+    expect(screen.getByLabelText(/Merged one/)).toBeChecked();
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+    expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+    expect(screen.getByText('1 of 3 selected')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByText('3 of 3 selected')).toBeInTheDocument();
+  });
+
+  it('leaves a merged conversation with uncommitted changes unticked, even via "Select merged"', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
+      entries: id === 'merged' ? [{ filePath: 'a.ts', status: 'M', staged: false }] : [],
+    })) as any);
+    await openDialog();
+
+    await screen.findByText('· uncommitted changes');
+    expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+
+    // The merged count still shows it, but selecting keeps the dirty rule.
+    await fireEvent.click(await screen.findByRole('button', { name: 'Select merged (1)' }));
+    expect(screen.getByLabelText(/Merged one/)).not.toBeChecked();
+    expect(screen.getByText('0 of 3 selected')).toBeInTheDocument();
+  });
+
+  it('keeps the user\'s ticks and does not re-check when an unrelated session changes', async () => {
+    await openDialog();
+    await screen.findByTestId('cleanup-pr-nopr');
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+
+    await fireEvent.click(screen.getByLabelText(/Open one/));
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+
+    // A status change on a running session rebuilds store.sessions but not the candidate set.
+    store.updateStatus('live', 'error');
+    await tick();
+
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+    expect(screen.getByLabelText(/Merged one/)).toBeChecked();
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3);
+    expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(3);
+  });
+
+  it('checks only the newly listed conversations when the cutoff changes', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'recent', branch: 'feat-recent', repoPath: '/repo-a', status: 'stopped', displayName: 'Recent one', lastActiveAt: Date.now() - 10 * DAY },
+    ] as any;
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+    expect(screen.queryByLabelText(/Recent one/)).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText(/Open one/));
+
+    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+
+    // The new candidate is checked and preselected; the earlier untick survives.
+    await waitFor(() => expect(screen.getByLabelText(/Recent one/)).toBeChecked());
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4);
+    expect(mockGroveBench.getGitStatus).toHaveBeenLastCalledWith('recent');
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+  });
+
+  it('does not run a git status check for direct conversations', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'direct', branch: 'main', repoPath: '/repo-a', status: 'stopped', direct: true, displayName: 'Direct one', lastActiveAt: longAgo },
+    ] as any;
+    await openDialog();
+
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+    expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('direct');
+    await waitFor(() => expect(screen.getByLabelText(/Direct one/)).toBeChecked());
+  });
+
+  it('skips PR lookups when the GitHub CLI is unavailable', async () => {
+    store.prerequisites = { ...store.prerequisites, gh: { available: false } } as any;
+    await openDialog();
+
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+    expect(mockGroveBench.getPrs).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Select merged/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cleanup-pr-merged')).not.toBeInTheDocument();
+  });
+
+  it('shows "PR unknown" when gh cannot answer for a branch', async () => {
+    mockGroveBench.getPrs.mockRejectedValue(new Error('gh: offline'));
+    await openDialog();
+
+    expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR unknown');
+    expect(screen.queryByRole('button', { name: /Select merged/ })).toBeDisabled();
   });
 });

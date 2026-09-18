@@ -48,7 +48,7 @@ At the bottom of the sidebar you'll find:
 
 - **+ Project** and **+ Agent** — Add a project / start a new conversation (side by side)
 - **Memory** (brain icon) — Open the project memory panel
-- **Clean up old conversations** (broom icon) — Review and remove stopped conversations inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Conversations with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. Running conversations are never listed.
+- **Clean up old conversations** (broom icon) — Review and remove stopped conversations inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Conversations with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. When the GitHub CLI is available, each row also shows the state of the pull request on its branch (open, draft, merged, closed or none), and **Select merged** ticks only the conversations whose PR has been merged. Running conversations are never listed.
 - **Settings** (gear icon) — Open application settings
 
 You can also access **Help** (? icon) from the title bar, next to the window controls in the top right.
