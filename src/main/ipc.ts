@@ -298,6 +298,8 @@ export function registerHandlers() {
 
     // Don't await — let it run in the background
     setupPromise.catch(() => {}); // prevent unhandled rejection
+    // Prompts sent to the new tab while setup runs wait for it to finish.
+    sessionManager.trackPendingSetup(id, setupPromise);
 
     return { id, branch };
   });
@@ -313,29 +315,36 @@ export function registerHandlers() {
       return { id: s.id, branch: s.branch };
     }
 
-    const worktree = await worktreeManager.getWorktreeOrManifest(id);
-    if (!worktree) {
-      throw new Error(`Worktree ${id} not found`);
-    }
+    // The renderer already shows the tab and its input while this runs, so
+    // register the resume as a pending setup: prompts sent meanwhile are held
+    // by sendMessage() until the session exists.
+    const resumePromise = (async () => {
+      const worktree = await worktreeManager.getWorktreeOrManifest(id);
+      if (!worktree) {
+        throw new Error(`Worktree ${id} not found`);
+      }
 
-    // Look up saved provider session ID for conversation resumption
-    const providerSessionId = await worktreeManager.getProviderSessionId(id);
-    // Restore the model the session last ran with (falls back to default if unset)
-    const savedModel = await worktreeManager.getModel(id);
-    logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
+      // Look up saved provider session ID for conversation resumption
+      const providerSessionId = await worktreeManager.getProviderSessionId(id);
+      // Restore the model the session last ran with (falls back to default if unset)
+      const savedModel = await worktreeManager.getModel(id);
+      logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
 
-    const session = await sessionManager.createSession({
-      id: worktree.id,
-      branch: worktree.branch,
-      cwd: worktree.path,
-      repoPath,
-      window: win,
-      resumeSessionId: providerSessionId,
-      model: savedModel,
-    });
+      const session = await sessionManager.createSession({
+        id: worktree.id,
+        branch: worktree.branch,
+        cwd: worktree.path,
+        repoPath,
+        window: win,
+        resumeSessionId: providerSessionId,
+        model: savedModel,
+      });
 
-    logger.info(`Session resumed: id=${session.id}`);
-    return { id: session.id, branch: session.branch, agentType: session.agentType };
+      logger.info(`Session resumed: id=${session.id}`);
+      return { id: session.id, branch: session.branch, agentType: session.agentType };
+    })();
+    sessionManager.trackPendingSetup(id, resumePromise);
+    return resumePromise;
   });
 
   ipcMain.handle(IPC.SESSION_STOP, async (_event, id: string) => {

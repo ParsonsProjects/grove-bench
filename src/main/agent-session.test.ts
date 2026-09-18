@@ -1233,6 +1233,81 @@ describe('AgentSessionManager.sendMessage()', () => {
 
     await sessionManager.destroySession('test-send-early');
   });
+
+  it('holds a prompt sent before setup has registered the session, then delivers it', async () => {
+    // Worktree creation / npm install run before createSession(), but the
+    // renderer already has the id and a live input. A prompt sent in that
+    // window must wait for setup rather than bounce with "not connected".
+    let finishSetup!: () => void;
+    const setup = new Promise<void>((r) => { finishSetup = r; });
+    sessionManager.trackPendingSetup('test-send-presetup', setup);
+
+    const pending = sessionManager.sendMessage('test-send-presetup', 'Hello before setup');
+    let settled = false;
+    pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-presetup',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    finishSetup();
+
+    expect(await pending).toBe(true);
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const userMsgs = sessionManager.getEventHistory('test-send-presetup').filter((e) => e.type === 'user_message');
+    expect(userMsgs).toHaveLength(1);
+    expect(userMsgs[0]).toMatchObject({ type: 'user_message', text: 'Hello before setup' });
+
+    await sessionManager.destroySession('test-send-presetup');
+  });
+
+  it('keeps the order of prompts held during setup', async () => {
+    let finishSetup!: () => void;
+    const setup = new Promise<void>((r) => { finishSetup = r; });
+    sessionManager.trackPendingSetup('test-send-order', setup);
+
+    const first = sessionManager.sendMessage('test-send-order', 'first');
+    const second = sessionManager.sendMessage('test-send-order', 'second');
+
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-order',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    finishSetup();
+
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    const texts = sessionManager.getEventHistory('test-send-order')
+      .filter((e) => e.type === 'user_message')
+      .map((e) => (e as { text: string }).text);
+    expect(texts).toEqual(['first', 'second']);
+
+    await sessionManager.destroySession('test-send-order');
+  });
+
+  it('returns false when the pending setup fails without creating the session', async () => {
+    let failSetup!: (err: Error) => void;
+    const setup = new Promise<void>((_, reject) => { failSetup = reject; });
+    sessionManager.trackPendingSetup('test-send-failed-setup', setup);
+
+    const pending = sessionManager.sendMessage('test-send-failed-setup', 'Hello');
+    failSetup(new Error('npm install failed'));
+    expect(await pending).toBe(false);
+
+    // The entry is cleared once settled: later sends fail fast, not hang.
+    expect(await sessionManager.sendMessage('test-send-failed-setup', 'Hello again')).toBe(false);
+  });
 });
 
 describe('AgentSessionManager.listSessions()', () => {

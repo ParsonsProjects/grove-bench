@@ -225,6 +225,11 @@ process.setMaxListeners(50);
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private completionCallbacks = new Map<string, (result: SessionCompletionResult) => void>();
+  /** Session setups (worktree, dependency install, adapter start) still in
+   *  flight, keyed by the id the renderer already holds. The renderer opens
+   *  the pane and its input the moment it has an id, so sendMessage() waits
+   *  on these instead of bouncing a prompt typed before the session exists. */
+  private pendingSetups = new Map<string, Promise<void>>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
   /** Union of skill names each repo's sessions have reported via system_init.
@@ -915,8 +920,34 @@ class AgentSessionManager {
     });
   }
 
+  /**
+   * Register an in-flight session setup so prompts sent for `id` before
+   * createSession() has run are held until it settles. The entry clears
+   * itself once the setup resolves or rejects.
+   */
+  trackPendingSetup(id: string, setup: Promise<unknown>): void {
+    const settled = setup.then(() => undefined, () => undefined);
+    this.pendingSetups.set(id, settled);
+    settled.then(() => {
+      if (this.pendingSetups.get(id) === settled) this.pendingSetups.delete(id);
+    });
+  }
+
   async sendMessage(id: string, content: string, images?: import('../shared/types.js').ImageAttachment[]): Promise<boolean> {
-    const session = this.sessions.get(id);
+    let session = this.sessions.get(id);
+
+    // The session object is created at the end of setup; a prompt that
+    // arrives during worktree creation or dependency install has nowhere to
+    // go yet. Wait for setup to settle and look the session up again.
+    if (!session) {
+      const setup = this.pendingSetups.get(id);
+      if (setup) {
+        logger.debug(`[sendMessage] session=${id} waiting for session setup`);
+        await setup;
+        session = this.sessions.get(id);
+      }
+    }
+
     if (!session) {
       logger.debug(`[sendMessage] session=${id} no session`);
       return false;
