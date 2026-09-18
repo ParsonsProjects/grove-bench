@@ -1034,8 +1034,8 @@ export interface GroveBenchSettings {
  * Activity panel view modes:
  * - 'detailed': everything (tool calls, thinking, system, ...)
  * - 'summary':  hides thinking and non-essential tool calls
- * - 'focus':    only user prompts, the final assistant text of each turn,
- *               unanswered permission/question blocks, and errors
+ * - 'focus':    only user prompts, assistant text, unanswered
+ *               permission/question blocks, errors and turn results
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];

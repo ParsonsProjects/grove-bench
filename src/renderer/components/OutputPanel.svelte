@@ -29,7 +29,7 @@
   let activity = $derived(messageStore.getActivity(sessionId));
 
   // View mode — Detailed shows everything; Summary hides thinking & most tool
-  // calls; Focus shows only final turn output + unanswered permissions/questions.
+  // calls; Focus shows only assistant text + unanswered permissions/questions.
   // The toggle lives in the status bar; the default comes from settings.
   let viewMode = $derived(messageStore.getViewMode(sessionId));
   let filteredMessages = $derived(filterVisibleMessages(allMessages, viewMode));
@@ -105,9 +105,8 @@
     const id = messageStore.findMessageIdForEventIndex(sessionId, eventIndex);
     if (!id) return false;
 
-    // The target may be hidden by the current view mode (thinking, a filtered
-    // tool call, or interim text in focus mode). Reveal details so it can be
-    // scrolled to.
+    // The target may be hidden by the current view mode (thinking or a
+    // filtered tool call). Reveal details so it can be scrolled to.
     if (viewMode !== 'detailed' && !filteredMessages.some((m) => m.id === id)) {
       messageStore.setViewMode(sessionId, 'detailed');
       await tick();

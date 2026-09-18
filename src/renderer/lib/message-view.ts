@@ -14,7 +14,7 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
   summary: 'Hides thinking and most tool calls (edits, writes and shell commands stay)',
-  focus: 'Final output and pending questions only',
+  focus: 'Agent responses and pending questions only (no tool calls or thinking)',
 };
 
 /** Cycle order for the status-bar toggle: Summary → Focus → Detailed → Summary. */
@@ -26,8 +26,8 @@ export const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
 
 export const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
   detailed: 'Showing everything — click for Summary',
-  summary: 'Hiding thinking & most tool calls — click for Focus (final output only)',
-  focus: 'Showing final output & pending questions only — click for Detailed',
+  summary: 'Hiding thinking & most tool calls — click for Focus (responses only)',
+  focus: 'Showing agent responses & pending questions only — click for Detailed',
 };
 
 /** Tool calls shown in summary mode (everything else is hidden when details are off). */
@@ -37,11 +37,6 @@ const SUMMARY_VISIBLE_TOOLS = new Set(['Edit', 'Write', 'Bash']);
  * Whether a message is rendered in the Activity panel for the given view mode.
  * Single source of truth shared by the panel's filter and the search-scroll logic
  * so the two can never disagree about what's on screen.
- *
- * Note: in focus mode, 'text' messages are additionally narrowed to the final
- * one per turn — that requires list context, so it lives in
- * filterVisibleMessages. A 'text' message returning true here may still be
- * dropped there.
  */
 export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boolean {
   // Tool calls awaiting a permission decision are never rendered (the permission
@@ -67,41 +62,14 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
     case 'question':
       return !msg.resolved;
     default:
-      // user, text (narrowed to final-per-turn in filterVisibleMessages),
-      // error, result
+      // user, text, error, result. Every assistant text block is kept: agents
+      // routinely split one answer across several blocks (findings, then next
+      // steps), so keeping only the last would hide the part that matters.
       return true;
   }
 }
 
-/**
- * IDs of the last 'text' message in each turn. A turn ends at a 'user' or
- * 'result' message (or the end of the list, so a still-running turn shows its
- * latest text).
- */
-function collectFinalTextIds(messages: ChatMessage[]): Set<string> {
-  const ids = new Set<string>();
-  let lastTextId: string | null = null;
-  for (const msg of messages) {
-    if (msg.kind === 'user' || msg.kind === 'result') {
-      if (lastTextId) ids.add(lastTextId);
-      lastTextId = null;
-    } else if (msg.kind === 'text') {
-      lastTextId = msg.id;
-    }
-  }
-  if (lastTextId) ids.add(lastTextId);
-  return ids;
-}
-
 /** Filter a message list down to what's visible for the current view mode. */
 export function filterVisibleMessages(messages: ChatMessage[], mode: MessageViewMode): ChatMessage[] {
-  if (mode !== 'focus') {
-    return messages.filter((m) => isMessageVisible(m, mode));
-  }
-  // Focus mode: interim assistant text (status notes between tool calls) is
-  // hidden — only the final text of each turn survives.
-  const finalTextIds = collectFinalTextIds(messages);
-  return messages.filter(
-    (m) => isMessageVisible(m, mode) && (m.kind !== 'text' || finalTextIds.has(m.id))
-  );
+  return messages.filter((m) => isMessageVisible(m, mode));
 }
