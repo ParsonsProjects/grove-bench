@@ -17,6 +17,16 @@ const CLEAR_UUID = '__clear__';
 /** Internal checkpoints that never show in the list. */
 const SENTINEL_UUIDS: ReadonlySet<string> = new Set([BASELINE_UUID, CLEAR_UUID]);
 
+/** Identity for checkpoint commits. They live only under refs/grove and are
+ *  never part of the user's branch history, so a fixed identity is fine and
+ *  spares the capture from failing where git has no user.name/email. */
+const CHECKPOINT_IDENTITY_ENV: Record<string, string> = {
+  GIT_AUTHOR_NAME: 'Grove Bench',
+  GIT_AUTHOR_EMAIL: 'checkpoints@grove-bench.local',
+  GIT_COMMITTER_NAME: 'Grove Bench',
+  GIT_COMMITTER_EMAIL: 'checkpoints@grove-bench.local',
+};
+
 /** Sum a `git diff --numstat` output into aggregate stats. Binary files count
  *  toward filesChanged but contribute no line counts (numstat prints `-`). */
 function parseNumstat(output: string): DiffStats {
@@ -84,17 +94,42 @@ export class CheckpointManager {
   /**
    * Capture a checkpoint of the current working tree state.
    * Uses a temporary git index so we don't interfere with the user's real index.
+   * Never throws: resolves true when the checkpoint ref was written, false
+   * when the capture failed (the failure is logged) or was skipped.
    * @param text Optional user message text to store in the checkpoint for display.
    */
-  async capture(sessionId: string, cwd: string, uuid: string, text?: string): Promise<void> {
+  async capture(sessionId: string, cwd: string, uuid: string, text?: string): Promise<boolean> {
     const s = this.getOrCreate(sessionId);
     // Queue captures to prevent concurrent git index corruption
-    s.captureQueue = s.captureQueue.then(() =>
+    const result = s.captureQueue.then(() =>
       this._doCapture(s, sessionId, cwd, uuid, text)
-    ).catch(err => {
+    ).then((written) => written, (err: unknown) => {
       logger.warn(`[checkpoints] capture failed session=${sessionId} uuid=${uuid}:`, err);
+      return false;
     });
-    return s.captureQueue;
+    s.captureQueue = result.then(() => undefined);
+    return result;
+  }
+
+  /**
+   * Capture the session's starting point (a sentinel that never shows in the
+   * list, but anchors the cumulative "all turns" diff). Existing refs are
+   * scanned first, in the same queue slot, so a session that already has
+   * checkpoints (a query restart after a rewind, or an app-restart resume
+   * whose provider id was dropped) keeps its original baseline as the oldest
+   * ref instead of getting a second one in the middle of its history.
+   */
+  async captureBaseline(sessionId: string, cwd: string): Promise<boolean> {
+    const s = this.getOrCreate(sessionId);
+    const result = s.captureQueue.then(async () => {
+      await this._doResume(s, sessionId, cwd);
+      return this._doCapture(s, sessionId, cwd, BASELINE_UUID);
+    }).then((written) => written, (err: unknown) => {
+      logger.warn(`[checkpoints] baseline capture failed session=${sessionId}:`, err);
+      return false;
+    });
+    s.captureQueue = result.then(() => undefined);
+    return result;
   }
 
   /**
@@ -104,7 +139,7 @@ export class CheckpointManager {
    * conversation's. Turn numbering continues across the boundary.
    */
   async markCleared(sessionId: string, cwd: string): Promise<void> {
-    return this.capture(sessionId, cwd, CLEAR_UUID);
+    await this.capture(sessionId, cwd, CLEAR_UUID);
   }
 
   /**
@@ -117,7 +152,15 @@ export class CheckpointManager {
 
   private async _doCapture(
     s: SessionCheckpoints, sessionId: string, cwd: string, uuid: string, text?: string
-  ): Promise<void> {
+  ): Promise<boolean> {
+    // The baseline must stay the oldest ref: once any turn exists (including
+    // after a rewind reset the counter to a kept turn) a second baseline would
+    // land in the middle of the history and swallow the previous turn's diff.
+    if (uuid === BASELINE_UUID && s.turnCount > 0) {
+      logger.debug(`[checkpoints] baseline skipped session=${sessionId} (already at turn ${s.turnCount})`);
+      return false;
+    }
+
     const turn = ++s.turnCount;
     const ref = `refs/grove/checkpoints/${sessionId}/turn/${turn}`;
     const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-${turn}-${Date.now()}`);
@@ -125,8 +168,15 @@ export class CheckpointManager {
     try {
       const env = { GIT_INDEX_FILE: tmpIndex };
 
-      // Seed temp index from HEAD
-      await gitEnv(['read-tree', 'HEAD'], cwd, env);
+      // Seed temp index from HEAD. A repo whose branch has no commits yet has
+      // no HEAD to read; start from an empty index so the snapshot still
+      // records the working tree instead of failing every capture.
+      try {
+        await gitEnv(['read-tree', 'HEAD'], cwd, env);
+      } catch (err) {
+        logger.debug(`[checkpoints] read-tree HEAD failed session=${sessionId}, using empty index:`, err);
+        await gitEnv(['read-tree', '--empty'], cwd, env);
+      }
 
       // Stage all working tree changes (including untracked files)
       await gitEnv(['add', '-A'], cwd, env);
@@ -144,8 +194,11 @@ export class CheckpointManager {
       let commitOid: string;
       try {
         fs.writeFileSync(msgFile, commitMsg);
-        commitOid = (await git(
-          ['commit-tree', treeOid, '-F', msgFile], cwd
+        // commit-tree refuses to run without an author identity. Checkpoint
+        // commits are internal (never on a branch), so a fixed identity keeps
+        // captures working on machines where user.name/email are not set.
+        commitOid = (await gitEnv(
+          ['commit-tree', treeOid, '-F', msgFile], cwd, CHECKPOINT_IDENTITY_ENV
         )).trim();
       } finally {
         try { fs.rmSync(msgFile, { force: true }); } catch { /* ignore */ }
@@ -156,6 +209,7 @@ export class CheckpointManager {
 
       s.uuidToRef.set(uuid, ref);
       logger.debug(`[checkpoints] captured session=${sessionId} turn=${turn} uuid=${uuid}`);
+      return true;
     } finally {
       // Always clean up temp index
       try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }

@@ -350,7 +350,10 @@
       class={isCurrent ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
     >
       {#if msg.kind === 'user'}
-        <UserPromptBlock text={msg.text} />
+        <UserPromptBlock
+          text={msg.text}
+          onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
+        />
 
       {:else if msg.kind === 'text'}
         <AssistantTextBlock content={msg.text} />

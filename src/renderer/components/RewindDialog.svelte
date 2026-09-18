@@ -15,6 +15,17 @@
   let conversationOnly = $state(false);
 
   let rewindPoints = $derived(messageStore.getRewindPoints(sessionId));
+  let target = $derived(messageStore.getRewindDialogTarget(sessionId));
+
+  // Opened from a message in the Activity thread: preselect it and load its
+  // preview so the user only has to confirm. Runs once per open; a manual
+  // selection afterwards is left alone.
+  $effect(() => {
+    if (!open || !target) return;
+    if (selectedId !== null) return;
+    if (!rewindPoints.some((p) => p.uuid === target)) return;
+    handleSelect(target);
+  });
 
   function handleOpenChange(value: boolean) {
     if (!value) {
@@ -86,6 +97,7 @@
               {selectedId === point.uuid
                 ? 'bg-accent text-accent-foreground'
                 : 'hover:bg-muted'}"
+            aria-pressed={selectedId === point.uuid}
             onclick={() => handleSelect(point.uuid)}
           >
             <span class="text-muted-foreground mr-2 font-mono text-xs">

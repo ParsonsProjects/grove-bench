@@ -1871,6 +1871,9 @@ class MessageStore {
 
   /** Whether the rewind dialog is open for a session */
   rewindDialogOpen = $state<Record<string, boolean>>({});
+  /** Message the rewind dialog should open preselected on (set when the
+   *  dialog is opened from a message in the Activity thread). */
+  rewindDialogTarget = $state<Record<string, string | null>>({});
 
   /** Get available rewind points (user messages with UUIDs) for a session */
   getRewindPoints(sessionId: string): { uuid: string; text: string; index: number }[] {
@@ -1897,14 +1900,22 @@ class MessageStore {
     // The rewind event from main will handle message truncation
   }
 
-  /** Open the rewind dialog for a session */
-  openRewindDialog(sessionId: string) {
+  /** Open the rewind dialog for a session, optionally preselecting the
+   *  checkpoint of one user message (its uuid). */
+  openRewindDialog(sessionId: string, targetUuid?: string) {
+    this.rewindDialogTarget[sessionId] = targetUuid ?? null;
     this.rewindDialogOpen[sessionId] = true;
   }
 
   /** Close the rewind dialog for a session */
   closeRewindDialog(sessionId: string) {
     this.rewindDialogOpen[sessionId] = false;
+    this.rewindDialogTarget[sessionId] = null;
+  }
+
+  /** The message the rewind dialog was opened on, if any. */
+  getRewindDialogTarget(sessionId: string): string | null {
+    return this.rewindDialogTarget[sessionId] ?? null;
   }
 
   /** Clear all in-memory state for a session so history can be replayed cleanly.
@@ -1947,7 +1958,7 @@ class MessageStore {
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.preservedEditHistory, this.paginationBySession,
-      this.rewindDialogOpen, this.pendingJumpBySession, this.promptInsertBySession,
+      this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
       this.queuedBySession, this.queuePausedBySession,
     ] as Record<string, unknown>[]) {
       delete record[sessionId];

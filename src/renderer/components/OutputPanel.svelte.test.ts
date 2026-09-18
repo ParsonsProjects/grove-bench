@@ -29,6 +29,40 @@ async function pressCtrlF() {
   await tick();
 }
 
+describe('OutputPanel — rewind from a user message', () => {
+  it('offers Rewind on user messages that have a checkpoint and opens the dialog on that message', async () => {
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'user', id: 'u1', text: 'first prompt', uuid: 'uuid-1' },
+        { kind: 'text', id: 't1', text: 'reply', uuid: 'a1' },
+        { kind: 'user', id: 'u2', text: 'second prompt', uuid: 'uuid-2' },
+      ],
+    };
+    const openSpy = vi.spyOn(messageStore, 'openRewindDialog');
+    const { getAllByRole } = render(OutputPanel, { sessionId: SID });
+
+    const buttons = getAllByRole('button', { name: 'Rewind to this message' });
+    expect(buttons).toHaveLength(2);
+
+    buttons[1].click();
+    expect(openSpy).toHaveBeenCalledWith(SID, 'uuid-2');
+    expect(messageStore.rewindDialogOpen[SID]).toBe(true);
+    expect(messageStore.getRewindDialogTarget(SID)).toBe('uuid-2');
+    openSpy.mockRestore();
+    messageStore.closeRewindDialog(SID);
+  });
+
+  it('does not offer Rewind on a user message without a checkpoint', () => {
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'user', id: 'u1', text: 'no checkpoint yet' }],
+    };
+    const { queryByRole } = render(OutputPanel, { sessionId: SID });
+    expect(queryByRole('button', { name: 'Rewind to this message' })).toBeNull();
+  });
+});
+
 describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
   it('opens search when this pane is the active session', async () => {
     store.activeSessionId = SID;
