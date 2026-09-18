@@ -131,6 +131,8 @@ export type AgentEvent =
   | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string }
   | { type: 'task_progress'; taskId: string; toolUseId?: string; description: string; summary?: string; lastToolName?: string; totalTokens: number; toolUses: number; durationMs: number }
   | { type: 'task_notification'; taskId: string; toolUseId?: string; taskStatus: 'completed' | 'failed' | 'stopped'; summary: string; outputFile: string; totalTokens?: number; toolUses?: number; durationMs?: number }
+  /** Authoritative list of every live background task (replace semantics). */
+  | { type: 'background_tasks_changed'; tasks: Array<{ taskId: string; taskType?: string; description: string }> }
   // Auth status
   | { type: 'auth_status'; isAuthenticating: boolean; output: string[]; authError?: string }
   // Tool use summary (after compaction)
@@ -646,6 +648,9 @@ export interface GroveBenchAPI {
   createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   stopSession(id: string): Promise<void>;
+  /** Stop one running background task (Agent tool sub-task) without
+   *  interrupting the session's current turn. */
+  stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
   /** Persist the completed flag (see WorktreeInfo.completedAt). */
@@ -1166,6 +1171,7 @@ export const IPC = {
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
+  SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
   SESSION_SET_COMPLETED: 'session:setCompleted',

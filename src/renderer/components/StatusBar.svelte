@@ -218,6 +218,16 @@
       || memoryStore.autoCompactingRepo === repo;
   });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
+  let bgTaskStopError = $state('');
+
+  async function stopBgTask(taskId: string) {
+    bgTaskStopError = '';
+    try {
+      await backgroundTaskStore.stop(sessionId, taskId);
+    } catch (err) {
+      bgTaskStopError = err instanceof Error ? err.message : String(err);
+    }
+  }
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
   let contextExpanded = $state(false);
   let tasksExpanded = $state(false);
@@ -649,6 +659,9 @@
       {#if bgTasksExpanded}
         <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-80 z-50">
           <div class="font-medium text-foreground mb-2">Background Tasks</div>
+          {#if bgTaskStopError}
+            <p class="text-red-400 text-[10px] mb-2">Could not stop task: {bgTaskStopError}</p>
+          {/if}
           <div class="space-y-2 max-h-64 overflow-y-auto">
             {#each backgroundTasks as task}
               <div class="border border-border/50 p-2">
@@ -662,7 +675,17 @@
                   {/if}
                   <span class="text-foreground font-medium truncate flex-1">{task.description || task.taskId}</span>
                   <span class="text-muted-foreground/60 shrink-0 capitalize">{task.status}</span>
-                  {#if task.status !== 'running'}
+                  {#if task.status === 'running'}
+                    <button
+                      onclick={() => stopBgTask(task.taskId)}
+                      disabled={task.stopping}
+                      class="text-muted-foreground/60 hover:text-red-400 disabled:opacity-40 disabled:cursor-wait transition-colors shrink-0"
+                      title={task.stopping ? 'Stopping…' : 'Stop task'}
+                      aria-label={task.stopping ? 'Stopping task' : 'Stop task'}
+                    >
+                      <svg class="w-3 h-3" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="8" height="8" /></svg>
+                    </button>
+                  {:else}
                     <button
                       onclick={() => backgroundTaskStore.remove(sessionId, task.taskId)}
                       class="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"

@@ -353,6 +353,11 @@ export function registerHandlers() {
     logger.info(`Session query interrupted, ready for follow-up: id=${id}`);
   });
 
+  ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
+    logger.info(`Stopping background task: session=${id} task=${taskId}`);
+    await sessionManager.stopTask(id, taskId);
+  });
+
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
     await terminalManager.killAllForSession(id);

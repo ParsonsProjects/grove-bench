@@ -224,6 +224,9 @@ export function transformMessage(
         }
       } else if (message.subtype === 'task_started') {
         const m = message as any;
+        // Ambient tasks (live-update watchers, skip_transcript work) are not
+        // activity; the SDK asks hosts to keep them out of activity indicators.
+        if (m.ambient) return events;
         events.push({
           type: 'task_started',
           taskId: m.task_id ?? '',
@@ -247,6 +250,7 @@ export function transformMessage(
         });
       } else if (message.subtype === 'task_notification') {
         const m = message as any;
+        if (m.ambient) return events;
         const usage = m.usage ?? {};
         events.push({
           type: 'task_notification',
@@ -258,6 +262,17 @@ export function transformMessage(
           totalTokens: usage.total_tokens,
           toolUses: usage.tool_uses,
           durationMs: usage.duration_ms,
+        });
+      } else if (message.subtype === 'background_tasks_changed') {
+        const m = message as any;
+        const tasks: any[] = Array.isArray(m.tasks) ? m.tasks : [];
+        events.push({
+          type: 'background_tasks_changed',
+          tasks: tasks.filter((t) => !t.ambient).map((t) => ({
+            taskId: t.task_id ?? '',
+            taskType: t.task_type,
+            description: t.description ?? '',
+          })),
         });
       } else if (message.subtype === 'hook_started') {
         const m = message as any;
@@ -987,6 +1002,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cwd: config.cwd,
         abortController,
         includePartialMessages: true,
+        // We render a per-task stop control (see stopTask below), so an
+        // interrupt only aborts the current turn and leaves background
+        // tasks running. Without this the CLI fails closed and kills them.
+        perTaskStopAffordance: true,
         settingSources: ['user', 'project', 'local'],
         systemPrompt,
         permissionMode: toSdkPermissionMode(config.permissionMode),
@@ -1080,6 +1099,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         // Cancels the in-flight turn via a control request but leaves the
         // process running, so a follow-up message resumes instantly.
         await q.interrupt();
+      },
+
+      async stopTask(taskId: string) {
+        // Stops one background task; the SDK follows up with a
+        // task_notification (status 'stopped') for it.
+        await q.stopTask(taskId);
       },
 
       close() {

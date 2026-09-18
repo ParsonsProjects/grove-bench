@@ -356,6 +356,58 @@ describe('capToolResult()', () => {
 });
 
 describe('transformMessage()', () => {
+  describe('background task messages', () => {
+    it('maps background_tasks_changed to a replace-style task list, dropping ambient tasks', () => {
+      const events = transformMessage(
+        {
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: [
+            { task_id: 'a1', task_type: 'local_agent', description: 'Explore repo' },
+            { task_id: 'w1', task_type: 'monitor', description: 'watcher', ambient: true },
+          ],
+        } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{
+        type: 'background_tasks_changed',
+        tasks: [{ taskId: 'a1', taskType: 'local_agent', description: 'Explore repo' }],
+      }]);
+    });
+
+    it('maps an empty background_tasks_changed list', () => {
+      const events = transformMessage(
+        { type: 'system', subtype: 'background_tasks_changed', tasks: [] } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'background_tasks_changed', tasks: [] }]);
+    });
+
+    it('skips ambient task_started and task_notification messages', () => {
+      expect(transformMessage(
+        { type: 'system', subtype: 'task_started', task_id: 'w1', description: 'watcher', ambient: true } as any,
+        makeCtx(),
+      )).toEqual([]);
+      expect(transformMessage(
+        { type: 'system', subtype: 'task_notification', task_id: 'w1', status: 'completed', summary: '', output_file: '', ambient: true } as any,
+        makeCtx(),
+      )).toEqual([]);
+    });
+
+    it('still maps non-ambient task_started and stopped task_notification', () => {
+      expect(transformMessage(
+        { type: 'system', subtype: 'task_started', task_id: 'a1', description: 'Explore', task_type: 'local_agent' } as any,
+        makeCtx(),
+      )).toEqual([{ type: 'task_started', taskId: 'a1', toolUseId: undefined, description: 'Explore', taskType: 'local_agent' }]);
+      const events = transformMessage(
+        { type: 'system', subtype: 'task_notification', task_id: 'a1', status: 'stopped', summary: 'Stopped by user', output_file: '/tmp/o' } as any,
+        makeCtx(),
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: 'task_notification', taskId: 'a1', taskStatus: 'stopped', summary: 'Stopped by user' });
+    });
+  });
+
   describe('system messages', () => {
     it('transforms init into system_init', () => {
       const events = transformMessage(
