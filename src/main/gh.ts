@@ -12,6 +12,59 @@ export async function gh(args: string[], cwd?: string): Promise<string> {
   return result.stdout;
 }
 
+/** How long GitHub is treated as unreachable after a call fails for network
+ *  reasons. Without it, an offline machine pays GH_TIMEOUT_MS per branch per
+ *  session on every sweep: a handful of sessions is minutes of hung gh
+ *  processes for a connection already known to be down. */
+export const GH_OFFLINE_COOLDOWN_MS = 60_000;
+
+/** Thrown while the cooldown holds. Deliberately short: Electron logs the
+ *  text of every rejected IPC handler, so a full gh command echo per session
+ *  per sweep is what fills the log when the network drops. */
+export const GH_OFFLINE_MESSAGE = 'GitHub is unreachable, retrying shortly';
+
+let offlineUntil = 0;
+
+/** gh failing because it could not reach GitHub (DNS, connection, TLS, or our
+ *  own timeout), as opposed to an auth, no-PR, or bad-argument failure. Only
+ *  the former is worth backing off from; the rest stay broken until something
+ *  changes, so they must not trip the cooldown. */
+export function isNetworkError(e: unknown): boolean {
+  const err = e as { stderr?: unknown; message?: unknown; code?: unknown; timedOut?: unknown } | null;
+  if (err?.timedOut === true) return true;
+  const parts = [err?.stderr, err?.message, err?.code].filter((v) => typeof v === 'string');
+  // GH_OFFLINE_MESSAGE is in the list so a short-circuited call still reads as
+  // a network failure once a caller has wrapped it in its own message.
+  return /error connecting to|timed out|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|dial tcp|connection refused|TLS handshake|network is unreachable|GitHub is unreachable/i.test(parts.join('\n'));
+}
+
+/** True while a recent network failure's cooldown still holds. */
+export function ghOffline(): boolean {
+  return Date.now() < offlineUntil;
+}
+
+export function resetGhOfflineCooldownForTests(): void {
+  offlineUntil = 0;
+}
+
+/** gh for calls that need GitHub itself. Fails in microseconds while the
+ *  cooldown holds instead of waiting out another timeout, and the first
+ *  success reopens it, so recovery costs one call rather than a restart.
+ *  bypassCooldown is for user-initiated calls: someone clicking a button has
+ *  usually just noticed (and maybe fixed) the connection, so they always get
+ *  a real attempt. */
+async function ghOnline(args: string[], cwd?: string, opts?: { bypassCooldown?: boolean }): Promise<string> {
+  if (!opts?.bypassCooldown && ghOffline()) throw new Error(GH_OFFLINE_MESSAGE);
+  try {
+    const out = await gh(args, cwd);
+    offlineUntil = 0;
+    return out;
+  } catch (e) {
+    if (isNetworkError(e)) offlineUntil = Date.now() + GH_OFFLINE_COOLDOWN_MS;
+    throw e;
+  }
+}
+
 /** gh's "there is no PR for this branch" failure, as opposed to a network,
  *  auth, or timeout failure. */
 export function isNoPrError(e: unknown): boolean {
@@ -47,7 +100,7 @@ let cachedLogin: string | null = null;
 export async function ghLogin(): Promise<string | null> {
   if (cachedLogin) return cachedLogin;
   try {
-    const login = JSON.parse(await gh(['api', 'user']))?.login;
+    const login = JSON.parse(await ghOnline(['api', 'user']))?.login;
     if (typeof login === 'string' && login) cachedLogin = login;
   } catch {
     return null;
@@ -145,7 +198,7 @@ function parsePr(data: Record<string, any>, selfLogin?: string | null): PrInfo |
 export async function prStatus(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo | null> {
   let stdout: string;
   try {
-    stdout = await gh(['pr', 'view', branch, '--json', PR_VIEW_FIELDS], repoPath);
+    stdout = await ghOnline(['pr', 'view', branch, '--json', PR_VIEW_FIELDS], repoPath);
   } catch (e) {
     if (isNoPrError(e)) return null;
     const err = e as { stderr?: string; message?: string };
@@ -163,7 +216,7 @@ export async function prStatus(repoPath: string, branch: string, selfLogin?: str
 export async function prList(repoPath: string, branch: string, selfLogin?: string | null): Promise<PrInfo[]> {
   let stdout: string;
   try {
-    stdout = await gh(['pr', 'list', '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT), '--json', PR_VIEW_FIELDS], repoPath);
+    stdout = await ghOnline(['pr', 'list', '--head', branch, '--state', 'all', '--limit', String(PR_LIST_LIMIT), '--json', PR_VIEW_FIELDS], repoPath);
   } catch (e) {
     const err = e as { stderr?: string; message?: string };
     throw new Error(`gh pr list failed: ${err.stderr?.trim() || err.message || String(e)}`);
@@ -211,11 +264,11 @@ export async function prsForBranches(repoPath: string, branches: string[], selfL
  *  gh substitutes {owner}/{repo} from the repo's origin remote. */
 export async function prReviewComments(repoPath: string, prNumber: number): Promise<PrReviewComment[]> {
   const [inline, reviews, conversation] = await Promise.all([
-    gh(['api', `repos/{owner}/{repo}/pulls/${prNumber}/comments?per_page=100`], repoPath)
+    ghOnline(['api', `repos/{owner}/{repo}/pulls/${prNumber}/comments?per_page=100`], repoPath)
       .then((s) => JSON.parse(s)).catch(() => []),
-    gh(['api', `repos/{owner}/{repo}/pulls/${prNumber}/reviews?per_page=100`], repoPath)
+    ghOnline(['api', `repos/{owner}/{repo}/pulls/${prNumber}/reviews?per_page=100`], repoPath)
       .then((s) => JSON.parse(s)).catch(() => []),
-    gh(['api', `repos/{owner}/{repo}/issues/${prNumber}/comments?per_page=100`], repoPath)
+    ghOnline(['api', `repos/{owner}/{repo}/issues/${prNumber}/comments?per_page=100`], repoPath)
       .then((s) => JSON.parse(s)).catch(() => []),
   ]);
 
@@ -264,7 +317,7 @@ export async function prCreate(repoPath: string, branch: string, opts: PrCreateO
   if (opts.base) args.push('--base', opts.base);
   if (opts.draft) args.push('--draft');
   try {
-    await gh(args, repoPath);
+    await ghOnline(args, repoPath, { bypassCooldown: true });
   } catch (e: any) {
     throw new Error(e?.stderr?.trim() || e?.message || 'gh pr create failed');
   }

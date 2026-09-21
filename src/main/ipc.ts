@@ -10,7 +10,7 @@ import { checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { prerequisitesSatisfied } from '../shared/prerequisites.js';
 import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
-import { prsForBranches, prCreate, prReviewComments, ghLogin } from './gh.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
@@ -1002,6 +1002,22 @@ export function registerHandlers() {
     return [...new Set(ordered)].slice(0, MAX_SESSION_PR_BRANCHES);
   }
 
+  /** An unreachable GitHub is routine (laptop offline, VPN, GitHub down) and
+   *  the renderer already keeps its last snapshot and marks it stale, so it
+   *  does not deserve a stack trace per session per sweep. Record it once per
+   *  cooldown and rethrow a one-line error; the rejection is what tells the
+   *  renderer the data is stale, so it cannot be swallowed. */
+  let lastOfflineLog = 0;
+  function rethrowGhFailure(e: unknown): never {
+    if (!isNetworkError(e)) throw e;
+    const now = Date.now();
+    if (now - lastOfflineLog >= GH_OFFLINE_COOLDOWN_MS) {
+      lastOfflineLog = now;
+      logger.warn('GitHub is unreachable; PR status stays stale until it responds again');
+    }
+    throw new Error(GH_OFFLINE_MESSAGE);
+  }
+
   ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return [];
@@ -1009,13 +1025,22 @@ export function registerHandlers() {
     // replying on the PR doesn't trigger (and then auto-answer) a "new
     // comments" event about itself.
     const selfLogin = await ghLogin();
-    return prsForBranches(worktree.repoPath, await sessionPrBranches(worktree), selfLogin);
+    const branches = await sessionPrBranches(worktree);
+    try {
+      return await prsForBranches(worktree.repoPath, branches, selfLogin);
+    } catch (e) {
+      rethrowGhFailure(e);
+    }
   });
 
   ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return [];
-    return prReviewComments(worktree.repoPath, prNumber);
+    try {
+      return await prReviewComments(worktree.repoPath, prNumber);
+    } catch (e) {
+      rethrowGhFailure(e);
+    }
   });
 
   ipcMain.handle(IPC.PR_CREATE, async (_event, sessionId: string, opts: PrCreateOpts) => {
