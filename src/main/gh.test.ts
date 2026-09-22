@@ -4,13 +4,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, GH_TIMEOUT_MS } from './gh.js';
+import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, isNetworkError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
 beforeEach(() => {
   vi.clearAllMocks();
   resetGhLoginCacheForTests();
+  resetGhOfflineCooldownForTests();
 });
 
 describe('ghVersion()', () => {
@@ -199,6 +200,72 @@ describe('prList()', () => {
   it('throws on a gh failure so the caller keeps its last snapshot', async () => {
     mockExeca.mockRejectedValue(Object.assign(new Error('Command failed'), { stderr: 'error connecting to api.github.com' }));
     await expect(prList('/repo', 'feat/x')).rejects.toThrow(/gh pr list failed: error connecting/);
+  });
+});
+
+describe('offline cooldown', () => {
+  const netFail = () => Object.assign(new Error('Command failed'), { stderr: 'error connecting to api.github.com' });
+
+  it('classifies connection, DNS, and timeout failures as network failures', () => {
+    expect(isNetworkError(netFail())).toBe(true);
+    expect(isNetworkError(Object.assign(new Error('Command timed out after 30000 milliseconds'), { timedOut: true }))).toBe(true);
+    expect(isNetworkError(Object.assign(new Error('boom'), { code: 'ENOTFOUND' }))).toBe(true);
+    expect(isNetworkError(new Error(`gh pr list failed: ${GH_OFFLINE_MESSAGE}`))).toBe(true);
+    expect(isNetworkError(new Error('no pull requests found'))).toBe(false);
+    expect(isNetworkError(Object.assign(new Error('Command failed'), { stderr: 'gh auth login required' }))).toBe(false);
+  });
+
+  it('skips gh entirely for the next calls after a network failure', async () => {
+    mockExeca.mockRejectedValue(netFail());
+    await expect(prList('/repo', 'feat/x')).rejects.toThrow(/error connecting/);
+    expect(ghOffline()).toBe(true);
+
+    mockExeca.mockClear();
+    await expect(prList('/repo', 'feat/y')).rejects.toThrow(GH_OFFLINE_MESSAGE);
+    await expect(prStatus('/repo', 'feat/z')).rejects.toThrow(GH_OFFLINE_MESSAGE);
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it('stops a whole sweep at the first branch instead of timing out on each', async () => {
+    mockExeca.mockRejectedValue(netFail());
+    await expect(prsForBranches('/repo', ['a', 'b', 'c'])).rejects.toThrow();
+    expect(mockExeca).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not back off for a failure that is not the network', async () => {
+    mockExeca.mockRejectedValue(new Error('no pull requests found'));
+    expect(await prStatus('/repo', 'feat/x')).toBeNull();
+    expect(ghOffline()).toBe(false);
+  });
+
+  it('tries again once the cooldown expires, and a success reopens it', async () => {
+    vi.useFakeTimers();
+    try {
+      mockExeca.mockRejectedValue(netFail());
+      await expect(prList('/repo', 'feat/x')).rejects.toThrow();
+      expect(ghOffline()).toBe(true);
+
+      vi.advanceTimersByTime(GH_OFFLINE_COOLDOWN_MS + 1);
+      mockExeca.mockReset();
+      mockExeca.mockResolvedValue({ stdout: '[]' } as any);
+      expect(await prList('/repo', 'feat/x')).toEqual([]);
+      expect(mockExeca).toHaveBeenCalledTimes(1);
+      expect(ghOffline()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still attempts a user-initiated PR create while the cooldown holds', async () => {
+    mockExeca.mockRejectedValue(netFail());
+    await expect(prList('/repo', 'feat/x')).rejects.toThrow();
+    expect(ghOffline()).toBe(true);
+
+    mockExeca.mockReset();
+    mockExeca
+      .mockResolvedValueOnce({ stdout: 'https://github.com/o/r/pull/9' } as any)
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ number: 9, url: 'u' }) } as any);
+    expect((await prCreate('/repo', 'feat/x', { title: 'T', body: 'B', base: '' })).number).toBe(9);
   });
 });
 
