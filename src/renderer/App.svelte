@@ -252,8 +252,8 @@
   let prevActiveResumeId: string | null = null;
 
   /** Resume a stopped session, deduped against in-flight and recently-failed
-   *  resumes. Used by the active-session auto-resume effect and by the
-   *  wake-from-sleep handler (which resumes every tab that died during sleep). */
+   *  resumes. Used by startup restore, the active-session auto-resume effect
+   *  and the wake-from-sleep handler (each only for the focused tab). */
   function resumeStoppedSession(session: { id: string; repoPath: string; status: string } | null | undefined) {
     if (!session || session.status !== 'stopped') return;
     if (resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
@@ -324,22 +324,27 @@
       }
     });
 
-    // After system resume (laptop wake), bring back every tab that was running
-    // before sleep. The main process reports which sessions died during suspend
-    // (their SDK query usually doesn't survive); resume them all so they stay in
-    // the Active list instead of silently dropping to Inactive. (The focused
-    // session is also covered by the auto-resume effect; resumingIds dedupes.)
+    // After system resume (laptop wake), keep every tab that was running before
+    // sleep. The main process reports which sessions died during suspend
+    // (their SDK query usually doesn't survive). Same as startup: only the
+    // focused tab reconnects now; the others stay in the Active list and
+    // reconnect when the user focuses them. (The focused session is also
+    // covered by the auto-resume effect; resumingIds dedupes.)
     const unsubPower = window.groveBench.onPowerResume((resumeIds) => {
       for (const id of resumeIds) {
         const session = store.sessions.find((s) => s.id === id);
         if (!session || session.status === 'running') continue;
         // healthCheckAll already emits SESSION_STATUS 'stopped'; guard in case
-        // that event hasn't been applied yet so resumeStoppedSession can proceed.
+        // that event hasn't been applied yet.
         if (session.status !== 'stopped') {
           store.updateStatus(id, 'stopped');
           messageStore.markSessionStopped(id);
         }
-        resumeStoppedSession(store.sessions.find((s) => s.id === id));
+        if (id === store.activeSessionId) {
+          resumeStoppedSession(store.sessions.find((s) => s.id === id));
+        } else {
+          store.deferResume(id);
+        }
       }
     });
 
