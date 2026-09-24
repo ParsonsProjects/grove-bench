@@ -4,7 +4,7 @@ The status bar sits at the top of the workspace area and displays real-time info
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5 · Code` normally, or `Opus 5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. The agent itself is fixed when a conversation is created, so other agents are listed but not selectable.
+The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Code` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. The agent itself is fixed when a conversation is created, so other agents are listed but not selectable.
 
 ### Usage
 

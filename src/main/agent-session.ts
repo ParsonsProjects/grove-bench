@@ -1144,7 +1144,11 @@ class AgentSessionManager {
     const models = adapter.getModels();
     const exact = models.find((m) => m.id === raw);
     if (exact) return exact.id;
-    const prefixed = models.find((m) => raw.startsWith(m.id));
+    // Longest prefix wins: "claude-opus-5-5-<date>" also starts with
+    // "claude-opus-5", so list order alone can't be trusted here.
+    const prefixed = models
+      .filter((m) => raw.startsWith(m.id))
+      .sort((a, b) => b.id.length - a.id.length)[0];
     return prefixed?.id ?? null;
   }
 

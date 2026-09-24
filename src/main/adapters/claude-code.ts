@@ -817,6 +817,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // TODO: Hardcoded model list — update when new models are released, or fetch dynamically from the SDK if it exposes a model list.
   getModels(): ModelInfo[] {
     return [
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },

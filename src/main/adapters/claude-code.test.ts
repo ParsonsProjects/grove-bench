@@ -35,8 +35,8 @@ describe('isPathInside()', () => {
 describe('getModels()', () => {
   const models = new ClaudeCodeAdapter().getModels();
 
-  it('lists Opus 5 first (used as the default model)', () => {
-    expect(models[0]).toMatchObject({ id: 'claude-opus-5', label: 'Opus 5' });
+  it('lists Opus 5.5 first (used as the default model)', () => {
+    expect(models[0]).toMatchObject({ id: 'claude-opus-5-5', label: 'Opus 5.5' });
   });
 
   it('offers Fable 5 but not as the default', () => {
@@ -92,6 +92,7 @@ describe('getControls()', () => {
     expect(supportsAdaptiveThinking('claude-sonnet-4-6')).toBe(true);
   });
 
+    expect(ids('claude-opus-5-5')).toContain('speed');
   it('offers fast mode only where the provider supports it', () => {
     expect(ids('claude-opus-5')).toContain('speed');
     expect(ids('claude-opus-4-8')).toContain('speed');

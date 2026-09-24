@@ -342,6 +342,7 @@ const api: Record<string, unknown> = {
     ] },
   ],
   getModels: async () => [
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', contextWindow: 1_000_000 },
     { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
     { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },
     { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', contextWindow: 1_000_000 },
