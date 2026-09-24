@@ -128,12 +128,12 @@ describe('schema versioning', () => {
   });
 
   it('moves defaultThinkingLevel under the Claude Code adapter defaults (v1 → v2)', () => {
-    const { settings } = upgradeSettings({ schemaVersion: 1, defaultThinkingLevel: 'low' });
-    expect(settings.adapterDefaults).toEqual({ 'claude-code': { thinking: 'low' } });
+    const { settings } = upgradeSettings({ schemaVersion: 1, defaultThinkingLevel: 'off' });
+    expect(settings.adapterDefaults).toEqual({ 'claude-code': { thinking: 'off' } });
     expect((settings as any).defaultThinkingLevel).toBeUndefined();
     // An unversioned file goes through both migrations
-    const { settings: fromV0 } = upgradeSettings({ defaultThinkingLevel: 'medium', devCommand: 'x' });
-    expect(fromV0.adapterDefaults).toEqual({ 'claude-code': { thinking: 'medium' } });
+    const { settings: fromV0 } = upgradeSettings({ defaultThinkingLevel: 'adaptive', devCommand: 'x' });
+    expect(fromV0.adapterDefaults).toEqual({ 'claude-code': { thinking: 'adaptive' } });
     // Nothing saved → empty map, no phantom Claude entry
     expect(upgradeSettings({ schemaVersion: 1 }).settings.adapterDefaults).toEqual({});
   });
@@ -148,6 +148,20 @@ describe('schema versioning', () => {
     expect(upgradeSettings({ schemaVersion: 3, defaultPermissionMode: 'auto' }).settings.defaultPermissionMode).toBe('auto');
     // Other modes pass through the migration untouched.
     expect(upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'plan' }).settings.defaultPermissionMode).toBe('plan');
+  });
+
+  it('drops a saved Claude thinking budget, keeping Off/adaptive and other controls (3 → 4)', () => {
+    const { settings } = upgradeSettings({
+      schemaVersion: 3,
+      adapterDefaults: { 'claude-code': { thinking: 'low', speed: 'fast' }, other: { thinking: 'low' } },
+    });
+    expect(settings.adapterDefaults).toEqual({ 'claude-code': { speed: 'fast' }, other: { thinking: 'low' } });
+    for (const kept of ['off', 'adaptive']) {
+      const { settings: s } = upgradeSettings({ schemaVersion: 3, adapterDefaults: { 'claude-code': { thinking: kept } } });
+      expect(s.adapterDefaults).toEqual({ 'claude-code': { thinking: kept } });
+    }
+    // The v1 → v2 path lands a budget in the same place, so it is dropped too.
+    expect(upgradeSettings({ schemaVersion: 1, defaultThinkingLevel: 'medium' }).settings.adapterDefaults).toEqual({ 'claude-code': {} });
   });
 
   it('does not rewrite or re-migrate a current-version file', () => {

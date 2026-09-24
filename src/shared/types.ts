@@ -446,6 +446,7 @@ export interface ControlDescriptor {
 export const CONTROL_IDS = {
   permissionMode: 'permissionMode',
   thinking: 'thinking',
+  effort: 'effort',
   speed: 'speed',
 } as const;
 
@@ -453,6 +454,7 @@ export const CONTROL_IDS = {
 export const CONTROL_SHORTCUTS: Record<string, string> = {
   [CONTROL_IDS.permissionMode]: 'Alt+M',
   [CONTROL_IDS.thinking]: 'Alt+T',
+  [CONTROL_IDS.effort]: 'Alt+E',
 };
 
 // ─── Provider usage ("runway") ───

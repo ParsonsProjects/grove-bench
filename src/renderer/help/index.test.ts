@@ -50,7 +50,9 @@ describe('help topics', () => {
     expect(shortcuts!.content).toContain('Alt+M');
     expect(shortcuts!.content).toContain('Cycle agent mode');
     expect(shortcuts!.content).toContain('Alt+T');
-    expect(shortcuts!.content).toContain('Cycle thinking level');
+    expect(shortcuts!.content).toContain('Toggle thinking');
+    expect(shortcuts!.content).toContain('Alt+E');
+    expect(shortcuts!.content).toContain('Cycle effort level');
   });
 
   it('session states shows green for ready state', () => {

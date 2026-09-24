@@ -1172,7 +1172,20 @@ class AgentSessionManager {
       worktreeManager.saveModel(id, model).catch((e) => {
         logger.warn(`Failed to persist model for ${id}:`, e);
       });
-      session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
+      const before = session.controls;
+      const controls = this.reconcileControls(session);
+      // Values reset for the new model (e.g. an effort level it doesn't
+      // offer) must reach the live query too, or the badge and the
+      // provider disagree until the next query start.
+      for (const [controlId, value] of Object.entries(controls.values)) {
+        if (before[controlId] === value || !session.queryHandle.setControl) continue;
+        try {
+          await session.queryHandle.setControl(controlId, value);
+        } catch (e) {
+          logger.warn(`Failed to apply ${controlId}=${value} after model switch for ${id}:`, e);
+        }
+      }
+      session.emit?.({ type: 'controls_sync', ...controls });
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;

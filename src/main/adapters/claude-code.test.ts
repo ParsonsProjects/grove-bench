@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
-import { THINKING_LEVELS } from '../../shared/types.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -59,8 +58,8 @@ describe('getControls()', () => {
   const adapter = new ClaudeCodeAdapter();
   const ids = (model: string | null) => adapter.getControls(model).map((d) => d.id);
 
-  it('declares mode, thinking, and speed for the default model', () => {
-    expect(ids(null)).toEqual(['permissionMode', 'thinking', 'speed']);
+  it('declares mode, effort, thinking, and speed for an unset model', () => {
+    expect(ids(null)).toEqual(['permissionMode', 'effort', 'thinking', 'speed']);
     expect(adapter.getControls(null)).toEqual(claudeControlsFor(null));
   });
 
@@ -81,19 +80,62 @@ describe('getControls()', () => {
     expect(supportsAutoMode(null)).toBe(true);
   });
 
-  it('offers the full thinking ladder on adaptive-capable models and drops adaptive on Haiku', () => {
+  it('offers Thinking as On/Off on adaptive models and fixed budgets only on Haiku', () => {
     const opus = adapter.getControls('claude-opus-5').find((d) => d.id === 'thinking')!;
-    expect(opus.options.map((o) => o.value)).toEqual(THINKING_LEVELS);
-    expect(opus.default).toBe('high');
+    expect(opus.options.map((o) => o.value)).toEqual(['off', 'adaptive']);
+    expect(opus.default).toBe('adaptive');
 
     const haiku = adapter.getControls('claude-haiku-4-5-20251001').find((d) => d.id === 'thinking')!;
     expect(haiku.options.map((o) => o.value)).toEqual(['off', 'low', 'medium', 'high']);
+    expect(haiku.default).toBe('high');
     expect(supportsAdaptiveThinking('claude-haiku-4-5-20251001')).toBe(false);
     expect(supportsAdaptiveThinking('claude-sonnet-4-6')).toBe(true);
   });
 
-    expect(ids('claude-opus-5-5')).toContain('speed');
+  it('has no Thinking control on models that reject disabled thinking', () => {
+    for (const model of ['claude-opus-5-5', 'claude-fable-5']) {
+      expect(ids(model), model).not.toContain('thinking');
+      expect(claudeModelCaps(model).thinkingOff, model).toBe(false);
+    }
+  });
+
+  it('offers effort levels per model with the model default', () => {
+    const effort = (model: string) => adapter.getControls(model).find((d) => d.id === 'effort');
+    expect(effort('claude-opus-5-5')).toMatchObject({ default: 'medium' });
+    expect(effort('claude-opus-5-5')!.options.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(effort('claude-opus-5')).toMatchObject({ default: 'high' });
+    expect(effort('claude-opus-4-7')).toMatchObject({ default: 'xhigh' });
+    expect(effort('claude-opus-4-6')!.options.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'max']);
+    expect(effort('claude-sonnet-4-6')!.options.map((o) => o.value)).not.toContain('xhigh');
+    expect(effort('claude-haiku-4-5-20251001')).toBeUndefined();
+  });
+
+  it('matches dated ids by longest prefix so Opus 5.5 never reads as Opus 5', () => {
+    expect(claudeModelCaps('claude-opus-5-5-20260901')).toBe(claudeModelCaps('claude-opus-5-5'));
+    expect(claudeModelCaps('claude-opus-5-20260801')).toBe(claudeModelCaps('claude-opus-5'));
+    expect(claudeModelCaps('claude-haiku-4-5-20251001')).toBe(claudeModelCaps('claude-haiku-4-5'));
+  });
+
+  it('builds query-start thinking and effort from recorded controls', () => {
+    expect(reasoningOptionsFor('claude-opus-5', { thinking: 'off', effort: 'low' }))
+      .toEqual({ thinking: { type: 'disabled' }, effort: 'low' });
+    // Opus 5.5 can't turn thinking off: a carried-over 'off' is not sent.
+    expect(reasoningOptionsFor('claude-opus-5-5', { thinking: 'off', effort: 'medium' }))
+      .toEqual({ thinking: null, effort: 'medium' });
+    expect(reasoningOptionsFor('claude-haiku-4-5-20251001', { thinking: 'low', effort: 'high' }))
+      .toEqual({ thinking: { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low }, effort: undefined });
+    expect(reasoningOptionsFor('claude-opus-5', undefined)).toEqual({ thinking: null, effort: undefined });
+  });
+
+  it('only sends effort levels the model accepts', () => {
+    expect(effortFor('claude-opus-5-5', 'max')).toBe('max');
+    expect(effortFor('claude-opus-4-6', 'xhigh')).toBeUndefined();
+    expect(effortFor('claude-haiku-4-5-20251001', 'high')).toBeUndefined();
+    expect(effortFor('claude-opus-5', undefined)).toBeUndefined();
+  });
+
   it('offers fast mode only where the provider supports it', () => {
+    expect(ids('claude-opus-5-5')).toContain('speed');
     expect(ids('claude-opus-5')).toContain('speed');
     expect(ids('claude-opus-4-8')).toContain('speed');
     expect(ids('claude-opus-4-6')).not.toContain('speed');

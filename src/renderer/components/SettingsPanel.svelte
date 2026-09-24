@@ -14,7 +14,7 @@
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import type { SettingsPermissionMode, CavemanMode, McpConfigScope, ControlDescriptor } from '../../shared/types.js';
-  import { CONTROL_IDS } from '../../shared/types.js';
+  import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
   interface Props {
@@ -441,8 +441,8 @@
                       </Select.Root>
                       <p class="text-xs text-muted-foreground mt-1">
                         {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
-                        {#if control.id === CONTROL_IDS.thinking}
-                          Adjustable per conversation from the status bar (Alt+T).
+                        {#if CONTROL_SHORTCUTS[control.id]}
+                          Adjustable per conversation from the status bar ({CONTROL_SHORTCUTS[control.id]}).
                         {/if}
                       </p>
                     </div>

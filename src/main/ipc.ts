@@ -1164,7 +1164,10 @@ export function registerHandlers() {
       ? adapterRegistry.get(adapterType)
       : adapterRegistry.getDefault();
     if (!adapter) return [];
-    return adapter.getControls(typeof model === 'string' && model ? model : null);
+    // No default model set: new conversations start on the adapter's first
+    // model (see AgentSessionManager), so describe that model's controls.
+    const resolved = typeof model === 'string' && model ? model : adapter.getModels()[0]?.id ?? null;
+    return adapter.getControls(resolved);
   });
 
   ipcMain.handle(IPC.AGENT_GET_MODELS, (_event, adapterType?: string) => {

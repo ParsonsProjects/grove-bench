@@ -576,14 +576,68 @@ export function thinkingConfigFor(
 
 // ─── Session controls ───
 
+/** Claude's effort levels, lowest first (the SDK's `EffortLevel`). */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+/** What a model accepts for thinking and effort. */
+export interface ClaudeModelCaps {
+  /** Effort levels offered, lowest first; empty = no effort parameter. */
+  effortLevels: readonly EffortLevel[];
+  /** The model's own effort default, used when the session has no choice. */
+  defaultEffort: EffortLevel | null;
+  /** Adaptive thinking (the model decides when and how much to think). */
+  adaptiveThinking: boolean;
+  /** Thinking can be switched off. Fable 5/5.1 and Opus 5.5 reject it, and
+   *  Claude Code keeps thinking on for them regardless of what is sent. */
+  thinkingOff: boolean;
+}
+
+const ALL_EFFORT = EFFORT_LEVELS;
+const NO_XHIGH: readonly EffortLevel[] = ['low', 'medium', 'high', 'max'];
+
+/**
+ * Per-model thinking/effort capabilities, from the model catalog in Claude
+ * Code 2.1.281 (the CLI bundled with the agent SDK). Update alongside
+ * getModels() when models are added.
+ */
+const MODEL_CAPS: Record<string, ClaudeModelCaps> = {
+  'claude-fable-5': { effortLevels: ALL_EFFORT, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: false },
+  'claude-opus-5-5': { effortLevels: ALL_EFFORT, defaultEffort: 'medium', adaptiveThinking: true, thinkingOff: false },
+  'claude-opus-5': { effortLevels: ALL_EFFORT, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: true },
+  'claude-opus-4-8': { effortLevels: ALL_EFFORT, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: true },
+  'claude-opus-4-7': { effortLevels: ALL_EFFORT, defaultEffort: 'xhigh', adaptiveThinking: true, thinkingOff: true },
+  'claude-opus-4-6': { effortLevels: NO_XHIGH, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: true },
+  'claude-sonnet-4-6': { effortLevels: NO_XHIGH, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: true },
+  'claude-haiku-4-5': { effortLevels: [], defaultEffort: null, adaptiveThinking: false, thinkingOff: true },
+};
+
+/** Unset or unrecognised model: offer everything and let Claude Code
+ *  downgrade what the model can't take. */
+const GENERIC_CAPS: ClaudeModelCaps = { effortLevels: ALL_EFFORT, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: true };
+
+/**
+ * Capabilities for `model`. Dated and suffixed ids ("claude-opus-5-5-<date>",
+ * "[1m]") match by longest known prefix, so "claude-opus-5-5" never falls
+ * through to "claude-opus-5".
+ */
+export function claudeModelCaps(model: string | null | undefined): ClaudeModelCaps {
+  if (!model) return GENERIC_CAPS;
+  const id = Object.keys(MODEL_CAPS)
+    .filter((k) => model.startsWith(k))
+    .sort((a, b) => b.length - a.length)[0];
+  if (id) return MODEL_CAPS[id];
+  if (/haiku/i.test(model)) return MODEL_CAPS['claude-haiku-4-5'];
+  return GENERIC_CAPS;
+}
+
 /**
  * Adaptive thinking (the model decides when and how much to think) exists on
  * the Claude 4.6+ generations; Haiku 4.5 only takes fixed budgets. Unset
  * model = SDK default, which is adaptive-capable.
  */
 export function supportsAdaptiveThinking(model: string | null | undefined): boolean {
-  if (!model) return true;
-  return !/haiku/i.test(model);
+  return claudeModelCaps(model).adaptiveThinking;
 }
 
 /**
@@ -622,7 +676,15 @@ const THINKING_OPTIONS: Record<ThinkingLevel, ControlOption> = {
   low: { value: 'low', label: 'Low', tone: 'accent-soft', description: 'Brief reasoning on hard steps' },
   medium: { value: 'medium', label: 'Medium', tone: 'accent-soft', description: 'Moderate reasoning budget' },
   high: { value: 'high', label: 'High', tone: 'accent', description: 'Provider default / maximum reasoning' },
-  adaptive: { value: 'adaptive', label: 'Auto', tone: 'highlight', description: 'Model decides when and how much to think' },
+  adaptive: { value: 'adaptive', label: 'On', tone: 'accent', description: 'Model decides when and how much to think; Effort sets how much' },
+};
+
+const EFFORT_OPTIONS: Record<EffortLevel, ControlOption> = {
+  low: { value: 'low', label: 'Low', tone: 'muted', description: 'Fastest and cheapest; brief reasoning' },
+  medium: { value: 'medium', label: 'Medium', tone: 'accent-soft', description: 'Balanced speed and depth' },
+  high: { value: 'high', label: 'High', tone: 'accent', description: 'Deep reasoning' },
+  xhigh: { value: 'xhigh', label: 'Extra', tone: 'accent', description: 'Deeper than High; suits long coding and agentic work' },
+  max: { value: 'max', label: 'Max', tone: 'highlight', description: 'Uncapped reasoning; slow and token-hungry, for the hardest tasks' },
 };
 
 const SPEED_OPTIONS: ControlOption[] = [
@@ -630,22 +692,69 @@ const SPEED_OPTIONS: ControlOption[] = [
   { value: 'fast', label: 'Fast', tone: 'highlight', description: 'Faster output on the same model' },
 ];
 
+/**
+ * Thinking options for a model. Adaptive models are On/Off (effort sets the
+ * depth, and Claude Code ignores fixed budgets for them). Haiku keeps fixed
+ * budgets because it has no effort parameter. Models that can't turn
+ * thinking off get no Thinking control at all.
+ */
+function thinkingOptionsFor(caps: ClaudeModelCaps): { options: ControlOption[]; default: ThinkingLevel } | null {
+  if (!caps.thinkingOff) return null;
+  if (caps.adaptiveThinking) {
+    return { options: [THINKING_OPTIONS.off, THINKING_OPTIONS.adaptive], default: 'adaptive' };
+  }
+  return {
+    options: THINKING_LEVELS.filter((l) => l !== 'adaptive').map((l) => THINKING_OPTIONS[l]),
+    default: 'high',
+  };
+}
+
 /** Controls the Claude Code adapter exposes for `model`. Pure so it can be
  *  unit-tested without an SDK. */
 export function claudeControlsFor(model?: string | null): ControlDescriptor[] {
-  const thinkingOptions = THINKING_LEVELS
-    .filter((level) => level !== 'adaptive' || supportsAdaptiveThinking(model))
-    .map((level) => THINKING_OPTIONS[level]);
+  const caps = claudeModelCaps(model);
   const modeOptions = PERMISSION_MODE_OPTIONS
     .filter((o) => o.value !== 'auto' || supportsAutoMode(model));
   const controls: ControlDescriptor[] = [
     { id: CONTROL_IDS.permissionMode, label: 'Mode', options: modeOptions, default: 'default' },
-    { id: CONTROL_IDS.thinking, label: 'Thinking', options: thinkingOptions, default: 'high' },
   ];
+  if (caps.effortLevels.length > 0 && caps.defaultEffort) {
+    controls.push({
+      id: CONTROL_IDS.effort,
+      label: 'Effort',
+      options: caps.effortLevels.map((l) => EFFORT_OPTIONS[l]),
+      default: caps.defaultEffort,
+    });
+  }
+  const thinking = thinkingOptionsFor(caps);
+  if (thinking) {
+    controls.push({ id: CONTROL_IDS.thinking, label: 'Thinking', options: thinking.options, default: thinking.default });
+  }
   if (supportsFastMode(model)) {
     controls.push({ id: CONTROL_IDS.speed, label: 'Speed', options: SPEED_OPTIONS, default: 'standard' });
   }
   return controls;
+}
+
+/**
+ * The query-start `thinking` and `effort` options for recorded control values.
+ * Models that reject disabled thinking get no Thinking control, so a stale
+ * recorded value (e.g. 'off' carried over from another model) is not sent.
+ */
+export function reasoningOptionsFor(
+  model: string | null | undefined,
+  controls: Record<string, string> | null | undefined,
+): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
+  const thinking = claudeModelCaps(model).thinkingOff
+    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
+    : null;
+  return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort]) };
+}
+
+/** A recorded effort value the model accepts, else undefined (send nothing). */
+export function effortFor(model: string | null | undefined, value: string | undefined): EffortLevel | undefined {
+  const levels = claudeModelCaps(model).effortLevels;
+  return levels.includes(value as EffortLevel) ? (value as EffortLevel) : undefined;
 }
 
 // ─── Plan usage ───
@@ -994,7 +1103,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: config.appendSystemPrompt }
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
-    const thinking = thinkingConfigFor(config.controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined);
+    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model);
 
     const q: Query = queryFn({
@@ -1015,6 +1124,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ...(config.skills ? { skills: config.skills } : {}),
         ...(config.outputFormat ? { outputFormat: config.outputFormat } : {}),
         ...(thinking ? { thinking } : {}),
+        ...(effort ? { effort } : {}),
         ...(fastMode ? { settings: { fastMode: true } } : {}),
         ...(config.sandbox ? { sandbox: config.sandbox } : {}),
         ...(mcpServers ? { mcpServers } : {}),
@@ -1141,6 +1251,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             // the limit so the provider default (adaptive on capable models)
             // applies until the next query start passes the full config.
             await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null);
+            return;
+          case CONTROL_IDS.effort:
+            // Session-scoped; 'max' is accepted here though never persisted
+            // to Claude Code's own settings files.
+            await q.applyFlagSettings({ effortLevel: value as EffortLevel });
             return;
           case CONTROL_IDS.speed:
             await q.applyFlagSettings({ fastMode: value === 'fast' });
