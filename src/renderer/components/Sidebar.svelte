@@ -151,8 +151,10 @@
         ? { label: 'Reopen', icon: 'check', action: () => store.setCompleted(sessionId, false) }
         : { label: 'Mark Completed', icon: 'check', action: () => store.setCompleted(sessionId, true) },
     ];
-    // Stop disconnects a live session (keeps it resumable); not shown for already-stopped ones.
-    if (session.status !== 'stopped') {
+    // Stop disconnects a live session (keeps it resumable); not shown for
+    // already-stopped ones. For an open tab still waiting to reconnect it
+    // just closes the tab.
+    if (store.isOpenTab(session)) {
       items.push({ label: 'Stop', icon: 'stop', action: () => stopSession(sessionId) });
     }
     items.push({ label: 'Destroy Agent', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
@@ -345,6 +347,7 @@
       store.activeSessionId = next?.id ?? null;
     }
     store.updateStatus(id, 'stopped');
+    store.clearDeferredResume(id);
     // Refetch this session's preview next time it's needed — the cached one
     // (if any) predates the conversation that just ended.
     sessionPreviewStore.invalidate(id);
@@ -511,13 +514,13 @@
     return notHiddenCompleted(session) && matchesTriageFilter(triageFilter, triageOf(session));
   }
 
-  /** Live sessions (anything not stopped) that pass the filter, ordered by the
+  /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
    *  active sort. This is the always-visible "working set". */
   let activeSessions = $derived(
-    sortSessions(store.sessions.filter((s) => s.status !== 'stopped' && rowVisible(s)), sort),
+    sortSessions(store.sessions.filter((s) => store.isOpenTab(s) && rowVisible(s)), sort),
   );
 
-  let stoppedCount = $derived(visibleSessions.filter((s) => s.status === 'stopped').length);
+  let stoppedCount = $derived(visibleSessions.filter((s) => !store.isOpenTab(s)).length);
 
   /** Attention counts for one repo's header (all of its sessions, any status). */
   function repoCounts(repo: string) {
@@ -526,7 +529,7 @@
 
   /** All sessions for a repo that pass the filter, grouped by branch (for the
    *  INACTIVE tree), with each group's sessions ordered by the active sort.
-   *  Active (non-stopped) sessions are kept here too — the rows render
+   *  Open tabs are kept here too — the rows render
    *  greyed-out and non-clickable (they remain fully interactive in the ACTIVE
    *  list above). */
   function getInactiveBranchGroups(repo: string): [string, typeof store.sessions][] {
@@ -801,7 +804,7 @@
         {#if !collapsed}
           {#each inactiveGroups as [branch, sessions] (branch)}
             {#if sessions.length === 1}
-              {@render sessionRow(sessions[0], false, null, sessions[0].status !== 'stopped')}
+              {@render sessionRow(sessions[0], false, null, store.isOpenTab(sessions[0]))}
             {:else}
               <div class="pl-3 mt-0.5">
                 <div class="flex items-center gap-1.5 px-1 py-0.5 text-xs text-muted-foreground/70">
@@ -810,7 +813,7 @@
                   <span class="text-muted-foreground/40">({sessions.length})</span>
                 </div>
                 {#each sessions as session, i (session.id)}
-                  {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, session.status !== 'stopped')}
+                  {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, store.isOpenTab(session))}
                 {/each}
               </div>
             {/if}
