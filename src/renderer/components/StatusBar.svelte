@@ -493,6 +493,10 @@
       e.preventDefault();
       messageStore.cycleControl(sessionId, CONTROL_IDS.thinking);
     }
+    if (e.altKey && e.key.toLowerCase() === 'e') {
+      e.preventDefault();
+      messageStore.cycleControl(sessionId, CONTROL_IDS.effort);
+    }
   }
 
   function handleClickOutside(e: MouseEvent) {
@@ -1528,7 +1532,8 @@
           <div class="flex justify-between"><span>Conversation finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
           <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
-          <div class="flex justify-between"><span>Cycle thinking level</span><kbd class="text-foreground">Alt+T</kbd></div>
+          <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
+          <div class="flex justify-between"><span>Cycle effort level</span><kbd class="text-foreground">Alt+E</kbd></div>
           <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
           <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
           <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>

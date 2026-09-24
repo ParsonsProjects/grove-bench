@@ -334,14 +334,16 @@ const api: Record<string, unknown> = {
   listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
   getAdapterControls: async () => [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
-    { id: 'thinking', label: 'Thinking', default: 'high', options: [
-      { value: 'off', label: 'Off', description: 'No extended thinking' },
-      { value: 'low', label: 'Low', description: 'Brief reasoning on hard steps' },
-      { value: 'medium', label: 'Medium', description: 'Moderate reasoning budget' },
-      { value: 'high', label: 'High', description: 'Provider default / maximum reasoning' },
+    { id: 'effort', label: 'Effort', default: 'medium', options: [
+      { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
+      { value: 'medium', label: 'Medium', description: 'Balanced speed and depth' },
+      { value: 'high', label: 'High', description: 'Deep reasoning' },
+      { value: 'xhigh', label: 'Extra', description: 'Deeper than High; suits long coding and agentic work' },
+      { value: 'max', label: 'Max', description: 'Uncapped reasoning; slow and token-hungry, for the hardest tasks' },
     ] },
   ],
   getModels: async () => [
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', contextWindow: 1_000_000 },
     { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
     { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },
     { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', contextWindow: 1_000_000 },
@@ -360,7 +362,8 @@ const api: Record<string, unknown> = {
       { id: 'seven_day_opus', label: 'Weekly · Opus', utilization: 0.71, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
     ],
   }),
-  // Mirrors the Claude Code adapter's declared controls so the status bar
+  // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
+  // default model) so the status bar
   // renders its badges in the browser demo.
   getControls: async () => ({
     descriptors: [
@@ -369,16 +372,16 @@ const api: Record<string, unknown> = {
         { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'highlight' },
         { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
       ] },
-      { id: 'thinking', label: 'Thinking', default: 'high', options: [
-        { value: 'off', label: 'Off', tone: 'muted' }, { value: 'low', label: 'Low', tone: 'accent-soft' },
-        { value: 'medium', label: 'Medium', tone: 'accent-soft' }, { value: 'high', label: 'High', tone: 'accent' },
-        { value: 'adaptive', label: 'Auto', tone: 'highlight' },
+      { id: 'effort', label: 'Effort', default: 'medium', options: [
+        { value: 'low', label: 'Low', tone: 'muted' }, { value: 'medium', label: 'Medium', tone: 'accent-soft' },
+        { value: 'high', label: 'High', tone: 'accent' }, { value: 'xhigh', label: 'Extra', tone: 'accent' },
+        { value: 'max', label: 'Max', tone: 'highlight' },
       ] },
       { id: 'speed', label: 'Speed', default: 'standard', options: [
         { value: 'standard', label: 'Standard', tone: 'neutral' }, { value: 'fast', label: 'Fast', tone: 'highlight' },
       ] },
     ],
-    values: { thinking: 'high', speed: 'standard' },
+    values: { effort: 'medium', speed: 'standard' },
   }),
   setControl: async () => {},
   pluginList: async () => ({ installed: [], available: [] }),

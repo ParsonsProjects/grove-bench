@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -108,6 +108,19 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
   // native mode, so it keeps its old meaning.
   (raw) => {
     if (raw.defaultPermissionMode === 'auto') raw.defaultPermissionMode = 'readSafe';
+    return raw;
+  },
+  // 3 → 4: Claude's thinking budgets gave way to the Effort control. On
+  // adaptive-thinking models Claude Code ignored the Low/Medium/High budgets,
+  // and those models now offer Thinking as On/Off only, so a saved budget
+  // default is dropped. 'off' and 'adaptive' keep their meaning.
+  (raw) => {
+    const defaults = raw.adapterDefaults as Record<string, Record<string, string>> | undefined;
+    const claude = defaults?.['claude-code'];
+    if (claude && ['low', 'medium', 'high'].includes(claude.thinking)) {
+      const { thinking: _budget, ...rest } = claude;
+      raw.adapterDefaults = { ...defaults, 'claude-code': rest };
+    }
     return raw;
   },
 ];

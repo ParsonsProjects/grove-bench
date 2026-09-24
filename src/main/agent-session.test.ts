@@ -2202,6 +2202,24 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-mode-model');
   });
 
+  it('setModel pushes control values reset for the new model to the live query', async () => {
+    const session = await createWithHandle('ctl-push');
+    await sessionManager.setControl('ctl-push', 'speed', 'fast');
+    await sessionManager.setControl('ctl-push', 'thinking', 'low');
+    const setControl = session.queryHandle!.setControl as ReturnType<typeof vi.fn>;
+    setControl.mockClear();
+
+    // Back to the full model: 'speed' reappears at its default, 'thinking' is unchanged.
+    await sessionManager.setModel('ctl-push', 'mock-lite');
+    await sessionManager.setModel('ctl-push', 'mock-model');
+
+    expect(session.controls).toEqual({ thinking: 'low', speed: 'standard' });
+    expect(setControl).toHaveBeenCalledWith('speed', 'standard');
+    expect(setControl).not.toHaveBeenCalledWith('thinking', expect.anything());
+
+    await sessionManager.destroySession('ctl-push');
+  });
+
   it('getUsage returns the live handle usage, and null without a handle or when it throws', async () => {
     const session = await createWithHandle('ctl-usage');
 

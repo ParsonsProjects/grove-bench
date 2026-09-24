@@ -1144,7 +1144,11 @@ class AgentSessionManager {
     const models = adapter.getModels();
     const exact = models.find((m) => m.id === raw);
     if (exact) return exact.id;
-    const prefixed = models.find((m) => raw.startsWith(m.id));
+    // Longest prefix wins: "claude-opus-5-5-<date>" also starts with
+    // "claude-opus-5", so list order alone can't be trusted here.
+    const prefixed = models
+      .filter((m) => raw.startsWith(m.id))
+      .sort((a, b) => b.id.length - a.id.length)[0];
     return prefixed?.id ?? null;
   }
 
@@ -1168,7 +1172,20 @@ class AgentSessionManager {
       worktreeManager.saveModel(id, model).catch((e) => {
         logger.warn(`Failed to persist model for ${id}:`, e);
       });
-      session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
+      const before = session.controls;
+      const controls = this.reconcileControls(session);
+      // Values reset for the new model (e.g. an effort level it doesn't
+      // offer) must reach the live query too, or the badge and the
+      // provider disagree until the next query start.
+      for (const [controlId, value] of Object.entries(controls.values)) {
+        if (before[controlId] === value || !session.queryHandle.setControl) continue;
+        try {
+          await session.queryHandle.setControl(controlId, value);
+        } catch (e) {
+          logger.warn(`Failed to apply ${controlId}=${value} after model switch for ${id}:`, e);
+        }
+      }
+      session.emit?.({ type: 'controls_sync', ...controls });
     } catch (e) {
       logger.warn(`Failed to set model for session ${id}:`, e);
       throw e;

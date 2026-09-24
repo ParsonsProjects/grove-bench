@@ -4,7 +4,7 @@ The status bar sits at the top of the workspace area and displays real-time info
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5 · Code` normally, or `Opus 5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. The agent itself is fixed when a conversation is created, so other agents are listed but not selectable.
+The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Code` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. The agent itself is fixed when a conversation is created, so other agents are listed but not selectable.
 
 ### Usage
 
@@ -26,23 +26,32 @@ Click the mode badge or press `Alt+M` to cycle between modes. The first four are
 
 Read-safe and Auto differ in who decides: Read-safe uses a fixed allowlist inside Grove and asks you about everything else, so nothing unexpected ever runs unprompted. Auto hands the decision to Claude's classifier and rarely prompts, so the agent can run tests, commit and so on without you, at the cost of a model making the call.
 
-The mode, thinking, and speed badges are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a badge (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.
+The mode, effort, thinking, and speed badges are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a badge (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.
 
 ## Speed
 
 On models that support it, a **Speed** badge toggles between **Standard** and **Fast** output. Fast keeps the same model but returns responses more quickly.
 
-## Thinking Level
+## Effort
 
-A **thinking** control sets how much extended thinking (deeper reasoning) the agent uses. Press `Alt+T` or click the badge to cycle through the levels:
+An **Effort** control sets how much the agent reasons before it acts. Higher effort means more thorough work, but it takes longer and uses your plan limits faster. Press `Alt+E` or click the badge to cycle through the levels the current model offers:
 
 | Level | Meaning |
 |-------|---------|
-| **Off** | No extended thinking |
-| **Low** | Brief reasoning on hard steps |
-| **Med** | Moderate reasoning budget |
-| **High** | Provider default / maximum reasoning |
-| **Auto** | Adaptive — the model decides when and how much to think |
+| **Low** | Fastest and cheapest; brief reasoning |
+| **Medium** | Balanced speed and depth |
+| **High** | Deep reasoning |
+| **Extra** | Deeper than High; suits long coding and agentic work |
+| **Max** | Uncapped reasoning; slow and token-hungry, for the hardest tasks |
+
+Each model starts on its own default: **Medium** for Opus 5.5, **Extra** for Opus 4.7, and **High** for the others. Opus 4.6 and Sonnet 4.6 don't offer Extra. Haiku 4.5 has no effort setting.
+
+## Thinking
+
+On most models a **Thinking** control switches extended thinking **On** (the model decides when and how much to think, and Effort sets how much) or **Off**. Press `Alt+T` or click the badge to toggle it.
+
+- Opus 5.5 and Fable 5 always think, so they show no Thinking control. Use a lower Effort to make them faster.
+- Haiku 4.5 has no Effort setting, so its Thinking control keeps fixed levels: **Off**, **Low**, **Medium**, and **High**.
 
 When thinking is active, a purple pulsing dot appears while the agent reasons.
 
