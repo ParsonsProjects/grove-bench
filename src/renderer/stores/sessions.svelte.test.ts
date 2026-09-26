@@ -28,6 +28,7 @@ describe('SessionStore', () => {
     store.error = null;
     store.creating = false;
     store.repos = [];
+    store.deferredResume = {};
     localStorageMock.clear();
   });
 
@@ -124,6 +125,39 @@ describe('SessionStore', () => {
 
     it('activeSession returns null when no active', () => {
       expect(store.activeSession).toBeNull();
+    });
+  });
+
+  describe('deferredResume', () => {
+    it('counts a stopped session as an open tab only while its reconnect is deferred', () => {
+      const s = makeSession({ id: 'a', status: 'stopped' });
+      store.addSession(s, false);
+      expect(store.isOpenTab(s)).toBe(false);
+      store.deferResume('a');
+      expect(store.isOpenTab(s)).toBe(true);
+      store.clearDeferredResume('a');
+      expect(store.isOpenTab(s)).toBe(false);
+    });
+
+    it('treats live sessions as open tabs', () => {
+      expect(store.isOpenTab(makeSession({ status: 'running' }))).toBe(true);
+      expect(store.isOpenTab(makeSession({ status: 'error' }))).toBe(true);
+    });
+
+    it('drops the mark when the session is removed', () => {
+      store.addSession(makeSession({ id: 'a', status: 'stopped' }), false);
+      store.deferResume('a');
+      store.removeSession('a');
+      expect(store.deferredResume['a']).toBeUndefined();
+    });
+
+    it('keeps deferred tabs out of clean-up candidates', () => {
+      store.sessions = [
+        { ...makeSession({ id: 'a', status: 'stopped' }), lastActiveAt: 1 },
+        { ...makeSession({ id: 'b', status: 'stopped' }), lastActiveAt: 1 },
+      ];
+      store.deferResume('a');
+      expect(store.stoppedSessionsOlderThan(14).map((s) => s.id)).toEqual(['b']);
     });
   });
 

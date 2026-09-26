@@ -8,7 +8,6 @@
   import { installRendererErrorHandlers, reportFromError, shortMessage, ErrorDeduper } from './lib/error-handling.js';
   import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
-  import { orderTabsForResume, RESUME_STAGGER_MS } from './lib/resume-order.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { deriveSessionName } from './lib/session-name.js';
   import Sidebar from './components/Sidebar.svelte';
@@ -52,9 +51,10 @@
 
   let restored = $state(false);
 
-  // A session is "live" (has a connection) when it isn't stopped — these are
-  // the ones persisted so they reopen/resume on restart.
-  let liveSessions = $derived(store.sessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing' || s.status === 'error'));
+  // Open tabs: live sessions (have a connection) plus restored tabs still
+  // waiting to reconnect on first focus. These are persisted so they reopen
+  // on restart.
+  let openTabs = $derived(store.sessions.filter((s) => store.isOpenTab(s)));
 
   async function restoreApp() {
     await restoreWorktrees();
@@ -72,26 +72,31 @@
       }
     }
 
-    // Restore persisted active tab, or fall back to first running session
+    // Restore persisted active tab, or fall back to the first running session,
+    // then the first previously-open tab
     const persistedTabId = await window.groveBench.getActiveTab();
     if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
       store.activeSessionId = persistedTabId;
     } else {
-      const firstRunning = store.sessions.find((s) => s.status === 'running');
-      if (firstRunning) {
-        store.activeSessionId = firstRunning.id;
+      const fallback = store.sessions.find((s) => s.status === 'running')
+        ?? store.sessions.find((s) => openSet.has(s.id));
+      if (fallback) {
+        store.activeSessionId = fallback.id;
       }
     }
 
-    // Resume previously-open tabs: the active one first (it's on screen), the
-    // rest staggered so their agent subprocesses don't all boot at once.
-    // `restored` stays false until every resume has been started so the
-    // open-tabs persistence effect doesn't briefly write a partial list.
-    const ordered = orderTabsForResume(persistedOpenTabs, store.activeSessionId);
-    for (let i = 0; i < ordered.length; i++) {
-      if (i > 0) await new Promise((r) => setTimeout(r, RESUME_STAGGER_MS));
-      resumeStoppedSession(store.sessions.find((s) => s.id === ordered[i]));
+    // Only the active tab reconnects now (it's on screen). The other open tabs
+    // stay listed but don't start their agent until the user focuses them, so
+    // startup doesn't boot one agent subprocess per tab. The deferred marks are
+    // set before `restored` flips so the open-tabs persistence effect never
+    // writes a partial list.
+    for (const id of new Set(persistedOpenTabs)) {
+      const session = store.sessions.find((s) => s.id === id);
+      if (session?.status === 'stopped' && id !== store.activeSessionId) {
+        store.deferResume(id);
+      }
     }
+    resumeStoppedSession(store.activeSession);
 
     // Bring back the unread flags from the previous run. The active tab's
     // flag is cleared straight away by the focus effect below, same as if
@@ -162,7 +167,7 @@
   // Persist live session IDs so they reopen/resume on restart
   $effect(() => {
     if (restored) {
-      window.groveBench.setOpenTabs(liveSessions.map((s) => s.id));
+      window.groveBench.setOpenTabs(openTabs.map((s) => s.id));
     }
   });
 
@@ -247,8 +252,8 @@
   let prevActiveResumeId: string | null = null;
 
   /** Resume a stopped session, deduped against in-flight and recently-failed
-   *  resumes. Used by the active-session auto-resume effect and by the
-   *  wake-from-sleep handler (which resumes every tab that died during sleep). */
+   *  resumes. Used by startup restore, the active-session auto-resume effect
+   *  and the wake-from-sleep handler (each only for the focused tab). */
   function resumeStoppedSession(session: { id: string; repoPath: string; status: string } | null | undefined) {
     if (!session || session.status !== 'stopped') return;
     if (resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
@@ -256,6 +261,7 @@
     resumingIds.add(sessionId);
     window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
+      store.clearDeferredResume(sessionId);
       // Don't subscribe here — WorkspacePane handles history replay + subscription
       // on mount. Subscribing here would race with mount and cause isReady to be
       // set before history replay, resulting in an empty chat.
@@ -298,7 +304,7 @@
     // tab. Stopped sessions are excluded: their alerts have no agent to act,
     // and a pile of old worktrees shouldn't each spawn a gh poll per sweep.
     prStore.startGlobalPolling(() =>
-      store.sessions.filter((s) => s.status !== 'stopped').map((s) => s.id));
+      store.sessions.filter((s) => store.isOpenTab(s)).map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
       store.updateStatus(sessionId, status);
@@ -318,22 +324,27 @@
       }
     });
 
-    // After system resume (laptop wake), bring back every tab that was running
-    // before sleep. The main process reports which sessions died during suspend
-    // (their SDK query usually doesn't survive); resume them all so they stay in
-    // the Active list instead of silently dropping to Inactive. (The focused
-    // session is also covered by the auto-resume effect; resumingIds dedupes.)
+    // After system resume (laptop wake), keep every tab that was running before
+    // sleep. The main process reports which sessions died during suspend
+    // (their SDK query usually doesn't survive). Same as startup: only the
+    // focused tab reconnects now; the others stay in the Active list and
+    // reconnect when the user focuses them. (The focused session is also
+    // covered by the auto-resume effect; resumingIds dedupes.)
     const unsubPower = window.groveBench.onPowerResume((resumeIds) => {
       for (const id of resumeIds) {
         const session = store.sessions.find((s) => s.id === id);
         if (!session || session.status === 'running') continue;
         // healthCheckAll already emits SESSION_STATUS 'stopped'; guard in case
-        // that event hasn't been applied yet so resumeStoppedSession can proceed.
+        // that event hasn't been applied yet.
         if (session.status !== 'stopped') {
           store.updateStatus(id, 'stopped');
           messageStore.markSessionStopped(id);
         }
-        resumeStoppedSession(store.sessions.find((s) => s.id === id));
+        if (id === store.activeSessionId) {
+          resumeStoppedSession(store.sessions.find((s) => s.id === id));
+        } else {
+          store.deferResume(id);
+        }
       }
     });
 

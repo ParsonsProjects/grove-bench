@@ -35,6 +35,11 @@ class SessionStore {
    *  flash on their sidebar row until the user focuses them. */
   needsAttention = $state<Record<string, boolean>>({});
 
+  /** Tabs restored at startup whose agent hasn't been reconnected yet. They
+   *  stay 'stopped' (no agent process) but still count as open tabs, and
+   *  reconnect the first time the user focuses them. */
+  deferredResume = $state<Record<string, boolean>>({});
+
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
@@ -50,6 +55,28 @@ class SessionStore {
     return this.repos.length > 0;
   }
 
+  /** Whether the session is an open tab: live, or restored and waiting to
+   *  reconnect on first focus. */
+  isOpenTab(session: { id: string; status: SessionStatus }): boolean {
+    return session.status !== 'stopped' || !!this.deferredResume[session.id];
+  }
+
+  /** Mark a stopped session as an open tab that reconnects on first focus. */
+  deferResume(id: string) {
+    if (!this.deferredResume[id]) {
+      this.deferredResume = { ...this.deferredResume, [id]: true };
+    }
+  }
+
+  /** Drop the deferred-reconnect mark (reconnected, closed or removed). */
+  clearDeferredResume(id: string) {
+    if (this.deferredResume[id]) {
+      const next = { ...this.deferredResume };
+      delete next[id];
+      this.deferredResume = next;
+    }
+  }
+
   get activeSession() {
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
   }
@@ -58,12 +85,12 @@ class SessionStore {
    * Stopped sessions whose last activity is before the cutoff, oldest first —
    * candidates for the sidebar's session clean-up dialog. Sessions without a
    * timestamp get ts=0 and are listed first as unknown age, never hidden.
-   * Running sessions are never candidates.
+   * Running sessions and open tabs waiting to reconnect are never candidates.
    */
   stoppedSessionsOlderThan(days: number): Array<SessionEntry & { ts: number }> {
     const cutoff = Date.now() - days * 86_400_000;
     return this.sessions
-      .filter((s) => s.status === 'stopped')
+      .filter((s) => !this.isOpenTab(s))
       .map((s) => ({ ...s, ts: s.lastActiveAt ?? s.createdAt ?? 0 }))
       .filter((s) => s.ts < cutoff)
       .sort((a, b) => a.ts - b.ts);
@@ -142,6 +169,7 @@ class SessionStore {
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
     this.clearNeedsAttention(id);
+    this.clearDeferredResume(id);
     if (this.activeSessionId === id) {
       // Prefer a running session, fall back to any session
       const next = this.sessions.find((s) => s.status === 'running')
