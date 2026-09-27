@@ -8,17 +8,8 @@
  * chat message keeps only the original text.
  */
 
-const AT_REF_RE = /@([\w.\/\-]+)/g;
-
-/** Extract @-references from prompt text. A trailing `/` marks a folder. */
-export function extractAtRefs(text: string): string[] {
-  const refs: string[] = [];
-  let match;
-  while ((match = AT_REF_RE.exec(text)) !== null) {
-    refs.push(match[1]);
-  }
-  return refs;
-}
+// Shared with main, which reads @-references back out of stored messages.
+export { extractAtRefs } from '../../shared/prompt-text.js';
 
 /**
  * Read each @-reference and wrap it in a `<file>`/`<folder>` tag. Unreadable

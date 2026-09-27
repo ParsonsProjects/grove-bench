@@ -87,13 +87,16 @@ function spawnClaudeCodeProcess(
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@anthropic-ai/claude-agent-sdk')>;
 
-let _query: typeof import('@anthropic-ai/claude-agent-sdk').query;
-async function getQuery() {
-  if (!_query) {
-    const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
-    _query = sdk.query;
+let _sdk: typeof import('@anthropic-ai/claude-agent-sdk') | undefined;
+async function getSdk() {
+  if (!_sdk) {
+    _sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
   }
-  return _query;
+  return _sdk;
+}
+
+async function getQuery() {
+  return (await getSdk()).query;
 }
 
 // ─── Tool category mapping ───
@@ -1701,6 +1704,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     return resultText;
+  }
+
+  // ─── Conversation title ───
+
+  async getConversationTitle(providerSessionId: string, cwd: string): Promise<string | null> {
+    const sdk = await getSdk();
+    const info = await sdk.getSessionInfo(providerSessionId, { dir: cwd });
+    // customTitle is the transcript's own title: a /rename title, else the
+    // one Claude Code generates from the conversation (its ai-title entry).
+    // `summary` falls back to prompt text, which Grove derives itself.
+    return info?.customTitle?.replace(/\s+/g, ' ').trim() || null;
   }
 
   // ─── Worktree configuration ───

@@ -1409,6 +1409,17 @@ describe('ingestEvent — user_message UUID stamping', () => {
     expect(msgs[0].kind).toBe('user');
     expect((msgs[0] as any).uuid).toBe('uuid-new');
   });
+
+  it('shows a replayed message as it was displayed, not with attached file content', () => {
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: '<file path="notes.md">\nlong notes\n</file>\n<file path="src/a.ts">\nconst secret = 1;\n</file>\n\nfollow the notes for @src/a.ts', uuid: 'uuid-files' },
+    ] as AgentEvent[]);
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs).toHaveLength(1);
+    expect((msgs[0] as any).text).toBe('[notes.md] follow the notes for @src/a.ts');
+    expect((msgs[0] as any).uuid).toBe('uuid-files');
+  });
 });
 
 describe('ingestEvent — rewind', () => {

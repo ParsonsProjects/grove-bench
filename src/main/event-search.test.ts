@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid, extractSessionPreview, EventSearchIndex, SearchIndexCache } from './event-search.js';
+import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid, extractSessionPreview, firstUserPrompt, EventSearchIndex, SearchIndexCache } from './event-search.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('searchableEventText', () => {
@@ -290,5 +290,34 @@ describe('extractSessionPreview', () => {
     const preview = extractSessionPreview([{ type: 'user_message', text: long }]);
     expect(preview.firstPrompt.length).toBeLessThanOrEqual(161);
     expect(preview.firstPrompt.endsWith('…')).toBe(true);
+  });
+
+  it('shows user messages as the chat does, not attached file content', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '<file path="a.ts">\nconst secret = 1;\n</file>\n\nexplain @a.ts' },
+      { type: 'assistant_text', text: 'It declares a constant', uuid: '' },
+      { type: 'user_message', text: '<file path="notes.md">\nlong notes\n</file>\n\nfollow these' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'explain @a.ts', lastText: '[notes.md] follow these' });
+  });
+});
+
+describe('searchableEventText for user messages', () => {
+  it('indexes the displayed text, not attached file content', () => {
+    const event: AgentEvent = { type: 'user_message', text: '<file path="a.ts">\nconst secret = 1;\n</file>\n\nfix it' };
+    expect(searchableEventText(event)).toBe('[a.ts] fix it');
+    expect(searchEvents([event], 'secret')).toEqual([]);
+  });
+});
+
+describe('firstUserPrompt', () => {
+  it('returns the first real prompt as sent, file blocks included', () => {
+    const sent = '<file path="a.ts">\nx\n</file>\n\nexplain @a.ts';
+    expect(firstUserPrompt([{ type: 'user_message', text: '/clear' }, { type: 'user_message', text: `  ${sent}  ` }])).toBe(sent);
+  });
+
+  it('returns null when there is no real prompt', () => {
+    expect(firstUserPrompt([{ type: 'user_message', text: '<file path="a.ts">\nx\n</file>\n\n' }])).toBeNull();
+    expect(firstUserPrompt([])).toBeNull();
   });
 });
