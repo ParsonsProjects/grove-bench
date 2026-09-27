@@ -38,6 +38,8 @@ vi.mock('./worktree-manager.js', () => ({
     updateLastActive: vi.fn().mockResolvedValue(undefined),
     saveModel: vi.fn().mockResolvedValue(undefined),
     getModel: vi.fn().mockResolvedValue(undefined),
+    saveAdapterType: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue([]),
   },
 }));
 vi.mock('./settings.js', () => ({
@@ -84,13 +86,19 @@ vi.mock('./checkpoints.js', () => {
 // Mock the adapter registry with a controllable mock adapter
 let mockAdapter: MockAdapter;
 
+/** Other agents a test registers alongside the mock adapter. */
+let extraAdapters: Record<string, AgentAdapter> = {};
 vi.mock('./adapters/index.js', () => ({
   adapterRegistry: {
-    get: (id: string) => id === 'mock' ? mockAdapter : undefined,
+    get: (id: string) => id === 'mock' ? mockAdapter : extraAdapters[id],
     getDefault: () => mockAdapter,
-    list: () => [mockAdapter],
+    list: () => [mockAdapter, ...Object.values(extraAdapters)],
     register: vi.fn(),
   },
+}));
+vi.mock('./skill-suggestions.js', () => ({
+  analyzeRepo: vi.fn(async () => [{ id: 'analyzed' }]),
+  getCachedSuggestions: vi.fn(() => [{ id: 'cached' }]),
 }));
 
 // ─── Mock Adapter ───
@@ -242,6 +250,7 @@ const settingsMock = await import('./settings.js') as unknown as { getSettings: 
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
+  extraAdapters = {};
   vi.clearAllMocks();
 });
 
@@ -1951,6 +1960,31 @@ describe('AgentSessionManager model handling', () => {
     await sessionManager.destroySession('test-model-default');
   });
 
+  const BASE_SETTINGS = { defaultPermissionMode: 'default', defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
+
+  it('records which agent the conversation runs', async () => {
+    await sessionManager.createSession({ id: 'test-agent-recorded', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    const { worktreeManager } = await import('./worktree-manager.js');
+    expect(worktreeManager.saveAdapterType).toHaveBeenCalledWith('test-agent-recorded', 'mock');
+    await sessionManager.destroySession('test-agent-recorded');
+  });
+
+  it("starts on this agent's saved default model", async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...BASE_SETTINGS, defaultModels: { mock: 'mock-saved', 'claude-code': 'claude-sonnet-4-6' } });
+    await sessionManager.createSession({ id: 'test-model-saved', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.model).toBe('mock-saved');
+    await sessionManager.destroySession('test-model-saved');
+  });
+
+  it("never hands another agent's default model to this agent", async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...BASE_SETTINGS, defaultModels: { 'claude-code': 'claude-sonnet-4-6' } });
+    await sessionManager.createSession({ id: 'test-model-other', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.model).toBe('mock-model');
+    await sessionManager.destroySession('test-model-other');
+  });
+
   it('honours an explicit model passed to createSession (resume path)', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -2311,5 +2345,50 @@ describe('AgentSessionManager session controls', () => {
     const controls = sessionManager.getControls('never-created');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
     expect(controls.values).toEqual({});
+  });
+});
+
+describe('AgentSessionManager skill suggestions', () => {
+  const conversation = (id: string, agentType: string, lastActiveAt: number) =>
+    ({ id, agentType, lastActiveAt, createdAt: 0, path: `/wt/${id}`, branch: id, repoPath: '/repo' });
+
+  async function mocks() {
+    const { worktreeManager } = await import('./worktree-manager.js');
+    const suggestions = await import('./skill-suggestions.js');
+    return { list: vi.mocked(worktreeManager.list), analyzeRepo: vi.mocked(suggestions.analyzeRepo) };
+  }
+
+  it("runs on the newest agent with skills, reads only that agent's conversations, and uses its background model", async () => {
+    const withSkills = mockAdapter as unknown as { capabilities: Record<string, boolean>; backgroundModel?: string; generateText?: unknown };
+    withSkills.capabilities = { ...mockAdapter.capabilities, skills: true };
+    withSkills.backgroundModel = 'cheap-model';
+    const generateText = vi.fn(async () => '[]');
+    withSkills.generateText = generateText;
+    extraAdapters.other = { ...new MockAdapter(), id: 'other', capabilities: { ...mockAdapter.capabilities, skills: false } } as unknown as AgentAdapter;
+
+    const { list, analyzeRepo } = await mocks();
+    list.mockResolvedValue([
+      conversation('a', 'mock', 1),
+      conversation('b', 'other', 9),
+      conversation('c', 'mock', 3),
+    ] as never);
+
+    const result = await sessionManager.analyzeSkillSuggestionsForRepo('/repo');
+
+    expect(result).toEqual([{ id: 'analyzed' }]);
+    const opts = analyzeRepo.mock.calls[0][0];
+    expect(opts.sessionIds).toEqual(['a', 'c']);
+    await opts.generateText!('system', 'user', { cwd: '/repo' });
+    expect(generateText).toHaveBeenCalledWith('system', 'user', { cwd: '/repo', model: 'cheap-model' });
+  });
+
+  it('keeps the cached suggestions when no agent in the project has skills', async () => {
+    const { list, analyzeRepo } = await mocks();
+    list.mockResolvedValue([conversation('a', 'mock', 1)] as never);
+
+    const result = await sessionManager.analyzeSkillSuggestionsForRepo('/repo');
+
+    expect(result).toEqual([{ id: 'cached' }]);
+    expect(analyzeRepo).not.toHaveBeenCalled();
   });
 });

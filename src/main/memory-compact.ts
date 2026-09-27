@@ -5,6 +5,7 @@ import { logger } from './logger.js';
 import * as memory from './memory.js';
 import * as settings from './settings.js';
 import { adapterRegistry } from './adapters/index.js';
+import { backgroundModelFor } from './background-tasks.js';
 
 // ─── Types ───
 
@@ -703,7 +704,7 @@ async function runCompaction(
       {
         cwd: opts.cwd ?? repoPath,
         abortSignal: abortController.signal,
-        model: settings.getSettings().memoryModel || undefined,
+        model: backgroundModelFor(adapter),
       },
     );
   } catch (err) {

@@ -6,7 +6,8 @@ import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
 import { computeSkillsFilter } from './skills.js';
-import { analyzeRepo as analyzeSkillSuggestions } from './skill-suggestions.js';
+import { analyzeRepo as analyzeSkillSuggestions, getCachedSuggestions } from './skill-suggestions.js';
+import { backgroundModelFor, newestAgent } from './background-tasks.js';
 import { loadKnownSkills, saveKnownSkills } from './app-state.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
@@ -295,24 +296,31 @@ class AgentSessionManager {
   }
 
   /** Mine the repo's session logs for recurring workflows and refresh the
-   *  cached skill suggestions. Uses a live session's adapter when one exists,
-   *  falling back to the registry default. */
+   *  cached skill suggestions. Skills are an agent feature, so this runs on
+   *  the project's most recently used agent that has them, with that agent's
+   *  background model, and only reads that agent's conversations: content from
+   *  one provider's conversations is never sent to another provider. Returns
+   *  the cached suggestions untouched when no agent in the project has skills. */
   async analyzeSkillSuggestionsForRepo(repoPath: string) {
-    const adapter = [...this.sessions.values()].find((s) => s.repoPath === repoPath)?.adapter
-      ?? adapterRegistry.getDefault();
     const worktrees = await worktreeManager.list(repoPath);
+    const adapter = newestAgent(worktrees, (a) => a.capabilities.skills === true);
+    if (!adapter) return getCachedSuggestions(repoPath);
     const sessionIds = worktrees
+      .filter((w) => w.agentType === adapter.id)
       .sort((a, b) => (a.lastActiveAt ?? a.createdAt) - (b.lastActiveAt ?? b.createdAt))
       .map((w) => w.id);
     const existingSkills = adapter.listSkills
       ? await adapter.listSkills(repoPath).catch(() => [])
       : [];
+    const generateText = adapter.generateText?.bind(adapter);
     return analyzeSkillSuggestions({
       repoPath,
       sessionIds,
       eventsDir: getEventsDir(),
       existingSkills,
-      generateText: adapter.generateText ? adapter.generateText.bind(adapter) : null,
+      generateText: generateText
+        ? (system, user, options) => generateText(system, user, { ...options, model: backgroundModelFor(adapter) })
+        : null,
     });
   }
 
@@ -415,12 +423,17 @@ class AgentSessionManager {
     const adapterType = opts.adapterType ?? adapterRegistry.getDefault().id;
     const adapter = adapterRegistry.get(adapterType);
     if (!adapter) throw new Error(`Unknown agent adapter: ${adapterType}`);
+    // Record the agent so a restart resumes this conversation on it and its
+    // background tasks (memory notes, commit messages) use it.
+    worktreeManager.saveAdapterType(id, adapterType).catch((e) => {
+      logger.warn(`Failed to record agent for ${id}:`, e);
+    });
 
     const abortController = new AbortController();
 
     // Apply settings defaults for values not explicitly provided
     const appSettings = settings.getSettings();
-    const initialModel = opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null);
+    const initialModel = opts.model ?? (appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null);
     const requestedMode: PermissionMode = opts.permissionMode
       || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
       || 'default';

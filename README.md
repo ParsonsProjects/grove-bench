@@ -14,6 +14,10 @@ Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.c
 
 Electron · Svelte 5 · Tailwind CSS v4 · TypeScript · node-pty · xterm.js
 
+## Installing
+
+Download `Grove-Bench-Setup-<version>.exe` from [Releases](https://github.com/ParsonsProjects/grove-bench/releases). The installer is not code signed yet, so Windows SmartScreen shows "Windows protected your PC" on first run: choose **More info**, then **Run anyway**. After that, the app checks for new releases and offers the update in the title bar.
+
 ## Getting Started
 
 ```bash
@@ -29,7 +33,7 @@ npm start
 | Command | Description |
 |---|---|
 | `npm start` | Run in dev mode |
-| `npm run dist` | Build distributable installer |
+| `npm run dist` | Build the Windows installer into `out/` |
 | `npm test` | Run all tests |
 | `npm run test:watch` | Watch mode |
 | `npm run test:coverage` | Run tests with coverage |

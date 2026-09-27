@@ -9,10 +9,14 @@ import type {
   AgentQueryHandle,
   AdapterConfig,
   AdapterPrerequisiteStatus,
+  ApiKeyDescriptor,
   ModelInfo,
   PermissionResponse,
   UserMessage,
 } from './types.js';
+import { getApiKey } from '../credentials.js';
+import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
+import { z } from 'zod';
 import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -598,8 +602,10 @@ const NO_XHIGH: readonly EffortLevel[] = ['low', 'medium', 'high', 'max'];
 
 /**
  * Per-model thinking/effort capabilities, from the model catalog in Claude
- * Code 2.1.281 (the CLI bundled with the agent SDK). Update alongside
- * getModels() when models are added.
+ * Code 2.1.281 (the CLI bundled with the agent SDK). For models the SDK lists
+ * (see modelsFromSdk), its effort levels and adaptive-thinking flag win; this
+ * table still supplies each model's default effort and whether thinking can
+ * be switched off, which the SDK doesn't report.
  */
 const MODEL_CAPS: Record<string, ClaudeModelCaps> = {
   'claude-fable-5': { effortLevels: ALL_EFFORT, defaultEffort: 'high', adaptiveThinking: true, thinkingOff: false },
@@ -620,8 +626,24 @@ const GENERIC_CAPS: ClaudeModelCaps = { effortLevels: ALL_EFFORT, defaultEffort:
  * Capabilities for `model`. Dated and suffixed ids ("claude-opus-5-5-<date>",
  * "[1m]") match by longest known prefix, so "claude-opus-5-5" never falls
  * through to "claude-opus-5".
+ *
+ * `learned` is what the SDK reported for this model (see modelsFromSdk). It
+ * wins for effort levels and adaptive thinking. The SDK doesn't report a
+ * model's default effort or whether thinking can be switched off, so those
+ * still come from the table above (or the generic fallback).
  */
-export function claudeModelCaps(model: string | null | undefined): ClaudeModelCaps {
+export function claudeModelCaps(model: string | null | undefined, learned?: LearnedModel): ClaudeModelCaps {
+  const base = staticModelCaps(model);
+  if (!learned) return base;
+  const effortLevels = EFFORT_LEVELS.filter((l) => learned.effortLevels.includes(l));
+  const defaultEffort = effortLevels.length === 0 ? null
+    : base.defaultEffort && effortLevels.includes(base.defaultEffort) ? base.defaultEffort
+    : effortLevels.includes('high') ? 'high'
+    : effortLevels[effortLevels.length - 1];
+  return { effortLevels, defaultEffort, adaptiveThinking: learned.adaptiveThinking, thinkingOff: base.thinkingOff };
+}
+
+function staticModelCaps(model: string | null | undefined): ClaudeModelCaps {
   if (!model) return GENERIC_CAPS;
   const id = Object.keys(MODEL_CAPS)
     .filter((k) => model.startsWith(k))
@@ -644,7 +666,8 @@ export function supportsAdaptiveThinking(model: string | null | undefined): bool
  * Fast mode (faster output, same model) is an Opus-only feature from 4.8 on.
  * Unset model = SDK default, which currently qualifies.
  */
-export function supportsFastMode(model: string | null | undefined): boolean {
+export function supportsFastMode(model: string | null | undefined, learned?: LearnedModel): boolean {
+  if (learned) return learned.fastMode;
   if (!model) return true;
   return /opus-(4-(8|9)|5)/i.test(model);
 }
@@ -664,7 +687,8 @@ const PERMISSION_MODE_OPTIONS: ControlOption[] = [
  * Opus 4.6+, Sonnet 4.6+ or Fable; Haiku is not supported. Unset model = SDK
  * default, which qualifies.
  */
-export function supportsAutoMode(model: string | null | undefined): boolean {
+export function supportsAutoMode(model: string | null | undefined, learned?: LearnedModel): boolean {
+  if (learned) return learned.autoMode;
   if (!model) return true;
   return !/haiku/i.test(model);
 }
@@ -709,12 +733,12 @@ function thinkingOptionsFor(caps: ClaudeModelCaps): { options: ControlOption[]; 
   };
 }
 
-/** Controls the Claude Code adapter exposes for `model`. Pure so it can be
- *  unit-tested without an SDK. */
-export function claudeControlsFor(model?: string | null): ControlDescriptor[] {
-  const caps = claudeModelCaps(model);
+/** Controls the Claude Code adapter exposes for `model`, given what the SDK
+ *  reported for it when known. Pure so it can be unit-tested without an SDK. */
+export function claudeControlsFor(model?: string | null, learned?: LearnedModel): ControlDescriptor[] {
+  const caps = claudeModelCaps(model, learned);
   const modeOptions = PERMISSION_MODE_OPTIONS
-    .filter((o) => o.value !== 'auto' || supportsAutoMode(model));
+    .filter((o) => o.value !== 'auto' || supportsAutoMode(model, learned));
   const controls: ControlDescriptor[] = [
     { id: CONTROL_IDS.permissionMode, label: 'Mode', options: modeOptions, default: 'default' },
   ];
@@ -730,7 +754,7 @@ export function claudeControlsFor(model?: string | null): ControlDescriptor[] {
   if (thinking) {
     controls.push({ id: CONTROL_IDS.thinking, label: 'Thinking', options: thinking.options, default: thinking.default });
   }
-  if (supportsFastMode(model)) {
+  if (supportsFastMode(model, learned)) {
     controls.push({ id: CONTROL_IDS.speed, label: 'Speed', options: SPEED_OPTIONS, default: 'standard' });
   }
   return controls;
@@ -744,18 +768,124 @@ export function claudeControlsFor(model?: string | null): ControlDescriptor[] {
 export function reasoningOptionsFor(
   model: string | null | undefined,
   controls: Record<string, string> | null | undefined,
+  learned?: LearnedModel,
 ): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
-  const thinking = claudeModelCaps(model).thinkingOff
+  const thinking = claudeModelCaps(model, learned).thinkingOff
     ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
     : null;
-  return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort]) };
+  return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort], learned) };
 }
 
 /** A recorded effort value the model accepts, else undefined (send nothing). */
-export function effortFor(model: string | null | undefined, value: string | undefined): EffortLevel | undefined {
-  const levels = claudeModelCaps(model).effortLevels;
+export function effortFor(model: string | null | undefined, value: string | undefined, learned?: LearnedModel): EffortLevel | undefined {
+  const levels = claudeModelCaps(model, learned).effortLevels;
   return levels.includes(value as EffortLevel) ? (value as EffortLevel) : undefined;
 }
+
+// ─── Model catalog ───
+
+type SdkModelInfo = import('@anthropic-ai/claude-agent-sdk').ModelInfo;
+
+/**
+ * Models this app version knew about, default first. Only used until the SDK
+ * reports its own list (see modelsFromSdk), which then replaces this and is
+ * cached for the next launch.
+ */
+export const FALLBACK_MODELS: readonly ModelInfo[] = [
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude', contextWindow: 1_000_000 },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude', contextWindow: 200_000 },
+];
+
+/** A model as reported by the SDK, with the capabilities it declares. */
+export interface LearnedModel {
+  /** The concrete model id (the SDK row's resolvedModel). */
+  id: string;
+  /** e.g. "Opus 5.5". */
+  label: string;
+  /** The SDK's alias for the row ("opus", "haiku"), when it had one. */
+  alias?: string;
+  effortLevels: EffortLevel[];
+  adaptiveThinking: boolean;
+  fastMode: boolean;
+  autoMode: boolean;
+}
+
+const learnedModelSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  alias: z.string().optional(),
+  effortLevels: z.array(z.enum(EFFORT_LEVELS)),
+  adaptiveThinking: z.boolean(),
+  fastMode: z.boolean(),
+  autoMode: z.boolean(),
+});
+
+/** The family new conversations start on when the user hasn't picked a model:
+ *  Opus, as before the list came from the SDK. Its row is listed first. */
+const DEFAULT_ALIAS = 'opus';
+/** The family background tasks use unless the user picks another model. */
+const BACKGROUND_ALIAS = 'haiku';
+const FALLBACK_BACKGROUND_MODEL = 'claude-haiku-4-5-20251001';
+
+/**
+ * Turn the SDK's model rows (`Query.supportedModels()`) into Grove's list.
+ * The SDK lists aliases ("opus", "sonnet", "haiku") with the concrete model
+ * each resolves to; Grove keeps the concrete id so saved choices and
+ * conversation models keep matching. The "default" row (the account's
+ * recommended model) repeats another row and is skipped: Grove has its own
+ * Default entry. A boolean the SDK omits means the model lacks it (Haiku's
+ * row carries none of them).
+ */
+export function modelsFromSdk(rows: readonly SdkModelInfo[]): LearnedModel[] {
+  const seen = new Set<string>();
+  const models: LearnedModel[] = [];
+  for (const row of rows) {
+    if (row.value === 'default') continue;
+    const id = row.resolvedModel || row.value;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    // "Opus 5.5 · Best for everyday, complex tasks" names the version; the
+    // display name is only the family ("Opus").
+    const version = row.description?.includes(' · ') ? row.description.split(' · ')[0].trim() : '';
+    models.push({
+      id,
+      label: version || row.displayName || id,
+      ...(row.value !== id ? { alias: row.value } : {}),
+      effortLevels: row.supportsEffort ? (row.supportedEffortLevels ?? [...EFFORT_LEVELS]) : [],
+      adaptiveThinking: row.supportsAdaptiveThinking === true,
+      fastMode: row.supportsFastMode === true,
+      autoMode: row.supportsAutoMode === true,
+    });
+  }
+  const preferred = models.findIndex((m) => m.alias === DEFAULT_ALIAS);
+  if (preferred > 0) models.unshift(...models.splice(preferred, 1));
+  return models;
+}
+
+/** A cached list from app-state, or null when absent or malformed. */
+export function parseLearnedModels(raw: unknown): LearnedModel[] | null {
+  const parsed = z.array(learnedModelSchema).safeParse(raw);
+  return parsed.success && parsed.data.length > 0 ? parsed.data : null;
+}
+
+/** Where the adapter keeps its learned list between launches. */
+export interface ModelCatalogStore {
+  load(adapterId: string): unknown;
+  save(adapterId: string, models: LearnedModel[]): void;
+}
+
+const appStateModelStore: ModelCatalogStore = {
+  load: (adapterId) => loadModelCatalog(adapterId),
+  save: (adapterId, models) => saveModelCatalog(adapterId, models),
+};
 
 // ─── Plan usage ───
 
@@ -898,12 +1028,49 @@ export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   return args;
 }
 
+// ─── Credentials ───
+
+/** A GUI-launched `where`/`which` or `claude auth status` can hang (network,
+ *  a first-run prompt). Without a limit, the check never settles. */
+const CLI_LOOKUP_TIMEOUT_MS = 10_000;
+const AUTH_STATUS_TIMEOUT_MS = 15_000;
+
+/** Provider switches the agent reads from the environment
+ *  (https://code.claude.com/docs/en/agent-sdk/quickstart). */
+const PROVIDER_ENV_FLAGS: ReadonlyArray<[flag: string, method: string]> = [
+  ['CLAUDE_CODE_USE_BEDROCK', 'Amazon Bedrock'],
+  ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'Claude Platform on AWS'],
+  ['CLAUDE_CODE_USE_VERTEX', 'Google Vertex AI'],
+  ['CLAUDE_CODE_USE_FOUNDRY', 'Microsoft Foundry'],
+];
+
+/** How the agent will authenticate from the environment alone: an
+ *  ANTHROPIC_API_KEY or a third-party provider switch. Null when neither is
+ *  set. Cloud provider credentials themselves aren't verified here; a bad one
+ *  surfaces as an auth error when the conversation starts. */
+export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.ANTHROPIC_API_KEY?.trim()) return 'ANTHROPIC_API_KEY';
+  for (const [flag, method] of PROVIDER_ENV_FLAGS) {
+    const value = env[flag]?.trim().toLowerCase();
+    if (value === '1' || value === 'true') return method;
+  }
+  return null;
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly id = 'claude-code';
-  readonly displayName = 'Claude Code';
-  readonly authErrorMessage = 'Authentication failed. Please run "claude auth login" in your terminal and try again.';
+  // The Agent SDK branding guidelines rule out "Claude Code" as a label in
+  // our UI and suggest "Claude Agent" for menus
+  // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
+  readonly displayName = 'Claude Agent';
+  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly apiKey: ApiKeyDescriptor = {
+    envVar: 'ANTHROPIC_API_KEY',
+    label: 'Anthropic API key',
+    helpUrl: 'https://platform.claude.com/',
+  };
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -919,22 +1086,95 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     sandbox: true,
   };
 
-  getControls(model?: string | null): ControlDescriptor[] {
-    return claudeControlsFor(model);
+  constructor(private readonly modelStore: ModelCatalogStore = appStateModelStore) {}
+
+  // ─── Models ───
+  // The list comes from the SDK (`Query.supportedModels()`), read when a
+  // conversation starts and cached for the next launch. FALLBACK_MODELS only
+  // covers the time before the first read.
+
+  /** undefined until the cache has been read; null when there is none. */
+  private learned: LearnedModel[] | null | undefined;
+  /** Set once a read has been started this run; cleared if it fails. */
+  private modelsRequested = false;
+  private modelListeners = new Set<() => void>();
+
+  private learnedModels(): LearnedModel[] | null {
+    if (this.learned === undefined) {
+      try {
+        this.learned = parseLearnedModels(this.modelStore.load(this.id));
+      } catch {
+        this.learned = null;
+      }
+    }
+    return this.learned;
   }
 
-  // TODO: Hardcoded model list — update when new models are released, or fetch dynamically from the SDK if it exposes a model list.
+  /** What the SDK reported for `model`, matching dated or suffixed ids by the
+   *  longest known prefix. */
+  private learnedFor(model: string | null | undefined): LearnedModel | undefined {
+    if (!model) return undefined;
+    return (this.learnedModels() ?? [])
+      .filter((m) => model.startsWith(m.id))
+      .sort((a, b) => b.id.length - a.id.length)[0];
+  }
+
   getModels(): ModelInfo[] {
-    return [
-      { id: 'claude-opus-5-5', label: 'Opus 5.5', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-opus-5', label: 'Opus 5', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-fable-5', label: 'Fable 5', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-opus-4-8', label: 'Opus 4.8', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-opus-4-7', label: 'Opus 4.7', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-opus-4-6', label: 'Opus 4.6', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', family: 'Claude', contextWindow: 1_000_000 },
-      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', family: 'Claude', contextWindow: 200_000 },
-    ];
+    const learned = this.learnedModels();
+    if (!learned) return [...FALLBACK_MODELS];
+    return learned.map((m) => ({
+      id: m.id,
+      label: m.label,
+      family: 'Claude',
+      // The SDK doesn't report context size; the turn's usage does, and the
+      // status bar prefers that. Until then, follow the 1M-context rule.
+      contextWindow: FALLBACK_MODELS.find((f) => f.id === m.id)?.contextWindow
+        ?? (supportsLargeContext(m.id) ? 1_000_000 : 200_000),
+    }));
+  }
+
+  /** The SDK's current Haiku, so background tasks follow new Haiku releases. */
+  get backgroundModel(): string {
+    return this.learnedModels()?.find((m) => m.alias === BACKGROUND_ALIAS)?.id ?? FALLBACK_BACKGROUND_MODEL;
+  }
+
+  getControls(model?: string | null): ControlDescriptor[] {
+    return claudeControlsFor(model, this.learnedFor(model));
+  }
+
+  onModelsChanged(listener: () => void): () => void {
+    this.modelListeners.add(listener);
+    return () => { this.modelListeners.delete(listener); };
+  }
+
+  /** Record the SDK's model rows. Saves and notifies only when the list
+   *  changed. Returns whether it did. */
+  learnModels(rows: readonly SdkModelInfo[]): boolean {
+    const models = modelsFromSdk(rows);
+    if (models.length === 0) return false;
+    if (JSON.stringify(models) === JSON.stringify(this.learnedModels())) return false;
+    this.learned = models;
+    try {
+      this.modelStore.save(this.id, models);
+    } catch (err) {
+      logger.warn('[ClaudeCodeAdapter] could not cache the model list:', err);
+    }
+    for (const listener of this.modelListeners) listener();
+    return true;
+  }
+
+  /** Read the model list from a live query, once per run. The list only
+   *  changes when the bundled CLI or the account does. */
+  private refreshModelsFrom(q: Query): void {
+    // Never let the model list get in the way of starting a conversation.
+    if (this.modelsRequested || typeof q.supportedModels !== 'function') return;
+    this.modelsRequested = true;
+    q.supportedModels()
+      .then((rows) => { this.learnModels(rows); })
+      .catch((err) => {
+        this.modelsRequested = false;
+        logger.debug('[ClaudeCodeAdapter] supportedModels failed:', err);
+      });
   }
 
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> {
@@ -947,7 +1187,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     let claudePath: string | undefined;
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
-      const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true });
+      const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true, timeout: CLI_LOOKUP_TIMEOUT_MS });
       claudePath = stdout.trim().split(/\r?\n/)[0];
     } catch {
       // `where`/`which` failed — try known Windows install locations
@@ -968,16 +1208,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       }
     }
 
+    // Conversations run on the SDK's bundled binary, not the installed CLI,
+    // so credentials in the environment are enough on their own. The CLI is
+    // only needed to sign in and for MCP / plugin configuration.
+    const envMethod = envAuthMethod();
+
     if (!claudePath) {
       return {
         available: false,
+        authenticated: envMethod !== null,
+        ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
         installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
       };
     }
 
+    if (envMethod) {
+      return { available: true, path: claudePath, authenticated: true, authMethod: envMethod };
+    }
+
     try {
-      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true });
+      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS });
       const auth = JSON.parse(authJson.trim());
       return {
         available: true,
@@ -989,6 +1240,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     } catch {
       return { available: true, path: claudePath, authenticated: false };
     }
+  }
+
+  /** The API key saved in the app, as env for the agent process. Spread after
+   *  the inherited env so it wins over a stale shell ANTHROPIC_API_KEY. */
+  private savedKeyEnv(): Record<string, string> {
+    const key = getApiKey(this.id);
+    return key ? { [this.apiKey.envVar]: key } : {};
   }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
@@ -1103,8 +1361,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: config.appendSystemPrompt }
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
-    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls);
-    const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model);
+    const learned = this.learnedFor(config.model);
+    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned);
+    const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
 
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
@@ -1141,6 +1400,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         env: {
           ...cleanEnv(),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+          ...this.savedKeyEnv(),
           ...(config.extraEnv ?? {}),
         },
         stderr: (data: string) => {
@@ -1148,6 +1408,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         },
       },
     });
+
+    // Learn the current model list from the CLI (once per run).
+    this.refreshModelsFrom(q);
 
     // Message context for the transform function
     const ctx: MessageContext = {
@@ -1407,6 +1670,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     let resultText = '';
+    const keyEnv = this.savedKeyEnv();
     const q = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
@@ -1416,6 +1680,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permissionMode: 'plan',
         maxTurns: 1,
         ...(options?.model ? { model: options.model } : {}),
+        // `env` replaces the inherited environment rather than merging, so
+        // only pass it when there is a saved key to add.
+        ...(Object.keys(keyEnv).length > 0 ? { env: { ...process.env, ...keyEnv } } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
       },
     });
