@@ -435,7 +435,7 @@ App close event (before-quit)
 
 `node-pty` uses Windows ConPTY (available since Windows 10 1809). Key points:
 
-- **Native module rebuild**: node-pty is a native Node addon. It must be rebuilt for Electron's Node version using `electron-rebuild` or `@electron/rebuild`.
+- **Native module**: node-pty is a native Node addon. Version 1.1.0 ships Node-API prebuilds, which load in any Electron version, so it is not rebuilt (`npmRebuild: false` in `electron-builder.yml`).
 - **Shell selection**: Should detect the best available shell rather than hardcoding. See shell detection below.
 - **ConPTY quirks**: ConPTY can have rendering issues with certain escape sequences. xterm.js handles most of these, but testing is needed with Claude Code's specific output (spinner animations, syntax highlighting, etc.).
 
