@@ -7,6 +7,7 @@ import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 beforeEach(() => {
@@ -74,6 +75,22 @@ describe('Sidebar session rows', () => {
     render(Sidebar);
     expect(await screen.findByText('parser fixed')).toBeInTheDocument();
     expect(mockGroveBench.getSessionPreviews).toHaveBeenCalledWith(['s2']);
+  });
+
+  it('shows a status dot by default and a character when the setting is on', async () => {
+    messageStore.messagesBySession['s1'] = [
+      { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
+    ];
+    render(Sidebar);
+    await screen.findByText('Waiting for approval — Write');
+    expect(screen.queryByRole('img', { name: 'Waiting for your permission' })).toBeNull();
+
+    settingsStore.current = { ...settingsStore.current, sidebarCharacters: true };
+    try {
+      expect(await screen.findByRole('img', { name: 'Waiting for your permission' })).toBeInTheDocument();
+    } finally {
+      settingsStore.current = { ...settingsStore.current, sidebarCharacters: false };
+    }
   });
 
   it('opens the session finder from the search field', async () => {

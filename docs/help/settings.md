@@ -21,6 +21,7 @@ Configure agent behavior:
 ## General
 
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
+- **Grove Characters**: Show a small pixel agent instead of the status dot in the sidebar. Its pose shows the state as well as its colour: typing while working, a question mark while waiting for your permission, waving after it finishes a turn, asleep when stopped. Off by default
 - **Project Colors** — Customize the accent color for each project in the sidebar
 - **Always on Top** — Keep the Grove Bench window above other windows
 - **Spell Check** — Enable or disable spell checking in the prompt editor

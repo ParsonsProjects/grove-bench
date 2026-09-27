@@ -12,7 +12,7 @@ Conversations within a project are listed below the project name. If multiple co
 
 Each conversation in the sidebar shows:
 
-- **Status dot** — A colored indicator showing the conversation's current state (see [Conversation States](session-states.md))
+- **Status dot** — A colored indicator showing the conversation's current state (see [Conversation States](session-states.md)). Turn on **Grove Characters** in Settings > General to show a small pixel agent instead
 - **Conversation name** — Either the branch name or a custom name you've assigned
 - **Active indicator** — The currently selected conversation is highlighted
 

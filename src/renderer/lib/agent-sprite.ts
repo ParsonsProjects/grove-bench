@@ -1,0 +1,157 @@
+/**
+ * Pixel characters for the sidebar's conversation status (opt-in via the
+ * `sidebarCharacters` setting).
+ *
+ * Each state gets its own pose, so the status reads from shape as well as
+ * colour. The hoodie, laptop glow and symbol take the same Tailwind colour as
+ * the status dot they replace, via `currentColor`.
+ */
+
+export type AgentSpriteState =
+  | 'removing'
+  | 'error'
+  | 'starting'
+  | 'installing'
+  | 'permission'
+  | 'working'
+  | 'unread'
+  | 'stopped'
+  | 'ready';
+
+export interface AgentSpriteInput {
+  destroying: boolean;
+  status: string;
+  hasPending: boolean;
+  isRunning: boolean;
+  needsAttention: boolean;
+}
+
+/** Same precedence as the sidebar's status dot. */
+export function agentSpriteState(s: AgentSpriteInput): AgentSpriteState {
+  if (s.destroying) return 'removing';
+  if (s.status === 'error') return 'error';
+  if (s.status === 'starting') return 'starting';
+  if (s.status === 'installing') return 'installing';
+  if (s.hasPending) return 'permission';
+  if (s.isRunning) return 'working';
+  if (s.needsAttention) return 'unread';
+  if (s.status === 'stopped') return 'stopped';
+  return 'ready';
+}
+
+export const SPRITE_W = 10;
+export const SPRITE_H = 9;
+
+// Map legend. `c` cells use currentColor (the state colour).
+const PALETTE: Record<string, string> = {
+  h: '#4a3426', // hair
+  s: '#e8b48a', // skin
+  z: '#b9825d', // closed eyes
+  e: '#1c1917', // eyes
+  l: '#a8a29e', // laptop lid
+  L: '#57534e', // laptop edge
+  p: '#3f3f46', // trousers
+  f: '#18181b', // shoes
+  c: 'currentColor',
+};
+
+// Sitting on a bench with a laptop on the lap. Columns 6 to 9 hold symbols.
+const HEAD = ['.hhhh.....', 'hhhhhh....', 'hesseh....', '.ssss.....'];
+const HEAD_ASLEEP = ['.hhhh.....', 'hhhhhh....', 'hzsszh....', '.ssss.....'];
+const HOODIE = ['cccccc....', 'cccccc....'];
+const LEGS_SIT = ['.pppp.....', '.f..f.....'];
+
+const SIT = [...HEAD, ...HOODIE, 'sLllLs....', ...LEGS_SIT];
+// Typing: one hand on the keys, then the other.
+const TYPE_A = [...HEAD, ...HOODIE, 'sLllL.....', ...LEGS_SIT];
+const TYPE_B = [...HEAD, ...HOODIE, '.LllLs....', ...LEGS_SIT];
+// Asleep over a closed laptop.
+const ASLEEP = [...HEAD_ASLEEP, ...HOODIE, 'sLLLLs....', ...LEGS_SIT];
+
+/** Overlays a symbol drawn in columns 6 to 9 onto a pose. */
+function withSymbol(pose: string[], symbol: string[]): string[] {
+  return pose.map((row, i) => row.slice(0, 6) + (symbol[i] ?? '').padEnd(4, '.'));
+}
+
+const QUESTION = ['.ccc', '...c', '..cc', '....', '..c.'];
+const BANG = ['..c.', '..c.', '..c.', '....', '..c.'];
+const ZZZ = ['cccc', '..c.', '.c..', 'cccc'];
+
+// Waving: the right arm is raised and the hand rocks side to side.
+const WAVE_POSE = [...HEAD, ...HOODIE, 'sLllL.....', ...LEGS_SIT];
+const WAVE_A = withSymbol(WAVE_POSE, ['', 's', 'c', 'c', 'c']);
+const WAVE_B = withSymbol(WAVE_POSE, ['', '.s', 'c', 'c', 'c']);
+
+// Walking in: no laptop yet, legs apart then together.
+const WALK_TOP = [...HEAD, 'cccccc....', 'sccccs....', '.cccc.....'];
+const WALK_A = [...WALK_TOP, '.p..p.....', '.f..f.....'];
+const WALK_B = [...WALK_TOP, '..pp......', '..ff......'];
+
+export interface SpriteRun {
+  x: number;
+  y: number;
+  w: number;
+  fill: string;
+  /** Part of the symbol (question mark, exclamation mark, zzz), which may pulse. */
+  symbol: boolean;
+}
+
+export interface AgentSprite {
+  label: string;
+  /** Tailwind text colour class; matches the status dot's background colour. */
+  colorClass: string;
+  /** One frame is a still; two frames alternate. */
+  frames: SpriteRun[][];
+  /** Frame length in seconds when there are two frames. */
+  frameSeconds: number;
+  /** Pulse the symbol, like the dot's animate-pulse. */
+  pulseSymbol: boolean;
+  /** Fade the whole sprite in and out. */
+  fade: boolean;
+}
+
+/** Turns a pixel map into horizontal runs of the same colour. */
+export function toRuns(map: string[]): SpriteRun[] {
+  const runs: SpriteRun[] = [];
+  map.forEach((row, y) => {
+    let x = 0;
+    while (x < row.length) {
+      const key = row[x];
+      if (key === '.' || !(key in PALETTE)) {
+        x++;
+        continue;
+      }
+      let w = 1;
+      while (row[x + w] === key) w++;
+      runs.push({ x, y, w, fill: PALETTE[key], symbol: key === 'c' && x >= 6 });
+      x += w;
+    }
+  });
+  return runs;
+}
+
+function sprite(label: string, colorClass: string, maps: string[][], opts: Partial<Pick<AgentSprite, 'frameSeconds' | 'pulseSymbol' | 'fade'>> = {}): AgentSprite {
+  return {
+    label,
+    colorClass,
+    frames: maps.map(toRuns),
+    frameSeconds: opts.frameSeconds ?? 0.5,
+    pulseSymbol: opts.pulseSymbol ?? false,
+    fade: opts.fade ?? false,
+  };
+}
+
+export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
+  working: sprite('Working', 'text-primary', [TYPE_A, TYPE_B], { frameSeconds: 0.4 }),
+  permission: sprite('Waiting for your permission', 'text-amber-500', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
+  unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
+  ready: sprite('Ready', 'text-green-500', [SIT]),
+  stopped: sprite('Stopped', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
+  error: sprite('Error', 'text-red-500', [withSymbol(SIT, BANG)]),
+  starting: sprite('Starting', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
+  installing: sprite('Installing dependencies', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
+  removing: sprite('Removing', 'text-muted-foreground', [ASLEEP], { fade: true }),
+};
+
+/** Exported for tests: every pose map, so their sizes can be checked. */
+export const SPRITE_MAPS = { SIT, TYPE_A, TYPE_B, ASLEEP, WAVE_A, WAVE_B, WALK_A, WALK_B };

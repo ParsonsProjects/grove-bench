@@ -556,6 +556,17 @@
 
           <Separator />
 
+          <!-- Sidebar characters -->
+          <div>
+            <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <Checkbox bind:checked={settingsStore.draft.sidebarCharacters} />
+              Show grove characters in the sidebar
+            </label>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">A small pixel agent shows each conversation's status by pose as well as colour, in place of the dot.</p>
+          </div>
+
+          <Separator />
+
           <!-- Repository Accent Colors -->
           {#if store.repos.length > 0}
             <div>
