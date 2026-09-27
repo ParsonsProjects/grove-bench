@@ -83,10 +83,10 @@
       <div class="qwrap">
         <p class="q" id="wb-launch">What should your agents build?</p>
         <p class="cap" aria-live="polite">
-          {#if full}Four at once in this demo. Open a PR or close one first.{:else}Pick a task, or press + Agent.{/if}
+          {#if full}Four at once in this demo. Open a PR or close one first.{:else}Pick a task, or press + Conversation.{/if}
         </p>
       </div>
-      <button class="agent" disabled={full} onclick={() => sim.addAgent()}>+ Agent</button>
+      <button class="agent" disabled={full} onclick={() => sim.addAgent()}>+ Conversation</button>
     </div>
     <div class="chips" role="group" aria-labelledby="wb-launch">
       {#each PRESETS as preset (preset.id)}

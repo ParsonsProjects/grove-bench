@@ -94,7 +94,7 @@
       <div class="perm-btns">
         <button class="pb allow" onclick={() => sim.decide(pane, 'allow')}>Allow</button>
         <button class="pb" onclick={() => sim.decide(pane, 'deny')}>Deny</button>
-        <button class="pb ghost" onclick={() => sim.decide(pane, 'always')}>Always allow</button>
+        <button class="pb ghost" onclick={() => sim.decide(pane, 'always')}>Always Allow</button>
       </div>
       {#if sim.autoplay && pane.perm}
         <div class="countdown">

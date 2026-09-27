@@ -7,7 +7,7 @@
    * @type {{
    *   speaker?: string,
    *   tag?: string,
-   *   status?: 'working' | 'permission' | 'ready' | null,
+   *   status?: 'working' | 'permission' | 'ready' | 'starting' | null,
    *   text?: string,
    *   meta?: { label: string, value: string }[],
    *   choices?: { label: string, value: string, hint?: string }[],
@@ -124,7 +124,7 @@
     if (!done) skip();
   }
 
-  const statusWord = { working: 'Working', permission: 'Waiting for you', ready: 'Ready' };
+  const statusWord = { working: 'Working', permission: 'Waiting for you', ready: 'Ready', starting: 'Starting' };
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -296,6 +296,10 @@
   }
   .dot.ready {
     background: #22c55e;
+  }
+  .dot.starting {
+    background: #eab308;
+    animation: dot-pulse 1s steps(4) infinite;
   }
   @keyframes dot-pulse {
     50% {

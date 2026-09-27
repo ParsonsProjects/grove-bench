@@ -210,7 +210,7 @@
             </div>
           {/each}
           <p class="undo">
-            Rewind All undoes {since.count}
+            Rewind all undoes {since.count}
             {since.count === 1 ? 'turn' : 'turns'}:
             <span class="bx-add">+{since.add}</span>
             <span class="bx-del">-{since.del}</span>
@@ -228,12 +228,12 @@
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <rect x="1" y="7" width="2" height="2" /><rect x="3" y="5" width="2" height="2" /><rect x="3" y="9" width="2" height="2" /><rect x="5" y="3" width="2" height="2" /><rect x="5" y="11" width="2" height="2" /><rect x="3" y="7" width="12" height="2" />
         </svg>
-        Rewind All
+        Rewind all
       </button>
       {#if kept < turns.length}
         <button type="button" class="bx-btn" onclick={replay} disabled={busy}>Replay turns</button>
       {:else}
-        <span class="hint">or <b>Conv. Only</b> to reset just the conversation</span>
+        <span class="hint">or <b>Conv. only</b> to reset just the conversation</span>
       {/if}
     </div>
     <p class="note" aria-live="polite">{note}</p>

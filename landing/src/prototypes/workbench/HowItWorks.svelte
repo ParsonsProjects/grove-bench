@@ -5,7 +5,7 @@
 
   const steps = [
     { n: '01', title: 'Add a project', text: 'Point Grove Bench at any git project on your machine.' },
-    { n: '02', title: 'Press + Agent', text: 'Each conversation gets a fresh worktree, branch and terminal.' },
+    { n: '02', title: 'Press + Conversation', text: 'Each conversation gets a fresh worktree, branch and terminal.' },
     { n: '03', title: 'Review and merge', text: 'Check the diffs, rewind a turn if needed, then merge or open a PR.' },
   ];
 </script>

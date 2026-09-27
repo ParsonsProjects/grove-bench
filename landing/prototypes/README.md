@@ -48,7 +48,7 @@ The page reads like `git log --graph`. A graph in the left gutter draws itself a
 
 - Live conversation cards stream tool calls beside each lane.
 - Three agents edit `src/routes/index.ts` at once, with "conflicts: 0".
-- A checkpoint scrubber with This turn / Since here and Rewind All.
+- A checkpoint scrubber with This turn / Since here and Rewind all.
 - Memory notes pulse down every lane.
 - A permission prompt you answer. Until you do, the feat/auth lane stops there.
 
@@ -58,7 +58,7 @@ Good: closest to the current page, text stays real HTML (good for search), one c
 
 The hero is a playable copy of the app. Two conversations run on load and loop by themselves. The first click hands control to the visitor.
 
-- Start tasks (up to four), answer Allow / Deny / Always allow, rewind with Rewind All or Conv. Only, then Open PR.
+- Start tasks (up to four), answer Allow / Always Allow / Deny, rewind with Rewind all or Conv. only, then Open PR.
 - A git graph strip tracks every lane, and "conflicts: 0" never moves.
 - Six live feature tiles: diff view, worktrees, terminal, permission modes, memory budget, `gh pr create`.
 

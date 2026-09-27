@@ -40,7 +40,7 @@ import {
   cloudShape,
   BENCH_W,
 } from './sprites.js';
-import { STARTING_AGENTS, PLANTED_AGENTS, createAgent, stepAgent, answerAgent } from './agents.js';
+import { STARTING_AGENTS, PLANTED_AGENTS, createAgent, stepAgent, answerAgent, activityFor } from './agents.js';
 
 export const LAYOUT = {
   oldTree: -34,
@@ -111,7 +111,7 @@ export function createScene(canvas, options = {}) {
   let local = 0;
   let tod = 0;
   let todShown = 0;
-  const anim = { fence: 0, memory: 0, merge: 0, term: 0 };
+  const anim = { fence: 0, memory: 0, merge: 0, term: 0, callout: 0 };
   let merged = false;
   let hover = -1;
   let time = 0;
@@ -256,7 +256,8 @@ export function createScene(canvas, options = {}) {
     const rewindX = LAYOUT.slots[REWIND_SLOT];
     switch (ch) {
       case 0:
-        return { range: [a, b], pri: LAYOUT.slots[1] + 4, inset: insetLeftCss / k };
+        // Keep every tree clear of the title: if they do not all fit, crop on the right.
+        return { range: [a, b], pri: insetLeftCss > 0 ? -Infinity : LAYOUT.slots[1] + 4, inset: insetLeftCss / k };
       case 3:
         return { range: [LAYOUT.oldTree - 46, b], pri: LAYOUT.oldTree + 38 };
       case 4:
@@ -314,6 +315,8 @@ export function createScene(canvas, options = {}) {
       memory: chapter === 3 ? 1 : 0,
       term: chapter === 2 ? 1 : 0,
       merge: chapter === 5 ? clamp((local - 0.04) / 0.5, 0, 1) : 0,
+      // Once you plant a tree the grove changes shape, so the Welcome labels step aside.
+      callout: chapter === 0 && plots.length === STARTING_AGENTS.length ? 1 : 0,
     };
   }
 
@@ -323,6 +326,7 @@ export function createScene(canvas, options = {}) {
     anim.memory = t.memory;
     anim.term = t.term;
     anim.merge = t.merge;
+    anim.callout = t.callout;
     if (chapter === 5 && anim.merge >= 1 && !merged) {
       merged = true;
       onchange();
@@ -465,6 +469,7 @@ export function createScene(canvas, options = {}) {
     anim.memory += (t.memory - anim.memory) * (1 - Math.exp(-dt * 3));
     anim.term += (t.term - anim.term) * (1 - Math.exp(-dt * 4));
     anim.merge += Math.sign(t.merge - anim.merge) * Math.min(Math.abs(t.merge - anim.merge), dt * 0.9);
+    anim.callout += (t.callout - anim.callout) * (1 - Math.exp(-dt * 6));
     if (chapter === 5 && anim.merge >= 0.999 && !merged) {
       merged = true;
       const gate = LAYOUT.gate;
@@ -658,6 +663,7 @@ export function createScene(canvas, options = {}) {
     drawMemory(cam, tt);
     drawMerge(cam, tt);
     drawFireflies(cam, tt, night);
+    drawCallouts(cam, tt);
     drawHover(cam, tt);
   }
 
@@ -712,10 +718,11 @@ export function createScene(canvas, options = {}) {
     const horizon = groundY - 20;
     // Moon: high at night, sinking to the left toward day.
     const moonA = 1 - smooth(0.45, 0.8, todv);
-    if (moonA > 0.01) {
-      // On narrow screens the title fills the sky, so the moon tucks into the corner.
+    // On phones the key and the app panel fill the sky, so the moon sits this one out.
+    if (moonA > 0.01 && W >= 220) {
+      // The app panel sits top right on wide screens, so the moon hangs mid sky.
       const narrow = W < 220;
-      const mx = Math.round(narrow ? W - 24 - todv * 40 : W * (0.8 - 0.25 * todv));
+      const mx = Math.round(narrow ? W - 24 - todv * 40 : W * (0.47 - 0.2 * todv));
       const my = Math.round((narrow ? 16 : Math.max(14, groundY - 124)) + todv * 70);
       ctx.globalAlpha = moonA;
       ctx.drawImage(ringHalo(C.primaryPale, 19, [0.1, 0.06, 0.03]), mx - 19, my - 19);
@@ -1375,6 +1382,96 @@ export function createScene(canvas, options = {}) {
   }
 
   // -------------------------------------------------------------------------
+  // Welcome callouts: labelled leader lines to one tree, one agent, one lamp.
+
+  function calloutGeometry() {
+    const compact = W < 220;
+    const [p0, p1, p2] = plots;
+    const G = groundY;
+    const agentRow = compact ? G - 91 : G - 80;
+    const lamp = compact
+      ? { x: p1.x, label: p1.x + 44, path: [[p1.x + 42, G - 79], [p1.x + 32, G - 69]] }
+      : { x: p2.x, label: p2.x + 14, path: [[p2.x + 20, G - 79], [p2.x + 32, G - 67]] };
+    const out = [
+      { key: 'tree', label: [p0.x, G - 80], path: [[p0.x, G - 79], [p0.x, G - 73]], end: 'down' },
+      {
+        key: 'agent',
+        label: [p1.x + 17, agentRow],
+        path: [[p1.x + 17, agentRow + 1], [p1.x + 17, G - 13], [p1.x + 16, G - 13]],
+        end: 'left',
+      },
+      {
+        key: 'lamp',
+        label: [lamp.label, G - 80],
+        path: [...lamp.path, [lamp.x + 32, G - 18], [lamp.x + 30, G - 18]],
+        end: 'left',
+      },
+    ];
+    // Keep each label on screen and start its line right under it.
+    const cam = Math.round(camX);
+    const half = Math.ceil(64 / k);
+    for (const c of out) {
+      const x = clamp(c.label[0], cam + half + 2, cam + W - half - 2);
+      if (x !== c.label[0]) {
+        c.label[0] = x;
+        c.path[0][0] = clamp(c.path[0][0], x - half + 4, x + half - 4);
+      }
+    }
+    return out;
+  }
+
+  function linePixels(x0, y0, x1, y1, out) {
+    const dx = Math.abs(x1 - x0);
+    const dy = -Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    for (;;) {
+      out.push([x0, y0]);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
+      }
+    }
+  }
+
+  function drawCallouts(cam, tt) {
+    const a = anim.callout;
+    if (a < 0.02 || plots.length < 3) return;
+    for (const c of calloutGeometry()) {
+      const pts = c.path.map(([x, y]) => [Math.round(x - cam), Math.round(y)]);
+      const px = [];
+      for (let i = 1; i < pts.length; i++) linePixels(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], px);
+      const [ex, ey] = pts[pts.length - 1];
+      const tip =
+        c.end === 'down'
+          ? [[ex, ey + 1], [ex - 1, ey], [ex + 1, ey], [ex - 2, ey - 1], [ex + 2, ey - 1]]
+          : [[ex - 1, ey], [ex, ey - 1], [ex, ey + 1], [ex + 1, ey - 2], [ex + 1, ey + 2]];
+      // Dark outline first so the line reads over leaves and sky alike.
+      ctx.globalAlpha = a * 0.85;
+      ctx.fillStyle = '#0b1224';
+      for (const [x, y] of [...px, ...tip]) ctx.fillRect(x - 1, y - 1, 3, 3);
+      // Marching light toward the target.
+      const march = reduced ? 0 : Math.floor(tt * 10);
+      ctx.fillStyle = C.cream;
+      px.forEach(([x, y], i) => {
+        ctx.globalAlpha = a * ((i - march) % 4 === 0 ? 0.55 : 1);
+        ctx.fillRect(x, y, 1, 1);
+      });
+      ctx.globalAlpha = a * (reduced ? 1 : 0.7 + 0.3 * Math.sin(tt * 5));
+      ctx.fillStyle = '#ffe7a8';
+      for (const [x, y] of tip) ctx.fillRect(x, y, 1, 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // -------------------------------------------------------------------------
   // Overlay layout (CSS px relative to the stage)
 
   function layout() {
@@ -1392,7 +1489,18 @@ export function createScene(canvas, options = {}) {
         signVisible: p.sign >= 1,
       })),
       gate: [X(LAYOUT.gate + 0.5), Y(groundY - 25)],
-      sundial: [X(LAYOUT.sundial + 0.5), Y(groundY - 25)],
+      sundial: [X(LAYOUT.sundial + 0.5), Y(groundY - 27)],
+      // The dial face, where a range input lets you drag the shadow.
+      dial: [X(LAYOUT.sundial - 14), Y(groundY - 26), 29 * k, 18 * k],
+      callouts: plots.length >= 3 ? calloutGeometry().map((c) => [X(c.label[0]), Y(c.label[1])]) : [],
+      calloutAlpha: anim.callout,
+      // Things in the canvas that the app panel must never cover: [x0, y0, x1, y1].
+      blocks: [
+        ...plots.filter((p) => p.phase !== 'seed').map((p) => [X(p.x - 29), Y(groundY - 72), X(p.x + 31), Y(groundY + 2)]),
+        [X(LAYOUT.oldTree - 39), Y(groundY - OLD.h - 1), X(LAYOUT.oldTree + 39), Y(groundY)],
+        [X(LAYOUT.gate - 16), Y(groundY - 34), X(LAYOUT.gate + 16), Y(groundY)],
+        [X(LAYOUT.sundial - 13), Y(groundY - 26), X(LAYOUT.sundial + 13), Y(groundY)],
+      ],
       oldTree: [X(LAYOUT.oldTree), Y(groundY - OLD.h)],
       // Notes pinned around the old tree's crown.
       tags: [
@@ -1408,7 +1516,7 @@ export function createScene(canvas, options = {}) {
     return plots.map((p, i) => {
       const a = p.agent;
       let bubble = a.bubble;
-      let status = displayStatus(p);
+      let status = p.phase === 'sit' ? displayStatus(p) : 'starting';
       if (p.phase !== 'sit') bubble = null;
       if (merged && p.phase === 'sit') bubble = { tool: 'merge', detail: 'main' };
       if (i === REWIND_SLOT && chapter === 4 && a.history) {
@@ -1430,6 +1538,8 @@ export function createScene(canvas, options = {}) {
         bubble,
         seated: p.phase === 'sit',
         phase: p.phase,
+        prompt: a.prompt,
+        activity: activityFor(a, p.phase),
         rewindTarget: i === REWIND_SLOT,
       };
     });
@@ -1490,6 +1600,9 @@ export function createScene(canvas, options = {}) {
     },
     get rewindNote() {
       return rewindNote;
+    },
+    get merged() {
+      return merged;
     },
   };
 }

@@ -6,6 +6,8 @@
   import { prefersReducedMotion, animationLoop, inView } from '../shared/motion.js';
   import { trackLandingEvent } from '../../lib/analytics.js';
   import Dialogue from './Dialogue.svelte';
+  import AppPanel from './AppPanel.svelte';
+  import Legend from './Legend.svelte';
   import { createScene } from './scene.js';
   import { MAX_TREES, STARTING_AGENTS, statusLabel } from './agents.js';
 
@@ -16,25 +18,27 @@
     { name: 'Welcome', text: '' },
     {
       name: 'Worktrees',
-      text: 'Every agent gets its own tree: a git worktree on its own branch, kept in `.grove-wt/<id>`. Nobody edits anyone else\'s files.',
+      text: 'Each conversation gets its own git worktree and branch, in `.grove-wt/<id>`, so agents never overwrite each other. Each tree is one worktree.',
     },
     {
       name: 'Terminals',
-      text: 'Each tree has its own bench: a real terminal (PTY) for every conversation, opened in its worktree. Run tests in one and a dev server in another.',
+      text: 'Each conversation has its own terminal, a real PTY opened in its worktree. Run tests in one while another runs a dev server.',
     },
     {
       name: 'Project memory',
-      text: 'The old tree remembers. Notes in `repo/`, `conventions/`, `architecture/` and `sessions/` are read at the start of every conversation.',
+      text: 'Project memory is markdown notes in `repo/`, `conventions/`, `architecture/` and `sessions/`, read at the start of every conversation. The old tree holds them.',
     },
     {
       name: 'Checkpoints',
-      text: 'The sundial keeps a checkpoint for every message you send. Drag its shadow back, then pick Rewind All (files and conversation) or Conv. Only.',
+      text: 'Every message you send saves a checkpoint. Rewind all restores files and conversation, Conv. only resets just the conversation. The sundial is your checkpoint list.',
     },
     {
-      name: 'Home to main',
-      text: 'At dawn the branches come home. Review each diff in the Changes tab, then open a PR from the app or merge the branch the way you always do.',
+      name: 'Review and ship',
+      text: "Review each conversation's changes in the Changes tab, then open a PR from the app or merge the branch your usual way. At dawn the branches head home to main.",
     },
   ];
+  const PANEL_VIEWS = ['sidebar', 'worktrees', 'terminal', 'memory', 'checkpoints', 'changes'];
+  const CALLOUTS = ['git worktree', 'AI conversation', 'status lamp'];
   const SEGMENTS = CHAPTERS.length;
   const NUMBER_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five'];
   const MEMORY_FOLDERS = ['repo/', 'conventions/', 'architecture/', 'sessions/'];
@@ -69,16 +73,25 @@
   let event = $state(null);
   let wide = $state(true);
   let hitEls = $state([]);
+  let merged = $state(false);
+  let colEl = $state();
+  let legendEl = $state();
+  let panelMax = $state(400);
 
   const reduced = $derived(prefersReducedMotion.current);
-  // Phones get the title above the scene instead of over it.
-  const narrow = new MediaQuery('max-width: 639px');
+  // Below laptop width the title sits above the scene instead of over it.
+  const narrow = new MediaQuery('max-width: 1199px');
   const titleOut = $derived(smoothstep((progress - 0.02) / 0.07));
   const count = $derived(agents.length);
   const full = $derived(count >= MAX_TREES);
+  // Wide screens put the key in the meadow beside the dialogue, others stack it with the panel.
+  let stageW = $state(1440);
+  const legendLeft = $derived(wide);
+  const panelView = $derived(open != null && agents[open] ? 'activity' : event ? 'sidebar' : PANEL_VIEWS[chapter]);
 
-  // What you said at each checkpoint of the conversation next to the sundial.
-  const HISTORY = STARTING_AGENTS.find((a) => a.history).history.map((h) => h.you);
+  // The checkpoints of the conversation next to the sundial.
+  const CHECKPOINTS = STARTING_AGENTS.find((a) => a.history).history;
+  const HISTORY = CHECKPOINTS.map((h) => h.you);
 
   // ---------------------------------------------------------------------------
   // Overlays positioned from the scene every frame
@@ -99,8 +112,14 @@
     };
   }
 
+  let obstacles = [];
+  const obstacleKeys = (key) =>
+    (key.startsWith('callout') && chapter === 0) || (key.startsWith('tag') && chapter === 3) || (key === 'hint' && chapter === 4);
+
   function lookup(L, key) {
     const [kind, i] = key.split(':');
+    if (kind === 'callout') return L.callouts[i];
+    if (kind === 'hint') return L.sundial;
     if (kind === 'sign') return L.plots[i]?.sign;
     if (kind === 'bubble') return L.plots[i]?.bubble;
     if (kind === 'hit') return L.plots[i]?.hit;
@@ -114,7 +133,12 @@
     if (!pos) return;
     let [x, y] = pos;
     const child = el.firstElementChild;
-    if (child && stageEl && !key.startsWith('hit')) {
+    if (key.startsWith('callout')) {
+      const a = L.calloutAlpha;
+      el.style.opacity = a.toFixed(2);
+      el.style.visibility = a < 0.02 ? 'hidden' : '';
+    }
+    if (child && stageEl && !key.startsWith('hit') && key !== 'dial') {
       const w = stageEl.clientWidth;
       const half = child.offsetWidth / 2;
       const labelled = key !== 'sundial';
@@ -123,7 +147,11 @@
       // far from its agent (and onto a neighbour's) is hidden instead.
       const agentLabel = key.startsWith('bubble') || key.startsWith('sign');
       const off = x < 0 || x > w || (agentLabel && Math.abs(x - cx) > 30);
-      if (labelled) el.style.visibility = off ? 'hidden' : '';
+      if (labelled && !key.startsWith('callout')) el.style.visibility = off ? 'hidden' : '';
+      // Labels in the sky count as obstacles for the app panel.
+      if (obstacleKeys(key) && el.style.visibility !== 'hidden') {
+        obstacles.push([cx - half, y - child.offsetHeight, cx + half, y]);
+      }
       if (key.startsWith('bubble')) child.style.setProperty('--tail', `${clamp(x - cx, -half + 8, half - 8).toFixed(1)}px`);
       x = cx;
     }
@@ -137,8 +165,26 @@
   function placeOverlays() {
     if (!scene) return;
     const L = scene.layout();
+    obstacles = [...L.blocks];
     for (const [el, key] of placed) positionOne(el, key, L);
     if (Math.abs(L.k - k) > 0.001) k = L.k;
+    fitPanel();
+  }
+
+  // The app panel lives in the empty sky: it gets whatever height is left
+  // above the highest tree, label or note under it, and never covers them.
+  function fitPanel() {
+    if (!colEl || !stageEl) return;
+    const left = colEl.offsetLeft;
+    const right = left + colEl.offsetWidth;
+    const top = colEl.offsetTop;
+    let floor = stageEl.clientHeight;
+    for (const [x0, y0, x1] of obstacles) {
+      if (x1 > left && x0 < right && y0 > top) floor = Math.min(floor, y0);
+    }
+    const legendH = legendEl && !legendLeft ? legendEl.offsetHeight + 10 : 0;
+    const next = Math.floor(floor - top - legendH - 14);
+    if (next !== panelMax) panelMax = next;
   }
 
   function redraw() {
@@ -186,7 +232,8 @@
 
   function sizeStage() {
     if (!scene || !stageEl) return;
-    wide = stageEl.clientWidth >= 960;
+    wide = stageEl.clientWidth >= 1200;
+    stageW = stageEl.clientWidth;
     const reserve = (bottomEl?.offsetHeight ?? 0) + 18;
     scene.resize(stageEl.clientWidth, stageEl.clientHeight, reserve);
     updateInset();
@@ -259,8 +306,8 @@
     open = null;
     const a = scene.snapshot()[index];
     event = {
-      speaker: '+ Agent',
-      text: `A new conversation on \`${a.branch}\`, with a fresh worktree in \`.grove-wt/${a.id}\` and its own terminal.`,
+      speaker: '+ Conversation',
+      text: `New conversation on \`${a.branch}\`. Grove Bench makes its worktree in \`.grove-wt/${a.id}\` and opens its terminal. A new tree grows.`,
     };
     if (reduced) redraw();
   }
@@ -273,19 +320,6 @@
   function rewind(mode) {
     scene?.rewind(mode);
     if (reduced) redraw();
-  }
-
-  // Dragging directly on the sundial moves its shadow too.
-  let dialDrag = false;
-  function dialPointer(e) {
-    if (e.type === 'pointerdown') {
-      dialDrag = true;
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
-    if (!dialDrag) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    const t = clamp((e.clientX - r.left) / r.width, 0, 1);
-    setTurn(1 + Math.round(t * 3));
   }
 
   function onStagePointer(e) {
@@ -313,6 +347,7 @@
         agents = scene.snapshot();
         turn = scene.turn;
         rewindNote = scene.rewindNote;
+        merged = scene.merged;
         // Without the loop, redraw once the change has settled.
         if (prefersReducedMotion.current) queueMicrotask(redraw);
       },
@@ -346,7 +381,7 @@
   // Derived copy
 
   const introText = $derived(
-    `${NUMBER_WORDS[count] ?? count} agents are working in the grove tonight. Click one to check in, or plant a tree to start a new conversation.`,
+    `${NUMBER_WORDS[count] ?? count} AI agents are working on one project. Click one to see its conversation, or press + Conversation to plant a new tree.`,
   );
 
   const dlg = $derived.by(() => {
@@ -404,7 +439,7 @@
   });
 
   const sceneLabel = $derived(
-    `Pixel art grove at ${chapter >= 5 ? 'dawn' : 'night'}. ${NUMBER_WORDS[count] ?? count} agents sit on benches under their own trees, each with a laptop and a status lamp: ` +
+    `Pixel art grove at ${chapter >= 5 ? 'dawn' : 'night'}. Each tree is a git worktree, each agent on a bench is one AI conversation, and each lamp shows its status. ${NUMBER_WORDS[count] ?? count} conversations: ` +
       agents.map((a) => `${a.branch} (${statusLabel(a.status).toLowerCase()})`).join(', ') +
       '. An old tree with a glowing stone stands on the left, a sundial and a gate marked main on the right.',
   );
@@ -448,8 +483,11 @@
 
 {#snippet titleContent()}
   <p class="kicker">{@render logo(14)} Grove Bench for Windows</p>
-  <h1>Claude Code agents, side by side.</h1>
-  <p class="lede">Each conversation gets its own git worktree, branch and terminal. Run several at once on one project.</p>
+  <h1>AI agents, side by side.</h1>
+  <p class="lede">
+    Grove Bench is a Windows app that runs several AI coding agents on one project at once. Each works in its own git
+    worktree, on its own branch, with its own terminal.
+  </p>
   <div class="actions">
     <a href={links.releases} target="_blank" rel="noopener" class="pix-btn primary" onclick={() => onDownload('grove-hero')}>
       {@render downloadIcon()} Download for Windows
@@ -593,51 +631,61 @@
             {/if}
           {/each}
 
-          <!-- Sundial: drag the shadow back through the checkpoints -->
-          <div class="pin sundial-pin" use:place={'sundial'} class:show={chapter === 4} inert={chapter !== 4}>
-            <div class="dial-panel">
-              <div class="dial-head">
-                <label for="grove-turn">Checkpoint <b>{turn}</b> of 4</label>
-                <span class="dial-you">"{HISTORY[turn - 1]}"</span>
-              </div>
-              <input
-                id="grove-turn"
-                class="dial-range"
-                type="range"
-                min="1"
-                max="4"
-                step="1"
-                value={turn}
-                aria-valuetext="Checkpoint {turn} of 4: {HISTORY[turn - 1]}"
-                oninput={(e) => setTurn(e.currentTarget.value)}
-              />
-              <div class="dial-actions">
-                <button type="button" class="pix-btn small" disabled={turn >= 4} onclick={() => rewind('all')}>Rewind All</button>
-                <button type="button" class="pix-btn small ghost" disabled={turn >= 4} onclick={() => rewind('conv')}>Conv. Only</button>
-              </div>
-              <p class="dial-note" aria-live="polite">
-                {#if rewindNote?.mode === 'all'}
-                  Files and conversation are back at turn {rewindNote.turn}.
-                {:else if rewindNote?.mode === 'conv'}
-                  Conversation is back at turn {rewindNote.turn}. Files stay as they are.
-                {:else if turn < 4}
-                  Previewing turn {turn}. The tree shows the files as they were.
-                {:else}
-                  Latest turn. Drag left to look back.
-                {/if}
-              </p>
+          <!-- Welcome callouts: what a tree, an agent and a lamp are -->
+          {#each CALLOUTS as label, i}
+            <div class="pin" use:place={`callout:${i}`} aria-hidden="true">
+              <span class="callout">{label}</span>
             </div>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="dial-grab"
-              aria-hidden="true"
-              onpointerdown={dialPointer}
-              onpointermove={dialPointer}
-              onpointerup={() => (dialDrag = false)}
-              onpointercancel={() => (dialDrag = false)}
-            ></div>
-          </div>
+          {/each}
+
+          {#if chapter === 4}
+            <!-- The sundial's shadow is a range input laid over the dial -->
+            <div class="pin" use:place={'hint'} aria-hidden="true">
+              <span class="dial-hint">
+                <svg width="6" height="10" viewBox="0 0 3 5" shape-rendering="crispEdges"><path fill="currentColor" d="M2 0h1v5H2zM1 1h1v3H1zM0 2h1v1H0z" /></svg>
+                Drag the shadow
+                <svg width="6" height="10" viewBox="0 0 3 5" shape-rendering="crispEdges"><path fill="currentColor" d="M0 0h1v5H0zM1 1h1v3H1zM2 2h1v1H2z" /></svg>
+              </span>
+            </div>
+            <input
+              class="dial-range"
+              use:place={'dial'}
+              type="range"
+              min="1"
+              max="4"
+              step="1"
+              value={turn}
+              aria-label="Sundial: checkpoint"
+              aria-valuetext="Checkpoint {turn} of 4: {HISTORY[turn - 1]}"
+              oninput={(e) => setTurn(e.currentTarget.value)}
+            />
+          {/if}
         </div>
+
+        <!-- The same thing in the real app, plus the key to the grove -->
+        <div class="app-col" class:wide bind:this={colEl}>
+          {#if !legendLeft}
+            <div class="legend-slot" bind:this={legendEl}><Legend compact={!wide} /></div>
+          {/if}
+          <AppPanel
+            view={panelView}
+            {agents}
+            focus={open}
+            {turn}
+            maxTurn={4}
+            {rewindNote}
+            history={CHECKPOINTS}
+            {merged}
+            {reduced}
+            onturn={setTurn}
+            onrewind={rewind}
+            onanswer={(allow) => choose(allow ? 'allow' : 'deny')}
+            style="max-height: {Math.max(0, panelMax)}px; visibility: {panelMax < 70 ? 'hidden' : 'visible'}"
+          />
+        </div>
+        {#if legendLeft}
+          <div class="legend-left"><Legend /></div>
+        {/if}
 
         <!-- HUD and dialogue -->
         <div class="bottom-ui" class:talking={dlg.mode === 'agent'} bind:this={bottomEl}>
@@ -657,11 +705,18 @@
                 </button>
               {/each}
             </nav>
-            <button type="button" class="pix-btn plant" onclick={plant} disabled={full} aria-describedby="plant-count">
+            <button
+              type="button"
+              class="pix-btn plant"
+              onclick={plant}
+              disabled={full}
+              aria-label={full ? 'The grove is full' : 'Start a new conversation (plants a tree)'}
+              aria-describedby="plant-count"
+            >
               <svg width="14" height="16" viewBox="0 0 7 8" aria-hidden="true" shape-rendering="crispEdges">
                 <rect x="3" y="3" width="1" height="5" fill="#8a6a4a" /><rect x="1" y="1" width="2" height="2" fill="#6ec87a" /><rect x="4" y="0" width="2" height="2" fill="#5ab868" /><rect x="3" y="2" width="1" height="1" fill="#4aaa58" />
               </svg>
-              {full ? 'Grove is full' : 'Plant a tree'}
+              {full ? 'Grove is full' : '+ Conversation'}
               <span class="plant-count" id="plant-count"><span class="sr-only">Trees:</span> {count}/{MAX_TREES}</span>
             </button>
           </div>
@@ -709,7 +764,7 @@
               {/each}
             </svg>
             <h3>Start conversations</h3>
-            <p>Press <span class="kbd">+ Agent</span> for each task. Pick New Worktree, Existing Worktree or Direct.</p>
+            <p>Press <span class="kbd">+ Conversation</span> for each task. Pick New branch, Existing branch or Direct.</p>
           </li>
           <li class="step">
             <span class="step-num" aria-hidden="true">3</span>
@@ -1053,112 +1108,98 @@
     outline-offset: 2px;
   }
 
-  /* Sundial */
-  .sundial-pin > .dial-panel {
-    bottom: calc(var(--px) * 12);
-    opacity: 0;
-    visibility: hidden;
-    transition:
-      opacity 0.3s steps(3),
-      visibility 0s 0.3s;
-  }
-  .sundial-pin.show > .dial-panel {
-    opacity: 1;
-    visibility: visible;
-    transition: opacity 0.3s steps(3);
-  }
-  .dial-panel {
+  /* Welcome callouts and the sundial */
+  .callout,
+  .dial-hint {
     --edge: #0b1224;
-    width: 248px;
-    padding: 10px 12px 10px;
-    pointer-events: auto;
-    color: #eef1f8;
-    background: #13203f;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 8px 2px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: #1b1f2a;
+    background: #ffe7a8;
     box-shadow:
-      inset 0 0 0 2px #d9dff0,
-      inset 0 0 0 4px #0b1224,
       0 calc(var(--px) * -1) 0 0 var(--edge),
       0 var(--px) 0 0 var(--edge),
       calc(var(--px) * -1) 0 0 0 var(--edge),
       var(--px) 0 0 0 var(--edge);
   }
-  .dial-head {
-    display: grid;
-    gap: 2px;
-    font-size: 15px;
-  }
-  .dial-head b {
-    color: #ffe7a8;
-  }
-  .dial-you {
-    font-size: 13px;
-    color: #93a0c0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .dial-hint {
+    margin-bottom: calc(var(--px) * 2);
+    background: #f4ecdd;
   }
   .dial-range {
-    width: 100%;
-    height: 28px;
-    margin: 6px 0 4px;
+    position: absolute;
+    left: 0;
+    top: 0;
+    margin: 0;
+    pointer-events: auto;
     appearance: none;
     background: transparent;
     cursor: ew-resize;
   }
   .dial-range::-webkit-slider-runnable-track {
-    height: 8px;
-    background:
-      linear-gradient(90deg, transparent calc(33.3% - 1px), #0b1224 calc(33.3% - 1px) calc(33.3% + 1px), transparent calc(33.3% + 1px) calc(66.6% - 1px), #0b1224 calc(66.6% - 1px) calc(66.6% + 1px), transparent calc(66.6% + 1px)),
-      #6b7390;
-    box-shadow: 0 0 0 2px #0b1224;
-  }
-  .dial-range::-moz-range-track {
-    height: 8px;
-    background: #6b7390;
-    box-shadow: 0 0 0 2px #0b1224;
+    height: 100%;
+    background: transparent;
   }
   .dial-range::-webkit-slider-thumb {
     appearance: none;
-    width: 18px;
-    height: 22px;
-    margin-top: -7px;
-    background: #f59e0b;
-    box-shadow:
-      0 0 0 2px #0b1224,
-      inset 0 -4px 0 0 #b86f06;
+    width: 16px;
+    height: 100%;
+    background: transparent;
+  }
+  .dial-range::-moz-range-track {
+    background: transparent;
   }
   .dial-range::-moz-range-thumb {
-    width: 18px;
-    height: 22px;
-    border: 0;
-    border-radius: 0;
-    background: #f59e0b;
-    box-shadow:
-      0 0 0 2px #0b1224,
-      inset 0 -4px 0 0 #b86f06;
+    opacity: 0;
   }
-  .dial-actions {
+  .dial-range:focus-visible {
+    outline: 2px dashed #ffe7a8;
+    outline-offset: 2px;
+  }
+
+  /* App panel column and the key */
+  .app-col {
+    position: absolute;
+    z-index: 2;
+    top: 8px;
+    left: 12px;
+    right: 12px;
     display: flex;
-    gap: 8px;
-  }
-  .dial-note {
-    margin-top: 8px;
-    min-height: 3.9em;
-    font-size: 13px;
-    line-height: 1.3;
-    color: #c9d2e8;
-    white-space: normal;
-  }
-  .dial-grab {
-    bottom: calc(var(--px) * -8);
-    width: calc(var(--px) * 26);
-    height: calc(var(--px) * 12);
+    flex-direction: column;
+    gap: 10px;
+    max-width: 520px;
+    margin: 0 auto;
     pointer-events: none;
-    touch-action: none;
-    cursor: ew-resize;
   }
-  .sundial-pin.show > .dial-grab {
+  .app-col > :global(*) {
     pointer-events: auto;
+  }
+  .app-col.wide {
+    top: 20px;
+    left: auto;
+    right: clamp(24px, 3vw, 48px);
+    width: clamp(340px, 28vw, 420px);
+    max-width: none;
+    margin: 0;
+  }
+  .app-col.wide .legend-slot {
+    order: 2;
+  }
+  .legend-left {
+    position: absolute;
+    z-index: 3;
+    left: 24px;
+    bottom: 16px;
+    width: min(280px, calc((100% - min(780px, 100% - 600px)) / 2 - 40px));
+  }
+  /* Leave the bottom left corner to the key. */
+  .stage.wide .bottom-ui > * {
+    max-width: min(780px, calc(100% - 600px));
   }
 
   /* Title screen */
@@ -1388,7 +1429,7 @@
 
   @media (max-width: 639px) {
     .dlg-wrap {
-      --dlg-h: 162px;
+      --dlg-h: 150px;
       --dlg-font: 16px;
     }
     .bottom-ui {
@@ -1408,14 +1449,6 @@
       gap: 6px;
       padding: 6px 10px;
       font-size: 15px;
-    }
-    .dial-panel {
-      width: 224px;
-    }
-    .dial-actions .pix-btn {
-      flex: 1;
-      padding: 4px 6px;
-      font-size: 13px;
     }
   }
 
@@ -1660,7 +1693,6 @@
       animation: none;
     }
     .tag-note,
-    .sundial-pin > .dial-panel,
     .pix-btn {
       transition: none;
     }

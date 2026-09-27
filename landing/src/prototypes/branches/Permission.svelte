@@ -4,7 +4,7 @@
   import { lanes, AMBER } from './lanes.js';
 
   /**
-   * A conversation paused on a permission prompt. Allow and Always allow let
+   * A conversation paused on a permission prompt. Allow and Always Allow let
    * the lane carry on; Deny makes the agent take another route, so the lane
    * bends into a new column. Replay puts the prompt back.
    *
@@ -147,7 +147,7 @@
           <div class="prompt-actions">
             <button type="button" class="bx-btn allow" onclick={() => decide('allow')}>Allow</button>
             <button type="button" class="bx-btn deny" onclick={() => decide('deny')}>Deny</button>
-            <button type="button" class="bx-btn" onclick={() => decide('always')}>Always allow</button>
+            <button type="button" class="bx-btn" onclick={() => decide('always')}>Always Allow</button>
           </div>
         </div>
       </li>

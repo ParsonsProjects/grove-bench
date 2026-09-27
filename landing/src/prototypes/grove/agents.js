@@ -1,20 +1,15 @@
 // The conversations that live in the grove. Plain data plus a tiny step
 // machine that walks each agent through its tool calls.
+//
+// A step is [tool, short detail for the speech bubble, longer detail for the
+// app panel]. The third item is optional.
 
 import { models } from '../shared/brand.js';
 
 /**
- * @typedef {[tool: string, detail: string]} Step
- * @typedef {{
- *   id: string, branch: string, model: string, look: number,
- *   status: 'working' | 'permission' | 'ready',
- *   task: string, script?: Step[], ask?: string,
- *   allowScript?: Step[], denyScript?: Step[], readyText?: string,
- *   term: [string, string], history?: { you: string, step: Step }[],
- * }} AgentDef
+ * @typedef {[tool: string, detail: string, full?: string]} Step
  */
 
-/** @type {AgentDef[]} */
 export const STARTING_AGENTS = [
   {
     id: 'a3f8b2c1',
@@ -22,13 +17,14 @@ export const STARTING_AGENTS = [
     model: models.opus.label,
     look: 0,
     status: 'working',
+    prompt: 'Add JWT auth middleware to the API routes',
     task: 'Adding JWT middleware to the API routes.',
     script: [
-      ['Read', 'routes/index.ts'],
-      ['Edit', 'auth.ts +47'],
-      ['Edit', 'index.ts +8 -3'],
+      ['Read', 'routes/index.ts', 'src/routes/index.ts'],
+      ['Edit', 'auth.ts +47', 'src/middleware/auth.ts +47'],
+      ['Edit', 'index.ts +8 -3', 'src/routes/index.ts +8 -3'],
       ['Bash', 'npm test'],
-      ['done', '4 passed'],
+      ['done', '4 passed', '4 tests passed. The middleware is in place.'],
     ],
     term: ['$ npm test', '4 passed'],
   },
@@ -38,20 +34,25 @@ export const STARTING_AGENTS = [
     model: models.sonnet.label,
     look: 1,
     status: 'permission',
+    prompt: 'Build the user profile endpoints',
     task: 'Building the user profile endpoints.',
+    before: [
+      ['Read', 'routes/index.ts', 'src/routes/index.ts'],
+      ['Write', 'types.ts +24', 'src/types/profile.ts +24'],
+    ],
     ask: 'npm install zod',
     allowScript: [
       ['Bash', 'npm install zod'],
-      ['Write', 'profile.ts +89'],
-      ['Edit', 'routes.ts +3 -1'],
+      ['Write', 'profile.ts +89', 'src/routes/profile.ts +89'],
+      ['Edit', 'routes.ts +3 -1', 'src/routes/index.ts +3 -1'],
       ['Bash', 'npm test'],
-      ['done', '7 passed'],
+      ['done', '7 passed', '7 tests passed. The profile endpoints are ready.'],
     ],
     denyScript: [
       ['Read', 'package.json'],
-      ['Edit', 'profile.ts +31'],
+      ['Edit', 'profile.ts +31', 'src/routes/profile.ts +31'],
       ['Bash', 'npm test'],
-      ['done', '7 passed'],
+      ['done', '7 passed', '7 tests passed, with the input checked by hand.'],
     ],
     term: ['$ npm run dev', 'server running'],
   },
@@ -61,15 +62,18 @@ export const STARTING_AGENTS = [
     model: models.haiku.label,
     look: 2,
     status: 'ready',
+    prompt: 'Users get logged out after 5 min',
     task: 'Fixed the early logout. Ready for your review.',
     readyText: 'Ready: 2 files',
     term: ['$ npm test', '5 passed'],
+    // One entry per message you sent: what you said and what the agent did.
     history: [
-      { you: 'Users get logged out after 5 min', step: ['Read', 'session.ts'] },
-      { you: 'Refresh the token earlier', step: ['Edit', 'session.ts +12 -4'] },
-      { you: 'Add a test for it', step: ['Write', 'session.test.ts +38'] },
-      { you: 'Run the tests', step: ['Bash', 'npm test'] },
+      { you: 'Users get logged out after 5 min', step: ['Read', 'session.ts', 'src/auth/session.ts'], add: 0, del: 0 },
+      { you: 'Refresh the token earlier', step: ['Edit', 'session.ts +12 -4', 'src/auth/session.ts +12 -4'], add: 12, del: 4 },
+      { you: 'Add a test for it', step: ['Write', 'session.test.ts +38', 'src/auth/session.test.ts +38'], add: 38, del: 0 },
+      { you: 'Run the tests', step: ['Bash', 'npm test'], add: 0, del: 0 },
     ],
+    closing: 'Fixed. 5 tests passed, 2 files changed.',
   },
 ];
 
@@ -81,13 +85,14 @@ export const PLANTED_AGENTS = [
     model: models.opus.label,
     look: 3,
     status: 'working',
+    prompt: 'Add search to the dashboard',
     task: 'Fresh worktree, clean branch. Adding search to the dashboard.',
     script: [
       ['Read', 'package.json'],
       ['Grep', 'searchIndex'],
-      ['Write', 'search.ts +64'],
+      ['Write', 'search.ts +64', 'src/search/search.ts +64'],
       ['Bash', 'npm test'],
-      ['done', '6 passed'],
+      ['done', '6 passed', '6 tests passed. Search is wired up.'],
     ],
     term: ['$ git status', 'clean'],
   },
@@ -97,12 +102,13 @@ export const PLANTED_AGENTS = [
     model: models.sonnet.label,
     look: 4,
     status: 'working',
+    prompt: 'Update the README for the new API',
     task: 'Fresh worktree, clean branch. Updating the README.',
     script: [
       ['Read', 'README.md'],
       ['Glob', 'docs/**/*.md'],
       ['Edit', 'README.md +22 -5'],
-      ['done', 'Done'],
+      ['done', 'Done', 'The README covers the new endpoints.'],
     ],
     term: ['$ git diff --stat', '1 file changed'],
   },
@@ -140,16 +146,16 @@ function initialBubble(def) {
  */
 export function stepAgent(a, dt) {
   if (a.status === 'permission') return false;
-  if (a.status === 'ready' && !a.script.length) return false;
   if (!a.script.length) return false;
+  if (a.finished) return false;
   a.timer += dt;
   const [tool] = a.script[a.step];
   const hold = tool === 'done' ? DONE_SECONDS : STEP_SECONDS;
   if (a.timer < hold) return false;
   a.timer = 0;
-  // A permission agent that finished its reply stays ready.
+  // An agent that finished its reply to a permission answer stays ready.
   if (tool === 'done' && a.answered) {
-    a.script = [];
+    a.finished = true;
     return false;
   }
   a.step = (a.step + 1) % a.script.length;
@@ -171,5 +177,38 @@ export function answerAgent(a, allow) {
 }
 
 export function statusLabel(status) {
-  return { working: 'Working', permission: 'Waiting for you', ready: 'Ready' }[status] ?? status;
+  return (
+    { working: 'Working', permission: 'Waiting for you', ready: 'Ready', starting: 'Starting' }[status] ?? status
+  );
+}
+
+const toolItem = ([tool, detail, full], pending = false) =>
+  tool === 'done' ? { kind: 'text', text: full ?? detail } : { kind: 'tool', tool, detail: full ?? detail, pending };
+
+/**
+ * What the Activity tab of the app would show for this conversation right
+ * now: your message, then the agent's recent tool calls. Newest last.
+ */
+export function activityFor(a, phase = 'sit') {
+  if (phase !== 'sit') {
+    return [
+      { kind: 'user', text: a.prompt },
+      { kind: 'system', text: `Creating worktree .grove-wt/${a.id}` },
+    ];
+  }
+  if (a.history) {
+    const items = a.history.slice(-2).flatMap((h) => [{ kind: 'user', text: h.you }, toolItem(h.step)]);
+    return [...items, { kind: 'text', text: a.closing }];
+  }
+  const items = [{ kind: 'user', text: a.prompt }];
+  for (const s of a.before ?? []) items.push(toolItem(s));
+  if (a.ask) {
+    if (!a.answered) {
+      items.push({ kind: 'permission', tool: 'Bash', detail: a.ask });
+      return items.slice(-6);
+    }
+    items.push({ kind: 'permission', tool: 'Bash', detail: a.ask, resolved: a.answered === 'allow' ? 'Allowed' : 'Denied' });
+  }
+  a.script.slice(0, a.step + 1).forEach((s, i) => items.push(toolItem(s, i === a.step && a.status === 'working')));
+  return items.slice(-6);
 }

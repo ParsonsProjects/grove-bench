@@ -178,7 +178,7 @@ function drawBlock(ctx, x, y, s, b, pal, i, set) {
 // ---------------------------------------------------------------------------
 // Agents. Front view, sitting on a bench with a laptop on their lap.
 
-const SITTING = [
+export const SITTING = [
   '..hhhhh..',
   '.hhhhhhh.',
   '.hsssssh.',

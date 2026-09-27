@@ -155,8 +155,8 @@
       <div class="confirm" transition:slide={{ duration: ms(200) }}>
         <p>Rewind to #{confirmAt}? Since here: <span class="plus">+{since.add}</span> <span class="minus">-{since.del}</span></p>
         <div class="cbtns">
-          <button class="mini primary" onclick={() => rewind('all')} title="Restore files and conversation">Rewind All</button>
-          <button class="mini" onclick={() => rewind('conv')} title="Reset only the conversation, keep files">Conv. Only</button>
+          <button class="mini primary" onclick={() => rewind('all')} title="Restore files and conversation">Rewind all</button>
+          <button class="mini" onclick={() => rewind('conv')} title="Reset only the conversation, keep files">Conv. only</button>
           <button class="mini ghost" onclick={() => (confirmAt = null)}>Cancel</button>
         </div>
       </div>

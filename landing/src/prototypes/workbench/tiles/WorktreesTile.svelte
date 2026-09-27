@@ -11,8 +11,8 @@
     { id: 'e52b0f7a', branch: 'fix/login-timeout', color: LANE_COLORS[2], status: /** @type {const} */ ('ready') },
   ];
   const MODES = [
-    { label: 'New Worktree', note: 'new branch' },
-    { label: 'Existing Worktree', note: 'already on disk' },
+    { label: 'New branch', note: 'fresh worktree' },
+    { label: 'Existing branch', note: 'worktree for it' },
     { label: 'Direct', note: 'no worktree' },
   ];
   const LEGEND = [
@@ -63,7 +63,7 @@
 
 <div class="wt" bind:this={root}>
   <div class="picker" aria-hidden="true">
-    <p class="plabel"><span class="agent">+ Agent</span> New conversation</p>
+    <p class="plabel"><span class="agent">+ Conversation</span> Branch mode</p>
     <div class="opts">
       {#each MODES as mode, i (mode.label)}
         <span class="opt" class:hover={hover === i} class:pressed={pressed && i === 0}>

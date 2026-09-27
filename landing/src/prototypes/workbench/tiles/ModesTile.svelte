@@ -13,7 +13,7 @@
   const MODES = [
     { id: 'default', label: 'Default', line: 'Asks before edits and commands.', out: /** @type {Outcome[]} */ (['runs', 'asks', 'asks']) },
     { id: 'plan', label: 'Plan', line: 'Explores and plans. Edits nothing.', out: /** @type {Outcome[]} */ (['runs', 'planned', 'planned']) },
-    { id: 'acceptEdits', label: 'AcceptEdits', line: 'Applies edits. Commands still ask.', out: /** @type {Outcome[]} */ (['runs', 'applied', 'asks']) },
+    { id: 'acceptEdits', label: 'Accept Edits', line: 'Applies edits. Commands still ask.', out: /** @type {Outcome[]} */ (['runs', 'applied', 'asks']) },
   ];
   const WORDS = { runs: 'runs', asks: 'asks you', applied: 'applied', planned: 'in the plan' };
 

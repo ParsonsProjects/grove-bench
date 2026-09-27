@@ -35,8 +35,8 @@
     {
       hash: 'e7f3b20',
       title: 'Start conversations',
-      text: 'Click + Agent, choose New Worktree, Existing Worktree or Direct, then describe the task.',
-      ui: ['+ Agent', 'New Worktree', 'Existing Worktree', 'Direct'],
+      text: 'Click + Conversation, choose New branch, Existing branch or Direct, then describe the task.',
+      ui: ['+ Conversation', 'New branch', 'Existing branch', 'Direct'],
     },
     {
       hash: '94d6c1a',
@@ -103,7 +103,7 @@
           <Commit id="fork" hash="9fceb02" lane="main" headingId="h-fork">
             Every conversation gets its own worktree
             {#snippet sub()}
-              Click <code>+ Agent</code>. Grove Bench makes a branch, a worktree under
+              Click <code>+ Conversation</code>. Grove Bench makes a branch, a worktree under
               <code>.grove-wt/</code> and a terminal, then the agent gets to work. Add more and they run side by side.
             {/snippet}
           </Commit>
@@ -140,7 +140,7 @@
             <Commit id="checkpoints" hash="8c4f0b2" lane="auth" headingId="h-cp">
               Every message is a checkpoint
               {#snippet sub()}
-                Drag back through the turns. See what one turn changed, or everything since. <b>Rewind All</b> puts
+                Drag back through the turns. See what one turn changed, or everything since. <b>Rewind all</b> puts
                 back the files and the conversation together.
               {/snippet}
             </Commit>
@@ -177,7 +177,7 @@
               The agent asks. You decide.
               {#snippet sub()}
                 When an agent wants to edit a file or run a command, its dot pulses amber and it waits for you. Try
-                it. Pick a permission mode per conversation: Default, Plan or AcceptEdits.
+                it. Pick a permission mode per conversation: Default, Plan or Accept Edits.
               {/snippet}
             </Commit>
           </div>
