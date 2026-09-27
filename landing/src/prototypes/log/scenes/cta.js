@@ -7,7 +7,7 @@
 
 import { treePalette } from '../../grove/palette.js';
 import { P, clamp } from './engine.js';
-import { bubbleAt, hitAt } from './common.js';
+import { bubbleAt, hitAt, bubbleTurn } from './common.js';
 import { story } from '../story.svelte.js';
 import { lanes } from '../lanes.js';
 
@@ -76,7 +76,7 @@ export function ctaScene(env) {
       if (kind === 'ground') return [0, env.groundY - 0.5];
       const p = plots[KEYS.indexOf(id)];
       if (!p) return null;
-      if (kind === 'bubble') return bubbleAt(env, p);
+      if (kind === 'bubble') return bubbleTurn(env, KEYS.indexOf(id)) ? bubbleAt(env, p) : null;
       if (kind === 'hit') return hitAt(env, p, env.compact ? 5 : 3);
       return null;
     },

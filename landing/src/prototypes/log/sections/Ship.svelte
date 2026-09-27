@@ -14,7 +14,7 @@
   let snap = $state(null);
 
   const waitingBubble = { tool: '?', detail: '' };
-  const sitting = { auth: { tool: 'Bash', detail: 'npm test' }, api: { tool: 'Bash', detail: 'npm test' }, fix: { tool: 'done', detail: 'Ready' } };
+  const sitting = { auth: { tool: 'Bash', detail: 'npm test' }, api: { tool: 'Edit', detail: 'profile.ts +18' }, fix: { tool: 'Bash', detail: 'npm test' } };
 
   function talk(key) {
     const a = agents[key];
@@ -61,7 +61,7 @@
               <span class="lg-board below gate" class:good={s?.all}>main</span>
             </div>
             {#if s?.home}
-              <div class="pin" use:pin={'gate'} aria-hidden="true">
+              <div class="pin" use:pin={'ready'} aria-hidden="true">
                 <span class="lg-callout ready">{s.home} of 3 ready for main</span>
               </div>
             {/if}
@@ -84,7 +84,6 @@
     font-size: 14px;
   }
   .ready {
-    margin-bottom: calc(var(--px) * 14);
     font-size: 12px;
   }
   .waiting {

@@ -36,3 +36,12 @@ export function hitAt(env, p, pad = 3) {
   const box = env.agentBox(p);
   return box ? [box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2] : null;
 }
+
+/**
+ * On narrow scenes there is only room for one speech bubble, so the agents
+ * take turns. Wide scenes show them all.
+ */
+export function bubbleTurn(env, i, n = 3, period = 2.8) {
+  if (!env.compact) return true;
+  return Math.floor(env.tnow() / period) % n === i;
+}

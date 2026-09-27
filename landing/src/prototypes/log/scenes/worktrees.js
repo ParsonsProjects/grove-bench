@@ -7,7 +7,7 @@
 
 import { C } from '../../grove/palette.js';
 import { P, clamp } from './engine.js';
-import { spreadPlots, bubbleAt, signAt, hitAt } from './common.js';
+import { spreadPlots, bubbleAt, signAt, hitAt, bubbleTurn } from './common.js';
 import { passed } from '../story.svelte.js';
 
 const KEYS = ['auth', 'api', 'fix'];
@@ -116,7 +116,7 @@ export function worktreesScene(env) {
         const lift = env.compact && i === 1 ? 17 : 0;
         return [Math.round(p.x), top - 4 - lift];
       }
-      if (kind === 'bubble') return p.pose === 'sit' ? bubbleAt(env, p) : null;
+      if (kind === 'bubble') return p.pose === 'sit' && bubbleTurn(env, i) ? bubbleAt(env, p) : null;
       if (kind === 'hit') return p.pose === 'sit' ? hitAt(env, p, env.compact ? 6 : 3) : null;
       return null;
     },

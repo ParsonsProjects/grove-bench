@@ -57,11 +57,11 @@
   min-width: 0;
 }
 .lg-section {
-  padding-block: 56px;
+  padding-block: 48px;
 }
 @media (min-width: 768px) {
   .lg-section {
-    padding-block: 80px;
+    padding-block: 64px;
   }
 }
 
@@ -437,6 +437,21 @@
   }
   .lg-page * {
     scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 559px) {
+  .lg-sign {
+    padding: 1px 4px 2px;
+    font-size: 12px;
+  }
+  .lg-bubble {
+    padding: 1px 5px 2px;
+    font-size: 12px;
+  }
+  .lg-callout {
+    padding: 1px 5px 2px;
+    font-size: 12px;
   }
 }
 

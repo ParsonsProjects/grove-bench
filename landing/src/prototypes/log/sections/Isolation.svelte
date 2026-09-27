@@ -45,12 +45,15 @@
           class="lg-frame"
           label="All three agents edit index.ts at the same time, each on its own copy in its own worktree. Low fences stand between the benches. A wooden sign in front reads conflicts: 0."
         >
-          {#snippet overlays(pin)}
+          {#snippet overlays(pin, snap)}
             {#each keys as key (key)}
               <div class="pin" use:pin={`bubble:${key}`} aria-hidden="true">
-                <Bubble b={{ tool: 'Edit', detail: `index.ts ${sameFileEdits[key]}` }} />
+                <Bubble b={{ tool: 'Edit', detail: snap?.compact ? sameFileEdits[key] : `index.ts ${sameFileEdits[key]}` }} />
               </div>
             {/each}
+            <div class="pin" use:pin={'file'} aria-hidden="true">
+              <span class="lg-callout">3 copies of index.ts</span>
+            </div>
             <div class="pin" use:pin={'board'}>
               <span class="lg-board">conflicts: 0</span>
             </div>

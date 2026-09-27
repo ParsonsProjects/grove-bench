@@ -6,7 +6,7 @@
 import { C, oldTreePalette, mix } from '../../grove/palette.js';
 import { drawStone, runePixels, halo, hash, treeBlocks } from '../../grove/sprites.js';
 import { P, quad, clamp } from './engine.js';
-import { bubbleAt, hitAt } from './common.js';
+import { bubbleAt, hitAt, bubbleTurn } from './common.js';
 
 const KEYS = ['auth', 'api', 'fix'];
 
@@ -105,13 +105,13 @@ export function memoryScene(env) {
       if (kind === 'note') {
         const i = +id;
         const top = crownTop();
-        if (env.compact) return [oldX + (i % 2 ? 6 : -6), top + 6 + i * 11];
+        if (env.compact) return [oldX + (i % 2 ? 58 : -14), top + 6 + Math.floor(i / 2) * 16];
         return [oldX + (i % 2 ? 20 : -20), top + 16 + Math.floor(i / 2) * 20];
       }
       if (kind === 'stone') return [stoneX + 0.5, env.groundY + 2];
       const p = plots[KEYS.indexOf(id)];
       if (!p) return null;
-      if (kind === 'bubble') return bubbleAt(env, p);
+      if (kind === 'bubble') return bubbleTurn(env, KEYS.indexOf(id)) ? bubbleAt(env, p) : null;
       if (kind === 'hit') return hitAt(env, p, env.compact ? 6 : 3);
       return null;
     },

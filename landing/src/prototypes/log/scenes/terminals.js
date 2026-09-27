@@ -2,7 +2,7 @@
 // laptop's screen is shown as a tiny terminal over its agent (npm test and
 // its ticks), and speech bubbles show the tool calls. Ambient, it loops.
 
-import { spreadPlots, bubbleAt, hitAt } from './common.js';
+import { spreadPlots, bubbleAt, hitAt, bubbleTurn } from './common.js';
 import { toolCalls, terminals } from '../data.js';
 
 const KEYS = ['auth', 'api', 'fix'];
@@ -69,11 +69,11 @@ export function terminalsScene(env) {
       const p = plots[i];
       if (!p) return null;
       const head = bubbleAt(env, p);
-      if (kind === 'bubble') return env.compact ? null : head;
+      if (kind === 'bubble') return bubbleTurn(env, i) ? head : null;
       if (kind === 'term') {
         // Stacked above the bubble; on phones the middle one sits higher.
-        const bubbleH = env.compact ? 0 : Math.ceil(26 / env.k);
-        const lift = env.compact && i === 1 ? Math.ceil(66 / env.k) : 0;
+        const bubbleH = Math.ceil(26 / env.k);
+        const lift = env.compact && i === 1 ? Math.ceil(52 / env.k) : 0;
         return [head[0], head[1] - bubbleH - lift];
       }
       if (kind === 'hit') return hitAt(env, p, env.compact ? 6 : 3);

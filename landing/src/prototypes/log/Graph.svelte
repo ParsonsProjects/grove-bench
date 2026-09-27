@@ -278,7 +278,7 @@
   shape-rendering="crispEdges"
   data-head={head.toFixed(1)}
   data-api-head={apiHead.toFixed(1)}
-  data-tod={story.tod.toFixed(4)}
+  data-sky={story.tod.toFixed(4)}
 >
   {#if geo}
     {@const P = geo.P}
@@ -389,9 +389,10 @@
 
     <!-- Draw heads: a bright pixel spark per lane -->
     {#each heads as h (h.key)}
-      <g transform="translate({Math.round(h.x - P * 2.5)} {Math.round(h.y - P * 2.5)})">
-        <rect x="0" y="0" width={P * 5} height={P * 5} fill={h.color} opacity="0.18" />
-        <rect x={P} y={P} width={P * 3} height={P * 3} fill={h.color} opacity="0.45" />
+      <g class="spark" transform="translate({Math.round(h.x - P * 2.5)} {Math.round(h.y - P * 2.5)})">
+        <rect x={P} y={P} width={P * 3} height={P * 3} fill={h.color} opacity="0.3" />
+        <rect x="0" y={P * 2} width={P * 5} height={P} fill={h.color} />
+        <rect x={P * 2} y="0" width={P} height={P * 5} fill={h.color} />
         <rect x={P * 2} y={P * 2} width={P} height={P} fill="#ffffff" />
       </g>
     {/each}

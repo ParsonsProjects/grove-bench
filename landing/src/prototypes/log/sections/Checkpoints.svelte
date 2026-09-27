@@ -270,6 +270,13 @@
     flex: none;
     min-width: 132px;
   }
+  @media (max-width: 599px) {
+    .opt {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+  }
   .result {
     margin-top: 14px;
     font-size: 15px;

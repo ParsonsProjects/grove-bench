@@ -68,12 +68,17 @@ export function isolationScene(env) {
         drawPaper(ctx, Math.round(box.cx) - 6, paperY(), Math.min(1, t), lanes[p.key].stroke);
       });
     },
+    snapshot() {
+      return { compact: env.compact };
+    },
     pin(key) {
       const [kind, id] = key.split(':');
       if (kind === 'board') {
         const b = boardPos();
         return [b.x + 0.5, b.base - 10];
       }
+      if (kind === 'file' && !env.compact) return null;
+      if (kind === 'file') return [Math.round(env.W / 2), paperY() - 3];
       const p = plots[KEYS.indexOf(id)];
       if (!p) return null;
       if (kind === 'bubble') return bubbleAt(env, p);

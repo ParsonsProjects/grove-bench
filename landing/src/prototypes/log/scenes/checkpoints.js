@@ -82,8 +82,8 @@ export function checkpointsScene(env) {
       const [kind, id] = key.split(':');
       const G = env.groundY;
       if (kind === 'dial') return [dialX - 15, G - 27, 31, 22];
-      if (kind === 'hint') return touched ? null : [dialX + 0.5, G - 28];
-      if (kind === 'sign') return fix ? [Math.round(fix.x) + P.sign + 1, G - 8] : null;
+      if (kind === 'hint') return touched ? null : [dialX + 0.5, G - (env.compact ? 44 : 28)];
+      if (kind === 'sign') return fix && !env.compact ? [Math.round(fix.x) + P.sign + 1, G - 8] : null;
       const p = plots.find((q) => q.key === id);
       if (!p) return null;
       if (kind === 'bubble') return p === fix ? bubbleAt(env, p) : null;

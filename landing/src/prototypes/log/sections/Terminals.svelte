@@ -53,7 +53,6 @@
               <div class="pin" use:pin={`term:${key}`} aria-hidden="true">
                 {#if s}
                   <span class="lg-term" style="--edge: {lanes[key].stroke}">
-                    {#if snap?.compact}<span class="dim">{s.tool} {s.detail}</span>{/if}
                     <span><span class="p">$</span> {s.cmd}</span>
                     {#if s.running && s.total}
                       <span class="ok">{'✓'.repeat(s.ticks)}<span class="dim">{'·'.repeat(Math.max(0, s.total - s.ticks))}</span></span>

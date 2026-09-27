@@ -156,10 +156,15 @@
     );
     io.observe(stageEl);
     document.fonts?.ready.then(() => placeAll());
+    // Fireflies drift toward the pointer.
+    stageEl.addEventListener('pointermove', onpointermove);
+    stageEl.addEventListener('pointerleave', onpointerleave);
 
     return () => {
       ro.disconnect();
       io.disconnect();
+      stageEl?.removeEventListener('pointermove', onpointermove);
+      stageEl?.removeEventListener('pointerleave', onpointerleave);
     };
   });
 
@@ -235,10 +240,10 @@
   style="--px: {k}px; width: {cssW ? `${cssW}px` : '100%'}; height: {cssH ? `${cssH}px` : 'auto'};"
   data-tod={dataTod}
   data-scene={id}
-  {onpointermove}
-  {onpointerleave}
 >
-  <canvas bind:this={canvasEl} class="canvas" role="img" aria-label={label}></canvas>
+  <div class="art" role="img" aria-label={label}>
+    <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+  </div>
 
   <div class="overlays">
     {@render overlays?.(pin, snap)}
@@ -359,12 +364,12 @@
       width: min(620px, calc(100% - var(--px) * 12));
     }
   }
+  /* Phones: the box opens under the scene, so the character stays in view. */
   @media (max-width: 639px) {
     .dlg-slot {
       left: 0;
       right: 0;
-      top: auto;
-      bottom: calc(var(--px) * 2);
+      top: calc(100% + 18px);
       --dlg-font: 15px;
     }
   }

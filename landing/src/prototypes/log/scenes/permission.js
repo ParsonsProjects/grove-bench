@@ -75,7 +75,8 @@ export function permissionScene(env) {
       const [kind, id] = key.split(':');
       const p = plots[KEYS.indexOf(id)];
       if (!p) return null;
-      if (kind === 'bubble') return bubbleAt(env, p);
+      // Phones keep the spotlight on the one that is asking.
+      if (kind === 'bubble') return id === 'api' || !env.compact ? bubbleAt(env, p) : null;
       if (kind === 'sign') return [Math.round(p.x) - 17, env.groundY - 8];
       if (kind === 'hit') return hitAt(env, p, env.compact ? 6 : 3);
       return null;

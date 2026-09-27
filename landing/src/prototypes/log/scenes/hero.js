@@ -37,12 +37,16 @@ export function heroScene(env, opts) {
     const G = env.groundY;
     const top = env.treeTop();
     const [p0, p1, p2] = plots;
+    // Phones stagger the labels so they never overlap.
+    const step = env.compact ? Math.ceil(24 / env.k) : 0;
     const row = top - 7;
     const ax = Math.round(p1.x) + P.agent + 12;
     const lx = Math.round(p2.x) + P.lamp + 1;
+    const rt = row - step * 2;
+    const ra = row - step;
     return [
-      { key: 'tree', label: [Math.round(p0.x), row], path: [[p0.x, row + 1], [p0.x, top - 2]], end: 'down' },
-      { key: 'agent', label: [ax, row], path: [[ax, row + 1], [ax, G - 10], [ax - 1, G - 10]], end: 'left' },
+      { key: 'tree', label: [Math.round(p0.x), rt], path: [[p0.x, rt + 1], [p0.x, top - 2]], end: 'down' },
+      { key: 'agent', label: [ax, ra], path: [[ax, ra + 1], [ax, G - 10], [ax - 1, G - 10]], end: 'left' },
       { key: 'lamp', label: [lx, row], path: [[lx, row + 1], [lx, G - 24]], end: 'down' },
     ];
   }
@@ -73,7 +77,11 @@ export function heroScene(env, opts) {
     pin(key) {
       const [kind, id] = key.split(':');
       const p = plots.find((q) => q.key === id);
-      if (kind === 'bubble' && p) return bubbleAt(env, p);
+      if (kind === 'bubble' && p) {
+        const asking = id === 'api' && story.permission === 'pending';
+        // Phones only have room for the question mark.
+        return asking || !env.compact ? bubbleAt(env, p) : null;
+      }
       if (kind === 'sign' && p) return signAt(env, p);
       if (kind === 'hit' && p) return hitAt(env, p, env.compact ? 6 : 3);
       if (kind === 'callout') return callouts().find((c) => c.key === id)?.label ?? null;

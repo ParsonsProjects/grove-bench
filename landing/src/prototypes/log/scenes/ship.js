@@ -9,7 +9,7 @@
 import { C } from '../../grove/palette.js';
 import { drawGate, halo } from '../../grove/sprites.js';
 import { P } from './engine.js';
-import { spreadPlots, bubbleAt, hitAt } from './common.js';
+import { spreadPlots, bubbleAt, hitAt, bubbleTurn } from './common.js';
 import { story, passed } from '../story.svelte.js';
 
 const KEYS = ['auth', 'api', 'fix'];
@@ -125,10 +125,14 @@ export function shipScene(env) {
       const G = env.groundY;
       if (kind === 'merge') return [0, Math.round(env.H * { auth: 0.28, api: 0.52, fix: 0.76 }[id])];
       if (kind === 'gate') return [gateX + 0.5, G - 25];
+      if (kind === 'ready') return [gateX + 0.5, G - 46];
       const i = KEYS.indexOf(id);
       const p = plots[i];
       if (!p) return null;
-      if (kind === 'bubble') return p.pose === 'sit' ? bubbleAt(env, p) : null;
+      if (kind === 'bubble') {
+        const asking = i === 1 && !answered();
+        return p.pose === 'sit' && (asking || bubbleTurn(env, i)) ? bubbleAt(env, p) : null;
+      }
       if (kind === 'hit') return hitAt(env, p, env.compact ? 5 : 3);
       return null;
     },
