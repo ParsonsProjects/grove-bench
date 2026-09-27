@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agentSpriteState, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, type AgentSpriteInput } from './agent-sprite.js';
+import { agentSpriteState, agentLook, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SKIN_TONES, HAIR_TONES, type AgentSpriteInput } from './agent-sprite.js';
 
 const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false };
 
@@ -47,5 +47,27 @@ describe('toRuns', () => {
     // Only state-coloured cells in the symbol columns count as the symbol.
     expect(runs.map((r) => r.symbol)).toEqual([false, false, false, true]);
     expect(runs[2].fill).toBe('currentColor');
+    // Runs keep their map key so a look can recolour them.
+    expect(runs.map((r) => r.key)).toEqual(['h', 's', 'c', 'c']);
+  });
+});
+
+describe('agentLook', () => {
+  it('gives the same seed the same look', () => {
+    expect(agentLook('3f9a1c07')).toEqual(agentLook('3f9a1c07'));
+  });
+
+  it('pairs a skin tone with its own closed-eye shade and a hair colour', () => {
+    const look = agentLook('3f9a1c07');
+    expect(SKIN_TONES).toContainEqual({ s: look.s, z: look.z });
+    expect(HAIR_TONES).toContain(look.h);
+  });
+
+  it('uses every skin tone and hair colour across conversation ids', () => {
+    // Ids are the first 8 hex characters of a UUID.
+    const ids = Array.from({ length: 300 }, (_, i) => (Math.imul(i + 1, 0x9e3779b1) >>> 0).toString(16).padStart(8, '0'));
+    const looks = ids.map(agentLook);
+    expect(new Set(looks.map((l) => l.s)).size).toBe(SKIN_TONES.length);
+    expect(new Set(looks.map((l) => l.h)).size).toBe(HAIR_TONES.length);
   });
 });

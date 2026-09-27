@@ -4,7 +4,8 @@
  *
  * Each state gets its own pose, so the status reads from shape as well as
  * colour. The hoodie, laptop glow and symbol take the same Tailwind colour as
- * the status dot they replace, via `currentColor`.
+ * the status dot they replace, via `currentColor`. Skin and hair vary per
+ * conversation (see `agentLook`).
  */
 
 export type AgentSpriteState =
@@ -48,11 +49,12 @@ export function agentSpriteState(s: AgentSpriteInput): AgentSpriteState {
 export const SPRITE_W = 10;
 export const SPRITE_H = 9;
 
-// Map legend. `c` cells use currentColor (the state colour).
+// Map legend. `c` cells use currentColor (the state colour). Hair and skin
+// here are the fallback look, for a character not tied to a conversation.
 const PALETTE: Record<string, string> = {
   h: '#4a3426', // hair
   s: '#e8b48a', // skin
-  z: '#b9825d', // closed eyes
+  z: '#b9825d', // closed eyes, a shade darker than the skin
   e: '#1c1917', // eyes
   l: '#a8a29e', // laptop lid
   L: '#57534e', // laptop edge
@@ -96,10 +98,52 @@ const WALK_TOP = [...HEAD, 'cccccc....', 'sccccs....', '.cccc.....'];
 const WALK_A = [...WALK_TOP, '.p..p.....', '.f..f.....'];
 const WALK_B = [...WALK_TOP, '..pp......', '..ff......'];
 
+/** Palette overrides for one character, keyed like the pixel maps. */
+export type AgentLook = Record<'h' | 's' | 'z', string>;
+
+// Each skin tone comes with the darker shade its closed eyes use.
+export const SKIN_TONES: Omit<AgentLook, 'h'>[] = [
+  { s: '#f3d3b6', z: '#c9a07e' },
+  { s: '#e8b48a', z: '#b9825d' },
+  { s: '#d09a6a', z: '#a06c42' },
+  { s: '#b07a4e', z: '#825432' },
+  { s: '#8e5c3b', z: '#643c24' },
+  { s: '#6e4530', z: '#4a2b1c' },
+];
+
+// Lifted a little where needed so dark hair still shows on the dark sidebar.
+export const HAIR_TONES: string[] = [
+  '#37313b', // black
+  '#4a3426', // dark brown
+  '#7a5230', // brown
+  '#8e3b24', // auburn
+  '#c4632e', // ginger
+  '#d9b46a', // blonde
+  '#a19c96', // grey
+];
+
+/** FNV-1a: a small stable hash, so a conversation keeps its look across restarts. */
+function hashString(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Picks a skin tone and hair colour from a seed, normally the conversation id. */
+export function agentLook(seed: string): AgentLook {
+  const n = hashString(seed) % (SKIN_TONES.length * HAIR_TONES.length);
+  return { ...SKIN_TONES[n % SKIN_TONES.length], h: HAIR_TONES[Math.floor(n / SKIN_TONES.length)] };
+}
+
 export interface SpriteRun {
   x: number;
   y: number;
   w: number;
+  /** Map key, so a look can recolour the run. */
+  key: string;
   fill: string;
   /** Part of the symbol (question mark, exclamation mark, zzz), which may pulse. */
   symbol: boolean;
@@ -132,7 +176,7 @@ export function toRuns(map: string[], palette: Record<string, string> = PALETTE)
       }
       let w = 1;
       while (row[x + w] === key) w++;
-      runs.push({ x, y, w, fill: palette[key], symbol: key === 'c' && x >= 6 });
+      runs.push({ x, y, w, key, fill: palette[key], symbol: key === 'c' && x >= 6 });
       x += w;
     }
   });

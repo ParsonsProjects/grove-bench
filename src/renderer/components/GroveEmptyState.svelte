@@ -81,7 +81,7 @@
               {/each}
             </svg>
             <span class="relative -mb-1.5 ml-3">
-              <AgentSprite state={stateFor(s)} scale={3} />
+              <AgentSprite state={stateFor(s)} seed={s.id} scale={3} />
             </span>
           </span>
           <span class="text-xs text-muted-foreground truncate max-w-full">{name}</span>
