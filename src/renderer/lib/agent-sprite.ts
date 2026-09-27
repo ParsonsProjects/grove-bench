@@ -1,6 +1,6 @@
 /**
  * Pixel characters for the sidebar's conversation status (opt-in via the
- * `sidebarCharacters` setting).
+ * `groveCharacters` setting).
  *
  * Each state gets its own pose, so the status reads from shape as well as
  * colour. The hoodie, laptop glow and symbol take the same Tailwind colour as
@@ -16,7 +16,10 @@ export type AgentSpriteState =
   | 'working'
   | 'unread'
   | 'stopped'
-  | 'ready';
+  | 'ready'
+  // Permission prompts once answered.
+  | 'allowed'
+  | 'denied';
 
 export interface AgentSpriteInput {
   destroying: boolean;
@@ -76,6 +79,8 @@ function withSymbol(pose: string[], symbol: string[]): string[] {
 const QUESTION = ['.ccc', '...c', '..cc', '....', '..c.'];
 const BANG = ['..c.', '..c.', '..c.', '....', '..c.'];
 const ZZZ = ['cccc', '..c.', '.c..', 'cccc'];
+const CHECK = ['', '...c', 'c.c.', '.c..'];
+const CROSS = ['', '.c.c', '..c.', '.c.c'];
 
 // Waving: the right arm is raised and the hand rocks side to side.
 const WAVE_POSE = [...HEAD, ...HOODIE, 'sLllL.....', ...LEGS_SIT];
@@ -111,19 +116,19 @@ export interface AgentSprite {
 }
 
 /** Turns a pixel map into horizontal runs of the same colour. */
-export function toRuns(map: string[]): SpriteRun[] {
+export function toRuns(map: string[], palette: Record<string, string> = PALETTE): SpriteRun[] {
   const runs: SpriteRun[] = [];
   map.forEach((row, y) => {
     let x = 0;
     while (x < row.length) {
       const key = row[x];
-      if (key === '.' || !(key in PALETTE)) {
+      if (key === '.' || !(key in palette)) {
         x++;
         continue;
       }
       let w = 1;
       while (row[x + w] === key) w++;
-      runs.push({ x, y, w, fill: PALETTE[key], symbol: key === 'c' && x >= 6 });
+      runs.push({ x, y, w, fill: palette[key], symbol: key === 'c' && x >= 6 });
       x += w;
     }
   });
@@ -134,7 +139,7 @@ function sprite(label: string, colorClass: string, maps: string[][], opts: Parti
   return {
     label,
     colorClass,
-    frames: maps.map(toRuns),
+    frames: maps.map((map) => toRuns(map)),
     frameSeconds: opts.frameSeconds ?? 0.5,
     pulseSymbol: opts.pulseSymbol ?? false,
     fade: opts.fade ?? false,
@@ -143,7 +148,8 @@ function sprite(label: string, colorClass: string, maps: string[][], opts: Parti
 
 export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   working: sprite('Working', 'text-primary', [TYPE_A, TYPE_B], { frameSeconds: 0.4 }),
-  permission: sprite('Waiting for your permission', 'text-amber-500', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
+  // Covers questions as well as permissions, like the sidebar's "Needs you" filter.
+  permission: sprite('Waiting for you', 'text-amber-500', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
   unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
   ready: sprite('Ready', 'text-green-500', [SIT]),
   stopped: sprite('Stopped', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
@@ -151,7 +157,20 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   starting: sprite('Starting', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
   installing: sprite('Installing dependencies', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
   removing: sprite('Removing', 'text-muted-foreground', [ASLEEP], { fade: true }),
+  allowed: sprite('Allowed', 'text-green-400', [withSymbol(SIT, CHECK)]),
+  denied: sprite('Denied', 'text-destructive', [withSymbol(SIT, CROSS)]),
 };
 
 /** Exported for tests: every pose map, so their sizes can be checked. */
 export const SPRITE_MAPS = { SIT, TYPE_A, TYPE_B, ASLEEP, WAVE_A, WAVE_B, WALK_A, WALK_B };
+
+// Scenery for the empty states: a park bench and an unlit lamp post.
+export const SCENERY_PALETTE: Record<string, string> = {
+  w: '#8a6a4a', // wood
+  W: '#6a5040', // dark wood
+  m: '#57534e', // metal
+  o: '#3f3f46', // unlit lamp
+};
+
+export const BENCH = ['WWWWWWWWWWWW', '.w........w.', 'wwwwwwwwwwww', '.W........W.', '.W........W.'];
+export const LAMP = ['mmm', '.o.', 'mmm', '.m.', '.m.', '.m.', '.m.', '.m.', '.m.', '.m.', 'mmm'];

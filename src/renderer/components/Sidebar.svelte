@@ -569,7 +569,7 @@
     >
       <div class="w-full flex items-center justify-between">
       <div class="flex items-center gap-2 min-w-0">
-        {#if settingsStore.current.sidebarCharacters}
+        {#if settingsStore.current.groveCharacters}
           <AgentSprite state={agentSpriteState({
             destroying: isDestroying,
             status: session.status,

@@ -77,19 +77,18 @@ describe('Sidebar session rows', () => {
     expect(mockGroveBench.getSessionPreviews).toHaveBeenCalledWith(['s2']);
   });
 
-  it('shows a status dot by default and a character when the setting is on', async () => {
+  it('shows a character by default and the plain dot when grove characters are off', async () => {
     messageStore.messagesBySession['s1'] = [
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
     render(Sidebar);
-    await screen.findByText('Waiting for approval — Write');
-    expect(screen.queryByRole('img', { name: 'Waiting for your permission' })).toBeNull();
+    expect(await screen.findByRole('img', { name: 'Waiting for you' })).toBeInTheDocument();
 
-    settingsStore.current = { ...settingsStore.current, sidebarCharacters: true };
+    settingsStore.current = { ...settingsStore.current, groveCharacters: false };
     try {
-      expect(await screen.findByRole('img', { name: 'Waiting for your permission' })).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByRole('img', { name: 'Waiting for you' })).toBeNull());
     } finally {
-      settingsStore.current = { ...settingsStore.current, sidebarCharacters: false };
+      settingsStore.current = { ...settingsStore.current, groveCharacters: true };
     }
   });
 

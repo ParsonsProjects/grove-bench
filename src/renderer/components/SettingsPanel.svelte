@@ -556,13 +556,13 @@
 
           <Separator />
 
-          <!-- Sidebar characters -->
+          <!-- Grove characters -->
           <div>
             <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-              <Checkbox bind:checked={settingsStore.draft.sidebarCharacters} />
-              Show grove characters in the sidebar
+              <Checkbox bind:checked={settingsStore.draft.groveCharacters} />
+              Show grove characters
             </label>
-            <p class="text-xs text-muted-foreground mt-1 ml-6">A small pixel agent shows each conversation's status by pose as well as colour, in place of the dot.</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission prompts, and when no conversation is open.</p>
           </div>
 
           <Separator />

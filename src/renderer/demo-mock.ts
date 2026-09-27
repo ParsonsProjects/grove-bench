@@ -42,7 +42,7 @@ const SETTINGS = {
   theme: 'dark',
   alwaysOnTop: false,
   repoColors: {},
-  sidebarCharacters: false,
+  groveCharacters: true,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

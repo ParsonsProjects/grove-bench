@@ -17,6 +17,7 @@
   import { memoryStore } from './stores/memory.svelte.js';
   import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
   import SessionFinder from './components/SessionFinder.svelte';
+  import GroveEmptyState from './components/GroveEmptyState.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
@@ -408,10 +409,14 @@
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
           ></span>
         {/each}
-        <div class="text-center relative z-10">
-          <p class="text-sm mb-2">No active agents</p>
-          <p class="text-xs">Add a project and start a conversation to get started.</p>
-        </div>
+        {#if settingsStore.current.groveCharacters}
+          <GroveEmptyState variant="empty" />
+        {:else}
+          <div class="text-center relative z-10">
+            <p class="text-sm mb-2">No active agents</p>
+            <p class="text-xs">Add a project and start a conversation to get started.</p>
+          </div>
+        {/if}
       </div>
     {:else if !store.activeSessionId}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
@@ -421,9 +426,13 @@
             style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
           ></span>
         {/each}
-        <div class="text-center relative z-10">
-          <p class="text-sm">Select a conversation from the sidebar.</p>
-        </div>
+        {#if settingsStore.current.groveCharacters}
+          <GroveEmptyState variant="pick" />
+        {:else}
+          <div class="text-center relative z-10">
+            <p class="text-sm">Select a conversation from the sidebar.</p>
+          </div>
+        {/if}
       </div>
     {:else}
       <!-- Active session — keep all live panes mounted, show only the active one -->
