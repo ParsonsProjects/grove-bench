@@ -733,9 +733,10 @@ export interface GroveBenchAPI {
   getEventHistoryCount(sessionId: string): Promise<number>;
   /** Search the full event history (main-process), newest match first. */
   searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
-  /** Search every given session's full history (main-process). Hits are capped
-   *  per session and tagged with their sessionId, newest match first per session. */
-  searchAllEventHistory(sessionIds: string[], query: string, limitPerSession?: number): Promise<CrossSessionSearchHit[]>;
+  /** Search every given session's full history (main-process), in the given
+   *  order. Hits are capped per session and tagged with their sessionId, newest
+   *  match first per session; the search stops once `maxHits` are found. */
+  searchAllEventHistory(sessionIds: string[], query: string, limitPerSession?: number, maxHits?: number): Promise<CrossSessionSearchHit[]>;
   /** First-prompt / last-message previews for the given sessions (main-process). */
   getSessionPreviews(sessionIds: string[]): Promise<Record<string, SessionPreview>>;
   clearEventHistory(sessionId: string): Promise<void>;
