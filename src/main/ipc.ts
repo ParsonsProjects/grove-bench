@@ -49,6 +49,21 @@ function prelaunchPrefixedEvents(sessionId: string): import('../shared/types.js'
   return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
 }
 
+/** Search a session in prelaunchPrefixedEvents' index space, using the cached
+ *  search index for the history instead of scanning the combined array. */
+function searchPrefixedHistory(sessionId: string, query: string, limit: number): import('../shared/types.js').EventSearchHit[] {
+  const prelaunch = prelaunchEvents.get(sessionId) ?? [];
+  const hits = sessionManager.searchEventHistory(sessionId, query, limit);
+  if (prelaunch.length === 0) return hits;
+  // Prelaunch events sit before the history, so they hold the oldest matches.
+  const shifted = hits.map((h) => ({ ...h, eventIndex: h.eventIndex + prelaunch.length }));
+  if (shifted.length >= limit) return shifted;
+  return [...shifted, ...searchEvents(prelaunch, query, limit - shifted.length)];
+}
+
+/** Latest AGENT_HISTORY_SEARCH_ALL request; older ones stop at their next yield. */
+let searchAllGeneration = 0;
+
 /**
  * Resolve a user/agent-supplied file path to a worktree-relative path, stripping Docker
  * container prefixes and absolute host prefixes, and rejecting path traversal outside the worktree.
@@ -572,26 +587,39 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY_SEARCH, (_event, sessionId: string, query: string, limit?: number) => {
-    // Search the same prelaunch-prefixed event array the renderer pages over, so
+    // Search in the same prelaunch-prefixed index space the renderer pages over, so
     // returned eventIndex values line up with getEventHistoryPage's index space.
-    return searchEvents(prelaunchPrefixedEvents(sessionId), query, limit ?? 100);
+    sessionManager.beginSearch();
+    return searchPrefixedHistory(sessionId, query, limit ?? 100);
   });
 
-  ipcMain.handle(IPC.AGENT_HISTORY_SEARCH_ALL, (_event, sessionIds: string[], query: string, limitPerSession?: number) => {
+  ipcMain.handle(IPC.AGENT_HISTORY_SEARCH_ALL, async (_event, sessionIds: string[], query: string, limitPerSession?: number, maxHits?: number) => {
     // Cross-session search for the SessionFinder. Same prelaunch-prefixed index
     // space as AGENT_HISTORY_SEARCH, so hits feed the same jump path.
+    const generation = ++searchAllGeneration;
+    sessionManager.beginSearch();
     const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
     const perSession = limitPerSession ?? 5;
+    let sliceStart = performance.now();
     for (const id of sessionIds ?? []) {
+      if (maxHits !== undefined && hits.length >= maxHits) break;
       try {
-        for (const hit of searchEvents(prelaunchPrefixedEvents(id), query, perSession)) {
+        for (const hit of searchPrefixedHistory(id, query, perSession)) {
           hits.push({ ...hit, sessionId: id });
         }
       } catch (e) {
         logger.warn(`[history-search-all] search failed for ${id}:`, e);
       }
+      // The first search after launch parses every log it reaches. Yield now
+      // and then so terminals and other IPC keep flowing, and give up once a
+      // newer query has replaced this one (the renderer drops stale results).
+      if (performance.now() - sliceStart > 16) {
+        await new Promise((resolve) => setImmediate(resolve));
+        if (generation !== searchAllGeneration) return [];
+        sliceStart = performance.now();
+      }
     }
-    return hits;
+    return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
   });
 
   ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {

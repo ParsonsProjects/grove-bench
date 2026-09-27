@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
 import type { AgentEvent } from '../shared/types.js';
+import * as fs from 'node:fs';
 
 // ─── Mock infrastructure ───
 
@@ -15,11 +16,13 @@ vi.mock('electron', () => ({
 vi.mock('node:fs', () => ({
   default: {
     readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
+    statSync: vi.fn(() => { throw new Error('ENOENT'); }),
     writeFileSync: vi.fn(),
     appendFileSync: vi.fn(),
     mkdirSync: vi.fn(),
   },
   readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
+  statSync: vi.fn(() => { throw new Error('ENOENT'); }),
   writeFileSync: vi.fn(),
   appendFileSync: vi.fn(),
   mkdirSync: vi.fn(),
@@ -1256,6 +1259,75 @@ describe('AgentSessionManager.destroySession()', () => {
     await sessionManager.destroySession('test-destroy-perm');
 
     expect(permResolved).toMatchObject({ behavior: 'deny', message: 'Session destroyed' });
+  });
+});
+
+describe('AgentSessionManager.searchEventHistory()', () => {
+  const log = (...texts: string[]) => texts.map((text) => JSON.stringify({ type: 'user_message', text })).join('\n') + '\n';
+
+  afterEach(() => {
+    vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+  });
+
+  it('indexes a live session and picks up events emitted since the last search', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-search-live',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'fixed the parser', uuid: 'u1' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sessionManager.searchEventHistory('test-search-live', 'parser', 10).map((h) => h.snippet))
+      .toEqual(['fixed the parser']);
+
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'parser tests pass', uuid: 'u2' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sessionManager.searchEventHistory('test-search-live', 'parser', 10).map((h) => h.snippet))
+      .toEqual(['parser tests pass', 'fixed the parser']);
+
+    await sessionManager.destroySession('test-search-live');
+    expect(sessionManager.searchEventHistory('test-search-live', 'parser', 10)).toEqual([]);
+  });
+
+  it('parses a stopped session log once and re-reads it only when it changes', () => {
+    let content = log('investigate the parser bug', 'unrelated');
+    vi.mocked(fs.statSync).mockImplementation(() => ({ mtimeMs: 1, size: content.length }) as fs.Stats);
+    vi.mocked(fs.readFileSync).mockImplementation(() => content);
+
+    sessionManager.beginSearch();
+    expect(sessionManager.searchEventHistory('test-search-disk', 'parser', 10).map((h) => h.eventIndex)).toEqual([0]);
+    sessionManager.beginSearch();
+    expect(sessionManager.searchEventHistory('test-search-disk', 'bug', 10).map((h) => h.eventIndex)).toEqual([0]);
+    expect(fs.readFileSync).toHaveBeenCalledTimes(1);
+
+    content = log('investigate the parser bug', 'unrelated', 'parser fixed');
+    sessionManager.beginSearch();
+    expect(sessionManager.searchEventHistory('test-search-disk', 'parser', 10).map((h) => h.eventIndex)).toEqual([2, 0]);
+    expect(fs.readFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a log that failed to read instead of caching it as empty', () => {
+    const content = log('parser');
+    vi.mocked(fs.statSync).mockImplementation(() => ({ mtimeMs: 1, size: content.length }) as fs.Stats);
+    vi.mocked(fs.readFileSync)
+      .mockImplementationOnce(() => { throw new Error('EBUSY'); })
+      .mockImplementationOnce(() => { throw new Error('EBUSY'); })
+      .mockImplementation(() => content);
+
+    expect(sessionManager.getEventHistory('test-read-busy')).toEqual([]);
+    sessionManager.beginSearch();
+    expect(sessionManager.searchEventHistory('test-search-busy', 'parser', 10)).toEqual([]);
+
+    expect(sessionManager.getEventHistory('test-read-busy')).toHaveLength(1);
+    sessionManager.beginSearch();
+    expect(sessionManager.searchEventHistory('test-search-busy', 'parser', 10)).toHaveLength(1);
   });
 });
 

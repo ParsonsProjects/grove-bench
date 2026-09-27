@@ -4,7 +4,8 @@
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
-  import { highlightSegments } from '../lib/search-highlight.js';
+  import { sortSessions } from '../lib/session-sort.js';
+  import HighlightedText from './HighlightedText.svelte';
   import type { CrossSessionSearchHit } from '../../shared/types.js';
 
   let { onclose }: { onclose: (selectedId?: string) => void } = $props();
@@ -12,6 +13,10 @@
   let query = $state('');
   let selectedIndex = $state(0);
   let inputEl: HTMLInputElement;
+
+  /** Message hits kept per conversation, and in total. */
+  const HITS_PER_CONVERSATION = 3;
+  const MAX_CONTENT_HITS = 30;
 
   interface SessionEntry {
     id: string;
@@ -61,7 +66,11 @@
         { name: 'repoName', weight: 0.2 },
         { name: 'firstPrompt', weight: 0.2 },
       ],
-      threshold: 0.4,
+      // Match anywhere in the text: Fuse's default only scores matches near
+      // the start, so words ~40 chars into a first prompt never matched. The
+      // stricter threshold stops loose matches creeping in from long prompts.
+      ignoreLocation: true,
+      threshold: 0.3,
     })
   );
 
@@ -75,9 +84,14 @@
   let contentLoading = $state(false);
   let reqToken = 0;
 
+  // Newest conversations first, so the capped hit list favours them. Kept as a
+  // string so session updates that don't change the order (status, rename)
+  // don't re-run the search.
+  let searchOrder = $derived(JSON.stringify(sortSessions(store.sessions, { key: 'age', dir: 'desc' }).map((s) => s.id)));
+
   $effect(() => {
     const q = query.trim();
-    const ids = store.sessions.map((s) => s.id);
+    const ids: string[] = JSON.parse(searchOrder);
     if (q.length < 2 || ids.length === 0) {
       contentHits = [];
       contentLoading = false;
@@ -87,22 +101,23 @@
     const token = ++reqToken;
     const timer = setTimeout(async () => {
       try {
-        const hits = await window.groveBench.searchAllEventHistory(ids, q, 3);
+        const hits = await window.groveBench.searchAllEventHistory(ids, q, HITS_PER_CONVERSATION, MAX_CONTENT_HITS);
         if (token !== reqToken) return; // superseded by a newer query
-        contentHits = hits.slice(0, 30);
-        selectedIndex = 0;
+        contentHits = hits;
       } finally {
         if (token === reqToken) contentLoading = false;
       }
-    }, 250);
+    }, 150);
     return () => clearTimeout(timer);
   });
 
   /** Flat selection list: sessions first, then conversation hits. */
   let totalResults = $derived(sessionResults.length + contentHits.length);
 
+  // Back to the top when the query changes. Not on every result update: live
+  // status changes and late message hits shouldn't move the selection.
   $effect(() => {
-    const _r = sessionResults;
+    const _q = query;
     selectedIndex = 0;
   });
 
@@ -213,15 +228,15 @@
                 {:else}
                   <span class="w-2 h-2 bg-green-500 shrink-0"></span>
                 {/if}
-                <span class="text-muted-foreground shrink-0">{entry.repoName}</span>
+                <span class="text-muted-foreground shrink-0"><HighlightedText text={entry.repoName} {query} words /></span>
                 <span class="text-muted-foreground/40 shrink-0">/</span>
-                <span class="font-medium truncate min-w-0">{entry.label}</span>
+                <span class="font-medium truncate min-w-0"><HighlightedText text={entry.label} {query} words /></span>
                 {#if isActive}
                   <span class="ml-auto text-muted-foreground/40 text-[10px]">active</span>
                 {/if}
               </div>
               {#if entry.firstPrompt}
-                <span class="text-muted-foreground truncate pl-3.5">{entry.firstPrompt}</span>
+                <span class="text-muted-foreground truncate pl-3.5"><HighlightedText text={entry.firstPrompt} {query} words /></span>
               {/if}
             </button>
           {/each}
@@ -249,11 +264,7 @@
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0">{src.label}</span>
               </div>
-              <span class="text-muted-foreground truncate min-w-0 max-w-full pl-3.5">
-                {#each highlightSegments(hit.snippet, query) as seg}
-                  {#if seg.match}<mark class="bg-yellow-500/30 text-foreground rounded-sm">{seg.text}</mark>{:else}{seg.text}{/if}
-                {/each}
-              </span>
+              <span class="text-muted-foreground truncate min-w-0 max-w-full pl-3.5"><HighlightedText text={hit.snippet} {query} /></span>
             </button>
           {/each}
         {/if}

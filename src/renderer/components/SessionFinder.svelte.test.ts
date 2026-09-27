@@ -38,8 +38,16 @@ afterEach(() => {
 async function typeQuery(text: string) {
   const input = screen.getByPlaceholderText('Search conversations and messages...');
   await fireEvent.input(input, { target: { value: text } });
-  // Debounce (250ms) then the resolved promise
+  // Debounce (150ms) then the resolved promise
   await new Promise((r) => setTimeout(r, 300));
+}
+
+/** The highlighted match inside the message hit's snippet. */
+function snippetMark(text: string): HTMLElement {
+  const hit = screen.getByText('fixed the', { exact: false, selector: 'span' });
+  const mark = [...hit.querySelectorAll('mark')].find((m) => m.textContent === text);
+  if (!mark) throw new Error(`no <mark>${text}</mark> in snippet`);
+  return mark;
 }
 
 describe('SessionFinder', () => {
@@ -56,10 +64,47 @@ describe('SessionFinder', () => {
     render(SessionFinder, { onclose: vi.fn() });
     await typeQuery('parser');
 
-    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledWith(['s1', 's2'], 'parser', 3);
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledWith(['s1', 's2'], 'parser', 3, 30);
     expect(screen.getByText('In messages')).toBeInTheDocument();
     // Snippet is split into highlight segments; match on the mark element
-    expect(screen.getByText('parser', { selector: 'mark' })).toBeInTheDocument();
+    expect(snippetMark('parser')).toBeInTheDocument();
+  });
+
+  it('searches message content newest conversation first', async () => {
+    store.sessions = [
+      { id: 'old', branch: 'a', repoPath: '/repo-a', status: 'stopped', lastActiveAt: 1_000 },
+      { id: 'new', branch: 'b', repoPath: '/repo-a', status: 'stopped', lastActiveAt: 3_000 },
+      { id: 'mid', branch: 'c', repoPath: '/repo-a', status: 'stopped', createdAt: 2_000 },
+    ] as any;
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('parser');
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledWith(['new', 'mid', 'old'], 'parser', 3, 30);
+  });
+
+  it('does not re-run the content search when a session status changes', async () => {
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('parser');
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(1);
+    store.updateStatus('s1', 'error');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mockGroveBench.searchAllEventHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('highlights query words in conversation rows', async () => {
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('revamp');
+    expect(screen.getByText('revamp', { selector: 'mark' })).toBeInTheDocument();
+  });
+
+  it('matches words late in the first prompt', async () => {
+    mockGroveBench.getSessionPreviews.mockResolvedValue({
+      s2: { firstPrompt: 'Please look at the sidebar component and then refactor the websocket reconnect logic', lastText: '' },
+    });
+    render(SessionFinder, { onclose: vi.fn() });
+    await screen.findByText('sidebar', { exact: false });
+    await typeQuery('websocket');
+    expect(screen.getByText('websocket', { selector: 'mark' })).toBeInTheDocument();
+    expect(screen.queryByText('Sidebar revamp')).not.toBeInTheDocument();
   });
 
   it('selecting a conversation hit focuses the session and requests a jump', async () => {
@@ -68,7 +113,7 @@ describe('SessionFinder', () => {
     render(SessionFinder, { onclose });
     await typeQuery('parser');
 
-    await fireEvent.mouseDown(screen.getByText('parser', { selector: 'mark' }));
+    await fireEvent.mouseDown(snippetMark('parser'));
 
     expect(store.activeSessionId).toBe('s2');
     expect(requestSpy).toHaveBeenCalledWith('s2', { eventIndex: 12, uuid: null, bookmarkId: '' });
