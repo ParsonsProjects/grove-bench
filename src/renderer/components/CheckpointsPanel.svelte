@@ -24,9 +24,10 @@
 
   function getMessageText(uuid: string): string {
     // Prefer text stored in the checkpoint itself (persisted in git commit message),
-    // fall back to in-memory rewind points, then generic label
+    // fall back to in-memory rewind points, then generic label. Older builds
+    // stored the sent text, which starts with attached file content; skip that.
     const cp = checkpoints.find(c => c.uuid === uuid);
-    if (cp?.text) return cp.text;
+    if (cp?.text && !/^<(file|folder) path="/.test(cp.text)) return cp.text;
     const point = rewindPoints.find(p => p.uuid === uuid);
     return point?.text ?? `Turn checkpoint`;
   }

@@ -1,5 +1,5 @@
 import type { AgentEvent, EventSearchHit, SessionPreview } from '../shared/types.js';
-import { stripFileContext } from '../shared/session-name.js';
+import { displayTextFromSent, stripFileContext } from '../shared/prompt-text.js';
 
 export type { EventSearchHit };
 
@@ -46,6 +46,8 @@ export function eventKind(event: AgentEvent): string {
 export function searchableEventText(event: AgentEvent): string {
   switch (event.type) {
     case 'user_message':
+      // As the chat shows it, so a hit never lands in attached file content.
+      return displayTextFromSent(event.text);
     case 'assistant_text':
     case 'tool_use_summary':
       return 'text' in event ? event.text : event.summary;
@@ -103,19 +105,13 @@ function collapse(text: string): string {
   return normalized.length > PREVIEW_MAX_LEN ? `${normalized.slice(0, PREVIEW_MAX_LEN)}…` : normalized;
 }
 
-/** What the user typed in a message: user_message events hold the text as
- *  sent, which starts with file content blocks for attachments and @-refs. */
-function typedText(sentText: string): string {
-  return stripFileContext(sentText).trim();
-}
-
 /** Text of the first real user prompt (slash commands and attachment-only
  *  messages skipped), trimmed but otherwise as sent, or null when the history
  *  has none. */
 export function firstUserPrompt(events: AgentEvent[]): string | null {
   for (const e of events) {
     if (e.type !== 'user_message') continue;
-    const typed = typedText(e.text);
+    const typed = stripFileContext(e.text).trim();
     if (typed && !typed.startsWith('/')) return e.text.trim();
   }
   return null;
@@ -124,18 +120,24 @@ export function firstUserPrompt(events: AgentEvent[]): string | null {
 /**
  * Derive a lightweight conversation preview from a session's event history:
  * the first real user prompt (slash commands skipped) and the most recent
- * user/assistant text, showing what the user typed rather than attached file
- * content. Both empty when the history has no such events.
+ * user/assistant text. User messages read as the chat shows them, not with
+ * attached file content. Both empty when the history has no such events.
  */
 export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
-  const first = firstUserPrompt(events);
-  const firstPrompt = first ? collapse(typedText(first)) : '';
+  let firstPrompt = '';
+  for (const e of events) {
+    if (e.type !== 'user_message') continue;
+    const text = displayTextFromSent(e.text).trim();
+    if (!text || text.startsWith('/')) continue;
+    firstPrompt = collapse(text);
+    break;
+  }
 
   let lastText = '';
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === 'assistant_text' || e.type === 'user_message') {
-      const text = e.type === 'user_message' ? typedText(e.text) : e.text.trim();
+      const text = (e.type === 'user_message' ? displayTextFromSent(e.text) : e.text).trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
       lastText = collapse(text);
       break;

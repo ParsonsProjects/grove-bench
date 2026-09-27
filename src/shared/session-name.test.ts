@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveSessionName, legacySessionName, stripFileContext } from './session-name.js';
+import { deriveSessionName, legacySessionName } from './session-name.js';
 
 describe('deriveSessionName', () => {
   it('trims a short message and capitalises a plain first word', () => {
@@ -116,17 +116,5 @@ describe('legacySessionName', () => {
     expect(legacySessionName('')).toBeNull();
     expect(legacySessionName('/clear')).toBeNull();
     expect(legacySessionName('@src/only.ts')).toBeNull();
-  });
-});
-
-describe('stripFileContext', () => {
-  it('removes leading file and folder blocks, including empty ones', () => {
-    expect(stripFileContext('<file path="a.ts">\n\n</file>\n\nfix it')).toBe('fix it');
-    expect(stripFileContext('<file path="a.ts">\nx\n</file>\n<file path="b.ts">\ny\n</file>\n\nfix it')).toBe('fix it');
-  });
-
-  it('leaves text without leading blocks untouched', () => {
-    expect(stripFileContext('fix <file path="a.ts"> handling')).toBe('fix <file path="a.ts"> handling');
-    expect(stripFileContext('plain prompt')).toBe('plain prompt');
   });
 });

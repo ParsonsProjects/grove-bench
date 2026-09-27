@@ -44,6 +44,16 @@ describe('CheckpointsPanel on the shared review panel', () => {
     expect(container.textContent).not.toContain('Revert');
   });
 
+  it('labels an old checkpoint that stored attached file content with the message text instead', () => {
+    checkpointStore.checkpointsBySession = {
+      [SID]: [{ uuid: 'u3', turn: 3, ref: 'r3', text: '<file path="a.ts"> const secret = 1; </file>  fix it' }],
+    };
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'm3', text: '[a.ts] fix it', uuid: 'u3' }] };
+    const { getByText, queryByText } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText('[a.ts] fix it')).toBeInTheDocument();
+    expect(queryByText(/const secret/)).toBeNull();
+  });
+
   it('shows the empty state for a turn without file changes', async () => {
     mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [] });
     const { getByText } = render(CheckpointsPanel, { sessionId: SID });

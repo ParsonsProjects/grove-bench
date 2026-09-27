@@ -1,5 +1,6 @@
 import type { AgentEvent, ControlDescriptor, ImageAttachment, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
+import { displayTextFromSent } from '../../shared/prompt-text.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
@@ -1619,10 +1620,12 @@ class MessageStore {
         return;
       }
     }
+    // Replayed from history: the event holds the text as sent (file content
+    // blocks first), so rebuild what the chat showed when it was sent.
     this.pushMessage(sessionId, {
       kind: 'user',
       id: nextId(),
-      text: event.text,
+      text: displayTextFromSent(event.text),
       uuid: event.uuid,
     });
     // Schedule checkpoint list refresh so the Checkpoints tab updates

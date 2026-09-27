@@ -178,23 +178,21 @@ describe('extractSessionPreview', () => {
     expect(preview.firstPrompt.endsWith('…')).toBe(true);
   });
 
-  it('shows the typed text, not attached file content', () => {
+  it('shows user messages as the chat does, not attached file content', () => {
     const events: AgentEvent[] = [
       { type: 'user_message', text: '<file path="a.ts">\nconst secret = 1;\n</file>\n\nexplain @a.ts' },
       { type: 'assistant_text', text: 'It declares a constant', uuid: '' },
-      { type: 'user_message', text: '<folder path="src/">\na.ts\n</folder>\n\nnow list src/' },
+      { type: 'user_message', text: '<file path="notes.md">\nlong notes\n</file>\n\nfollow these' },
     ];
-    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'explain @a.ts', lastText: 'now list src/' });
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'explain @a.ts', lastText: '[notes.md] follow these' });
   });
+});
 
-  it('skips attachment-only messages', () => {
-    const events: AgentEvent[] = [
-      { type: 'user_message', text: '<file path="a.ts">\nx\n</file>\n\n' },
-      { type: 'user_message', text: 'what is this file?' },
-      { type: 'assistant_text', text: 'A config file', uuid: '' },
-      { type: 'user_message', text: '<file path="b.ts">\ny\n</file>\n\n' },
-    ];
-    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'what is this file?', lastText: 'A config file' });
+describe('searchableEventText for user messages', () => {
+  it('indexes the displayed text, not attached file content', () => {
+    const event: AgentEvent = { type: 'user_message', text: '<file path="a.ts">\nconst secret = 1;\n</file>\n\nfix it' };
+    expect(searchableEventText(event)).toBe('[a.ts] fix it');
+    expect(searchEvents([event], 'secret')).toEqual([]);
   });
 });
 

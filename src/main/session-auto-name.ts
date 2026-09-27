@@ -1,4 +1,5 @@
-import { deriveSessionName, legacySessionName, stripFileContext } from '../shared/session-name.js';
+import { deriveSessionName, legacySessionName } from '../shared/session-name.js';
+import { stripFileContext } from '../shared/prompt-text.js';
 
 /** Who set a conversation's display name. Auto names follow the provider's
  *  title (or the heuristic); user names are never replaced. */

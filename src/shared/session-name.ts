@@ -1,3 +1,5 @@
+import { stripFileContext } from './prompt-text.js';
+
 const MAX_LEN = 40;
 
 /**
@@ -21,16 +23,6 @@ const FILLER_RE = new RegExp(
   `^(?:${FILLER_OPENERS.map(escapeRegExp).join('|')})(?=[\\s,!.:;]|$)[\\s,!.:;]*`,
   'i',
 );
-
-/** Leading `<file path="…">…</file>` / `<folder …>` blocks that the prompt
- *  editor prepends to the text sent for attachments and @-references. */
-const FILE_CONTEXT_RE = /^(?:<(file|folder) path="[^"]*">\n[\s\S]*?\n<\/\1>\n*)+/;
-
-/** The typed prompt from a message as sent to the agent, without the file
- *  content blocks prepended for attachments and @-references. */
-export function stripFileContext(message: string): string {
-  return message.replace(FILE_CONTEXT_RE, '');
-}
 
 /** Strip a message down to its instruction text, or '' when nothing is left. */
 function cleanPrompt(text: string): string {

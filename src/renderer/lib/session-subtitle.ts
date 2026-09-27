@@ -1,5 +1,4 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
-import { stripFileContext } from '../../shared/session-name.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
 export type SubtitleTone = 'working' | 'waiting' | 'context';
@@ -14,12 +13,6 @@ const MAX_LEN = 90;
 function collapse(text: string): string {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length > MAX_LEN ? `${normalized.slice(0, MAX_LEN)}…` : normalized;
-}
-
-/** What the user typed. Messages replayed from history hold the text as sent,
- *  which starts with file content blocks for attachments and @-refs. */
-function typedText(text: string): string {
-  return stripFileContext(text).trim();
 }
 
 /** The tool name of the most recent unresolved permission request, if any. */
@@ -37,10 +30,7 @@ export function lastTextSnippet(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind === 'text' && m.text.trim()) return collapse(m.text);
-    if (m.kind === 'user') {
-      const typed = typedText(m.text);
-      if (typed && !typed.startsWith('/')) return collapse(typed);
-    }
+    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
   }
   return null;
 }
@@ -48,9 +38,7 @@ export function lastTextSnippet(messages: ChatMessage[]): string | null {
 /** First real user prompt in the loaded messages (slash commands skipped). */
 export function firstPromptSnippet(messages: ChatMessage[]): string | null {
   for (const m of messages) {
-    if (m.kind !== 'user') continue;
-    const typed = typedText(m.text);
-    if (typed && !typed.startsWith('/')) return collapse(typed);
+    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
   }
   return null;
 }
