@@ -425,6 +425,13 @@ export function drawStone(ctx, x, groundY) {
   ctx.fillRect(left + 4, top, 6, 1);
   ctx.fillRect(left + 3, top + 1, 3, 1);
   ctx.fillRect(left + 11, top + 1, 2, 1);
+  return runePixels(x, groundY);
+}
+
+/** Where the rune sits on a stone drawn at (x, groundY). */
+export function runePixels(x, groundY) {
+  const left = x - 8;
+  const top = groundY - 8;
   return RUNE.map(([dx, dy]) => [left + 6 + dx, top + 2 + dy]);
 }
 

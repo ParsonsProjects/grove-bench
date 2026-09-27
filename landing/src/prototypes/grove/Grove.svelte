@@ -1,12 +1,13 @@
 <script>
   import { onMount } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import PixelTree from '../shared/PixelTree.svelte';
   import { links, treeGreens } from '../shared/brand.js';
   import { prefersReducedMotion, animationLoop, inView } from '../shared/motion.js';
   import { trackLandingEvent } from '../../lib/analytics.js';
   import Dialogue from './Dialogue.svelte';
   import { createScene } from './scene.js';
-  import { MAX_TREES, statusLabel } from './agents.js';
+  import { MAX_TREES, STARTING_AGENTS, statusLabel } from './agents.js';
 
   // ---------------------------------------------------------------------------
   // Story
@@ -67,21 +68,17 @@
   let openText = $state('');
   let event = $state(null);
   let wide = $state(true);
-  let hovered = $state(-1);
   let hitEls = $state([]);
 
   const reduced = $derived(prefersReducedMotion.current);
+  // Phones get the title above the scene instead of over it.
+  const narrow = new MediaQuery('max-width: 639px');
   const titleOut = $derived(smoothstep((progress - 0.02) / 0.07));
   const count = $derived(agents.length);
   const full = $derived(count >= MAX_TREES);
-  const rewindAgent = $derived(agents.find((a) => a.rewindTarget));
 
-  const HISTORY = [
-    'Users get logged out after 5 min',
-    'Refresh the token earlier',
-    'Add a test for it',
-    'Run the tests',
-  ];
+  // What you said at each checkpoint of the conversation next to the sundial.
+  const HISTORY = STARTING_AGENTS.find((a) => a.history).history.map((h) => h.you);
 
   // ---------------------------------------------------------------------------
   // Overlays positioned from the scene every frame
@@ -117,13 +114,16 @@
     if (!pos) return;
     let [x, y] = pos;
     const child = el.firstElementChild;
-    if (child && stageEl && key !== 'gate' && !key.startsWith('hit')) {
+    if (child && stageEl && !key.startsWith('hit')) {
       const w = stageEl.clientWidth;
       const half = child.offsetWidth / 2;
-      const labelled = key.startsWith('bubble') || key.startsWith('sign');
-      // Labels of agents that are off screen are hidden, the rest stay fully visible.
-      if (labelled) el.style.visibility = x < 0 || x > w ? 'hidden' : '';
+      const labelled = key !== 'sundial';
       const cx = clamp(x, half + 8, w - half - 8);
+      // Labels stay fully on screen. An agent's label that would have to slide
+      // far from its agent (and onto a neighbour's) is hidden instead.
+      const agentLabel = key.startsWith('bubble') || key.startsWith('sign');
+      const off = x < 0 || x > w || (agentLabel && Math.abs(x - cx) > 30);
+      if (labelled) el.style.visibility = off ? 'hidden' : '';
       if (key.startsWith('bubble')) child.style.setProperty('--tail', `${clamp(x - cx, -half + 8, half - 8).toFixed(1)}px`);
       x = cx;
     }
@@ -178,9 +178,9 @@
   }
 
   function updateInset() {
-    if (!scene || !titleEl || !stageEl) return;
+    if (!scene) return;
     const out = smoothstep((progress - 0.02) / 0.07);
-    const inset = wide && out < 0.5 ? titleEl.offsetLeft + titleEl.offsetWidth + 8 : 0;
+    const inset = titleEl && wide && out < 0.5 ? titleEl.offsetLeft + titleEl.offsetWidth + 8 : 0;
     scene.setInsetLeft(inset);
   }
 
@@ -299,7 +299,6 @@
   }
 
   function hover(i) {
-    hovered = i;
     scene?.setHover(i);
     if (reduced) redraw();
   }
@@ -447,6 +446,18 @@
   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" /></svg>
 {/snippet}
 
+{#snippet titleContent()}
+  <p class="kicker">{@render logo(14)} Grove Bench for Windows</p>
+  <h1>Claude Code agents, side by side.</h1>
+  <p class="lede">Each conversation gets its own git worktree, branch and terminal. Run several at once on one project.</p>
+  <div class="actions">
+    <a href={links.releases} target="_blank" rel="noopener" class="pix-btn primary" onclick={() => onDownload('grove-hero')}>
+      {@render downloadIcon()} Download for Windows
+    </a>
+    <a href={links.github} target="_blank" rel="noopener" class="pix-btn" onclick={() => onGithub('grove-hero')}>View source</a>
+  </div>
+{/snippet}
+
 {#snippet bubbleBody(a)}
   {#if chapter === 1}
     <span class="b-folder" aria-hidden="true"></span><span class="mono">.grove-wt/{a.id}</span>
@@ -474,7 +485,7 @@
 
 <div class="page min-h-screen bg-background text-foreground">
   <nav class="sticky top-0 z-50 h-14 border-b border-border bg-card/85">
-    <div class="mx-auto flex h-full max-w-6xl items-center justify-between px-4 sm:px-6">
+    <div class="nav-inner flex h-full items-center justify-between">
       <a href="#top" class="flex items-center gap-2.5" aria-label="Grove Bench, back to top">
         {@render logo(16)}
         <span class="text-sm font-semibold tracking-tight">Grove Bench</span>
@@ -483,7 +494,7 @@
         href={links.github}
         target="_blank"
         rel="noopener"
-        class="nav-gh inline-flex items-center gap-2 bg-primary px-4 py-2 text-xs font-medium text-primary-foreground"
+        class="nav-gh inline-flex items-center gap-2 bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         onclick={() => onGithub('grove-nav')}
       >
         {@render githubIcon()}
@@ -493,6 +504,13 @@
   </nav>
 
   <main id="top">
+    {#if narrow.current}
+      <!-- On phones the title sits above the scene, in the same night sky -->
+      <header class="title-card stacked">
+        {@render titleContent()}
+      </header>
+    {/if}
+
     <!-- The grove: a tall section with a sticky scene -->
     <section class="story" bind:this={storyEl} aria-label="A walk through the grove" style="--segments: {SEGMENTS}">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -510,24 +528,16 @@
           <canvas bind:this={canvasEl} class="scene" aria-hidden="true"></canvas>
         </div>
 
-        <!-- Title screen -->
-        <header
-          class="title-card"
-          bind:this={titleEl}
-          style="opacity: {1 - titleOut}; transform: translateY({-titleOut * 28}px); visibility: {titleOut > 0.98 ? 'hidden' : 'visible'}"
-        >
-          <p class="kicker">{@render logo(14)} Grove Bench for Windows</p>
-          <h1>Claude Code agents, side by side.</h1>
-          <p class="lede">
-            Each conversation gets its own git worktree, branch and terminal. Run several at once on one project.
-          </p>
-          <div class="actions">
-            <a href={links.releases} target="_blank" rel="noopener" class="pix-btn primary" onclick={() => onDownload('grove-hero')}>
-              {@render downloadIcon()} Download for Windows
-            </a>
-            <a href={links.github} target="_blank" rel="noopener" class="pix-btn" onclick={() => onGithub('grove-hero')}>View source</a>
-          </div>
-        </header>
+        {#if !narrow.current}
+          <!-- Title screen, laid over the sky -->
+          <header
+            class="title-card"
+            bind:this={titleEl}
+            style="opacity: {1 - titleOut}; transform: translateY({-titleOut * 28}px); visibility: {titleOut > 0.98 ? 'hidden' : 'visible'}"
+          >
+            {@render titleContent()}
+          </header>
+        {/if}
 
         <div class="overlays">
           <!-- Memory folders around the old tree -->
@@ -719,7 +729,8 @@
     <section class="cta" use:inView={{ once: true, threshold: 0.3, onchange: (v) => v && (ctaSeen = true) }}>
       <div class="cta-sky" aria-hidden="true">
         {#each Array(30) as _, i}
-          <span class="cta-star" style="left: {(i * 37 + 11) % 97}%; top: {(i * 53 + 7) % 88}%; animation-delay: {(i * 0.7) % 4}s"></span>
+          {@const side = i % 2 ? 0 : 76}
+          <span class="cta-star" style="left: {side + ((i * 37 + 11) % 22)}%; top: {(i * 53 + 7) % 88}%; animation-delay: {(i * 0.7) % 4}s"></span>
         {/each}
       </div>
       <div class="cta-head mx-auto max-w-6xl px-4 sm:px-6">
@@ -783,6 +794,15 @@
   nav.sticky {
     backdrop-filter: blur(10px);
   }
+  /* Same gutter as the title screen, so the two line up. */
+  .nav-inner {
+    padding-inline: 16px;
+  }
+  @media (min-width: 640px) {
+    .nav-inner {
+      padding-inline: clamp(24px, 5vw, 72px);
+    }
+  }
   .nav-gh {
     transition: filter 0.15s ease;
   }
@@ -811,7 +831,6 @@
     min-height: 480px;
     overflow: hidden;
     background: #0d1228;
-    touch-action: pan-y;
   }
   .scene-wrap {
     position: absolute;
@@ -1149,8 +1168,32 @@
     left: 0;
     top: 0;
     width: 100%;
-    padding: 20px 16px 0;
+    padding: 24px clamp(24px, 5vw, 72px) 0;
     will-change: transform, opacity;
+  }
+  .title-card.stacked {
+    position: relative;
+    z-index: auto;
+    padding: 28px 16px 40px;
+    /* Ends on the canvas sky's top band so the two read as one sky. */
+    background: linear-gradient(180deg, #0b0f1c, #030715);
+  }
+  .title-card.stacked::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 3px;
+    height: 3px;
+    opacity: 0.6;
+    box-shadow:
+      300px 40px 0 #f4ecdd,
+      352px 120px 0 #c9d2e8,
+      250px 210px 0 #c9d2e8,
+      330px 290px 0 #f4ecdd,
+      40px 330px 0 #c9d2e8,
+      190px 20px 0 #c9d2e8;
+    pointer-events: none;
   }
   .stage.wide .title-card {
     width: min(560px, 42%);
@@ -1459,7 +1502,7 @@
   }
   .kbd {
     padding: 1px 6px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--color-foreground);
     background: var(--color-muted);
     box-shadow: 0 2px 0 0 #0b0b0b;

@@ -32,6 +32,7 @@ import {
   drawGate,
   drawSundial,
   drawStone,
+  runePixels,
   moonSprite,
   sunSprite,
   halo,
@@ -42,8 +43,8 @@ import {
 import { STARTING_AGENTS, PLANTED_AGENTS, createAgent, stepAgent, answerAgent } from './agents.js';
 
 export const LAYOUT = {
-  oldTree: 40,
-  stone: 68,
+  oldTree: -34,
+  stone: -6,
   // Slots in the order they fill: three starting trees, then new ones to the left.
   slots: [260, 330, 400, 190, 120],
   sundial: 466,
@@ -110,7 +111,7 @@ export function createScene(canvas, options = {}) {
   let local = 0;
   let tod = 0;
   let todShown = 0;
-  const anim = { fence: 0, memory: 0, merge: 0, term: 0, shake: 0 };
+  const anim = { fence: 0, memory: 0, merge: 0, term: 0 };
   let merged = false;
   let hover = -1;
   let time = 0;
@@ -151,7 +152,6 @@ export function createScene(canvas, options = {}) {
       sign: seated ? 1 : 0,
       walkX: 0,
       walkT: 0,
-      lampOn: seated ? 1 : 0,
       shake: 0,
     };
     plots.push(plot);
@@ -258,7 +258,7 @@ export function createScene(canvas, options = {}) {
       case 0:
         return { range: [a, b], pri: LAYOUT.slots[1] + 4, inset: insetLeftCss / k };
       case 3:
-        return { range: [LAYOUT.oldTree - 46, b], pri: -Infinity };
+        return { range: [LAYOUT.oldTree - 46, b], pri: LAYOUT.oldTree + 38 };
       case 4:
         return { range: [rewindX - 32, LAYOUT.sundial + 20], pri: LAYOUT.sundial - 10 };
       case 5:
@@ -565,7 +565,6 @@ export function createScene(canvas, options = {}) {
       p.walkX = Math.min(target, p.walkX + dt * 42);
       if (p.walkX >= target) {
         p.phase = 'sit';
-        p.lampOn = 1;
         const [tool, detail] = p.agent.script[0];
         p.agent.bubble = { tool, detail };
         p.agent.timer = 0;
@@ -626,7 +625,7 @@ export function createScene(canvas, options = {}) {
     ctx.drawImage(skyLayer.canvas, 0, 0);
     drawStars(tt, night);
     drawClouds(todv, tt);
-    drawMoonSun(todv, tt);
+    drawMoonSun(todv);
     drawMeteor(night);
     drawBirds(todv, tt);
     drawHills(cam, todv);
@@ -639,7 +638,7 @@ export function createScene(canvas, options = {}) {
     drawTufts(w, cam, tt, 1);
     drawOldTree(w, cam);
     drawFences(w, cam);
-    for (const p of plots) drawPlot(w, p, cam, tt);
+    for (const p of plots) drawPlot(w, p, cam);
     drawEmptySlots(w, cam);
     drawSundialAt(w, cam);
     drawGate(w, LAYOUT.gate - cam, groundY + 1);
@@ -709,8 +708,7 @@ export function createScene(canvas, options = {}) {
     }
   }
 
-  function drawMoonSun(todv, tt) {
-    const skyTop = 0;
+  function drawMoonSun(todv) {
     const horizon = groundY - 20;
     // Moon: high at night, sinking to the left toward day.
     const moonA = 1 - smooth(0.45, 0.8, todv);
@@ -718,7 +716,7 @@ export function createScene(canvas, options = {}) {
       // On narrow screens the title fills the sky, so the moon tucks into the corner.
       const narrow = W < 220;
       const mx = Math.round(narrow ? W - 24 - todv * 40 : W * (0.8 - 0.25 * todv));
-      const my = Math.round((narrow ? 16 : Math.max(skyTop + 14, groundY - 124)) + todv * 70);
+      const my = Math.round((narrow ? 16 : Math.max(14, groundY - 124)) + todv * 70);
       ctx.globalAlpha = moonA;
       ctx.drawImage(ringHalo(C.primaryPale, 19, [0.1, 0.06, 0.03]), mx - 19, my - 19);
       ctx.drawImage(moon, mx - 7, my - 7);
@@ -732,7 +730,6 @@ export function createScene(canvas, options = {}) {
       ctx.drawImage(ringHalo(C.amberLight, 26, [0.28, 0.15, 0.07]), sx - 26, sy - 26);
       ctx.drawImage(sun, sx - 7, sy - 7);
     }
-    void tt;
   }
 
   let cloudKey = '';
@@ -1018,7 +1015,7 @@ export function createScene(canvas, options = {}) {
     }
   }
 
-  function drawPlot(w, p, cam, tt) {
+  function drawPlot(w, p, cam) {
     const x = p.x - cam;
     if (x < -60 || x > W + 60) return;
     // Tree.
@@ -1063,7 +1060,6 @@ export function createScene(canvas, options = {}) {
     }
     // Lamp.
     if (p.bench >= 1) p.lamp = drawLamp(w, x + P.lamp, groundY);
-    void tt;
   }
 
   function drawEmptySlots(w, cam) {
@@ -1072,6 +1068,15 @@ export function createScene(canvas, options = {}) {
       if (occupied.has(i)) return;
       const x = sx - cam;
       if (x < -20 || x > W + 20) return;
+      // A bush and a few flowers keep the empty plot from looking bare.
+      drawBush(w, x - 22, groundY, i);
+      drawBush(w, x + 24, groundY, i + 3, true);
+      for (const [fx, col] of [[-12, C.amberLight], [-9, C.cream], [12, C.cream], [15, C.primaryPale]]) {
+        w.fillStyle = C.grassDark;
+        w.fillRect(x + fx, groundY - 2, 1, 3);
+        w.fillStyle = col;
+        w.fillRect(x + fx, groundY - 3, 1, 1);
+      }
       // A patch of turned soil waiting for a seed.
       w.fillStyle = C.woodDark;
       w.fillRect(x - 6, groundY, 13, 2);
@@ -1082,6 +1087,35 @@ export function createScene(canvas, options = {}) {
       w.fillRect(x - 2, groundY - 1, 1, 1);
       w.fillRect(x + 2, groundY, 1, 1);
     });
+  }
+
+  function drawBush(w, x, base, seed, small = false) {
+    const puffs = small
+      ? [[-3, 3, 3], [2, 4, 3]]
+      : [[-5, 3, 4], [0, 6, 5], [5, 3, 4]];
+    // Dark outline pass, then body, then a lit top edge.
+    for (const pass of [0, 1, 2]) {
+      for (const [dx, h, r] of puffs) {
+        const cx = x + dx;
+        const top = base - h - r + 1;
+        for (let yy = 0; yy <= r * 2; yy++) {
+          const half = Math.round(Math.sqrt(Math.max(0, r * r - (yy - r) ** 2)));
+          const y = top + yy;
+          if (y > base) continue;
+          if (pass === 0) {
+            w.fillStyle = C.leafSeam;
+            w.fillRect(cx - half - 1, y, half * 2 + 3, 1);
+          } else if (pass === 1) {
+            w.fillStyle = yy < 2 ? C.grassTop : hash(seed + dx, yy) < 0.2 ? C.grassDark : C.grass;
+            w.fillRect(cx - half, y, half * 2 + 1, 1);
+          }
+        }
+        if (pass === 2) {
+          w.fillStyle = C.leafTop;
+          w.fillRect(cx - 1, top + 1, 2, 1);
+        }
+      }
+    }
   }
 
   function sundialAngle(n) {
@@ -1181,7 +1215,7 @@ export function createScene(canvas, options = {}) {
     // The rune always glows a little.
     const sx = LAYOUT.stone - cam;
     if (sx > -40 && sx < W + 40) {
-      const rune = drawStoneRunePositions(sx);
+      const rune = runePixels(sx, groundY);
       const pulse = reduced ? 1 : 0.75 + 0.25 * Math.sin(tt * 2.2);
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = (0.15 + 0.85 * m) * pulse;
@@ -1242,15 +1276,6 @@ export function createScene(canvas, options = {}) {
       }
     }
     ctx.globalAlpha = 1;
-  }
-
-  function drawStoneRunePositions(sx) {
-    // Same geometry as drawStone, without drawing.
-    const left = sx - 8;
-    const top = groundY - 8;
-    return [
-      [1, 0], [2, 0], [3, 0], [2, 1], [0, 2], [1, 2], [2, 2], [3, 2], [4, 2], [2, 3], [1, 4], [3, 4],
-    ].map(([dx, dy]) => [left + 6 + dx, top + 2 + dy]);
   }
 
   function drawMerge(cam, tt) {
@@ -1431,8 +1456,7 @@ export function createScene(canvas, options = {}) {
             p.shown = blocksSmall.length;
             p.bench = 1;
             p.sign = 1;
-            p.lampOn = 1;
-            if (!p.agent.bubble && p.agent.script[0]) p.agent.bubble = { tool: p.agent.script[0][0], detail: p.agent.script[0][1] };
+                if (!p.agent.bubble && p.agent.script[0]) p.agent.bubble = { tool: p.agent.script[0][0], detail: p.agent.script[0][1] };
           }
         }
         particles.length = 0;
