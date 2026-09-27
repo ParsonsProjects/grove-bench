@@ -125,6 +125,12 @@
     </div>
   {/if}
 
+  <!-- Above the list: the popover grows upward from the status bar, so
+       anything added below the rows would slide them under the cursor. -->
+  {#if error}
+    <div class="px-2 py-1.5 border-b border-border text-red-400 break-words">{error}</div>
+  {/if}
+
   <div class="max-h-64 overflow-y-auto py-1" bind:this={listEl}>
     {#if loading}
       <div class="px-2 py-3 text-muted-foreground text-center">Loading branches…</div>
@@ -160,9 +166,7 @@
   </div>
 
   <div class="px-2 py-1.5 border-t border-border text-[10px]">
-    {#if error}
-      <span class="text-red-400 break-words">{error}</span>
-    {:else if switching}
+    {#if switching}
       <span class="text-muted-foreground">Switching…</span>
     {:else if fetching}
       <span class="text-muted-foreground/60">Fetching remote branches…</span>
