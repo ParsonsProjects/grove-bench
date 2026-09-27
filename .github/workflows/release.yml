@@ -1,48 +1,71 @@
 name: Release
 
+# Push a tag named v<package.json version> on a commit in main. The tag is
+# checked, the Package workflow builds and smoke tests the installer, then it
+# is published as a GitHub release. Versions with a pre-release part
+# (0.1.0-alpha.3) are published as pre-releases.
+
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: windows-latest
-    env:
-      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+  check:
+    name: Check tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          node-version: 20
-          cache: npm
+          fetch-depth: 0
 
-      - name: Install dependencies
-        run: npm ci
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
-      - name: Run tests
-        run: npm test
+      - name: Check tag matches package.json and is on main
+        id: check
+        run: node scripts/release-check.mjs
 
-      - name: Install AzureSignTool
-        if: env.AZURE_SIGNING_ENDPOINT != ''
-        run: dotnet tool install --global AzureSignTool
+  package:
+    needs: check
+    uses: ./.github/workflows/package.yml
 
-      - name: Build and publish
-        run: npm run dist:publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
-          AZURE_CODE_SIGNING_NAME: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+  publish:
+    name: Publish release
+    needs: [check, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
         with:
           name: windows-installer
-          path: out/
+          path: out
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check.outputs.version }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          ls -l out
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$VERSION" \
+            --generate-notes \
+            "${flags[@]}"

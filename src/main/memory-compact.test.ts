@@ -300,40 +300,38 @@ describe('compactMemory', () => {
     expect(listed.some(p => p.includes('_compact-backup'))).toBe(false);
   });
 
-  it('passes the configured memoryModel to generateText', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'fact');
-    vi.mocked(settings.getSettings).mockReturnValue({
-      memoryAutoSave: true, memoryAutoCompact: true, memoryModel: 'claude-haiku-4-5',
-    } as ReturnType<typeof settings.getSettings>);
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [{ action: 'keep', path: 'repo/overview.md', content: '', reason: '' }],
-    }));
+  describe('background model', () => {
+    const settingsWith = (backgroundModels: Record<string, string>) => ({
+      memoryAutoSave: true, memoryAutoCompact: true, backgroundModels,
+    }) as unknown as ReturnType<typeof settings.getSettings>;
 
-    await compactMemory({ repoPath: REPO, force: true });
+    async function modelUsed(): Promise<unknown> {
+      writeMemory('repo/overview.md', 'Overview', 'fact');
+      mockAdapter.generateText.mockResolvedValue(JSON.stringify({
+        files: [{ action: 'keep', path: 'repo/overview.md', content: '', reason: '' }],
+      }));
+      await compactMemory({ repoPath: REPO, force: true });
+      return (mockAdapter.generateText.mock.calls[0][2] as { model?: string }).model;
+    }
 
-    expect(mockAdapter.generateText).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.objectContaining({ model: 'claude-haiku-4-5' }),
-    );
-  });
+    afterEach(() => { delete (mockAdapter as { backgroundModel?: string }).backgroundModel; });
 
-  it('omits the model when memoryModel is empty (provider default)', async () => {
-    writeMemory('repo/overview.md', 'Overview', 'fact');
-    vi.mocked(settings.getSettings).mockReturnValue({
-      memoryAutoSave: true, memoryAutoCompact: true, memoryModel: '',
-    } as ReturnType<typeof settings.getSettings>);
-    mockAdapter.generateText.mockResolvedValue(JSON.stringify({
-      files: [{ action: 'keep', path: 'repo/overview.md', content: '', reason: '' }],
-    }));
+    it("uses the model picked for this agent in Settings", async () => {
+      (mockAdapter as { backgroundModel?: string }).backgroundModel = 'cheap-default';
+      vi.mocked(settings.getSettings).mockReturnValue(settingsWith({ [mockAdapter.id]: 'picked-model', other: 'other-model' }));
+      expect(await modelUsed()).toBe('picked-model');
+    });
 
-    await compactMemory({ repoPath: REPO, force: true });
+    it("falls back to the agent's own background model", async () => {
+      (mockAdapter as { backgroundModel?: string }).backgroundModel = 'cheap-default';
+      vi.mocked(settings.getSettings).mockReturnValue(settingsWith({ other: 'other-model' }));
+      expect(await modelUsed()).toBe('cheap-default');
+    });
 
-    expect(mockAdapter.generateText).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.objectContaining({ model: undefined }),
-    );
+    it("omits the model when neither is set (the agent's default)", async () => {
+      vi.mocked(settings.getSettings).mockReturnValue(settingsWith({}));
+      expect(await modelUsed()).toBeUndefined();
+    });
   });
 
   it('leaves files untouched when the adapter returns invalid JSON', async () => {

@@ -27,6 +27,8 @@ export interface WorktreeInfo {
    *  it is still open. Completed sessions are hidden from the sidebar by
    *  default and reopen on the next user message. */
   completedAt?: number | null;
+  /** Adapter id of the agent the session runs, from the manifest. */
+  agentType?: string;
 }
 
 export interface WorktreeRepoConfig {
@@ -66,23 +68,47 @@ export interface SessionInfo {
 
 // ─── Prerequisites ───
 
+/** A registered agent as the renderer sees it. */
+export interface AgentSummary {
+  id: string;
+  displayName: string;
+  capabilities: Record<string, boolean>;
+  isDefault?: boolean;
+  /** The adapter's own model for background tasks, if it declares one. */
+  backgroundModel?: string;
+}
+
+/** One agent's install and sign-in state. */
+export interface AgentPrerequisiteStatus {
+  available: boolean;
+  path?: string;
+  authenticated?: boolean;
+  authMethod?: string;
+  email?: string;
+  /** Adapter-provided error message when not available (e.g. install instructions). */
+  errorMessage?: string;
+  /** Adapter-provided message when not authenticated. */
+  authErrorMessage?: string;
+  /** Present when the provider accepts an API key entered in the app. The
+   *  key itself never reaches the renderer. */
+  apiKey?: {
+    label: string;
+    helpUrl: string;
+    /** A key is saved. While saved it is used instead of any CLI sign-in. */
+    saved: boolean;
+    /** The OS can encrypt a key. Without it no key can be saved. */
+    canStore: boolean;
+  };
+}
+
 export interface PrerequisiteStatus {
   git: {
     available: boolean;
     version?: string;
     meetsMinimum?: boolean;
   };
-  agent: {
-    available: boolean;
-    path?: string;
-    authenticated?: boolean;
-    authMethod?: string;
-    email?: string;
-    /** Adapter-provided error message when not available (e.g. install instructions). */
-    errorMessage?: string;
-    /** Adapter-provided message when not authenticated. */
-    authErrorMessage?: string;
-  };
+  /** One entry per registered agent, keyed by adapter id. */
+  agents: Record<string, AgentPrerequisiteStatus>;
   /** GitHub CLI — optional; only gates PR automation, never blocks the app. */
   gh?: {
     available: boolean;
@@ -725,10 +751,16 @@ export interface GroveBenchAPI {
   // Prerequisites
   /** Full check of git + agent CLI (spawns processes; excludes gh). */
   checkPrerequisites(): Promise<PrerequisiteStatus>;
-  /** Last passing check from a previous launch, or null. Instant. */
+  /** Last check result, from this or a previous launch, or null. Instant. */
   getCachedPrerequisites(): Promise<PrerequisiteStatus | null>;
   /** GitHub CLI availability/auth — may hit the network, never gates the app. */
   checkGhPrerequisite(): Promise<NonNullable<PrerequisiteStatus['gh']>>;
+  /** Encrypt and save an API key for one agent. Rejects with a user-facing
+   *  message when the key is malformed or can't be stored. Resolves with the
+   *  updated status. */
+  setApiKey(adapterId: string, key: string): Promise<PrerequisiteStatus>;
+  /** Remove an agent's saved API key. Resolves with the updated status. */
+  clearApiKey(adapterId: string): Promise<PrerequisiteStatus>;
   /** Tell main that startup session restore has finished. */
   notifyRestoreComplete(): void;
 
@@ -892,6 +924,8 @@ export interface GroveBenchAPI {
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
   onPowerResume(callback: (resumeIds: string[]) => void): () => void;
+  /** An agent's model list changed (it reported its current models). */
+  onModelsChanged(callback: (adapterId: string) => void): () => void;
 
   // Error reporting
   /** Uncaught main-process errors, forwarded so the UI can surface them. */
@@ -917,7 +951,9 @@ export interface GroveBenchAPI {
   winIsMaximized(): Promise<boolean>;
 
   // Agent adapters
-  listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
+  /** Registered agents, in registration order. `isDefault` marks the one new
+   *  conversations use unless another is picked. */
+  listAdapters(): Promise<AgentSummary[]>;
   /** Control descriptors an adapter declares for `model` (null = its default
    *  model), without needing a session. Used by Settings for per-adapter
    *  defaults. Unknown adapter = []. */
@@ -986,7 +1022,9 @@ export interface GroveBenchSettings {
   autoSkillSuggestions: boolean;
 
   // Agent Defaults
-  defaultModel: string;
+  /** Model new conversations start on, keyed by adapter id. Missing or empty
+   *  means the adapter's first model. */
+  defaultModels: Record<string, string>;
   /** Default values for each adapter's declared session controls (thinking,
    *  speed, ...), keyed by adapter id then control id. Only ids the adapter
    *  actually offers for the session's model are applied; anything else is
@@ -1008,10 +1046,10 @@ export interface GroveBenchSettings {
   /** Abort a memory compaction pass after this many seconds. Clamped to a
    *  30-second minimum. Default 300 (5 minutes). */
   memoryCompactTimeoutSeconds: number;
-  /** Model used for background memory calls (auto-save extraction and
-   *  compaction). Empty = provider default. Defaults to Haiku — these calls
-   *  run after every session and don't need a frontier model. */
-  memoryModel: string;
+  /** Model for background tasks (memory notes and compaction, commit
+   *  messages, skill suggestions), keyed by adapter id. Missing or empty
+   *  means the adapter's own cheap default (Haiku for Claude). */
+  backgroundModels: Record<string, string>;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
@@ -1217,6 +1255,8 @@ export const IPC = {
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
+  CREDENTIALS_SET_API_KEY: 'credentials:setApiKey',
+  CREDENTIALS_CLEAR_API_KEY: 'credentials:clearApiKey',
   /** Renderer → main: session restore finished; deferred background work may start. */
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
@@ -1341,6 +1381,7 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  AGENT_MODELS_CHANGED: 'agent:modelsChanged',
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater

@@ -211,6 +211,8 @@ const api: GroveBenchAPI = {
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
   getCachedPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CACHED),
   checkGhPrerequisite: () => ipcRenderer.invoke(IPC.PREREQUISITES_GH),
+  setApiKey: (adapterId: string, key: string) => ipcRenderer.invoke(IPC.CREDENTIALS_SET_API_KEY, adapterId, key),
+  clearApiKey: (adapterId: string) => ipcRenderer.invoke(IPC.CREDENTIALS_CLEAR_API_KEY, adapterId),
   notifyRestoreComplete: () => ipcRenderer.send(IPC.APP_RESTORE_COMPLETE),
 
   // Session status updates
@@ -341,6 +343,13 @@ const api: GroveBenchAPI = {
     ipcRenderer.on(IPC.POWER_RESUME, handler);
     return () => {
       ipcRenderer.removeListener(IPC.POWER_RESUME, handler);
+    };
+  },
+  onModelsChanged: (callback: (adapterId: string) => void) => {
+    const handler = (_event: unknown, adapterId: string) => callback(adapterId);
+    ipcRenderer.on(IPC.AGENT_MODELS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_MODELS_CHANGED, handler);
     };
   },
 

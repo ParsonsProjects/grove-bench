@@ -15,8 +15,11 @@ The project uses electron-builder with NSIS (Windows installer). Configuration i
 | Command | Output |
 |---------|--------|
 | `npm run build` | Build main, preload, and renderer |
-| `npm run dist` | Build + package NSIS installer (unsigned) |
-| `npm run dist:publish` | Build + package + publish to GitHub (CI only) |
+| `npm run dist` | Build + package the NSIS installer into `out/` (unsigned, never publishes) |
+
+Check a local build with `node scripts/smoke-pty.mjs`, which loads node-pty in the packaged app and runs a command in a terminal.
+
+node-pty is not rebuilt for Electron (`npmRebuild: false`): its 1.1.0 prebuilds use Node-API, so they load in any Electron version, and rebuilding from source needs a Visual Studio release that `@electron/node-gyp` recognises.
 
 ---
 
@@ -28,7 +31,6 @@ Uses `electron-updater` with GitHub Releases as the update feed.
 
 ```
 npm install electron-updater
-npm install -D @electron-forge/publisher-github
 ```
 
 ### Files to Create
@@ -39,7 +41,7 @@ Core auto-update module. Wraps `electron-updater` with:
 
 - `autoDownload = false` — user chooses when to download
 - `autoInstallOnAppQuit = true` — installs on next quit if downloaded
-- Checks on startup (10s delay) and every 4 hours
+- Checks on startup (60s delay) and every 4 hours
 - Only runs when `app.isPackaged` (skips in dev mode)
 - Forwards all status events to renderer via IPC
 
@@ -199,13 +201,26 @@ Embed `<UpdateNotification />` next to the "Grove Bench" text.
 
 ## Release Workflow
 
-1. Bump version in `package.json`
-2. Commit and tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
-3. Build and publish: `npm run dist:publish`
-4. Verify the draft release on GitHub
-5. Publish the release (un-draft it)
+1. On a branch, set the new version: `npm version 0.0.0-alpha.3 --no-git-tag-version` (updates `package.json` and `package-lock.json`). Merge it to `main`.
+2. Tag that commit on `main` and push the tag:
+   ```bash
+   git checkout main && git pull
+   git tag v0.0.0-alpha.3 && git push origin v0.0.0-alpha.3
+   ```
+3. `.github/workflows/release.yml` then:
+   - checks the tag is `v` + the `package.json` version and the commit is on `main` (`scripts/release-check.mjs`)
+   - runs the Package workflow: type check, tests, `npm run dist`, the node-pty smoke test
+   - creates the GitHub release with generated notes and uploads the installer, its `.blockmap` and `latest.yml`
 
-`electron-updater` reads the `latest.yml` from the GitHub Release to detect new versions and download the update.
+Versions with a pre-release part (`-alpha.3`, `-beta.1`) are published as GitHub pre-releases; plain `X.Y.Z` versions as full releases. The release is only created once everything has passed, so a failed run leaves nothing to clean up: fix it on `main`, then delete and re-push the tag (`git push --delete origin vX && git tag -d vX`).
+
+`electron-updater` reads `latest.yml` from the release to detect and download updates. Installs of a pre-release version also receive pre-releases (electron-updater turns `allowPrerelease` on when the running version has a pre-release part); installs of a full release only receive full releases.
+
+The Package workflow also runs on pull requests that touch packaging files, every Monday (runner image updates can break packaging with no change here), and on demand from the Actions tab. Its `windows-installer` artifact (kept 7 days) can be installed for testing.
+
+### Code signing
+
+Installers are not signed, so SmartScreen warns on first run. To sign with Azure Trusted Signing, add `win.azureSignOptions` to `electron-builder.yml` and pass `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` to the "Build installer" step in `.github/workflows/package.yml`.
 
 ---
 
@@ -213,6 +228,5 @@ Embed `<UpdateNotification />` next to the "Grove Bench" text.
 
 - **Vite externalization**: `electron-updater` must be in `rollupOptions.external` — it has native bindings that can't be bundled
 - **NSIS installer**: electron-builder uses NSIS for Windows installers — no Squirrel dependency
-- **Code signing**: Unsigned apps show SmartScreen warnings. Recommended for production
 - **Dev mode**: `app.isPackaged` guard is critical — `electron-updater` throws errors without a packaged app
-- **Tag format**: Use `vX.Y.Z` — `electron-updater` strips the `v` prefix automatically
+- **Tag format**: Use `v` + the `package.json` version. The Release workflow rejects anything else
