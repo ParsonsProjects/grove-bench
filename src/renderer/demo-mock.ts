@@ -331,7 +331,7 @@ const api: Record<string, unknown> = {
     '+    <SessionSearch />',
   ].join('\n'),
   listMcpServers: async () => [],
-  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
+  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {} }],
   getAdapterControls: async () => [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [

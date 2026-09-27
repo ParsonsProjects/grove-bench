@@ -583,7 +583,19 @@ Conversations don't need the installed CLI: the Agent SDK runs its own bundled C
 - `ANTHROPIC_API_KEY` or a provider switch (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`) is set in the environment.
 - `claude auth status` reports a sign-in.
 
-If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent. The app offers API key entry rather than an in-app claude.ai sign-in because Anthropic does not allow third-party apps built on the Agent SDK to offer claude.ai login unless previously approved ([Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)).
+If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
+
+**Authentication rules.** Anthropic's terms decide which sign-in paths the app may offer ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)):
+
+- **Allowed: the user's own Claude subscription through Claude Code.** The terms don't prevent "an end user from signing in to the unmodified Claude Code binary with their own Claude subscription". The user signs in with `claude auth login`, which is Anthropic's own flow. Grove only runs `claude auth status` to see whether they are signed in. It never reads, stores or forwards the sign-in token; the agent process reads it itself.
+- **Allowed: the user's own API key or cloud provider credentials,** billed to the user under their own agreement.
+- **Not allowed: a Claude login inside Grove.** Third-party developers may not offer Claude.ai login in their own apps, collect or store Claude.ai credentials or session tokens, or route requests through Free, Pro or Max credentials on their users' behalf. Don't add a "Sign in with Claude" button or read the CLI's stored tokens without Anthropic's approval.
+- **Keep the binary as published.** Don't modify the bundled Claude Code binary or remove or disable any of its sign-in methods.
+- **Don't pay for or resell usage.** Each user brings their own subscription, key or cloud credentials.
+- **Commercial Terms.** Running Claude Code inside a product requires agreeing to Anthropic's Commercial Terms of Service, which also govern the Agent SDK.
+- **Naming.** Plain-text statements that Grove runs Claude Code are fine. The agent is labelled "Claude Agent" in the UI, as the SDK branding guidelines suggest for menus. Don't use "Claude Code" or Anthropic's names or logos as part of Grove's own product, feature or company name.
+
+For anything these rules don't settle, Anthropic asks developers to contact its sales team.
 
 ## 9. Project Structure
 

@@ -933,7 +933,10 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
 
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly id = 'claude-code';
-  readonly displayName = 'Claude Code';
+  // The Agent SDK branding guidelines rule out "Claude Code" as a label in
+  // our UI and suggest "Claude Agent" for menus
+  // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
+  readonly displayName = 'Claude Agent';
   readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
