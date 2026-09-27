@@ -19,7 +19,7 @@
   viewBox="0 0 21 24"
   fill="none"
   class="pixel-tree {className}"
-  class:grow
+  class:pixel-grow={grow}
   style="opacity: {opacity}; image-rendering: pixelated;"
   role={label ? 'img' : undefined}
   aria-label={label}
@@ -38,7 +38,7 @@
 </svg>
 
 <style>
-  .grow rect {
+  .pixel-grow rect {
     transform-box: fill-box;
     transform-origin: center;
     animation: pixel-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
@@ -54,7 +54,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .grow rect {
+    .pixel-grow rect {
       animation: none;
     }
   }

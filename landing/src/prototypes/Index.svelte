@@ -13,7 +13,7 @@
       href: './workbench.html',
       name: 'Workbench',
       pitch: 'The hero is a playable copy of the app. Agents run by themselves until you take over, then you drive.',
-      try: 'Start agents, approve edits, rewind a turn, merge a branch.',
+      try: 'Start agents, approve edits, rewind a turn, open a PR.',
       lanes: ['var(--color-primary)', '#f59e0b', '#22c55e'],
     },
     {
