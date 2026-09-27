@@ -343,7 +343,7 @@
 .cn-plate {
   --edge: #2a1f1a;
   top: 0;
-  transform: translateX(-50%);
+  transform: translateX(calc(-50% + var(--shift, 0px)));
   display: grid;
   justify-items: center;
   padding: 1px 7px 2px;

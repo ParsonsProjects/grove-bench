@@ -339,7 +339,7 @@
 
       {#each labels.plates as pl (pl.lane)}
         <div class="cn-pin" style={pin(pl.x, pl.y)}>
-          <span class="cn-plate" style="--lane-text: {LANES[pl.lane].text}"><b>{byLane[pl.lane].branch}</b><span>.grove-wt/{byLane[pl.lane].id}</span></span>
+          <span class="cn-plate" style="--lane-text: {LANES[pl.lane].text}" use:keepOnScreen={[pl.x, vw]}><b>{byLane[pl.lane].branch}</b><span>.grove-wt/{byLane[pl.lane].id}</span></span>
         </div>
       {/each}
 
