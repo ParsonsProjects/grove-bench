@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
-  defaultModel: '',
+  defaultModels: {},
   adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
-  memoryModel: 'claude-haiku-4-5',
+  backgroundModels: {},
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: 'main',
@@ -187,6 +187,33 @@ describe('adapter defaults', () => {
     settingsStore.setAdapterDefault('codex', 'effort', null);
     settingsStore.setAdapterDefault('claude-code', 'speed', '');
     expect(settingsStore.draft.adapterDefaults).toEqual({ 'claude-code': { thinking: 'low' } });
+    expect(settingsStore.dirty).toBe(true);
+  });
+});
+
+describe('default models', () => {
+  it('keeps one default model per agent and clears it with an empty value', () => {
+    expect(settingsStore.defaultModel('claude-code')).toBe('');
+    settingsStore.setDefaultModel('claude-code', 'claude-sonnet-4-6');
+    settingsStore.setDefaultModel('codex', 'gpt-model');
+    expect(settingsStore.draft.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6', codex: 'gpt-model' });
+    expect(settingsStore.defaultModel('codex')).toBe('gpt-model');
+
+    settingsStore.setDefaultModel('codex', '');
+    expect(settingsStore.draft.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6' });
+    expect(settingsStore.dirty).toBe(true);
+  });
+});
+
+describe('background models', () => {
+  it('keeps one background model per agent and clears it with an empty value', () => {
+    expect(settingsStore.backgroundModel('claude-code')).toBe('');
+    settingsStore.setBackgroundModel('claude-code', 'claude-sonnet-4-6');
+    settingsStore.setBackgroundModel('codex', 'codex-mini');
+    expect(settingsStore.draft.backgroundModels).toEqual({ 'claude-code': 'claude-sonnet-4-6', codex: 'codex-mini' });
+
+    settingsStore.setBackgroundModel('claude-code', '');
+    expect(settingsStore.draft.backgroundModels).toEqual({ codex: 'codex-mini' });
     expect(settingsStore.dirty).toBe(true);
   });
 });

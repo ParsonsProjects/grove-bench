@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
-  defaultModel: '',
+  defaultModels: {},
   adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
-  memoryModel: 'claude-haiku-4-5',
+  backgroundModels: {},
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',
@@ -104,6 +104,32 @@ class SettingsStore {
   }
 
   // ─── List helpers ───
+
+  /** Draft default model for an adapter, or '' for the adapter's own default. */
+  defaultModel(adapterId: string): string {
+    return this.draft.defaultModels?.[adapterId] ?? '';
+  }
+
+  /** Set (or with an empty value, clear) an adapter's default model in the draft. */
+  setDefaultModel(adapterId: string, model: string) {
+    const next = { ...(this.draft.defaultModels ?? {}) };
+    if (model) next[adapterId] = model;
+    else delete next[adapterId];
+    this.draft.defaultModels = next;
+  }
+
+  /** Draft background model for an adapter, or '' for the adapter's own default. */
+  backgroundModel(adapterId: string): string {
+    return this.draft.backgroundModels?.[adapterId] ?? '';
+  }
+
+  /** Set (or with an empty value, clear) an adapter's background model in the draft. */
+  setBackgroundModel(adapterId: string, model: string) {
+    const next = { ...(this.draft.backgroundModels ?? {}) };
+    if (model) next[adapterId] = model;
+    else delete next[adapterId];
+    this.draft.backgroundModels = next;
+  }
 
   /** Draft value for one adapter control, or undefined when unset. */
   adapterDefault(adapterId: string, controlId: string): string | undefined {

@@ -15,7 +15,8 @@
   import ErrorToast from './components/ErrorToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
-  import PrerequisiteCheck from './components/PrerequisiteCheck.svelte';
+  import GitNotice from './components/GitNotice.svelte';
+  import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import SessionFinder from './components/SessionFinder.svelte';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
   import TitleBar from './components/TitleBar.svelte';
@@ -293,6 +294,9 @@
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
     const unsubAppError = window.groveBench.onAppError(handleErrorReport);
 
+    // Git and agent checks run in the background and never block the app.
+    // Credentials are asked for when the user starts a conversation.
+    prerequisitesStore.init();
     settingsStore.load();
     bookmarkStore.load();
     memoryStore.init();
@@ -388,10 +392,9 @@
   </div>
 {/snippet}
 
-<PrerequisiteCheck />
-
 <div class="flex flex-col h-screen bg-background text-foreground font-mono">
 <TitleBar />
+<GitNotice />
 <div class="flex flex-1 min-h-0">
   <svelte:boundary onerror={sidebarError}>
     <Sidebar />

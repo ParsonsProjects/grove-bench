@@ -1,0 +1,72 @@
+name: Package
+
+# Builds the Windows installer without publishing it and checks that node-pty
+# works in the packaged app. Runs when packaging inputs change, weekly (runner
+# image updates have broken packaging before with no change in this repo), and
+# from the Release workflow, which publishes the installer uploaded here.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+      - electron-builder.yml
+      - 'vite.*.config.mjs'
+      - 'scripts/**'
+      - 'src/main/icon.*'
+      - .github/workflows/package.yml
+      - .github/workflows/release.yml
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    name: Build installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build installer
+        run: npm run dist
+
+      - name: Smoke test node-pty in the packaged app
+        run: node scripts/smoke-pty.mjs
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          # NSIS also leaves its uninstaller build in out/; it ships inside
+          # the installer and must not become a release asset.
+          path: |
+            out/*.exe
+            out/*.exe.blockmap
+            out/latest.yml
+            !out/*__uninstaller.exe
+          if-no-files-found: error
+          retention-days: 7

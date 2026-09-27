@@ -5,12 +5,15 @@
   import { store } from '../stores/sessions.svelte.js';
   import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
   import PluginCard from './PluginCard.svelte';
+  import ApiKeyField from './ApiKeyField.svelte';
+  import { agentsStore } from '../stores/agents.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '$lib/message-view.js';
+  import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import type { SettingsPermissionMode, CavemanMode, McpConfigScope, ControlDescriptor } from '../../shared/types.js';
@@ -61,6 +64,7 @@
     if (open) {
       settingsStore.load();
       pluginStore.refresh();
+      agentsStore.load();
     }
   });
 
@@ -72,12 +76,18 @@
     if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
       mcpConfigStore.refresh();
     }
-    if (open && tab === 'mcp' && mcpRepos.length === 0) {
-      window.groveBench.listRepos().then((repos) => { mcpRepos = repos; }).catch(() => {});
+    // Once per open. Keying this on `mcpRepos.length === 0` looped when there
+    // were no projects: each empty result is a new array, which re-ran the
+    // effect and fetched again (hundreds of IPC calls a second).
+    if (open && tab === 'mcp' && !mcpReposRequested) {
+      mcpReposRequested = true;
+      window.groveBench.listRepos().then((repos) => { mcpRepos = repos; }).catch(() => { mcpReposRequested = false; });
     }
+    if (!open) mcpReposRequested = false;
   });
 
   let mcpRepos = $state<string[]>([]);
+  let mcpReposRequested = false;
   let mcpName = $state('');
   let mcpTransport = $state<'stdio' | 'http' | 'sse'>('stdio');
   let mcpCommand = $state('');
@@ -186,6 +196,23 @@
     { id: 'plugins', label: 'Plugins' },
   ];
 
+  // The MCP and Plugins tabs configure the default agent (their IPC calls
+  // don't name an agent), so they only show when that agent supports them.
+  // Until the agent list loads, they stay visible as before.
+  const defaultAgent = $derived(agentsStore.get(agentsStore.defaultId));
+  const visibleTabs = $derived(tabs.filter((t) => {
+    if (!defaultAgent) return true;
+    if (t.id === 'mcp') return defaultAgent.capabilities.mcpConfig ?? true;
+    if (t.id === 'plugins') return defaultAgent.capabilities.plugins ?? true;
+    return true;
+  }));
+  const featureAgentNote = $derived(
+    agentsStore.list.length > 1 && defaultAgent ? `These settings apply to ${defaultAgent.displayName} conversations.` : '',
+  );
+  $effect(() => {
+    if (!visibleTabs.some((t) => t.id === tab)) tab = 'permissions';
+  });
+
   // Claude's own modes first; Grove's app-level modes sit under a divider
   // with their own heading so they don't read as CLI options.
   const permissionModes: { value: SettingsPermissionMode; label: string; group?: string }[] = [
@@ -206,38 +233,61 @@
     { value: 'ultra', label: 'Ultra', description: 'Max compression, abbreviations' },
   ];
 
-  // ── Per-adapter defaults ──
-  // Each registered adapter declares its own session controls (thinking,
-  // speed, ...) per model; the Agent tab renders those descriptors instead of
-  // a hand-written list, so a new adapter needs no Settings changes.
-  interface AdapterControls { id: string; displayName: string; controls: ControlDescriptor[] }
-  let adapterControls = $state<AdapterControls[]>([]);
-  let adapterControlsLoading = $state(false);
-  let adapterControlsRequest = 0;
+  // ── Per-agent defaults ──
+  // One group per registered agent: its credentials, its default model and
+  // the session controls it declares for that model (thinking, speed, ...).
+  // Everything comes from the adapter's own descriptors, so a new agent needs
+  // no Settings changes. Models are picked from a list rather than typed, so
+  // a typo can't break every new conversation.
+  interface AgentGroup {
+    id: string;
+    displayName: string;
+    models: Array<{ id: string; label: string }>;
+    controls: ControlDescriptor[];
+    /** The adapter's own model for background tasks, if it declares one. */
+    backgroundModel?: string;
+  }
+  let agentGroups = $state<AgentGroup[]>([]);
+  let agentGroupsLoading = $state(false);
+  let agentGroupsRequest = 0;
 
-  async function loadAdapterControls(model: string) {
-    const request = ++adapterControlsRequest;
-    adapterControlsLoading = true;
+  async function loadAgentGroups(defaultModels: Record<string, string>) {
+    const request = ++agentGroupsRequest;
+    agentGroupsLoading = true;
     try {
-      const adapters = await window.groveBench.listAdapters();
-      const withControls = await Promise.all(adapters.map(async (a) => {
-        let controls: ControlDescriptor[] = [];
-        try { controls = await window.groveBench.getAdapterControls(a.id, model || null); } catch { /* adapter unavailable */ }
-        return { id: a.id, displayName: a.displayName, controls: controls.filter((c) => c.id !== CONTROL_IDS.permissionMode) };
+      await agentsStore.load();
+      const groups = await Promise.all(agentsStore.list.map(async (a): Promise<AgentGroup> => {
+        const [models, controls] = await Promise.all([
+          window.groveBench.getModels(a.id).catch(() => []),
+          window.groveBench.getAdapterControls(a.id, defaultModels[a.id] || null).catch(() => [] as ControlDescriptor[]),
+        ]);
+        return {
+          id: a.id,
+          displayName: a.displayName,
+          models,
+          controls: controls.filter((c) => c.id !== CONTROL_IDS.permissionMode),
+          backgroundModel: a.backgroundModel,
+        };
       }));
-      if (request === adapterControlsRequest) adapterControls = withControls;
+      if (request === agentGroupsRequest) agentGroups = groups;
     } catch {
-      if (request === adapterControlsRequest) adapterControls = [];
+      if (request === agentGroupsRequest) agentGroups = [];
     } finally {
-      if (request === adapterControlsRequest) adapterControlsLoading = false;
+      if (request === agentGroupsRequest) agentGroupsLoading = false;
     }
   }
 
-  // Descriptors depend on the model (e.g. adaptive thinking, fast mode), so
-  // reload when the default model changes while the panel is open.
+  // Control descriptors depend on the model (e.g. adaptive thinking, fast
+  // mode), so reload when a default model changes while the panel is open,
+  // and when an agent reports a new model list.
+  let modelsVersion = $state(0);
+  $effect(() => window.groveBench.onModelsChanged(() => {
+    agentsStore.refresh().finally(() => { modelsVersion++; });
+  }));
   $effect(() => {
-    const model = settingsStore.draft.defaultModel;
-    if (open && tab === 'agent') loadAdapterControls(model);
+    const defaults = settingsStore.draft.defaultModels ?? {};
+    void modelsVersion;
+    if (open && tab === 'agent') loadAgentGroups(defaults);
   });
 
   function controlValue(adapterId: string, control: ControlDescriptor): string {
@@ -263,7 +313,7 @@
 
     <!-- Tabs -->
     <div class="flex items-center gap-1 border-b border-border mt-2 overflow-x-auto overflow-y-hidden shrink-0">
-      {#each tabs as t (t.id)}
+      {#each visibleTabs as t (t.id)}
         <button
           onclick={() => tab = t.id}
           class="px-3 py-1.5 text-xs transition-colors border-b-2 -mb-px whitespace-nowrap
@@ -398,62 +448,108 @@
 
       {:else if tab === 'agent'}
         <div class="flex flex-col gap-4">
-          <!-- Default Model -->
-          <div>
-            <Label for="settings-model" class="mb-1 block">Default Model</Label>
-            <input
-              id="settings-model"
-              type="text"
-              bind:value={settingsStore.draft.defaultModel}
-              placeholder="e.g. model-id"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
-          </div>
-
-          <!-- Per-adapter session control defaults (from each adapter's descriptors) -->
-          {#if adapterControls.length === 0}
+          {#if agentGroups.length === 0}
             <p class="text-xs text-muted-foreground">
-              {adapterControlsLoading ? 'Loading agent controls…' : 'No agent adapters registered.'}
+              {agentGroupsLoading ? 'Loading agents…' : 'No agents registered.'}
             </p>
           {/if}
-          {#each adapterControls as adapter (adapter.id)}
-            <div>
-              <div class="text-sm font-medium text-foreground mb-2">{adapter.displayName} defaults</div>
-              {#if adapter.controls.length === 0}
-                <p class="text-xs text-muted-foreground">This agent declares no adjustable conversation controls.</p>
-              {:else}
-                <div class="flex flex-col gap-3">
-                  {#each adapter.controls as control (control.id)}
-                    {@const value = controlValue(adapter.id, control)}
-                    {@const selected = control.options.find((o) => o.value === value)}
-                    <div>
-                      <Label class="mb-1 block">Default {control.label}</Label>
-                      <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(adapter.id, control.id, v === control.default ? null : v); }}>
-                        <Select.Trigger class="w-48">
-                          {selected?.label ?? value}
-                        </Select.Trigger>
-                        <Select.Content>
-                          {#each control.options as option (option.value)}
-                            <Select.Item value={option.value} label={option.label} />
-                          {/each}
-                        </Select.Content>
-                      </Select.Root>
-                      <p class="text-xs text-muted-foreground mt-1">
-                        {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
-                        {#if CONTROL_SHORTCUTS[control.id]}
-                          Adjustable per conversation from the status bar ({CONTROL_SHORTCUTS[control.id]}).
-                        {/if}
-                      </p>
-                    </div>
-                  {/each}
+          {#each agentGroups as agent (agent.id)}
+            {@const status = store.prerequisites?.agents[agent.id]}
+            {@const currentModel = settingsStore.defaultModel(agent.id)}
+            {@const modelChoices = defaultModelChoices(agent.models, currentModel)}
+            {@const selectedModel = currentModel || DEFAULT_MODEL_VALUE}
+            {@const currentBackground = settingsStore.backgroundModel(agent.id)}
+            {@const backgroundChoices = defaultModelChoices(agent.models, currentBackground, agent.backgroundModel ?? null)}
+            {@const selectedBackground = currentBackground || DEFAULT_MODEL_VALUE}
+            <div class="flex flex-col gap-3">
+              <div class="text-sm font-medium text-foreground">{agent.displayName}</div>
+
+              <!-- Credentials: asked for when a conversation starts, changed here -->
+              {#if status?.apiKey}
+                <div class="flex flex-col gap-2">
+                  <Label class="block">Credentials</Label>
+                  <p class="text-xs text-muted-foreground -mt-1">
+                    {#if status.apiKey.saved}
+                      Using the saved API key.
+                    {:else if status.authenticated}
+                      Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
+                    {:else}
+                      No credentials found. Add a key, or sign in with the CLI in a terminal.
+                    {/if}
+                  </p>
+                  <ApiKeyField adapterId={agent.id} />
                 </div>
               {/if}
-            </div>
-          {/each}
-          <p class="text-xs text-muted-foreground -mt-2">Options depend on the default model above. Applied to new conversations only.</p>
 
-          <Separator />
+              <div>
+                <Label class="mb-1 block">Default Model</Label>
+                <Select.Root
+                  type="single"
+                  value={selectedModel}
+                  onValueChange={(v) => { if (v) settingsStore.setDefaultModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
+                >
+                  <Select.Trigger class="w-64" aria-label={`${agent.displayName} default model`}>
+                    {modelChoices.find((c) => c.value === selectedModel)?.label ?? selectedModel}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each modelChoices as choice (choice.value)}
+                      <Select.Item value={choice.value} label={choice.label} />
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                <p class="text-xs text-muted-foreground mt-1">New conversations with this agent start on this model. Each conversation can still switch from the status bar.</p>
+              </div>
+
+              <div>
+                <Label class="mb-1 block">Background Model</Label>
+                <Select.Root
+                  type="single"
+                  value={selectedBackground}
+                  onValueChange={(v) => { if (v) settingsStore.setBackgroundModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
+                >
+                  <Select.Trigger class="w-64" aria-label={`${agent.displayName} background model`}>
+                    {backgroundChoices.find((c) => c.value === selectedBackground)?.label ?? selectedBackground}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each backgroundChoices as choice (choice.value)}
+                      <Select.Item value={choice.value} label={choice.label} />
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                <p class="text-xs text-muted-foreground mt-1">Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's conversations. These run often, so a cheap model is best.</p>
+              </div>
+
+              {#if agent.controls.length === 0}
+                <p class="text-xs text-muted-foreground">This agent declares no adjustable conversation controls.</p>
+              {:else}
+                {#each agent.controls as control (control.id)}
+                  {@const value = controlValue(agent.id, control)}
+                  {@const selected = control.options.find((o) => o.value === value)}
+                  <div>
+                    <Label class="mb-1 block">Default {control.label}</Label>
+                    <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>
+                      <Select.Trigger class="w-48">
+                        {selected?.label ?? value}
+                      </Select.Trigger>
+                      <Select.Content>
+                        {#each control.options as option (option.value)}
+                          <Select.Item value={option.value} label={option.label} />
+                        {/each}
+                      </Select.Content>
+                    </Select.Root>
+                    <p class="text-xs text-muted-foreground mt-1">
+                      {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
+                      {#if CONTROL_SHORTCUTS[control.id]}
+                        Adjustable per conversation from the status bar ({CONTROL_SHORTCUTS[control.id]}).
+                      {/if}
+                    </p>
+                  </div>
+                {/each}
+                <p class="text-xs text-muted-foreground">Options depend on the default model above. Applied to new conversations only.</p>
+              {/if}
+            </div>
+            <Separator />
+          {/each}
 
           <!-- Caveman Mode -->
           <div>
@@ -728,17 +824,7 @@
             <p class="text-xs text-muted-foreground mt-1">Abort a compaction pass (manual or automatic) that runs longer than this. Minimum 30. Default 300 (5 minutes).</p>
           </div>
 
-          <div class="ml-6">
-            <Label for="settings-memory-model" class="mb-1 block">Memory model</Label>
-            <input
-              id="settings-memory-model"
-              type="text"
-              bind:value={settingsStore.draft.memoryModel}
-              placeholder="e.g. claude-haiku-4-5"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Model used for background memory auto-save and compaction calls. Defaults to Haiku to keep these cheap. Leave empty to use the provider default.</p>
-          </div>
+          <p class="text-xs text-muted-foreground ml-6">Memory calls run on each conversation's own agent, using its Background Model (Settings &gt; Agent).</p>
 
           <Separator />
 
@@ -782,6 +868,9 @@
         </div>
 
       {:else if tab === 'mcp'}
+        {#if featureAgentNote}
+          <p class="text-xs text-muted-foreground mb-3">{featureAgentNote}</p>
+        {/if}
         <!-- Configured servers -->
         <div class="flex items-start justify-between mb-3">
           <div>
@@ -955,6 +1044,9 @@
         </div>
 
       {:else if tab === 'plugins'}
+        {#if featureAgentNote}
+          <p class="text-xs text-muted-foreground mb-3">{featureAgentNote}</p>
+        {/if}
         <!-- Plugin sub-tabs -->
         <div class="flex items-center gap-1 border-b border-border mb-3">
           <button
