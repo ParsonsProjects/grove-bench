@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { AGENT_SPRITES, SPRITE_W, SPRITE_H, type AgentSpriteState } from '../lib/agent-sprite.js';
+  import { AGENT_SPRITES, SPRITE_W, SPRITE_H, agentLook, type AgentSpriteState } from '../lib/agent-sprite.js';
 
-  let { state, scale = 2 }: { state: AgentSpriteState; scale?: number } = $props();
+  /** `seed` (the conversation id) picks the skin tone and hair colour. */
+  let { state, seed, scale = 2 }: { state: AgentSpriteState; seed?: string; scale?: number } = $props();
 
   const sprite = $derived(AGENT_SPRITES[state]);
   const animated = $derived(sprite.frames.length > 1);
+  const look: Record<string, string> = $derived(seed ? agentLook(seed) : {});
 </script>
 
 <svg
@@ -24,7 +26,7 @@
   {#each sprite.frames as frame, i (i)}
     <g class="frame frame-{i}">
       {#each frame as run (`${run.x},${run.y}`)}
-        <rect x={run.x} y={run.y} width={run.w} height="1" fill={run.fill} class:symbol={run.symbol} />
+        <rect x={run.x} y={run.y} width={run.w} height="1" fill={look[run.key] ?? run.fill} class:symbol={run.symbol} />
       {/each}
     </g>
   {/each}
