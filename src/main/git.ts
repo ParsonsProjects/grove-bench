@@ -87,9 +87,11 @@ export async function getDefaultBranch(cwd: string): Promise<string> {
   return 'main';
 }
 
-export async function listBranches(cwd: string): Promise<string[]> {
+export async function listBranches(cwd: string, opts: { fetch?: boolean } = {}): Promise<string[]> {
   // Fetch latest remote refs (non-blocking — proceed with local cache on failure)
-  try { await git(['fetch', '--prune'], cwd); } catch { /* offline or no remote */ }
+  if (opts.fetch !== false) {
+    try { await git(['fetch', '--prune'], cwd); } catch { /* offline or no remote */ }
+  }
 
   // Get remote names so we can strip their prefix from remote-tracking branches
   let remotes: string[] = [];
@@ -299,6 +301,69 @@ export async function branchHasRemote(cwd: string, branch: string): Promise<bool
 
 export async function renameBranch(cwd: string, oldName: string, newName: string): Promise<void> {
   await git(['branch', '-m', oldName, newName], cwd);
+}
+
+/** True when `refs/heads/<branch>` exists. Unlike branchExists, a tag or SHA
+ *  with that name doesn't count. */
+export async function localBranchExists(cwd: string, branch: string): Promise<boolean> {
+  try {
+    await git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The remote-tracking ref for `branch` (e.g. `origin/feat/x`), preferring
+ *  origin when several remotes carry it. Null when no remote has it. */
+export async function remoteTrackingRef(cwd: string, branch: string): Promise<string | null> {
+  let remotes: string[] = [];
+  try {
+    remotes = (await git(['remote'], cwd)).split('\n').map((r) => r.trim()).filter(Boolean);
+  } catch { /* no remotes */ }
+  remotes.sort((a, b) => (a === 'origin' ? -1 : b === 'origin' ? 1 : 0));
+  for (const remote of remotes) {
+    try {
+      await git(['show-ref', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`], cwd);
+      return `${remote}/${branch}`;
+    } catch { /* not on this remote */ }
+  }
+  return null;
+}
+
+/** Branch name → checkout path for every worktree of the repo that has a
+ *  branch checked out (the main checkout included). */
+export async function worktreeBranches(repoPath: string): Promise<Map<string, string>> {
+  return parseWorktreeBranches(await git(['worktree', 'list', '--porcelain'], repoPath));
+}
+
+/** Parse `git worktree list --porcelain`: blocks of `worktree <path>` then
+ *  `HEAD <sha>` then `branch refs/heads/<name>` (or `detached`). */
+export function parseWorktreeBranches(raw: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let wtPath: string | null = null;
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('worktree ')) wtPath = trimmed.slice('worktree '.length);
+    else if (trimmed.startsWith('branch refs/heads/') && wtPath) out.set(trimmed.slice('branch refs/heads/'.length), wtPath);
+    else if (trimmed === '') wtPath = null;
+  }
+  return out;
+}
+
+/** Check out a branch in `cwd`. `create` makes a new branch at HEAD; `track`
+ *  (a remote-tracking ref) makes a new local branch following it; otherwise
+ *  `branch` must be an existing local branch. Uses `checkout` rather than
+ *  `switch`, which needs git 2.23 (the app supports 2.17). */
+export async function checkoutBranch(
+  cwd: string,
+  branch: string,
+  opts: { create?: boolean; track?: string } = {},
+): Promise<void> {
+  if (opts.create) await git(['checkout', '-b', branch], cwd);
+  else if (opts.track) await git(['checkout', '-b', branch, '--track', opts.track], cwd);
+  // The trailing `--` stops git reading the name as a file path.
+  else await git(['checkout', branch, '--'], cwd);
 }
 
 /**

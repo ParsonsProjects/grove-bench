@@ -303,6 +303,14 @@ const api: Record<string, unknown> = {
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
   getDefaultBranch: async () => 'main',
+  // Branch picker: `main` is checked out in the project folder, so picking it
+  // from a worktree conversation shows the refusal.
+  listBranches: async (repoPath: string) => repoPath === REPO_B
+    ? ['main', 'develop', 'claude/fix-oauth-refresh', 'claude/flaky-e2e-retries', 'claude/perf-audit', 'feat/checkout-v2', 'release/1.4']
+    : ['main', 'claude/sidebar-revamp', 'claude/update-readme', 'feat/branch-picker'],
+  switchBranch: async (id: string, branch: string) => branch === 'main'
+    ? { success: false, error: `"main" is already checked out in ${REPO_B}. A branch can only be checked out in one place.` }
+    : { success: true, branch, sessionIds: [id] },
   gitLogCommits: async () => [
     { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
     { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },

@@ -418,6 +418,13 @@ export interface GitOpResult {
   error?: string;
 }
 
+/** Outcome of switching a conversation's checkout to another branch. Every
+ *  conversation sharing that checkout moves with it, so `sessionIds` lists
+ *  all of them (the one that asked included). */
+export type BranchSwitchResult =
+  | { success: true; branch: string; sessionIds: string[] }
+  | { success: false; error: string };
+
 // ─── Thinking Level ───
 
 /** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
@@ -703,10 +710,16 @@ export interface GroveBenchAPI {
   listRepos(): Promise<string[]>;
 
   // Branch operations
-  listBranches(repoPath: string): Promise<string[]>;
+  /** Local and remote branch names (remote prefix stripped). Fetches first
+   *  unless `fetch` is false. */
+  listBranches(repoPath: string, opts?: { fetch?: boolean }): Promise<string[]>;
   /** The repo's default branch (origin/HEAD, falling back to main/master). */
   getDefaultBranch(repoPath: string): Promise<string>;
   renameBranch(sessionId: string, newBranchName: string): Promise<{ branch: string }>;
+  /** Check out another branch in the conversation's checkout, or with
+   *  `create` a new one at HEAD. `busySessionIds` are conversations mid-turn;
+   *  the switch is refused if any of them shares the checkout. */
+  switchBranch(sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }): Promise<BranchSwitchResult>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -720,9 +733,10 @@ export interface GroveBenchAPI {
   getEventHistoryCount(sessionId: string): Promise<number>;
   /** Search the full event history (main-process), newest match first. */
   searchEventHistory(sessionId: string, query: string, limit?: number): Promise<EventSearchHit[]>;
-  /** Search every given session's full history (main-process). Hits are capped
-   *  per session and tagged with their sessionId, newest match first per session. */
-  searchAllEventHistory(sessionIds: string[], query: string, limitPerSession?: number): Promise<CrossSessionSearchHit[]>;
+  /** Search every given session's full history (main-process), in the given
+   *  order. Hits are capped per session and tagged with their sessionId, newest
+   *  match first per session; the search stops once `maxHits` are found. */
+  searchAllEventHistory(sessionIds: string[], query: string, limitPerSession?: number, maxHits?: number): Promise<CrossSessionSearchHit[]>;
   /** First-prompt / last-message previews for the given sessions (main-process). */
   getSessionPreviews(sessionIds: string[]): Promise<Record<string, SessionPreview>>;
   clearEventHistory(sessionId: string): Promise<void>;
@@ -1243,6 +1257,7 @@ export const IPC = {
   BRANCH_LIST: 'branch:list',
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
+  BRANCH_SWITCH: 'branch:switch',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',

@@ -30,10 +30,12 @@ const api: GroveBenchAPI = {
   listRepos: () => ipcRenderer.invoke(IPC.WORKTREE_LIST_REPOS) as Promise<string[]>,
 
   // Branch operations
-  listBranches: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath),
+  listBranches: (repoPath: string, opts?: { fetch?: boolean }) => ipcRenderer.invoke(IPC.BRANCH_LIST, repoPath, opts),
   getDefaultBranch: (repoPath: string) => ipcRenderer.invoke(IPC.BRANCH_DEFAULT, repoPath) as Promise<string>,
   renameBranch: (sessionId: string, newBranchName: string) =>
     ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
+  switchBranch: (sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }) =>
+    ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
 
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
@@ -60,8 +62,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_HISTORY_COUNT, sessionId),
   searchEventHistory: (sessionId: string, query: string, limit?: number) =>
     ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH, sessionId, query, limit),
-  searchAllEventHistory: (sessionIds: string[], query: string, limitPerSession?: number) =>
-    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH_ALL, sessionIds, query, limitPerSession),
+  searchAllEventHistory: (sessionIds: string[], query: string, limitPerSession?: number, maxHits?: number) =>
+    ipcRenderer.invoke(IPC.AGENT_HISTORY_SEARCH_ALL, sessionIds, query, limitPerSession, maxHits),
   getSessionPreviews: (sessionIds: string[]) =>
     ipcRenderer.invoke(IPC.SESSION_PREVIEWS, sessionIds),
   clearEventHistory: (sessionId: string) =>

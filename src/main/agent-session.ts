@@ -20,6 +20,7 @@ import { getCavemanPrompt } from './caveman.js';
 import { findRewindForkPoint } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
+import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 
 /**
  * Sandbox settings for Read-safe-mode queries: OS-level enforcement layered
@@ -77,9 +78,14 @@ const EVENT_LOG_FLUSH_MS = 250;
 const EVENT_LOG_FLUSH_BYTES = 64 * 1024;
 
 /** Parsed on-disk histories for sessions that are not running, keyed by id.
- *  Bounded so the session finder's cross-session search doesn't re-parse
- *  every log per keystroke, but old sessions don't pin memory forever. */
+ *  Bounded so old sessions don't pin memory forever. Search doesn't rely on
+ *  it: see SEARCH_INDEX_BUDGET. */
 const HISTORY_CACHE_MAX = 12;
+
+/** Chars of searchable event text kept across all conversations (about one
+ *  byte each for ASCII text), so the session finder's search doesn't re-parse
+ *  every log and re-extract every event per keystroke. */
+const SEARCH_INDEX_BUDGET = 128 * 1024 * 1024;
 
 interface PendingPermission {
   requestId: string;
@@ -1331,7 +1337,7 @@ class AgentSessionManager {
     }
   }
 
-  renameBranch(id: string, newBranch: string): void {
+  setBranch(id: string, newBranch: string): void {
     const session = this.sessions.get(id);
     if (session) {
       session.branch = newBranch;
@@ -1523,6 +1529,7 @@ class AgentSessionManager {
 
     this.flushEventLog(session);
     this.historyCache.delete(id);
+    this.searchIndexes.delete(id);
     this.sessions.delete(id);
   }
 
@@ -1627,6 +1634,21 @@ class AgentSessionManager {
       this.historyCache.set(id, cached);
       return cached.events;
     }
+    const events = this.readEventLog(id, logPath);
+    if (!events) return [];
+    this.historyCache.delete(id);
+    this.historyCache.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, events });
+    while (this.historyCache.size > HISTORY_CACHE_MAX) {
+      const oldest = this.historyCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.historyCache.delete(oldest);
+    }
+    return events;
+  }
+
+  /** Parse a JSONL event log, or null if it can't be read (so callers don't
+   *  cache an empty history over a transient failure). */
+  private readEventLog(id: string, logPath: string): AgentEvent[] | null {
     try {
       const data = fs.readFileSync(logPath, 'utf-8');
       const events: AgentEvent[] = [];
@@ -1638,17 +1660,44 @@ class AgentSessionManager {
           logger.warn(`[loadEventHistory] skipping corrupt line in ${id}.jsonl`);
         }
       }
-      this.historyCache.delete(id);
-      this.historyCache.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, events });
-      while (this.historyCache.size > HISTORY_CACHE_MAX) {
-        const oldest = this.historyCache.keys().next().value;
-        if (oldest === undefined) break;
-        this.historyCache.delete(oldest);
-      }
       return events;
     } catch {
-      return [];
+      return null;
     }
+  }
+
+  private searchIndexes = new SearchIndexCache(SEARCH_INDEX_BUDGET);
+
+  /** Search index for a session's history, cached across searches. A live
+   *  session's in-memory history is indexed incrementally; a stopped one's
+   *  log is keyed by mtime/size and parsed without displacing historyCache. */
+  private getSearchIndex(id: string): EventSearchIndex | null {
+    const session = this.sessions.get(id);
+    if (session) return this.searchIndexes.live(id, session.eventHistory);
+    const logPath = path.join(getEventsDir(), `${id}.jsonl`);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(logPath);
+    } catch {
+      this.searchIndexes.delete(id);
+      return null;
+    }
+    return this.searchIndexes.snapshot(id, `${stat.mtimeMs}:${stat.size}`, () => {
+      const cached = this.historyCache.get(id);
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.events;
+      return this.readEventLog(id, logPath);
+    });
+  }
+
+  /** Start a search request. Indexes it touches stay cached for the whole
+   *  request, so a sweep over every conversation can't evict its own work. */
+  beginSearch(): void {
+    this.searchIndexes.beginPass();
+  }
+
+  /** Search a session's history, newest match first (see searchEvents). */
+  searchEventHistory(id: string, query: string, limit: number): EventSearchHit[] {
+    return this.getSearchIndex(id)?.search(query, limit) ?? [];
   }
 
   /** Rewind files on disk to their state at a specific user message checkpoint.
@@ -1703,6 +1752,7 @@ class AgentSessionManager {
     if (rewindIdx >= 0) {
       // Exclude the rewind target message — it gets placed back into the input
       session.eventHistory = session.eventHistory.slice(0, rewindIdx);
+      this.searchIndexes.delete(id);
       // Rewrite the disk log to match (drop queued appends first — they are
       // part of what is being cut)
       session.logBuffer = [];
@@ -1845,6 +1895,7 @@ class AgentSessionManager {
         });
       }
       session.eventHistory = [];
+      this.searchIndexes.delete(id);
       session.logBuffer = [];
       session.logBufferBytes = 0;
       this.flushEventLog(session);
@@ -1863,6 +1914,7 @@ class AgentSessionManager {
       const logPath = path.join(getEventsDir(), `${id}.jsonl`);
       try { fs.writeFileSync(logPath, ''); } catch { /* non-fatal */ }
       this.historyCache.delete(id);
+      this.searchIndexes.delete(id);
     }
   }
 
