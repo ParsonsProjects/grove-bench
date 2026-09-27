@@ -12,6 +12,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '$lib/message-view.js';
+  import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import type { SettingsPermissionMode, CavemanMode, McpConfigScope, ControlDescriptor } from '../../shared/types.js';
@@ -206,6 +207,22 @@
     { value: 'full', label: 'Full', description: 'Drop articles, fragments OK' },
     { value: 'ultra', label: 'Ultra', description: 'Max compression, abbreviations' },
   ];
+
+  // ── Default model ──
+  // Picked from the default adapter's model list rather than typed, so a typo
+  // can't break every new conversation.
+  let models = $state<Array<{ id: string; label: string }>>([]);
+  let modelsRequested = false;
+  $effect(() => {
+    if (open && tab === 'agent' && !modelsRequested) {
+      modelsRequested = true;
+      window.groveBench.getModels()
+        .then((list) => { models = list; })
+        .catch(() => { modelsRequested = false; });
+    }
+  });
+  const modelChoices = $derived(defaultModelChoices(models, settingsStore.draft.defaultModel));
+  const selectedModel = $derived(settingsStore.draft.defaultModel || DEFAULT_MODEL_VALUE);
 
   // ── Per-adapter defaults ──
   // Each registered adapter declares its own session controls (thinking,
@@ -420,15 +437,22 @@
 
           <!-- Default Model -->
           <div>
-            <Label for="settings-model" class="mb-1 block">Default Model</Label>
-            <input
-              id="settings-model"
-              type="text"
-              bind:value={settingsStore.draft.defaultModel}
-              placeholder="e.g. model-id"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Leave empty to use the SDK default.</p>
+            <Label class="mb-1 block">Default Model</Label>
+            <Select.Root
+              type="single"
+              value={selectedModel}
+              onValueChange={(v) => { if (v) settingsStore.draft.defaultModel = v === DEFAULT_MODEL_VALUE ? '' : v; }}
+            >
+              <Select.Trigger class="w-64" aria-label="Default model">
+                {modelChoices.find((c) => c.value === selectedModel)?.label ?? selectedModel}
+              </Select.Trigger>
+              <Select.Content>
+                {#each modelChoices as choice (choice.value)}
+                  <Select.Item value={choice.value} label={choice.label} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground mt-1">New conversations start on this model. Each conversation can still switch from the status bar.</p>
           </div>
 
           <!-- Per-adapter session control defaults (from each adapter's descriptors) -->
