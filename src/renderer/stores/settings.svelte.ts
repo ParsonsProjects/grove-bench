@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   theme: 'system',
   alwaysOnTop: false,
   repoColors: {},
+  groveCharacters: true,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

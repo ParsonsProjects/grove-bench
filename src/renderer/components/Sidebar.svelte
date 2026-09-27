@@ -26,6 +26,8 @@
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
+  import { agentSpriteState } from '../lib/agent-sprite.js';
+  import AgentSprite from './AgentSprite.svelte';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
   import { onMount, untrack } from 'svelte';
 
@@ -567,7 +569,15 @@
     >
       <div class="w-full flex items-center justify-between">
       <div class="flex items-center gap-2 min-w-0">
-        {#if isDestroying}
+        {#if settingsStore.current.groveCharacters}
+          <AgentSprite state={agentSpriteState({
+            destroying: isDestroying,
+            status: session.status,
+            hasPending: getSessionHasPending(session.id),
+            isRunning: messageStore.getIsRunning(session.id),
+            needsAttention: !!store.needsAttention[session.id],
+          })} />
+        {:else if isDestroying}
           <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
         {:else if session.status === 'error'}
           <span class="w-2 h-2 bg-red-500 shrink-0"></span>
