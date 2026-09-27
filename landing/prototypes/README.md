@@ -1,5 +1,7 @@
 # Landing page prototypes
 
+**Canopy (F) is now the main landing page**: `src/App.svelte` renders it, with the analytics consent banner, and `src/fonts.js` self-hosts JetBrains Mono and Pixelify Sans from `@fontsource` (no third-party font requests). The other prototypes stay here for comparison. The prototype pages themselves still load fonts from Google Fonts.
+
 Three alternative directions for the landing page. They reuse the site's tokens (`src/styles.css`), the pixel tree and the Svelte 5 + Tailwind setup, and they are kept out of the production build, so nothing here reaches GitHub Pages until one is picked.
 
 ## Run them
@@ -112,6 +114,6 @@ Branches is the safest base. Workbench makes the strongest case for the product.
 
 ## Not checked yet
 
-- Google Fonts was blocked in the build sandbox, so the screenshots used a fallback monospace. Check once with JetBrains Mono and Pixelify Sans loaded.
+- Google Fonts was blocked in the build sandbox, so the prototype screenshots used a fallback monospace. The main page (Canopy) self-hosts its fonts and was checked with JetBrains Mono and Pixelify Sans loaded.
 - Only tested in headless Chromium at 1440, 1024/820 and 390 wide. Not tested in Safari, Firefox or on a real phone, and not profiled on low-end hardware.
-- The prototypes load fonts from Google Fonts, which sends each visitor's IP address to Google. A Munich court ordered a site owner to pay damages for this under GDPR (LG München I, 20 Jan 2022, 3 O 17493/20). Self-host the fonts (for example `@fontsource/jetbrains-mono`) before going live.
+- The prototype pages load fonts from Google Fonts, which sends each visitor's IP address to Google. A Munich court ordered a site owner to pay damages for this under GDPR (LG München I, 20 Jan 2022, 3 O 17493/20). The main page avoids this by self-hosting the fonts; do the same for any prototype that goes live.

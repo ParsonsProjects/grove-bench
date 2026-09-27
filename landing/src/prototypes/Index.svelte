@@ -78,7 +78,7 @@
     </ol>
 
     <p class="mt-10 text-sm text-muted-foreground">
-      Compare with the <a href="https://parsonsprojects.github.io/grove-bench/" target="_blank" rel="noopener" class="text-foreground underline underline-offset-4">current landing page</a>.
+      F. Canopy is now the main landing page (<code class="text-foreground">landing/src/App.svelte</code>). The others stay here for comparison.
     </p>
   </div>
 </main>
