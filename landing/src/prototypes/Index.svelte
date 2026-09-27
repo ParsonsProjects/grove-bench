@@ -23,6 +23,27 @@
       try: 'Click an agent, plant a tree, drag the sundial.',
       lanes: ['#6ec87a', '#8a6a4a', 'var(--color-primary)'],
     },
+    {
+      href: './path.html',
+      name: 'Grove Path',
+      pitch: 'Branches meets Night Grove. The git lanes are pixel paths, and the agents walk down them with you as you scroll.',
+      try: 'Answer the agent at the gate, drag the sundial to walk one back.',
+      lanes: ['var(--color-primary)', 'oklch(0.65 0.15 200)', '#6ec87a'],
+    },
+    {
+      href: './log.html',
+      name: 'Grove Log',
+      pitch: 'The Branches git log, with a small pixel scene for every commit. One night passes as you scroll.',
+      try: 'Answer the permission prompt, drag the sundial, click a character.',
+      lanes: ['#6ec87a', 'var(--color-primary)', '#f59e0b'],
+    },
+    {
+      href: './canopy.html',
+      name: 'Canopy',
+      pitch: 'A tall grove behind the page. Scroll down from the night sky, past the agents on their branches, to the ground at dawn.',
+      try: 'Answer the agent on its branch, wind a branch back, click a character.',
+      lanes: ['#8a6a4a', '#6ec87a', 'var(--color-primary)'],
+    },
   ];
 </script>
 
