@@ -1191,6 +1191,17 @@ export function registerHandlers() {
 
   // ─── Agent Adapters ───
 
+  // An agent's model list can change at run time (the Claude adapter reads
+  // the SDK's list when a conversation starts). Tell every window so pickers
+  // and the status bar refetch.
+  for (const adapter of adapterRegistry.list()) {
+    adapter.onModelsChanged?.(() => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send(IPC.AGENT_MODELS_CHANGED, adapter.id);
+      }
+    });
+  }
+
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
     const defaultId = adapterRegistry.getDefault().id;
     return adapterRegistry.list().map(a => ({

@@ -278,9 +278,15 @@
   }
 
   // Control descriptors depend on the model (e.g. adaptive thinking, fast
-  // mode), so reload when a default model changes while the panel is open.
+  // mode), so reload when a default model changes while the panel is open,
+  // and when an agent reports a new model list.
+  let modelsVersion = $state(0);
+  $effect(() => window.groveBench.onModelsChanged(() => {
+    agentsStore.refresh().finally(() => { modelsVersion++; });
+  }));
   $effect(() => {
     const defaults = settingsStore.draft.defaultModels ?? {};
+    void modelsVersion;
     if (open && tab === 'agent') loadAgentGroups(defaults);
   });
 

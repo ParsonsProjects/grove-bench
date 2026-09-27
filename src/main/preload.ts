@@ -343,6 +343,13 @@ const api: GroveBenchAPI = {
       ipcRenderer.removeListener(IPC.POWER_RESUME, handler);
     };
   },
+  onModelsChanged: (callback: (adapterId: string) => void) => {
+    const handler = (_event: unknown, adapterId: string) => callback(adapterId);
+    ipcRenderer.on(IPC.AGENT_MODELS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.AGENT_MODELS_CHANGED, handler);
+    };
+  },
 
   // OS notifications
   notify: (req: import('../shared/types.js').OsNotificationRequest) =>

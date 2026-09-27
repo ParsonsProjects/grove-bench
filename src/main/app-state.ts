@@ -11,6 +11,11 @@ export interface PrerequisiteCache {
   checkedAt: number;
 }
 
+export interface ModelCatalogCache {
+  models: unknown[];
+  fetchedAt: number;
+}
+
 export interface SkillSuggestionCache {
   suggestions: SkillSuggestion[];
   /** Suggestion ids the user dismissed — never resurface these. */
@@ -38,6 +43,10 @@ export interface AppState {
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran. Restored into the sidebar on launch. */
   unreadSessionIds?: string[];
+  /** Model lists learned from each agent's own SDK/CLI, keyed by adapter id.
+   *  Shown at the next launch until the agent reports its list again. The
+   *  shape of `models` belongs to the adapter, which validates it on load. */
+  modelCatalogs?: Record<string, ModelCatalogCache>;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -82,6 +91,10 @@ const appStateSchema = z.object({
     checkedAt: z.number(),
   }).nullable().optional().catch(null),
   unreadSessionIds: z.array(z.string()).optional().catch(undefined),
+  modelCatalogs: z.record(z.string(), z.object({
+    models: z.array(z.unknown()),
+    fetchedAt: z.number(),
+  })).optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -242,6 +255,18 @@ export function loadPrerequisiteCache(): PrerequisiteCache | null {
 export function savePrerequisiteCache(status: PrerequisiteStatus): void {
   updateAppState((state) => {
     state.prerequisiteCache = { status, checkedAt: Date.now() };
+  });
+}
+
+/** The model list an agent last reported, or null. The caller validates it. */
+export function loadModelCatalog(adapterId: string): unknown[] | null {
+  return loadAppState().modelCatalogs?.[adapterId]?.models ?? null;
+}
+
+/** Write-through — an agent's model list is learned at most once per run. */
+export function saveModelCatalog(adapterId: string, models: unknown[]): void {
+  updateAppState((state) => {
+    state.modelCatalogs = { ...(state.modelCatalogs ?? {}), [adapterId]: { models, fetchedAt: Date.now() } };
   });
 }
 

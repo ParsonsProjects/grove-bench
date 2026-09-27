@@ -127,10 +127,17 @@
   $effect(() => {
     const agentType = sessionAgentType;
     let cancelled = false;
-    window.groveBench.getModels(agentType).then((models) => {
-      if (!cancelled) modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
-    }).catch(() => { /* keep the last list */ });
-    return () => { cancelled = true; };
+    const load = () => {
+      window.groveBench.getModels(agentType).then((models) => {
+        if (!cancelled) modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
+      }).catch(() => { /* keep the last list */ });
+    };
+    load();
+    // The agent reports its current list when a conversation starts.
+    const unsubscribe = window.groveBench.onModelsChanged((adapterId) => {
+      if (!agentType || adapterId === agentType) load();
+    });
+    return () => { cancelled = true; unsubscribe(); };
   });
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));

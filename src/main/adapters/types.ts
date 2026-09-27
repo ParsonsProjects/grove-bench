@@ -210,8 +210,13 @@ export interface AgentAdapter {
   /** What this adapter supports */
   readonly capabilities: AgentCapabilities;
 
-  /** Available models for this provider */
+  /** Available models for this provider, default first. May change at run
+   *  time when the provider reports its current list (see onModelsChanged). */
   getModels(): ModelInfo[];
+
+  /** Subscribe to changes in getModels() (and anything derived from it, such
+   *  as getControls or backgroundModel). Returns an unsubscribe function. */
+  onModelsChanged?(listener: () => void): () => void;
 
   /** Runtime controls this provider exposes for `model` (null = provider
    *  default model). Must include a `permissionMode` descriptor whose values

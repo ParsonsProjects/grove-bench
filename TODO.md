@@ -126,7 +126,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
-- [ ] Fetch Claude model list dynamically instead of hardcoding (`adapters/claude-code.ts` TODO) — the SDK's `supportedModels()` also reports per-model effort, adaptive-thinking, and fast-mode support, which could replace the static rules in `claudeControlsFor()`
+- [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)
 - [ ] Demo harness (`/demo.html`) console errors — duplicate keyed-each id in the Sidebar demo data, and mock bridge methods the demo never defined (`checkPrerequisites`, update listeners)
 
 ### From DESIGN.md v2 (documented but previously untracked)

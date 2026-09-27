@@ -911,6 +911,8 @@ export interface GroveBenchAPI {
   // App lifecycle
   onAppClosing(callback: () => void): () => void;
   onPowerResume(callback: (resumeIds: string[]) => void): () => void;
+  /** An agent's model list changed (it reported its current models). */
+  onModelsChanged(callback: (adapterId: string) => void): () => void;
 
   // Error reporting
   /** Uncaught main-process errors, forwarded so the UI can surface them. */
@@ -1365,6 +1367,7 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  AGENT_MODELS_CHANGED: 'agent:modelsChanged',
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater

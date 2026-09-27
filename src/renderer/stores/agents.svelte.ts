@@ -20,6 +20,13 @@ class AgentsStore {
     return this.inFlight;
   }
 
+  /** Fetch the list again, e.g. after an agent reports new models (its
+   *  background model can change with them). */
+  refresh(): Promise<void> {
+    this.loaded = false;
+    return this.load();
+  }
+
   /** The agent new conversations use unless another is picked. */
   get defaultId(): string | null {
     return this.list.find((a) => a.isDefault)?.id ?? this.list[0]?.id ?? null;
