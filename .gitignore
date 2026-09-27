@@ -4,4 +4,3 @@ out/
 dist/
 .grove-wt/
 *.log
-dist-prototypes/
