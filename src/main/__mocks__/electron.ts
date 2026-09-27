@@ -50,6 +50,14 @@ export const shell = {
   openExternal: vi.fn(),
 };
 
+// Reversible stand-in for OS encryption so tests can check nothing is stored
+// in plain text.
+export const safeStorage = {
+  isEncryptionAvailable: vi.fn(() => true),
+  encryptString: vi.fn((plain: string) => Buffer.from(`enc:${plain}`).reverse()),
+  decryptString: vi.fn((cipher: Buffer) => Buffer.from(cipher).reverse().toString().replace(/^enc:/, '')),
+};
+
 export const nativeTheme = {
   themeSource: 'system' as string,
   shouldUseDarkColors: false,

@@ -6,8 +6,8 @@ import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
-import { checkCorePrerequisites, checkGh } from './prerequisites.js';
-import { prerequisitesSatisfied } from '../shared/prerequisites.js';
+import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
+import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
@@ -23,7 +23,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, clearPrerequisiteCache } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import crypto from 'node:crypto';
@@ -416,12 +416,13 @@ export function registerHandlers() {
   // ─── Prerequisites ───
 
   // Core check (git + agent). Carries forward the last known gh status so the
-  // renderer keeps PR features enabled while the slower gh check runs.
+  // renderer keeps PR features enabled while the slower gh check runs. Every
+  // result is cached, pass or fail: the renderer shows it at the next launch
+  // while a fresh check runs, and nothing blocks on it.
   ipcMain.handle(IPC.PREREQUISITES_CHECK, async (): Promise<PrerequisiteStatus> => {
     const core = await checkCorePrerequisites();
     const status: PrerequisiteStatus = { ...core, gh: loadPrerequisiteCache()?.status.gh };
-    if (prerequisitesSatisfied(status)) savePrerequisiteCache(status);
-    else clearPrerequisiteCache();
+    savePrerequisiteCache(status);
     return status;
   });
 
@@ -434,6 +435,29 @@ export function registerHandlers() {
     const cached = loadPrerequisiteCache();
     if (cached) savePrerequisiteCache({ ...cached.status, gh });
     return gh;
+  });
+
+  // Saving or removing a key only changes the key state, so patch the last
+  // check rather than re-running the CLI probe (which can take seconds).
+  async function withFreshApiKeyState(): Promise<PrerequisiteStatus> {
+    const cached = loadPrerequisiteCache()?.status;
+    const status: PrerequisiteStatus = cached
+      ? { ...cached, agent: { ...cached.agent, apiKey: apiKeyState(adapterRegistry.getDefault()) } }
+      : await checkCorePrerequisites();
+    savePrerequisiteCache(status);
+    return status;
+  }
+
+  ipcMain.handle(IPC.CREDENTIALS_SET_API_KEY, async (_event, key: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = adapterRegistry.getDefault();
+    if (!adapter.apiKey) throw new Error(`${adapter.displayName} does not take an API key.`);
+    saveApiKey(adapter.id, key);
+    return withFreshApiKeyState();
+  });
+
+  ipcMain.handle(IPC.CREDENTIALS_CLEAR_API_KEY, async (): Promise<PrerequisiteStatus> => {
+    clearApiKey(adapterRegistry.getDefault().id);
+    return withFreshApiKeyState();
   });
 
   ipcMain.on(IPC.APP_RESTORE_COMPLETE, () => {

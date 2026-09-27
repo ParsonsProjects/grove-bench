@@ -9,10 +9,12 @@ import type {
   AgentQueryHandle,
   AdapterConfig,
   AdapterPrerequisiteStatus,
+  ApiKeyDescriptor,
   ModelInfo,
   PermissionResponse,
   UserMessage,
 } from './types.js';
+import { getApiKey } from '../credentials.js';
 import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -898,12 +900,46 @@ export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   return args;
 }
 
+// ─── Credentials ───
+
+/** A GUI-launched `where`/`which` or `claude auth status` can hang (network,
+ *  a first-run prompt). Without a limit, the check never settles. */
+const CLI_LOOKUP_TIMEOUT_MS = 10_000;
+const AUTH_STATUS_TIMEOUT_MS = 15_000;
+
+/** Provider switches the agent reads from the environment
+ *  (https://code.claude.com/docs/en/agent-sdk/quickstart). */
+const PROVIDER_ENV_FLAGS: ReadonlyArray<[flag: string, method: string]> = [
+  ['CLAUDE_CODE_USE_BEDROCK', 'Amazon Bedrock'],
+  ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'Claude Platform on AWS'],
+  ['CLAUDE_CODE_USE_VERTEX', 'Google Vertex AI'],
+  ['CLAUDE_CODE_USE_FOUNDRY', 'Microsoft Foundry'],
+];
+
+/** How the agent will authenticate from the environment alone: an
+ *  ANTHROPIC_API_KEY or a third-party provider switch. Null when neither is
+ *  set. Cloud provider credentials themselves aren't verified here; a bad one
+ *  surfaces as an auth error when the conversation starts. */
+export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.ANTHROPIC_API_KEY?.trim()) return 'ANTHROPIC_API_KEY';
+  for (const [flag, method] of PROVIDER_ENV_FLAGS) {
+    const value = env[flag]?.trim().toLowerCase();
+    if (value === '1' || value === 'true') return method;
+  }
+  return null;
+}
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly id = 'claude-code';
   readonly displayName = 'Claude Code';
-  readonly authErrorMessage = 'Authentication failed. Please run "claude auth login" in your terminal and try again.';
+  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly apiKey: ApiKeyDescriptor = {
+    envVar: 'ANTHROPIC_API_KEY',
+    label: 'Anthropic API key',
+    helpUrl: 'https://platform.claude.com/',
+  };
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -947,7 +983,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     let claudePath: string | undefined;
     try {
       const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
-      const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true });
+      const { stdout } = await execFileAsync(cmd, ['claude'], { shell: true, timeout: CLI_LOOKUP_TIMEOUT_MS });
       claudePath = stdout.trim().split(/\r?\n/)[0];
     } catch {
       // `where`/`which` failed — try known Windows install locations
@@ -968,16 +1004,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       }
     }
 
+    // Conversations run on the SDK's bundled binary, not the installed CLI,
+    // so credentials in the environment are enough on their own. The CLI is
+    // only needed to sign in and for MCP / plugin configuration.
+    const envMethod = envAuthMethod();
+
     if (!claudePath) {
       return {
         available: false,
+        authenticated: envMethod !== null,
+        ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
         installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
       };
     }
 
+    if (envMethod) {
+      return { available: true, path: claudePath, authenticated: true, authMethod: envMethod };
+    }
+
     try {
-      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true });
+      const { stdout: authJson } = await execFileAsync(claudePath, ['auth', 'status', '--json'], { shell: true, timeout: AUTH_STATUS_TIMEOUT_MS });
       const auth = JSON.parse(authJson.trim());
       return {
         available: true,
@@ -989,6 +1036,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     } catch {
       return { available: true, path: claudePath, authenticated: false };
     }
+  }
+
+  /** The API key saved in the app, as env for the agent process. Spread after
+   *  the inherited env so it wins over a stale shell ANTHROPIC_API_KEY. */
+  private savedKeyEnv(): Record<string, string> {
+    const key = getApiKey(this.id);
+    return key ? { [this.apiKey.envVar]: key } : {};
   }
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
@@ -1141,6 +1195,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         env: {
           ...cleanEnv(),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+          ...this.savedKeyEnv(),
           ...(config.extraEnv ?? {}),
         },
         stderr: (data: string) => {
@@ -1407,6 +1462,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     let resultText = '';
+    const keyEnv = this.savedKeyEnv();
     const q = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
@@ -1416,6 +1472,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         permissionMode: 'plan',
         maxTurns: 1,
         ...(options?.model ? { model: options.model } : {}),
+        // `env` replaces the inherited environment rather than merging, so
+        // only pass it when there is a saved key to add.
+        ...(Object.keys(keyEnv).length > 0 ? { env: { ...process.env, ...keyEnv } } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => spawnClaudeCodeProcess(o),
       },
     });

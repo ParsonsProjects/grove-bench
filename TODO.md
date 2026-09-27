@@ -96,7 +96,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Add a Content-Security-Policy for the renderer
 
 ### Onboarding
-- [ ] First-launch welcome/tour surfacing the existing `docs/help/` content (currently only prerequisite checks + analytics consent)
+- [ ] First-launch welcome/tour surfacing the existing `docs/help/` content (currently only the git notice, the API key step in New Conversation, and analytics consent)
 
 ## Priority 3 — Nice to Have
 

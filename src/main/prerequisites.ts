@@ -2,7 +2,8 @@ import type { PrerequisiteStatus } from '../shared/types.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
-import type { AdapterPrerequisiteStatus } from './adapters/types.js';
+import type { AdapterPrerequisiteStatus, AgentAdapter } from './adapters/types.js';
+import { canStoreApiKey, hasApiKey } from './credentials.js';
 
 const MIN_GIT_MAJOR = 2;
 const MIN_GIT_MINOR = 17;
@@ -36,9 +37,10 @@ export async function checkGh(): Promise<NonNullable<PrerequisiteStatus['gh']>> 
 }
 
 /**
- * Everything the app needs before it can run: git plus an authenticated agent
- * CLI. Deliberately excludes the GitHub CLI, whose auth check hits the network
- * and must not delay the startup gate.
+ * Git and agent status. Nothing here blocks the app: git only gates git-backed
+ * features and agent credentials are asked for when a conversation starts.
+ * Deliberately excludes the GitHub CLI, whose auth check hits the network and
+ * is slower than the rest.
  */
 export async function checkCorePrerequisites(): Promise<PrerequisiteStatus> {
   const adapter = adapterRegistry.getDefault();
@@ -46,7 +48,7 @@ export async function checkCorePrerequisites(): Promise<PrerequisiteStatus> {
     checkGit(),
     adapter.checkPrerequisites(),
   ]);
-  return buildStatus(gitStatus, agentStatus, adapter.authErrorMessage);
+  return buildStatus(gitStatus, agentStatus, adapter);
 }
 
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
@@ -56,13 +58,25 @@ export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
     adapter.checkPrerequisites(),
     checkGh(),
   ]);
-  return { ...buildStatus(gitStatus, agentStatus, adapter.authErrorMessage), gh: ghStatus };
+  return { ...buildStatus(gitStatus, agentStatus, adapter), gh: ghStatus };
+}
+
+/** What the renderer needs to offer API key entry for `adapter`, without the
+ *  key itself. Undefined when the adapter takes no API key. */
+export function apiKeyState(adapter: AgentAdapter): PrerequisiteStatus['agent']['apiKey'] {
+  if (!adapter.apiKey) return undefined;
+  return {
+    label: adapter.apiKey.label,
+    helpUrl: adapter.apiKey.helpUrl,
+    saved: hasApiKey(adapter.id),
+    canStore: canStoreApiKey(),
+  };
 }
 
 function buildStatus(
   gitStatus: PrerequisiteStatus['git'],
   agentStatus: AdapterPrerequisiteStatus,
-  adapterAuthErrorMessage: string,
+  adapter: AgentAdapter,
 ): PrerequisiteStatus {
   // Build error/auth message from adapter when not available or not authenticated
   let errorMessage: string | undefined;
@@ -74,7 +88,7 @@ function buildStatus(
         : 'Agent CLI not found.');
   }
   if (agentStatus.available && !agentStatus.authenticated) {
-    authErrorMessage = adapterAuthErrorMessage;
+    authErrorMessage = adapter.authErrorMessage;
   }
 
   return {
@@ -87,6 +101,7 @@ function buildStatus(
       email: agentStatus.email,
       errorMessage,
       authErrorMessage,
+      apiKey: apiKeyState(adapter),
     },
   };
 }

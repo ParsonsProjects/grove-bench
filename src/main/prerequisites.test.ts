@@ -9,20 +9,25 @@ vi.mock('./gh.js', () => ({
   ghAuthenticated: vi.fn(),
 }));
 
+vi.mock('./credentials.js', () => ({
+  hasApiKey: vi.fn(() => false),
+  canStoreApiKey: vi.fn(() => true),
+}));
+
 // Mock the adapter registry — checkAllPrerequisites delegates to it
 const mockCheckPrerequisites = vi.fn();
+const mockAdapter: Record<string, unknown> = { checkPrerequisites: mockCheckPrerequisites };
 vi.mock('./adapters/index.js', () => ({
   adapterRegistry: {
-    getDefault: () => ({
-      checkPrerequisites: mockCheckPrerequisites,
-    }),
+    getDefault: () => mockAdapter,
   },
 }));
 
 import { checkGit, checkGh, checkAllPrerequisites, checkCorePrerequisites } from './prerequisites.js';
-import { prerequisitesSatisfied } from '../shared/prerequisites.js';
+import { agentReady, gitReady } from '../shared/prerequisites.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
+import { canStoreApiKey, hasApiKey } from './credentials.js';
 
 const mockGitVersion = vi.mocked(gitVersion);
 const mockGhVersion = vi.mocked(ghVersion);
@@ -30,6 +35,10 @@ const mockGhAuthenticated = vi.mocked(ghAuthenticated);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  delete mockAdapter.apiKey;
+  delete mockAdapter.id;
+  vi.mocked(hasApiKey).mockReturnValue(false);
+  vi.mocked(canStoreApiKey).mockReturnValue(true);
 });
 
 describe('checkGit()', () => {
@@ -164,22 +173,75 @@ describe('checkCorePrerequisites()', () => {
   });
 });
 
-describe('prerequisitesSatisfied()', () => {
-  const ok = { git: { available: true, meetsMinimum: true }, agent: { available: true, authenticated: true } };
+describe('API key state', () => {
+  beforeEach(() => {
+    mockGitVersion.mockResolvedValue({ version: 'git version 2.39.1', major: 2, minor: 39, patch: 1 });
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: false });
+  });
 
-  it('passes with git and an authenticated agent, regardless of gh', () => {
-    expect(prerequisitesSatisfied(ok)).toBe(true);
-    expect(prerequisitesSatisfied({ ...ok, gh: { available: false } })).toBe(true);
+  it('is omitted when the adapter takes no API key', async () => {
+    const result = await checkCorePrerequisites();
+    expect(result.agent.apiKey).toBeUndefined();
+  });
+
+  it('describes the key field without the key itself', async () => {
+    mockAdapter.id = 'claude-code';
+    mockAdapter.apiKey = { envVar: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', helpUrl: 'https://example.com/keys' };
+    vi.mocked(hasApiKey).mockReturnValue(true);
+
+    const result = await checkCorePrerequisites();
+
+    expect(hasApiKey).toHaveBeenCalledWith('claude-code');
+    expect(result.agent.apiKey).toEqual({
+      label: 'Anthropic API key',
+      helpUrl: 'https://example.com/keys',
+      saved: true,
+      canStore: true,
+    });
+    expect(JSON.stringify(result)).not.toContain('ANTHROPIC_API_KEY');
+  });
+
+  it('reports when the OS cannot store a key', async () => {
+    mockAdapter.id = 'claude-code';
+    mockAdapter.apiKey = { envVar: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', helpUrl: 'https://example.com/keys' };
+    vi.mocked(canStoreApiKey).mockReturnValue(false);
+
+    const result = await checkCorePrerequisites();
+    expect(result.agent.apiKey?.canStore).toBe(false);
+  });
+});
+
+describe('gitReady()', () => {
+  const agent = { available: true, authenticated: true };
+
+  it('passes with git 2.17+ and ignores the agent', () => {
+    expect(gitReady({ git: { available: true, meetsMinimum: true }, agent })).toBe(true);
+    expect(gitReady({ git: { available: true, meetsMinimum: true }, agent: { available: false } })).toBe(true);
   });
 
   it('fails when git is missing or too old', () => {
-    expect(prerequisitesSatisfied({ ...ok, git: { available: false } })).toBe(false);
-    expect(prerequisitesSatisfied({ ...ok, git: { available: true, meetsMinimum: false } })).toBe(false);
+    expect(gitReady({ git: { available: false }, agent })).toBe(false);
+    expect(gitReady({ git: { available: true, meetsMinimum: false }, agent })).toBe(false);
+  });
+});
+
+describe('agentReady()', () => {
+  const git = { available: false };
+  const key = (saved: boolean) => ({ label: 'API key', helpUrl: 'https://example.com', saved, canStore: true });
+
+  it('passes with a CLI sign-in or env credentials, even without git', () => {
+    expect(agentReady({ git, agent: { available: true, authenticated: true } })).toBe(true);
+    expect(agentReady({ git, agent: { available: false, authenticated: true, authMethod: 'ANTHROPIC_API_KEY' } })).toBe(true);
   });
 
-  it('fails when the agent is missing or not authenticated', () => {
-    expect(prerequisitesSatisfied({ ...ok, agent: { available: false } })).toBe(false);
-    expect(prerequisitesSatisfied({ ...ok, agent: { available: true, authenticated: false } })).toBe(false);
-    expect(prerequisitesSatisfied({ ...ok, agent: { available: true } })).toBe(false);
+  it('passes with a saved API key when the CLI is missing or signed out', () => {
+    expect(agentReady({ git, agent: { available: false, apiKey: key(true) } })).toBe(true);
+    expect(agentReady({ git, agent: { available: true, authenticated: false, apiKey: key(true) } })).toBe(true);
+  });
+
+  it('fails with no credentials at all', () => {
+    expect(agentReady({ git, agent: { available: true, authenticated: false, apiKey: key(false) } })).toBe(false);
+    expect(agentReady({ git, agent: { available: true } })).toBe(false);
+    expect(agentReady({ git, agent: { available: false } })).toBe(false);
   });
 });

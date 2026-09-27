@@ -32,8 +32,8 @@ export interface AppState {
   knownSkills?: Record<string, string[]>;
   /** Last skill-suggestion analysis per repo path, including dismissals. */
   skillSuggestions?: Record<string, SkillSuggestionCache>;
-  /** Last prerequisite check that passed. Lets the renderer skip the blocking
-   *  startup overlay and re-verify in the background. Cleared on failure. */
+  /** Last prerequisite check, pass or fail. Lets the renderer show the last
+   *  known state at launch while a fresh check runs in the background. */
   prerequisiteCache?: PrerequisiteCache | null;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran. Restored into the sidebar on launch. */
@@ -238,15 +238,6 @@ export function savePrerequisiteCache(status: PrerequisiteStatus): void {
   updateAppState((state) => {
     state.prerequisiteCache = { status, checkedAt: Date.now() };
   });
-}
-
-export function clearPrerequisiteCache(): void {
-  try {
-    const state = loadAppState();
-    if (!state.prerequisiteCache) return;
-    state.prerequisiteCache = null;
-    writeAppState(state);
-  } catch { /* ignore */ }
 }
 
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */

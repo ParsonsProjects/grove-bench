@@ -5,6 +5,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
   import PluginCard from './PluginCard.svelte';
+  import ApiKeyField from './ApiKeyField.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
@@ -398,6 +399,25 @@
 
       {:else if tab === 'agent'}
         <div class="flex flex-col gap-4">
+          <!-- Credentials: asked for when a conversation starts, changed here -->
+          {#if store.prerequisites?.agent.apiKey}
+            {@const agent = store.prerequisites.agent}
+            <div class="flex flex-col gap-2">
+              <div class="text-sm font-medium text-foreground">Credentials</div>
+              <p class="text-xs text-muted-foreground">
+                {#if agent.apiKey?.saved}
+                  Using the saved API key.
+                {:else if agent.authenticated}
+                  Signed in{agent.email ? ` as ${agent.email}` : ''}{agent.authMethod ? ` via ${agent.authMethod}` : ''}.
+                {:else}
+                  No credentials found. Add a key, or sign in with the CLI in a terminal.
+                {/if}
+              </p>
+              <ApiKeyField />
+            </div>
+            <Separator />
+          {/if}
+
           <!-- Default Model -->
           <div>
             <Label for="settings-model" class="mb-1 block">Default Model</Label>

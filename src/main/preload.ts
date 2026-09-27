@@ -209,6 +209,8 @@ const api: GroveBenchAPI = {
   checkPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CHECK),
   getCachedPrerequisites: () => ipcRenderer.invoke(IPC.PREREQUISITES_CACHED),
   checkGhPrerequisite: () => ipcRenderer.invoke(IPC.PREREQUISITES_GH),
+  setApiKey: (key: string) => ipcRenderer.invoke(IPC.CREDENTIALS_SET_API_KEY, key),
+  clearApiKey: () => ipcRenderer.invoke(IPC.CREDENTIALS_CLEAR_API_KEY),
   notifyRestoreComplete: () => ipcRenderer.send(IPC.APP_RESTORE_COMPLETE),
 
   // Session status updates

@@ -188,6 +188,18 @@ export interface AdapterPrerequisiteStatus {
   installInstructions?: string;
 }
 
+/** An API key the user can enter in the app instead of signing in through the
+ *  provider's CLI. The main process stores it encrypted (see credentials.ts)
+ *  and the adapter passes it to the agent in `envVar`. */
+export interface ApiKeyDescriptor {
+  /** Environment variable the agent reads the key from. */
+  envVar: string;
+  /** Field label shown in the UI, e.g. "Anthropic API key". */
+  label: string;
+  /** Page where the user can create a key. */
+  helpUrl: string;
+}
+
 // ─── The Adapter Interface ───
 
 export interface AgentAdapter {
@@ -217,6 +229,9 @@ export interface AgentAdapter {
   /** Human-readable error message shown when authentication fails.
    *  E.g. 'Please run "claude auth login"' or 'Set OPENAI_API_KEY'. */
   readonly authErrorMessage: string;
+
+  /** Set when the provider accepts an API key entered in the app. */
+  readonly apiKey?: ApiKeyDescriptor;
 
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */

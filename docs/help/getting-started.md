@@ -8,7 +8,11 @@ Click the **+ Project** button at the bottom of the sidebar to add a project. Br
 
 ## Starting a Conversation
 
-Click the **+ Agent** button to start a new conversation. You have three options:
+Click the **+ Agent** button to start a new conversation.
+
+The first time, you may be asked for credentials. Paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. The key is stored encrypted on this computer. If you already signed in with `claude auth login` in a terminal, or set `ANTHROPIC_API_KEY`, click **Re-check** instead. You can change or remove the key later in **Settings > Agent**.
+
+You have three options:
 
 - **New Worktree** — Creates a new git branch and worktree for isolated work. This is the recommended approach for most tasks, as changes are completely isolated from your main branch.
 - **Existing Worktree** — Attach to a worktree that already exists on disk.

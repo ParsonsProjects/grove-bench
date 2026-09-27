@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
+  import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
+  import { agentReady } from '../../shared/prerequisites.js';
+  import ApiKeyField from './ApiKeyField.svelte';
   import { trackEvent } from '../lib/analytics.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -14,8 +17,19 @@
   let open = $state(true);
   let selectedRepo = $state(store.repos[0] || '');
 
+  // Credentials are checked here, not at app startup. A cached "ready" is
+  // trusted (a bad key still surfaces as an auth error in the conversation);
+  // anything else gets a fresh check before the key form shows.
+  const credentials = $derived.by(() => {
+    const status = store.prerequisites;
+    if (status && agentReady(status)) return 'ready';
+    if (prerequisitesStore.checking) return 'checking';
+    return 'missing';
+  });
+
   onMount(() => {
     if (defaultRepo) selectedRepo = defaultRepo;
+    if (credentials !== 'ready') prerequisitesStore.refresh();
   });
   let branchName = $state('');
   let baseBranch = $state('');
@@ -121,6 +135,7 @@
   }
 
   $effect(() => {
+    if (credentials !== 'ready') return;
     if (mode === 'existing' && selectedRepo) {
       fetchBranches();
     }
@@ -182,9 +197,41 @@
   <Dialog.Content class="max-w-sm">
     <Dialog.Header>
       <Dialog.Title>New Conversation</Dialog.Title>
-      <Dialog.Description>Start a new conversation in its own worktree branch.</Dialog.Description>
+      <Dialog.Description>
+        {credentials === 'missing'
+          ? 'Add credentials to start a conversation.'
+          : 'Start a new conversation in its own worktree branch.'}
+      </Dialog.Description>
     </Dialog.Header>
 
+    {#if credentials === 'checking'}
+      <div class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+        <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+        Checking credentials…
+      </div>
+    {:else if credentials === 'missing'}
+      <div class="flex flex-col gap-3 mt-4">
+        {#if store.prerequisites?.agent.apiKey}
+          <ApiKeyField autofocus />
+          <p class="text-xs text-muted-foreground">
+            Signed in with the CLI in a terminal instead? Re-check.
+          </p>
+        {:else}
+          <p class="text-sm text-muted-foreground">
+            {store.prerequisites?.agent.authErrorMessage ?? store.prerequisites?.agent.errorMessage ?? 'Could not check the agent\'s credentials.'}
+          </p>
+        {/if}
+
+        <Dialog.Footer>
+          <Button variant="secondary" onclick={() => { open = false; onclose(); }}>
+            Cancel
+          </Button>
+          <Button variant="secondary" onclick={() => prerequisitesStore.refresh()}>
+            Re-check
+          </Button>
+        </Dialog.Footer>
+      </div>
+    {:else}
     <div class="flex flex-col gap-3 mt-4">
       <div>
         <Label for="repo" class="mb-1 block">Project</Label>
@@ -404,5 +451,6 @@
         </Button>
       </Dialog.Footer>
     </div>
+    {/if}
   </Dialog.Content>
 </Dialog.Root>

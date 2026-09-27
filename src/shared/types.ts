@@ -82,6 +82,16 @@ export interface PrerequisiteStatus {
     errorMessage?: string;
     /** Adapter-provided message when not authenticated. */
     authErrorMessage?: string;
+    /** Present when the provider accepts an API key entered in the app. The
+     *  key itself never reaches the renderer. */
+    apiKey?: {
+      label: string;
+      helpUrl: string;
+      /** A key is saved. While saved it is used instead of any CLI sign-in. */
+      saved: boolean;
+      /** The OS can encrypt a key. Without it no key can be saved. */
+      canStore: boolean;
+    };
   };
   /** GitHub CLI — optional; only gates PR automation, never blocks the app. */
   gh?: {
@@ -712,10 +722,16 @@ export interface GroveBenchAPI {
   // Prerequisites
   /** Full check of git + agent CLI (spawns processes; excludes gh). */
   checkPrerequisites(): Promise<PrerequisiteStatus>;
-  /** Last passing check from a previous launch, or null. Instant. */
+  /** Last check result, from this or a previous launch, or null. Instant. */
   getCachedPrerequisites(): Promise<PrerequisiteStatus | null>;
   /** GitHub CLI availability/auth — may hit the network, never gates the app. */
   checkGhPrerequisite(): Promise<NonNullable<PrerequisiteStatus['gh']>>;
+  /** Encrypt and save an API key for the default agent. Rejects with a
+   *  user-facing message when the key is malformed or can't be stored.
+   *  Resolves with the updated status. */
+  setApiKey(key: string): Promise<PrerequisiteStatus>;
+  /** Remove the saved API key. Resolves with the updated status. */
+  clearApiKey(): Promise<PrerequisiteStatus>;
   /** Tell main that startup session restore has finished. */
   notifyRestoreComplete(): void;
 
@@ -1203,6 +1219,8 @@ export const IPC = {
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
+  CREDENTIALS_SET_API_KEY: 'credentials:setApiKey',
+  CREDENTIALS_CLEAR_API_KEY: 'credentials:clearApiKey',
   /** Renderer → main: session restore finished; deferred background work may start. */
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
