@@ -25,6 +25,13 @@ vi.mock('./git.js', () => ({
   validateBranchName: vi.fn(),
   branchExists: vi.fn(),
   getGitIdentity: vi.fn(),
+  getDefaultBranch: vi.fn(),
+  currentBranch: vi.fn(),
+  localBranchExists: vi.fn(),
+  remoteTrackingRef: vi.fn(),
+  isWorkingTreeClean: vi.fn(),
+  worktreeBranches: vi.fn(),
+  checkoutBranch: vi.fn(),
 }));
 
 vi.mock('./adapters/index.js', () => ({
@@ -42,7 +49,10 @@ const mockFsUtils = vi.hoisted(() => ({
 }));
 vi.mock('./fs-utils.js', () => mockFsUtils);
 
-import { git, branchExists, branchHasRemote, getGitIdentity } from './git.js';
+import {
+  git, branchExists, branchHasRemote, getGitIdentity, getDefaultBranch, validateBranchName, currentBranch,
+  localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch,
+} from './git.js';
 import { WorktreeManager } from './worktree-manager.js';
 
 const mockGit = vi.mocked(git);
@@ -61,6 +71,7 @@ beforeEach(() => {
     savedManifest = JSON.parse(data);
   });
   mockFs.mkdir.mockResolvedValue(undefined);
+  vi.mocked(getDefaultBranch).mockResolvedValue('main');
 });
 
 describe('saveAdapterType / getAdapterType', () => {
@@ -668,5 +679,197 @@ describe('create — pulling the base branch', () => {
     await manager.create({ repoPath: '/repo', branchName: 'feat', useExisting: true, id: 'a1' });
     expect(calledWith('fetch')).toBe(false);
     expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', expect.any(String), 'feat']);
+  });
+});
+
+describe('switchBranch', () => {
+  const WT = '/worktrees/abc/wt-a';
+
+  beforeEach(() => {
+    // Round-trip the manifest so registerDirect and switchBranch see each other's writes.
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+    vi.mocked(validateBranchName).mockResolvedValue(true);
+    vi.mocked(currentBranch).mockResolvedValue('feat-a');
+    vi.mocked(localBranchExists).mockResolvedValue(true);
+    vi.mocked(remoteTrackingRef).mockResolvedValue(null);
+    vi.mocked(isWorkingTreeClean).mockResolvedValue(true);
+    vi.mocked(worktreeBranches).mockResolvedValue(new Map([['main', '/repo'], ['feat-a', WT]]));
+    vi.mocked(checkoutBranch).mockResolvedValue(undefined);
+  });
+
+  /** A worktree conversation on `feat-a`, in memory and in the manifest. */
+  function addWorktreeSession() {
+    savedManifest = { 'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 } };
+    manager.register({ id: 'wt-a', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 1000 });
+  }
+
+  it('checks out an existing local branch and records it', async () => {
+    addWorktreeSession();
+
+    const result = await manager.switchBranch('wt-a', 'feat-b');
+
+    expect(result).toEqual({ success: true, branch: 'feat-b', sessionIds: ['wt-a'] });
+    expect(checkoutBranch).toHaveBeenCalledWith(WT, 'feat-b', { create: false, track: undefined });
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-b');
+    expect((savedManifest['wt-a'] as { branch: string }).branch).toBe('feat-b');
+  });
+
+  it('creates a tracking branch for a branch that only exists on a remote', async () => {
+    addWorktreeSession();
+    vi.mocked(localBranchExists).mockResolvedValue(false);
+    vi.mocked(remoteTrackingRef).mockResolvedValue('origin/feat-r');
+
+    const result = await manager.switchBranch('wt-a', 'feat-r');
+
+    expect(result.success).toBe(true);
+    expect(checkoutBranch).toHaveBeenCalledWith(WT, 'feat-r', { create: false, track: 'origin/feat-r' });
+  });
+
+  it('refuses a branch that exists nowhere', async () => {
+    addWorktreeSession();
+    vi.mocked(localBranchExists).mockResolvedValue(false);
+
+    const result = await manager.switchBranch('wt-a', 'ghost');
+
+    expect(result).toEqual({ success: false, error: 'Branch "ghost" doesn\'t exist.' });
+    expect(checkoutBranch).not.toHaveBeenCalled();
+  });
+
+  it('refuses to switch with uncommitted changes', async () => {
+    addWorktreeSession();
+    vi.mocked(isWorkingTreeClean).mockResolvedValue(false);
+
+    const result = await manager.switchBranch('wt-a', 'feat-b');
+
+    expect(result.success).toBe(false);
+    expect(!result.success && result.error).toMatch(/uncommitted changes/);
+    expect(checkoutBranch).not.toHaveBeenCalled();
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+  });
+
+  it('creates a new branch at HEAD even with uncommitted changes', async () => {
+    addWorktreeSession();
+    vi.mocked(localBranchExists).mockResolvedValue(false);
+    vi.mocked(isWorkingTreeClean).mockResolvedValue(false);
+
+    const result = await manager.switchBranch('wt-a', 'feat-new', { create: true });
+
+    expect(result).toEqual({ success: true, branch: 'feat-new', sessionIds: ['wt-a'] });
+    expect(checkoutBranch).toHaveBeenCalledWith(WT, 'feat-new', { create: true, track: undefined });
+  });
+
+  it('refuses to create a branch that already exists', async () => {
+    addWorktreeSession();
+
+    const result = await manager.switchBranch('wt-a', 'feat-b', { create: true });
+
+    expect(result).toEqual({ success: false, error: 'A branch named "feat-b" already exists.' });
+    expect(checkoutBranch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a branch checked out in another worktree', async () => {
+    addWorktreeSession();
+
+    const result = await manager.switchBranch('wt-a', 'main');
+
+    expect(result.success).toBe(false);
+    expect(!result.success && result.error).toContain('/repo');
+    expect(checkoutBranch).not.toHaveBeenCalled();
+  });
+
+  it('returns git failures as an error instead of throwing', async () => {
+    addWorktreeSession();
+    vi.mocked(isWorkingTreeClean).mockRejectedValue(Object.assign(new Error('failed'), { stderr: 'fatal: index file corrupt\n' }));
+
+    const result = await manager.switchBranch('wt-a', 'feat-b');
+
+    expect(result).toEqual({ success: false, error: 'fatal: index file corrupt' });
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+  });
+
+  it('refuses an invalid branch name', async () => {
+    addWorktreeSession();
+    vi.mocked(validateBranchName).mockResolvedValue(false);
+
+    const result = await manager.switchBranch('wt-a', 'bad..name');
+
+    expect(result.success).toBe(false);
+    expect(checkoutBranch).not.toHaveBeenCalled();
+  });
+
+  it('only updates the record when the checkout is already on the branch', async () => {
+    addWorktreeSession();
+    // The agent switched to feat-b in its own shell; the record still says feat-a.
+    vi.mocked(currentBranch).mockResolvedValue('feat-b');
+
+    const result = await manager.switchBranch('wt-a', 'feat-b');
+
+    expect(result).toEqual({ success: true, branch: 'feat-b', sessionIds: ['wt-a'] });
+    expect(checkoutBranch).not.toHaveBeenCalled();
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-b');
+  });
+
+  it('moves every conversation sharing the checkout, and no others', async () => {
+    addWorktreeSession();
+    const a = await manager.registerDirect('/repo', 'main');
+    const b = await manager.registerDirect('/repo', 'main');
+    vi.mocked(currentBranch).mockResolvedValue('main');
+    vi.mocked(worktreeBranches).mockResolvedValue(new Map([['main', '/repo'], ['feat-a', WT]]));
+
+    const result = await manager.switchBranch(a.id, 'develop');
+
+    expect(result.success).toBe(true);
+    expect(result.success && [...result.sessionIds].sort()).toEqual([a.id, b.id].sort());
+    expect(manager.getWorktree(b.id)?.branch).toBe('develop');
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+    expect((savedManifest[b.id] as { branch: string }).branch).toBe('develop');
+    expect((savedManifest['wt-a'] as { branch: string }).branch).toBe('feat-a');
+  });
+
+  it('refuses while a conversation sharing the checkout is mid-turn', async () => {
+    const a = await manager.registerDirect('/repo', 'main');
+    const b = await manager.registerDirect('/repo', 'main');
+
+    const result = await manager.switchBranch(a.id, 'develop', { busySessionIds: [b.id] });
+
+    expect(result.success).toBe(false);
+    expect(!result.success && result.error).toMatch(/agent is working/);
+    expect(checkoutBranch).not.toHaveBeenCalled();
+  });
+
+  it('ignores busy conversations on other checkouts', async () => {
+    addWorktreeSession();
+    const direct = await manager.registerDirect('/repo', 'main');
+
+    const result = await manager.switchBranch('wt-a', 'feat-b', { busySessionIds: [direct.id] });
+
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('remove: default branch guard', () => {
+  it('never deletes the default branch, even when the conversation switched onto it', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'main', createdAt: 1000 },
+    }));
+    mockGit.mockResolvedValue('');
+    mockFs.readdir.mockResolvedValue([]);
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-d', 'main'], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'main'], '/repo');
+  });
+
+  it('still deletes other branches', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 },
+    }));
+    mockGit.mockResolvedValue('');
+    mockFs.readdir.mockResolvedValue([]);
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
   });
 });

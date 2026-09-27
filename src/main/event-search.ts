@@ -93,11 +93,6 @@ function makeSnippet(normalized: string, matchIndex: number, queryLen: number): 
   return snippet;
 }
 
-/**
- * Search a session's event history for a query, newest match first. Returns up to
- * `limit` hits, each with the absolute event index (so the renderer can page in
- * exactly that depth) and a snippet for the results dropdown.
- */
 const PREVIEW_MAX_LEN = 160;
 
 function collapse(text: string): string {
@@ -151,24 +146,195 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
   return { firstPrompt, lastText };
 }
 
-export function searchEvents(events: AgentEvent[], query: string, limit = 100): EventSearchHit[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
+/** Escape a string for literal use in a RegExp. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A query compiled for case-insensitive matching against event text. */
+interface CompiledQuery {
+  /** Tests raw event text: any whitespace run matches a space in the query,
+   *  so events don't need normalising until one actually matches. */
+  raw: RegExp;
+  /** Locates the match in whitespace-collapsed text, for the snippet. */
+  normalized: RegExp;
+}
+
+function compileQuery(query: string): CompiledQuery | null {
+  const q = query.replace(/\s+/g, ' ').trim();
+  if (!q) return null;
+  const literal = escapeRegExp(q);
+  return { raw: new RegExp(literal.replace(/ /g, '\\s+'), 'i'), normalized: new RegExp(literal, 'i') };
+}
+
+/** Build the hit for an event whose raw text matched. */
+function makeHit(text: string, query: CompiledQuery, eventIndex: number, kind: string): EventSearchHit | null {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const match = query.normalized.exec(normalized);
+  if (!match) return null;
+  return { eventIndex, kind, snippet: makeSnippet(normalized, match.index, match[0].length) };
+}
+
+/**
+ * Search a session's event history for a query, newest match first. Returns up to
+ * `limit` hits, each with the absolute event index (so the renderer can page in
+ * exactly that depth) and a snippet for the results dropdown.
+ */
+export function searchEvents(events: readonly AgentEvent[], query: string, limit = 100): EventSearchHit[] {
+  const compiled = compileQuery(query);
+  if (!compiled) return [];
 
   const hits: EventSearchHit[] = [];
   // Iterate newest-first so the limit keeps the most recent matches.
-  for (let i = events.length - 1; i >= 0; i--) {
+  for (let i = events.length - 1; i >= 0 && hits.length < limit; i--) {
     const text = searchableEventText(events[i]);
-    if (!text) continue;
-    const normalized = text.replace(/\s+/g, ' ').trim();
-    const idx = normalized.toLowerCase().indexOf(q);
-    if (idx < 0) continue;
-    hits.push({
-      eventIndex: i,
-      kind: eventKind(events[i]),
-      snippet: makeSnippet(normalized, idx, q.length),
-    });
-    if (hits.length >= limit) break;
+    if (!text || !compiled.raw.test(text)) continue;
+    const hit = makeHit(text, compiled, i, eventKind(events[i]));
+    if (hit) hits.push(hit);
   }
   return hits;
+}
+
+/**
+ * Search text for one conversation, built once and reused across keystrokes:
+ * each event's searchable text, so a query no longer re-parses the log or
+ * re-extracts every event. Append-only, like the histories it mirrors.
+ * Returns the same hits as searchEvents.
+ */
+export class EventSearchIndex {
+  /** Source events consumed so far; the next append starts here. */
+  indexedCount = 0;
+  /** Per indexed event, oldest first. */
+  private texts: string[] = [];
+  private eventIndices: number[] = [];
+  private kinds: string[] = [];
+  private chars = 0;
+
+  /** Retained text size in chars. */
+  get size(): number {
+    return this.chars;
+  }
+
+  /** Index events[indexedCount..]. */
+  append(events: readonly AgentEvent[]): void {
+    for (let i = this.indexedCount; i < events.length; i++) {
+      const text = searchableEventText(events[i]);
+      if (!text) continue;
+      this.texts.push(text);
+      this.eventIndices.push(i);
+      this.kinds.push(eventKind(events[i]));
+      this.chars += text.length;
+    }
+    this.indexedCount = events.length;
+  }
+
+  /** Newest-first hits, at most one per event. */
+  search(query: string, limit = 100): EventSearchHit[] {
+    const compiled = compileQuery(query);
+    const hits: EventSearchHit[] = [];
+    if (!compiled) return hits;
+    for (let k = this.texts.length - 1; k >= 0 && hits.length < limit; k--) {
+      if (!compiled.raw.test(this.texts[k])) continue;
+      const hit = makeHit(this.texts[k], compiled, this.eventIndices[k], this.kinds[k]);
+      if (hit) hits.push(hit);
+    }
+    return hits;
+  }
+}
+
+interface SearchIndexEntry {
+  /** What the index was built from: a live history array (grows in place) or
+   *  a version string for an immutable snapshot (an on-disk log). */
+  source: readonly AgentEvent[] | string;
+  index: EventSearchIndex;
+  /** Last search pass that used this entry. */
+  pass: number;
+}
+
+/**
+ * Size-bounded cache of per-conversation search indexes. Cross-conversation
+ * search walks every conversation in the same order on each keystroke, which
+ * defeats plain LRU once they don't all fit (every lookup misses). So entries
+ * used by the current pass are never evicted to make room in that pass: an
+ * index that doesn't fit is used once and dropped, and the rest stay cached.
+ */
+export class SearchIndexCache {
+  private entries = new Map<string, SearchIndexEntry>();
+  private total = 0;
+  private pass = 0;
+
+  constructor(private readonly budget: number) {}
+
+  /** Retained text size in chars across all cached indexes. */
+  get size(): number {
+    return this.total;
+  }
+
+  /** Start a search request; entries it touches are protected from eviction until the next one. */
+  beginPass(): void {
+    this.pass++;
+  }
+
+  /** Index for a history that only grows in place (a live session's event array). */
+  live(id: string, events: readonly AgentEvent[]): EventSearchIndex {
+    const entry = this.lookup(id, events);
+    // Histories only grow in place; a shorter array was edited, so rebuild.
+    if (!entry || events.length < entry.index.indexedCount) return this.add(id, events, events);
+    if (events.length > entry.index.indexedCount) {
+      this.total -= entry.index.size;
+      entry.index.append(events);
+      this.total += entry.index.size;
+      this.fit(id);
+    }
+    return entry.index;
+  }
+
+  /** Index for an immutable snapshot identified by `version`. `load` runs only
+   *  on a miss; when it returns null (unreadable), nothing is cached. */
+  snapshot(id: string, version: string, load: () => readonly AgentEvent[] | null): EventSearchIndex | null {
+    const cached = this.lookup(id, version);
+    if (cached) return cached.index;
+    const events = load();
+    return events ? this.add(id, version, events) : null;
+  }
+
+  delete(id: string): void {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    this.total -= entry.index.size;
+    this.entries.delete(id);
+  }
+
+  private lookup(id: string, source: SearchIndexEntry['source']): SearchIndexEntry | undefined {
+    const entry = this.entries.get(id);
+    if (!entry) return undefined;
+    if (entry.source !== source) {
+      this.delete(id);
+      return undefined;
+    }
+    // Refresh recency (Map keeps insertion order; oldest is evicted first).
+    this.entries.delete(id);
+    this.entries.set(id, entry);
+    entry.pass = this.pass;
+    return entry;
+  }
+
+  private add(id: string, source: SearchIndexEntry['source'], events: readonly AgentEvent[]): EventSearchIndex {
+    this.delete(id);
+    const index = new EventSearchIndex();
+    index.append(events);
+    this.entries.set(id, { source, index, pass: this.pass });
+    this.total += index.size;
+    this.fit(id);
+    return index;
+  }
+
+  /** Evict older entries until within budget; drop `id` itself if it still doesn't fit. */
+  private fit(id: string): void {
+    for (const [key, entry] of this.entries) {
+      if (this.total <= this.budget) return;
+      if (key !== id && entry.pass < this.pass) this.delete(key);
+    }
+    if (this.total > this.budget) this.delete(id);
+  }
 }

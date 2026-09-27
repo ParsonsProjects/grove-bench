@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
+import { describe, it, expect, vi } from 'vitest';
+import { searchEvents, searchableEventText, eventKind, findEventIndexByUuid, extractSessionPreview, firstUserPrompt, EventSearchIndex, SearchIndexCache } from './event-search.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('searchableEventText', () => {
@@ -97,6 +97,120 @@ describe('searchEvents', () => {
     expect(hits).toHaveLength(3);
     // newest-first → indices 9, 8, 7
     expect(hits.map((h) => h.eventIndex)).toEqual([9, 8, 7]);
+  });
+
+  it('matches across line breaks and whitespace runs, in text and query', () => {
+    const multiline: AgentEvent[] = [{ type: 'assistant_text', text: 'fixed the\n\n   parser bug', uuid: '' }];
+    expect(searchEvents(multiline, 'the parser')[0]?.snippet).toBe('fixed the parser bug');
+    expect(searchEvents(multiline, 'the   parser')).toHaveLength(1);
+  });
+
+  it('treats regex characters in the query literally', () => {
+    const code: AgentEvent[] = [{ type: 'tool_result', toolUseId: 't', content: 'call foo(bar) in a.ts' }];
+    expect(searchEvents(code, 'foo(bar)')).toHaveLength(1);
+    expect(searchEvents(code, 'a.ts')).toHaveLength(1);
+    expect(searchEvents(code, 'a*ts')).toHaveLength(0);
+  });
+});
+
+describe('EventSearchIndex', () => {
+  const events: AgentEvent[] = [
+    { type: 'user_message', text: 'investigate the parser bug' },
+    { type: 'partial_text', text: 'parser streaming noise' },
+    { type: 'thinking', thinking: 'the Parser is\n\trecursive', uuid: '' },
+    { type: 'assistant_tool_use', toolName: 'Edit', toolUseId: 't1', uuid: '', toolInput: { file_path: '/src/parser.ts' } },
+    { type: 'assistant_text', text: 'unrelated answer', uuid: '' },
+    { type: 'tool_result', toolUseId: 't1', content: 'x'.repeat(200) + ' PARSER ' + 'y'.repeat(200) },
+  ];
+
+  it('returns the same hits as searchEvents', () => {
+    const index = new EventSearchIndex();
+    index.append(events);
+    for (const q of ['parser', 'PARSER', 'is recursive', 'parser.ts', 'answer', 'nothing', '', 'x']) {
+      for (const limit of [1, 2, 100]) {
+        expect(index.search(q, limit)).toEqual(searchEvents(events, q, limit));
+      }
+    }
+  });
+
+  it('indexes only events appended since the last call, keeping absolute indices', () => {
+    const index = new EventSearchIndex();
+    index.append(events.slice(0, 2));
+    expect(index.indexedCount).toBe(2);
+    const grown = [...events.slice(0, 2), { type: 'user_message', text: 'parser again' } as AgentEvent];
+    index.append(grown);
+    expect(index.indexedCount).toBe(3);
+    expect(index.search('parser').map((h) => h.eventIndex)).toEqual([2, 0]);
+  });
+});
+
+describe('SearchIndexCache', () => {
+  const history = (text: string): AgentEvent[] => [{ type: 'user_message', text }];
+
+  it('builds a snapshot once per version', () => {
+    const cache = new SearchIndexCache(1000);
+    const load = vi.fn(() => history('parser'));
+    cache.beginPass();
+    cache.snapshot('a', 'v1', load);
+    cache.snapshot('a', 'v1', load);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(cache.snapshot('a', 'v2', load)?.search('parser')).toHaveLength(1);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches nothing when a snapshot cannot be read', () => {
+    const cache = new SearchIndexCache(1000);
+    expect(cache.snapshot('a', 'v1', () => null)).toBeNull();
+    const load = vi.fn(() => history('parser'));
+    expect(cache.snapshot('a', 'v1', load)?.search('parser')).toHaveLength(1);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('extends a live index in place and rebuilds when the array is replaced', () => {
+    const cache = new SearchIndexCache(1000);
+    const events = history('first parser');
+    const index = cache.live('a', events);
+    events.push({ type: 'user_message', text: 'second parser' });
+    expect(cache.live('a', events)).toBe(index);
+    expect(index.search('parser').map((h) => h.eventIndex)).toEqual([1, 0]);
+
+    const rewound = events.slice(0, 1);
+    const rebuilt = cache.live('a', rewound);
+    expect(rebuilt).not.toBe(index);
+    expect(rebuilt.search('parser').map((h) => h.eventIndex)).toEqual([0]);
+  });
+
+  it('keeps what fits when a pass sweeps more than the budget', () => {
+    // Each history is 10 chars; the budget fits two of three. Plain LRU would
+    // evict on every lookup of a repeated sweep; this rebuilds only the overflow.
+    const cache = new SearchIndexCache(25);
+    const loads = { a: 0, b: 0, c: 0 };
+    const sweep = () => {
+      cache.beginPass();
+      for (const id of ['a', 'b', 'c'] as const) {
+        cache.snapshot(id, 'v1', () => { loads[id]++; return history(`${id}-parser-1`); });
+      }
+    };
+    sweep();
+    sweep();
+    sweep();
+    expect(loads).toEqual({ a: 1, b: 1, c: 3 });
+    expect(cache.size).toBeLessThanOrEqual(25);
+  });
+
+  it('evicts entries from earlier passes to make room', () => {
+    const cache = new SearchIndexCache(25);
+    const load = (id: string) => () => history(`${id}-parser-1`);
+    cache.beginPass();
+    cache.snapshot('a', 'v1', load('a'));
+    cache.snapshot('b', 'v1', load('b'));
+    cache.beginPass();
+    cache.snapshot('c', 'v1', load('c'));
+    expect(cache.size).toBe(20);
+    // 'a' was the least recently used, so it went; 'b' is still cached.
+    const reload = vi.fn(load('b'));
+    cache.snapshot('b', 'v1', reload);
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 
