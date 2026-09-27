@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
+  import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { agentReady } from '../../shared/prerequisites.js';
+  import ApiKeyField from './ApiKeyField.svelte';
   import { trackEvent } from '../lib/analytics.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -14,8 +18,37 @@
   let open = $state(true);
   let selectedRepo = $state(store.repos[0] || '');
 
+  // The agent this conversation runs: the default agent unless another is
+  // picked. The picker only shows when more than one agent is registered.
+  // Until the agent list loads, fall back to the agents in the last check.
+  let pickedAgent = $state('');
+  let agentsLoading = $state(true);
+  const agentId = $derived(
+    pickedAgent || agentsStore.defaultId || Object.keys(store.prerequisites?.agents ?? {})[0] || '',
+  );
+  const agentStatus = $derived(agentId ? store.prerequisites?.agents[agentId] : undefined);
+
+  // Credentials are checked here, not at app startup. A cached "ready" is
+  // trusted (a bad key still surfaces as an auth error in the conversation);
+  // anything else gets a fresh check before the key form shows.
+  const credentials = $derived.by(() => {
+    const status = store.prerequisites;
+    if (status && agentId && agentReady(status, agentId)) return 'ready';
+    if (prerequisitesStore.checking || (!agentId && agentsLoading)) return 'checking';
+    return 'missing';
+  });
+
+  // One fresh check per open, as soon as we know which agent is meant.
+  let checkedOnOpen = false;
+  $effect(() => {
+    if (checkedOnOpen || !agentId) return;
+    checkedOnOpen = true;
+    if (credentials !== 'ready') prerequisitesStore.refresh();
+  });
+
   onMount(() => {
     if (defaultRepo) selectedRepo = defaultRepo;
+    agentsStore.load().finally(() => { agentsLoading = false; });
   });
   let branchName = $state('');
   let baseBranch = $state('');
@@ -121,6 +154,7 @@
   }
 
   $effect(() => {
+    if (credentials !== 'ready') return;
     if (mode === 'existing' && selectedRepo) {
       fetchBranches();
     }
@@ -140,11 +174,12 @@
     dialogError = '';
 
     try {
+      const base = { repoPath: selectedRepo, ...(agentId ? { adapterType: agentId } : {}) };
       const opts = mode === 'direct'
-        ? { repoPath: selectedRepo, branchName: '', direct: true as const }
+        ? { ...base, branchName: '', direct: true as const }
         : mode === 'existing'
-        ? { repoPath: selectedRepo, branchName: selectedBranch, useExisting: true as const }
-        : { repoPath: selectedRepo, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
+        ? { ...base, branchName: selectedBranch, useExisting: true as const }
+        : { ...base, branchName: branchName.trim(), baseBranch: baseBranch.trim() || undefined };
 
       const result = await window.groveBench.createSession(opts);
       trackEvent('session_created', { mode });
@@ -182,9 +217,60 @@
   <Dialog.Content class="max-w-sm">
     <Dialog.Header>
       <Dialog.Title>New Conversation</Dialog.Title>
-      <Dialog.Description>Start a new conversation in its own worktree branch.</Dialog.Description>
+      <Dialog.Description>
+        {credentials === 'missing'
+          ? 'Add credentials to start a conversation.'
+          : 'Start a new conversation in its own worktree branch.'}
+      </Dialog.Description>
     </Dialog.Header>
 
+    {#if agentsStore.list.length > 1}
+      <div class="mt-4">
+        <Label class="mb-1 block">Agent</Label>
+        <Select.Root type="single" value={agentId} onValueChange={(v) => { if (v) pickedAgent = v; }}>
+          <Select.Trigger class="w-full" aria-label="Agent">
+            {agentsStore.get(agentId)?.displayName ?? agentId}
+          </Select.Trigger>
+          <Select.Content>
+            {#each agentsStore.list as agent (agent.id)}
+              <Select.Item value={agent.id} label={agent.displayName} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+    {/if}
+
+    {#if credentials === 'checking'}
+      <div class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+        <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+        Checking credentials…
+      </div>
+    {:else if credentials === 'missing'}
+      <div class="flex flex-col gap-3 mt-4">
+        {#if agentStatus?.apiKey}
+          <!-- Keyed so switching agent clears a half-typed key and its error -->
+          {#key agentId}
+            <ApiKeyField adapterId={agentId} autofocus />
+          {/key}
+          <p class="text-xs text-muted-foreground">
+            Signed in with the CLI in a terminal instead? Re-check.
+          </p>
+        {:else}
+          <p class="text-sm text-muted-foreground">
+            {agentStatus?.authErrorMessage ?? agentStatus?.errorMessage ?? 'Could not check the agent\'s credentials.'}
+          </p>
+        {/if}
+
+        <Dialog.Footer>
+          <Button variant="secondary" onclick={() => { open = false; onclose(); }}>
+            Cancel
+          </Button>
+          <Button variant="secondary" onclick={() => prerequisitesStore.refresh()}>
+            Re-check
+          </Button>
+        </Dialog.Footer>
+      </div>
+    {:else}
     <div class="flex flex-col gap-3 mt-4">
       <div>
         <Label for="repo" class="mb-1 block">Project</Label>
@@ -404,5 +490,6 @@
         </Button>
       </Dialog.Footer>
     </div>
+    {/if}
   </Dialog.Content>
 </Dialog.Root>

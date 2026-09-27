@@ -1,12 +1,19 @@
 import type { PrerequisiteStatus } from './types.js';
 
 /**
- * True when the core prerequisites (git and an authenticated agent CLI) are
- * met. The GitHub CLI is deliberately excluded: it only gates PR features and
- * must never hold the app behind the startup overlay.
+ * True when git is installed and new enough. Only git-backed features need it
+ * (adding a project, worktrees, Changes); it never blocks the app from loading.
  */
-export function prerequisitesSatisfied(status: PrerequisiteStatus): boolean {
-  if (!status.git.available || status.git.meetsMinimum === false) return false;
-  if (!status.agent.available || status.agent.authenticated !== true) return false;
-  return true;
+export function gitReady(status: PrerequisiteStatus): boolean {
+  return status.git.available && status.git.meetsMinimum !== false;
+}
+
+/**
+ * True when an agent has credentials to start a conversation: a CLI sign-in,
+ * credentials in the environment, or an API key saved in the app. Checked when
+ * the user starts a conversation, never at app startup.
+ */
+export function agentReady(status: PrerequisiteStatus, adapterId: string): boolean {
+  const agent = status.agents[adapterId];
+  return !!agent && (agent.authenticated === true || agent.apiKey?.saved === true);
 }
