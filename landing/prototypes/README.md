@@ -40,7 +40,7 @@ npm run build:prototypes   # static build in landing/dist-prototypes (git-ignore
 
 ## The three directions
 
-All three keep the brand (pixel tree, JetBrains Mono, square corners, blue primary), load the font properly, keep content visible without waiting for scroll observers, pause animation off screen, and fall back to a still frame under `prefers-reduced-motion`. Visible copy says "conversation" and "project", and every feature claim comes from `DESIGN.md` or `docs/help/`.
+All three keep the brand (pixel tree, JetBrains Mono, square corners, blue primary), load the font properly, keep content visible without waiting for scroll observers, pause animation off screen, and fall back to a still frame under `prefers-reduced-motion`. Visible copy says "AI agents" rather than naming a product (only the requirements line names the Claude Code CLI, because the app needs it), uses "conversation" and "project", and every feature claim comes from `DESIGN.md` or `docs/help/`.
 
 ### A. Branches (`src/prototypes/branches/`, about 3,800 lines)
 

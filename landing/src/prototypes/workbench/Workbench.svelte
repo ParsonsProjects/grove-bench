@@ -57,7 +57,7 @@
       <div class="relative max-w-[1140px] mx-auto px-4 sm:px-6 pt-12 md:pt-16 pb-20 md:pb-28">
         <div class="text-center mx-auto">
           <h1 class="text-[28px] leading-[1.15] sm:text-4xl lg:text-[44px] font-bold tracking-tight">
-            Run Claude Code agents <span class="text-gradient whitespace-nowrap">side by side.</span>
+            Run AI agents <span class="text-gradient whitespace-nowrap">side by side.</span>
           </h1>
           <p class="mt-4 text-sm sm:text-base text-muted-foreground leading-relaxed">
             Every conversation gets its own git worktree, branch and terminal.

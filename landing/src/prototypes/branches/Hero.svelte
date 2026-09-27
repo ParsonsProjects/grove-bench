@@ -58,7 +58,7 @@
         </span>
       </h1>
       <p class="hero-sub">
-        Run several Claude Code agents on one project. Each gets its own git worktree, branch and terminal.
+        Run several AI agents on one project. Each gets its own git worktree, branch and terminal.
       </p>
       <div class="hero-actions">
         <a
