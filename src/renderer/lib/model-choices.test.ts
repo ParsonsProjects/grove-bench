@@ -29,4 +29,12 @@ describe('defaultModelChoices()', () => {
       { value: DEFAULT_MODEL_VALUE, label: 'Default' },
     ]);
   });
+
+  it('names a given default model instead of the first one', () => {
+    expect(defaultModelChoices(models, '', 'claude-sonnet-4-6')[0]).toEqual({ value: DEFAULT_MODEL_VALUE, label: 'Default (Sonnet 4.6)' });
+    // A default the list doesn't know is shown by its id.
+    expect(defaultModelChoices(models, '', 'claude-mystery')[0].label).toBe('Default (claude-mystery)');
+    // Unknown default (the agent picks): no model named.
+    expect(defaultModelChoices(models, '', null)[0].label).toBe('Default');
+  });
 });

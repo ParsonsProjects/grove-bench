@@ -35,7 +35,7 @@ const SETTINGS = {
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
-  memoryModel: 'claude-haiku-4-5',
+  backgroundModels: {},
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',
@@ -331,7 +331,7 @@ const api: Record<string, unknown> = {
     '+    <SessionSearch />',
   ].join('\n'),
   listMcpServers: async () => [],
-  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true }],
+  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001' }],
   getAdapterControls: async () => [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [

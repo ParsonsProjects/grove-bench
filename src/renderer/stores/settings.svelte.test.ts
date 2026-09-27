@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
-  memoryModel: 'claude-haiku-4-5',
+  backgroundModels: {},
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: 'main',
@@ -200,6 +200,19 @@ describe('default models', () => {
 
     settingsStore.setDefaultModel('codex', '');
     expect(settingsStore.draft.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6' });
+    expect(settingsStore.dirty).toBe(true);
+  });
+});
+
+describe('background models', () => {
+  it('keeps one background model per agent and clears it with an empty value', () => {
+    expect(settingsStore.backgroundModel('claude-code')).toBe('');
+    settingsStore.setBackgroundModel('claude-code', 'claude-sonnet-4-6');
+    settingsStore.setBackgroundModel('codex', 'codex-mini');
+    expect(settingsStore.draft.backgroundModels).toEqual({ 'claude-code': 'claude-sonnet-4-6', codex: 'codex-mini' });
+
+    settingsStore.setBackgroundModel('claude-code', '');
+    expect(settingsStore.draft.backgroundModels).toEqual({ codex: 'codex-mini' });
     expect(settingsStore.dirty).toBe(true);
   });
 });

@@ -938,6 +938,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
   readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly backgroundModel = 'claude-haiku-4-5-20251001';
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',

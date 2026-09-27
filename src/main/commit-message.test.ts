@@ -74,6 +74,19 @@ describe('buildCommitPrompt()', () => {
 });
 
 describe('generateCommitMessage()', () => {
+  it("asks for the agent's background model", async () => {
+    mockGit
+      .mockResolvedValueOnce('diff --git a/x b/x\n+new line')
+      .mockResolvedValueOnce(' x | 1 +')
+      .mockResolvedValueOnce('');
+    const generateText = vi.fn(async () => 'feat: x');
+    const adapter = { ...makeAdapter(generateText), backgroundModel: 'cheap-model' } as AgentAdapter;
+
+    await generateCommitMessage('/wt', adapter);
+
+    expect(generateText).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ model: 'cheap-model' }));
+  });
+
   it('feeds the staged diff to the adapter and cleans the result', async () => {
     mockGit
       .mockResolvedValueOnce('diff --git a/x b/x\n+new line')  // diff --cached

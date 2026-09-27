@@ -244,6 +244,8 @@
     displayName: string;
     models: Array<{ id: string; label: string }>;
     controls: ControlDescriptor[];
+    /** The adapter's own model for background tasks, if it declares one. */
+    backgroundModel?: string;
   }
   let agentGroups = $state<AgentGroup[]>([]);
   let agentGroupsLoading = $state(false);
@@ -264,6 +266,7 @@
           displayName: a.displayName,
           models,
           controls: controls.filter((c) => c.id !== CONTROL_IDS.permissionMode),
+          backgroundModel: a.backgroundModel,
         };
       }));
       if (request === agentGroupsRequest) agentGroups = groups;
@@ -449,6 +452,9 @@
             {@const currentModel = settingsStore.defaultModel(agent.id)}
             {@const modelChoices = defaultModelChoices(agent.models, currentModel)}
             {@const selectedModel = currentModel || DEFAULT_MODEL_VALUE}
+            {@const currentBackground = settingsStore.backgroundModel(agent.id)}
+            {@const backgroundChoices = defaultModelChoices(agent.models, currentBackground, agent.backgroundModel ?? null)}
+            {@const selectedBackground = currentBackground || DEFAULT_MODEL_VALUE}
             <div class="flex flex-col gap-3">
               <div class="text-sm font-medium text-foreground">{agent.displayName}</div>
 
@@ -486,6 +492,25 @@
                   </Select.Content>
                 </Select.Root>
                 <p class="text-xs text-muted-foreground mt-1">New conversations with this agent start on this model. Each conversation can still switch from the status bar.</p>
+              </div>
+
+              <div>
+                <Label class="mb-1 block">Background Model</Label>
+                <Select.Root
+                  type="single"
+                  value={selectedBackground}
+                  onValueChange={(v) => { if (v) settingsStore.setBackgroundModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
+                >
+                  <Select.Trigger class="w-64" aria-label={`${agent.displayName} background model`}>
+                    {backgroundChoices.find((c) => c.value === selectedBackground)?.label ?? selectedBackground}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each backgroundChoices as choice (choice.value)}
+                      <Select.Item value={choice.value} label={choice.label} />
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                <p class="text-xs text-muted-foreground mt-1">Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's conversations. These run often, so a cheap model is best.</p>
               </div>
 
               {#if agent.controls.length === 0}
@@ -782,17 +807,7 @@
             <p class="text-xs text-muted-foreground mt-1">Abort a compaction pass (manual or automatic) that runs longer than this. Minimum 30. Default 300 (5 minutes).</p>
           </div>
 
-          <div class="ml-6">
-            <Label for="settings-memory-model" class="mb-1 block">Memory model</Label>
-            <input
-              id="settings-memory-model"
-              type="text"
-              bind:value={settingsStore.draft.memoryModel}
-              placeholder="e.g. claude-haiku-4-5"
-              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-            <p class="text-xs text-muted-foreground mt-1">Model used for background memory auto-save and compaction calls. Defaults to Haiku to keep these cheap. Leave empty to use the provider default.</p>
-          </div>
+          <p class="text-xs text-muted-foreground ml-6">Memory calls run on each conversation's own agent, using its Background Model (Settings &gt; Agent).</p>
 
           <Separator />
 

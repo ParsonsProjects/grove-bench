@@ -27,6 +27,8 @@ export interface WorktreeInfo {
    *  it is still open. Completed sessions are hidden from the sidebar by
    *  default and reopen on the next user message. */
   completedAt?: number | null;
+  /** Adapter id of the agent the session runs, from the manifest. */
+  agentType?: string;
 }
 
 export interface WorktreeRepoConfig {
@@ -72,6 +74,8 @@ export interface AgentSummary {
   displayName: string;
   capabilities: Record<string, boolean>;
   isDefault?: boolean;
+  /** The adapter's own model for background tasks, if it declares one. */
+  backgroundModel?: string;
 }
 
 /** One agent's install and sign-in state. */
@@ -1027,10 +1031,10 @@ export interface GroveBenchSettings {
   /** Abort a memory compaction pass after this many seconds. Clamped to a
    *  30-second minimum. Default 300 (5 minutes). */
   memoryCompactTimeoutSeconds: number;
-  /** Model used for background memory calls (auto-save extraction and
-   *  compaction). Empty = provider default. Defaults to Haiku — these calls
-   *  run after every session and don't need a frontier model. */
-  memoryModel: string;
+  /** Model for background tasks (memory notes and compaction, commit
+   *  messages, skill suggestions), keyed by adapter id. Missing or empty
+   *  means the adapter's own cheap default (Haiku for Claude). */
+  backgroundModels: Record<string, string>;
 
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */

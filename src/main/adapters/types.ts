@@ -233,6 +233,11 @@ export interface AgentAdapter {
   /** Set when the provider accepts an API key entered in the app. */
   readonly apiKey?: ApiKeyDescriptor;
 
+  /** Cheap model for background tasks run on this agent: memory notes and
+   *  compaction, commit messages, skill suggestions. Used unless the user
+   *  picks another in Settings > Agent. Omit to use the agent's own default. */
+  readonly backgroundModel?: string;
+
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */
   dispose?(): Promise<void>;

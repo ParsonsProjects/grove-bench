@@ -1,5 +1,6 @@
 import { git } from './git.js';
 import type { AgentAdapter } from './adapters/types.js';
+import { backgroundModelFor } from './background-tasks.js';
 
 /** Cap on the staged patch included in the prompt — the --stat summary always
  *  goes in full, so a truncated patch still yields a usable message. */
@@ -64,7 +65,7 @@ export async function generateCommitMessage(worktreePath: string, adapter: Agent
     const raw = await adapter.generateText(
       COMMIT_MESSAGE_SYSTEM_PROMPT,
       buildCommitPrompt(stat, diff, recentSubjects),
-      { cwd: worktreePath, abortSignal: abortController.signal },
+      { cwd: worktreePath, abortSignal: abortController.signal, model: backgroundModelFor(adapter) },
     );
     const message = cleanCommitMessage(raw);
     if (!message) throw new Error('The agent returned an empty commit message');

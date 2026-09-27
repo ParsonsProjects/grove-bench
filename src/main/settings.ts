@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
-  memoryModel: 'claude-haiku-4-5',
+  backgroundModels: {},
 
   // Worktree
   autoInstallDeps: false,
@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 5;
+export const SETTINGS_SCHEMA_VERSION = 6;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -137,6 +137,23 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
       : existing;
     return rest;
   },
+  // 5 → 6: `memoryModel` was one model for every agent's background calls,
+  // so a Claude model would have been handed to any other agent. It became
+  // `backgroundModels`, keyed by adapter id, and each adapter declares its own
+  // cheap default. The old shipped default ('claude-haiku-4-5') is dropped:
+  // the Claude adapter's own default is the same model. Any other saved model
+  // moves under Claude Code, the only agent before this. An empty value
+  // ("provider default") has no per-agent equivalent and is dropped too.
+  (raw) => {
+    const { memoryModel, ...rest } = raw;
+    const existing = (typeof rest.backgroundModels === 'object' && rest.backgroundModels !== null)
+      ? (rest.backgroundModels as Record<string, string>)
+      : {};
+    rest.backgroundModels = typeof memoryModel === 'string' && memoryModel && memoryModel !== 'claude-haiku-4-5'
+      ? { ...existing, 'claude-code': memoryModel }
+      : existing;
+    return rest;
+  },
 ];
 
 // ─── Validation ───
@@ -163,7 +180,7 @@ const settingsSchema = z.object({
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),
   memoryCompactTimeoutSeconds: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
-  memoryModel: z.string().catch(DEFAULT_SETTINGS.memoryModel),
+  backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
 
