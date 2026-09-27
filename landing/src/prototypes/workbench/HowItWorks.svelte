@@ -81,6 +81,28 @@
   .step {
     position: relative;
   }
+  /* Phones: icon beside the text */
+  @media (max-width: 767px) {
+    .steps {
+      gap: 1.75rem;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      column-gap: 1.25rem;
+      align-items: start;
+    }
+    .step .icon {
+      grid-row: span 3;
+      width: 72px;
+      height: 72px;
+      margin-bottom: 0;
+    }
+    .step .icon svg {
+      width: 48px;
+      height: 48px;
+    }
+  }
   /* Dashed track joining the icons on wide screens, with a pixel running along it */
   @media (min-width: 768px) {
     .step:not(:last-child)::after {
@@ -150,7 +172,8 @@
     font-size: 14px;
     line-height: 1.6;
     color: var(--color-muted-foreground);
-    max-width: 32ch;
+    max-width: 36ch;
+    text-wrap: pretty;
   }
 
   svg :global(rect),

@@ -152,11 +152,11 @@
       transform 0.12s ease;
   }
   .opt.hover {
-    border-color: color-mix(in oklch, var(--color-primary) 70%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 70%, transparent);
     color: var(--color-foreground);
   }
   .opt.pressed {
-    background: color-mix(in oklch, var(--color-primary) 30%, var(--color-background));
+    background: color-mix(in srgb, var(--color-primary) 30%, var(--color-background));
     color: white;
     transform: scale(0.98);
   }
@@ -211,7 +211,7 @@
     font-size: 11px;
     line-height: 1.7;
     color: var(--lane);
-    background: color-mix(in oklch, var(--lane) 12%, transparent);
+    background: color-mix(in srgb, var(--lane) 12%, transparent);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

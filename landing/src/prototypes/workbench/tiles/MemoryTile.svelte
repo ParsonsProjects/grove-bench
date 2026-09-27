@@ -180,7 +180,7 @@
   }
   .folder.lit {
     border-color: var(--color-primary);
-    background: color-mix(in oklch, var(--color-primary) 16%, var(--color-background));
+    background: color-mix(in srgb, var(--color-primary) 16%, var(--color-background));
     color: var(--color-foreground);
   }
   .box {
@@ -189,7 +189,7 @@
     transition: border-color 0.3s ease;
   }
   .box.compacting {
-    border-color: color-mix(in oklch, var(--color-primary) 60%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
   }
   .bhead {
     display: flex;
@@ -215,7 +215,7 @@
     text-align: right;
   }
   .compacting .mlabel {
-    color: color-mix(in oklch, var(--color-primary) 70%, white);
+    color: color-mix(in srgb, var(--color-primary) 70%, white);
   }
   .mbar {
     width: 72px;

@@ -153,7 +153,7 @@
   }
   .head {
     color: oklch(0.66 0.16 254.6);
-    background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 14%, transparent);
   }
   .arrow {
     color: var(--color-muted-foreground);
@@ -188,7 +188,7 @@
   }
   .btn.pressed {
     transform: scale(0.94);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 40%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 40%, transparent);
   }
   .cli {
     min-height: 3.4em;

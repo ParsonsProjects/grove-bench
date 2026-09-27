@@ -200,23 +200,23 @@
     transition-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
   }
   .row.a {
-    background: color-mix(in oklch, #22c55e 13%, var(--color-background));
+    background: color-mix(in srgb, #22c55e 13%, var(--color-background));
     color: #86efac;
   }
   .row.d {
-    background: color-mix(in oklch, #ef4444 13%, var(--color-background));
+    background: color-mix(in srgb, #ef4444 13%, var(--color-background));
     color: #fca5a5;
   }
   .num {
     flex-shrink: 0;
-    width: 3.2em;
+    width: 2.8em;
     padding-right: 0.6em;
     text-align: right;
     color: oklch(0.45 0 0);
   }
   .sg {
     flex-shrink: 0;
-    width: 1.4em;
+    width: 1.3em;
     opacity: 0.8;
   }
   .tx {

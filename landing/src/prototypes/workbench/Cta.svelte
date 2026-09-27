@@ -33,7 +33,7 @@
       {#if sim.trees > 0}
         {sim.trees} {sim.trees === 1 ? 'branch' : 'branches'} merged in the demo, {sim.trees === 1 ? 'one tree' : 'one tree each'}.
       {:else}
-        Merge a branch in the demo and a tree grows here.
+        Open a PR in the demo and a tree grows here.
       {/if}
     </p>
 

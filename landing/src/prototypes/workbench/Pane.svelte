@@ -122,7 +122,7 @@
     <div class="strip ready" transition:slide={{ duration: ms(240) }}>
       <StatusDot status="ready" size={7} />
       <span class="rtext">Ready <span class="dim">·</span> <span class="plus">+{Math.round(addT.current)}</span> <span class="minus">-{Math.round(delT.current)}</span> <span class="dim">in {pane.files.length} {pane.files.length === 1 ? 'file' : 'files'}</span></span>
-      <button class="mini primary merge" class:pressing={pane.pressing} onclick={() => sim.mergeNow(pane)} disabled={pane.files.length === 0}>Merge</button>
+      <button class="mini primary merge" class:pressing={pane.pressing} onclick={() => sim.mergeNow(pane)} disabled={pane.files.length === 0} title="Opens a PR with the GitHub CLI. In this demo it merges straight away.">Open PR</button>
     </div>
   {/if}
 
@@ -257,7 +257,7 @@
     align-items: center;
     gap: 0.5rem;
     font-size: 11px;
-    color: color-mix(in oklch, var(--color-primary) 75%, white);
+    color: color-mix(in srgb, var(--color-primary) 75%, white);
     padding: 0 0.125rem 0.625rem;
   }
   .working .sq {
@@ -280,7 +280,7 @@
     font-size: 11px;
     color: var(--color-foreground);
     background: var(--color-accent);
-    border: 1px solid color-mix(in oklch, var(--color-primary) 45%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
     box-shadow: 0 6px 20px oklch(0 0 0 / 0.35);
   }
 
@@ -294,7 +294,7 @@
     min-width: 0;
   }
   .strip.ready {
-    background: color-mix(in oklch, #22c55e 7%, var(--color-card));
+    background: color-mix(in srgb, #22c55e 7%, var(--color-card));
   }
   .strip.composer {
     background: var(--color-card);
@@ -354,7 +354,7 @@
   }
   .merge.pressing {
     transform: scale(0.94);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 40%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 40%, transparent);
   }
 
   .foot {
@@ -439,7 +439,7 @@
   }
   .cp.now .sq {
     opacity: 1;
-    box-shadow: 0 0 0 2px color-mix(in oklch, var(--lane) 35%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--lane) 35%, transparent);
   }
   .confirm {
     margin-top: 0.375rem;

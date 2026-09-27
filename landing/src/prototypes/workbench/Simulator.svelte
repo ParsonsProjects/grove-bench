@@ -66,7 +66,7 @@
         <span class="you">{sim.reduced ? 'Autoplay is off' : "You're driving"}</span>
         <button class="replay" data-keep-autoplay onclick={() => sim.replay()}>
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path fill="currentColor" d="M3 2h2v8H3zM5 3h2v6H5zM7 4h2v4H7zM9 5h1v2H9z" /></svg>
-          {sim.reduced ? 'Play' : 'Replay'}<span class="wide">&nbsp;demo</span>
+          {sim.reduced ? 'Play' : 'Replay'}<span class="wide">demo</span>
         </button>
       {/if}
     </div>
@@ -83,10 +83,10 @@
       <div class="qwrap">
         <p class="q" id="wb-launch">What should your agents build?</p>
         <p class="cap" aria-live="polite">
-          {#if full}Four at once in this demo. Merge or close one first.{:else}Pick a task, or press + Agent.{/if}
+          {#if full}Four at once in this demo. Open a PR or close one first.{:else}Pick a task, or press + Agent.{/if}
         </p>
       </div>
-      <button class="agent mob" disabled={full} onclick={() => sim.addAgent()}>+ Agent</button>
+      <button class="agent" disabled={full} onclick={() => sim.addAgent()}>+ Agent</button>
     </div>
     <div class="chips" role="group" aria-labelledby="wb-launch">
       {#each PRESETS as preset (preset.id)}
@@ -107,7 +107,6 @@
           {preset.label}
         </button>
       {/each}
-      <button class="agent desk" disabled={full} onclick={() => sim.addAgent()}>+ Agent</button>
     </div>
   </div>
 
@@ -218,8 +217,8 @@
     gap: 0.4rem;
     padding: 0.15rem 0.5rem;
     color: var(--color-foreground);
-    border: 1px solid color-mix(in oklch, var(--color-primary) 45%, transparent);
-    background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
     font-size: 11px;
   }
   .rec {
@@ -284,9 +283,6 @@
     justify-content: space-between;
     gap: 1rem;
   }
-  .agent.mob {
-    display: none;
-  }
   .q {
     font-size: 13px;
     font-weight: 700;
@@ -321,7 +317,7 @@
       transform 0.15s ease;
   }
   .chip:hover:not(:disabled) {
-    border-color: color-mix(in oklch, var(--color-primary) 60%, transparent);
+    border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
     transform: translateY(-1px);
   }
   .chip .plus {
@@ -329,8 +325,8 @@
     font-weight: 700;
   }
   .chip.open {
-    border-color: color-mix(in oklch, var(--lane) 55%, transparent);
-    background: color-mix(in oklch, var(--lane) 10%, var(--color-background));
+    border-color: color-mix(in srgb, var(--lane) 55%, transparent);
+    background: color-mix(in srgb, var(--lane) 10%, var(--color-background));
     box-shadow: inset 2px 0 0 var(--lane);
   }
   .chip:disabled,
@@ -339,7 +335,7 @@
     cursor: not-allowed;
   }
   .agent {
-    margin-left: auto;
+    flex-shrink: 0;
     background: var(--color-primary);
     border-color: var(--color-primary);
     color: white;
@@ -441,12 +437,8 @@
     .hint,
     .winctl,
     .wide,
-    .you,
-    .agent.desk {
+    .you {
       display: none;
-    }
-    .agent.mob {
-      display: inline-flex;
     }
     .qwrap {
       flex-direction: column;

@@ -121,7 +121,7 @@
     display: flex;
     gap: 0.5rem;
     padding: 0.5rem 0.625rem;
-    background: color-mix(in oklch, var(--color-primary) 9%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 9%, transparent);
     border-left: 2px solid var(--color-primary);
     color: var(--color-foreground);
     font-size: 12px;
@@ -253,11 +253,11 @@
     color: oklch(0.7 0 0);
   }
   .dl.a {
-    background: color-mix(in oklch, #22c55e 13%, transparent);
+    background: color-mix(in srgb, #22c55e 13%, transparent);
     color: #86efac;
   }
   .dl.d {
-    background: color-mix(in oklch, #ef4444 13%, transparent);
+    background: color-mix(in srgb, #ef4444 13%, transparent);
     color: #fca5a5;
   }
   .sign {
@@ -308,7 +308,7 @@
 
   .perm {
     border-left: 3px solid #f59e0b;
-    background: color-mix(in oklch, #f59e0b 7%, transparent);
+    background: color-mix(in srgb, #f59e0b 7%, transparent);
     padding: 0.5rem 0.625rem 0.625rem;
     font-size: 12px;
   }
@@ -364,12 +364,12 @@
     align-items: center;
     gap: 0.5rem;
     font-size: 11px;
-    color: color-mix(in oklch, #f59e0b 80%, white);
+    color: color-mix(in srgb, #f59e0b 80%, white);
   }
   .countdown .track {
     width: 56px;
     height: 3px;
-    background: color-mix(in oklch, #f59e0b 20%, transparent);
+    background: color-mix(in srgb, #f59e0b 20%, transparent);
     flex-shrink: 0;
   }
   .countdown .fill {

@@ -35,11 +35,11 @@
     0%,
     100% {
       opacity: 1;
-      box-shadow: 0 0 0 0 color-mix(in oklch, var(--c) 55%, transparent);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 55%, transparent);
     }
     50% {
       opacity: 0.45;
-      box-shadow: 0 0 0 3px color-mix(in oklch, var(--c) 0%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 0%, transparent);
     }
   }
   @media (prefers-reduced-motion: reduce) {

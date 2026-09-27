@@ -159,7 +159,7 @@
   }
   .acts li.active {
     border-left-color: var(--color-primary);
-    background: color-mix(in oklch, var(--color-primary) 8%, var(--color-background));
+    background: color-mix(in srgb, var(--color-primary) 8%, var(--color-background));
   }
   .tool {
     font-weight: 700;
@@ -186,11 +186,11 @@
   }
   .out.asks {
     color: #fbbf24;
-    background: color-mix(in oklch, #f59e0b 14%, transparent);
+    background: color-mix(in srgb, #f59e0b 14%, transparent);
   }
   .out.applied {
     color: #4ade80;
-    background: color-mix(in oklch, #22c55e 14%, transparent);
+    background: color-mix(in srgb, #22c55e 14%, transparent);
   }
   .out.planned {
     color: var(--color-muted-foreground);

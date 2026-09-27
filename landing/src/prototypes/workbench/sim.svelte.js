@@ -106,7 +106,7 @@ export class Pane {
   notice = $state(null);
   /** The script finished. */
   done = $state(false);
-  /** Autoplay is about to press Merge. */
+  /** Autoplay is about to press Open PR. */
   pressing = $state(false);
 
   /**

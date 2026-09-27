@@ -49,5 +49,6 @@
     font-size: 14px;
     line-height: 1.5;
     color: var(--color-muted-foreground);
+    text-wrap: pretty;
   }
 </style>
