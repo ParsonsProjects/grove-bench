@@ -32,6 +32,7 @@ These apply to every agent:
 ## General
 
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
+- **Grove Characters**: Show small pixel agents for each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, and when no conversation is open. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when stopped. On by default
 - **Project Colors** — Customize the accent color for each project in the sidebar
 - **Always on top** — Keep the Grove Bench window above other windows
 - **Enable spell checking** — Turn spell checking in the prompt editor on or off
