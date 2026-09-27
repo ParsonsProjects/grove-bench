@@ -24,10 +24,14 @@ export const GAP = 18;
 // Lane x as a share of the path region (wide screens) and packed tight in
 // a corridor beside the text (narrow screens).
 const WIDE_FRAC = { main: 0.13, auth: 0.315, api: 0.545, fix: 0.775 };
-const CORRIDOR = { main: 6, auth: 19, api: 30, fix: 41 };
+// Narrow screens: main stays put at the left, the branch lanes fan out in
+// scenes and pack into a corridor beside each text panel.
+const NARROW_MAIN = 12;
+const NARROW_FRAC = { auth: 0.35, api: 0.58, fix: 0.8 };
+const CORRIDOR = { main: NARROW_MAIN, auth: 24, api: 35, fix: 46 };
 export const HALF = { main: 6, lane: 4, detour: 3 };
-const FORK_DY = 40;
-const MERGE_DY = 40;
+const FORK_DY = 62;
+const MERGE_DY = 62;
 const OPEN_T = 26;
 export const TREE_EXTRA = 1;
 
@@ -63,9 +67,9 @@ export function buildWorld(m) {
   }
 
   function baseX(key, y) {
-    const wx = R + WIDE_FRAC[key] * RW;
-    if (wide) return wx;
-    return lerp(R + CORRIDOR[key], wx, open(y));
+    if (wide) return R + WIDE_FRAC[key] * RW;
+    if (key === 'main') return R + NARROW_MAIN;
+    return lerp(R + CORRIDOR[key], R + NARROW_FRAC[key] * RW, open(y));
   }
   const mainX = (y) => baseX('main', y);
 
@@ -90,15 +94,15 @@ export function buildWorld(m) {
   const zp = Z.permissions;
   const gateY = zp.top + 96;
   const zc = Z.checkpoints;
-  const sunY = zc.top + 112;
+  const sunY = zc.top + (wide ? 112 : 100);
   const STONE_STEP = 18;
   const stones = [3, 2, 1, 0].map((i) => sunY - i * STONE_STEP);
   const zm = Z.memory;
   const memHold = {};
   for (const key of BRANCH_KEYS) memHold[key] = zm.top + 134 - GAP * ORDER[key];
   const zr = Z.review;
-  const merge = { auth: zr.top + 14, api: zr.top + 28, fix: zr.top + 42 };
-  const mainGateY = zr.top + 132;
+  const merge = { auth: zr.top + 12, api: zr.top + 26, fix: zr.top + 40 };
+  const mainGateY = zr.top + 150;
   const zx = Z.cta;
   const mainEnd = zx.top + 104;
   const endFeet = zx.top + 100;
@@ -140,7 +144,7 @@ export function buildWorld(m) {
   const X = (key, y) => Math.round(baseX(key, y));
 
   // Hero: the project's own tree at the head of main, a status lamp.
-  const heroTreeX = Math.round(mainX(heroBase));
+  const heroTreeX = Math.round(mainX(heroBase)) + (wide ? 0 : 2);
   props.push({ kind: 'tree', id: 'hero', x: heroTreeX, base: heroBase, block: heroBlock, pal: treePalette(6, 0.01) });
   const heroLamp = { kind: 'lamp', id: 'hero', x: Math.round(mainX(heroBase + 44)) + 13, base: heroBase + 44, status: 'working' };
   props.push(heroLamp);
@@ -149,16 +153,16 @@ export function buildWorld(m) {
   const signs = [];
   const forkTrees = {};
   for (const key of BRANCH_KEYS) {
-    const sy = fork[key] + FORK_DY + 12;
+    const sy = fork[key] + FORK_DY + 10;
     const sx = X(key, sy) + 7;
     props.push({ kind: 'sign', x: sx, base: sy, height: 13 });
     signs.push({ key, x: sx + 1, y: sy - 13 });
-    const ty = zw.top + 160 - GAP * ORDER[key];
+    const ty = zw.top + 200 - GAP * ORDER[key];
     const t = { kind: 'tree', id: 'wt-' + key, lane: key, x: X(key, ty) + 22, base: ty, block: 4, pal: treePalette([-4, 8, -12][ORDER[key]], [0, 0.015, -0.01][ORDER[key]]) };
     forkTrees[key] = t;
     props.push(t);
   }
-  const wtY = zw.top + 150;
+  const wtY = zw.top + 170;
   const wtSign = { x: Math.round((mainX(wtY) + baseX('auth', wtY)) / 2) - 1, y: wtY - 12 };
   props.push({ kind: 'sign', x: wtSign.x - 1, base: wtY, height: 12 });
 
@@ -188,12 +192,15 @@ export function buildWorld(m) {
 
   // Project memory: the old tree and the memory stone beside main.
   const memTop = zm.top;
-  const oldX = Math.round(mainX(memTop + 74)) - (wide ? 20 : 17);
+  // Wide: the old tree left of main, the stone to its right. Narrow: both
+  // between main and the first lane.
+  const oldX = Math.round(mainX(memTop + 74)) + (wide ? -20 : 26);
   props.push({ kind: 'tree', id: 'old', x: oldX, base: memTop + 74, block: wide ? 5 : 4, pal: oldTreePalette });
-  const memStone = { x: Math.round(mainX(memTop + 78)) + 17, base: memTop + 78 };
+  const memStone = { x: Math.round(mainX(memTop + 80)) + (wide ? 17 : 19), base: memTop + 80 };
   props.push({ kind: 'memStone', x: memStone.x, base: memStone.base });
   const chipStep = Math.ceil(27 / m.k);
-  const chips = [0, 1, 2, 3].map((i) => ({ x: Math.round(mainX(memTop + 92 + i * chipStep)), y: memTop + 92 + i * chipStep }));
+  const chipX = Math.round(mainX(memTop + 92)) + (wide ? 0 : 12);
+  const chips = [0, 1, 2, 3].map((i) => ({ x: chipX, y: memTop + 94 + i * chipStep }));
 
   // Review and ship: lamps where each lane turns home, the gate on main.
   const mergeLamps = {};

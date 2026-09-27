@@ -29,7 +29,7 @@ import {
 import { createAgent, stepAgent, answerAgent } from '../grove/agents.js';
 import { AGENTS, CHECKPOINTS } from './data.js';
 import { LANE_ORDER, limbX, limbSlope, trunkHalf, todAt } from './layout.js';
-import { buildCrown, climbSprites, stemRow, drawLeafCluster, drawDeck, drawHollow, hollowNotes, drawBush, silhouetteCrown } from './art.js';
+import { buildCrown, CROWN_PAD, climbSprites, stemRow, drawLeafCluster, drawDeck, drawHollow, hollowNotes, drawBush, silhouetteCrown } from './art.js';
 
 const TILE = 128;
 const STAR_RATE = 0.04;
@@ -143,7 +143,7 @@ export function createScene(canvas, options = {}) {
   function setLayout(layout) {
     L = layout;
     tiles.clear();
-    crownImg = buildCrown(L.crown.block, L.crown.n, leafPal);
+    crownImg = buildCrown(L.crown.block, leafPal);
     maxCam = Math.max(1, L.worldH - H);
     camY = scroll / k;
     tod = todAt(L, scroll);
@@ -197,8 +197,10 @@ export function createScene(canvas, options = {}) {
   }
 
   function seedFar() {
-    const gF = Math.round(H * 0.62 + maxCam * FAR_RATE);
-    const gM = Math.round(H * 0.8 + maxCam * MID_RATE);
+    // Hills sit just above the ground line while the ground comes into view.
+    const camAtGround = Math.max(0, L.groundY - H * 0.8);
+    const gF = Math.round(H * 0.6 + camAtGround * FAR_RATE);
+    const gM = Math.round(H * 0.7 + camAtGround * MID_RATE);
     const farTrees = [];
     let x = -12 - hash(3, 3) * 20;
     let i = 0;
@@ -235,17 +237,22 @@ export function createScene(canvas, options = {}) {
   // -------------------------------------------------------------------------
   // Story state, all derived from scroll plus the two interactions
 
-  /** Progress 0..1 of agent i on its way down to the gate. */
+  /** How far agent i has got: climb 0..1 down its limb, then walk 0..1 to the gate. */
   function walkProgress(i) {
-    const { s0, s2 } = L.walk;
-    const span = Math.max(1, s2 - s0);
-    const d = span * 0.1;
-    return clamp((scroll - s0 - i * d) / (span - 2 * d), 0, 1);
+    const { s0, s1, s2, dc, dl } = L.walk;
+    const a = s0 + i * dc;
+    const b = s1 + i * dl;
+    const c = s2 + i * dl * 0.5;
+    return {
+      climb: clamp((scroll - a) / Math.max(1, b - a), 0, 1),
+      walk: clamp((scroll - b) / Math.max(1, c - b), 0, 1),
+      started: scroll > a,
+    };
   }
 
   function checkArrivals() {
     for (let i = 0; i < 3; i++) {
-      const q = walkProgress(i);
+      const q = walkProgress(i).walk;
       if (q >= 1 && !arrived[i]) {
         arrived[i] = true;
         if (!reduced && scroll > lastScroll) {
@@ -267,15 +274,12 @@ export function createScene(canvas, options = {}) {
     const p = L.platforms[ag.lane];
     const q = walkProgress(i);
     const off = trunkOffsets()[i];
-    if (q <= 0) {
+    if (!q.started) {
       return { phase: 'seat', x: p.seatX + 4, y: p.deckY - 1, status: seatStatus(ag), bubble: seatBubble(ag) };
     }
-    const CLIMB = 0.7;
-    if (q < CLIMB) {
-      const span = L.walk.s2 - L.walk.s0;
-      const startScroll = L.walk.s0 + i * span * 0.1;
-      const y0 = startScroll / k - 26;
-      const y = y0 + (L.groundY - y0) * (q / CLIMB);
+    if (q.climb < 1) {
+      const top = L.walk.climbTop;
+      const y = top + (L.groundY - top) * q.climb;
       const lx = limbX(L, ag.lane, y);
       let x;
       if (lx == null) x = L.trunkX + off;
@@ -286,10 +290,11 @@ export function createScene(canvas, options = {}) {
       return { phase: 'climb', x, y, status: 'working', bubble: null };
     }
     const from = L.trunkX + off;
-    const u = (q - CLIMB) / (1 - CLIMB);
-    const x = from + (L.spots[i] - from) * u;
-    if (q < 1) return { phase: 'walk', x, y: L.groundY, status: 'working', bubble: null };
-    return { phase: 'gate', x: L.spots[i], y: L.groundY, status: 'ready', bubble: { tool: 'done', detail: 'Ready' } };
+    const x = from + (L.spots[i] - from) * q.walk;
+    if (q.walk < 1) return { phase: 'walk', x, y: L.groundY, status: 'working', bubble: null };
+    // One speech bubble for the three of them, clear of the gate board.
+    const bubble = i === 0 && arrived.every(Boolean) ? { tool: 'done', detail: 'Ready for main' } : null;
+    return { phase: 'gate', x: L.spots[i], y: L.groundY, status: 'ready', bubble };
   }
 
   function seatStatus(ag) {
@@ -482,13 +487,30 @@ export function createScene(canvas, options = {}) {
     const made = makeCanvas(W, TILE);
     drawTile(made.ctx, t * TILE);
     tiles.set(t, made.canvas);
-    if (tiles.size > 10) {
+    if (tiles.size > 14) {
       const here = Math.floor(camY / TILE);
       let worst = null;
       for (const key of tiles.keys()) if (worst == null || Math.abs(key - here) > Math.abs(worst - here)) worst = key;
       tiles.delete(worst);
     }
     return made.canvas;
+  }
+
+  // Draw the next tile in the direction of travel while the browser is idle,
+  // so scrolling rarely has to build one mid-frame.
+  let prefetchQueued = false;
+  function prefetch() {
+    if (prefetchQueued || !L) return;
+    const down = scroll >= lastScroll;
+    const t = down ? Math.floor((camY + H + 1) / TILE) + 1 : Math.floor(camY / TILE) - 1;
+    if (t < 0 || tiles.has(t) || t * TILE > L.worldH + TILE) return;
+    prefetchQueued = true;
+    const run = () => {
+      prefetchQueued = false;
+      if (L && !tiles.has(t)) tile(t);
+    };
+    if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 300 });
+    else setTimeout(run, 60);
   }
 
   const inTile = (y0, a, b) => b >= y0 && a < y0 + TILE;
@@ -511,7 +533,7 @@ export function createScene(canvas, options = {}) {
     }
     drawRingsCarved(g, y0);
     drawLeaves(g, y0);
-    if (inTile(y0, L.crown.top, L.crown.top + L.crown.h)) g.drawImage(crownImg, L.crown.left, L.crown.top - y0);
+    if (inTile(y0, L.crown.top - CROWN_PAD, L.crown.top + L.crown.h + CROWN_PAD)) g.drawImage(crownImg, L.crown.left - CROWN_PAD, L.crown.top - CROWN_PAD - y0);
     drawSignTwigs(g, y0);
     for (const lane of LANE_ORDER) drawPlatform(g, L.platforms[lane], y0);
     const hl = L.hollow;
@@ -525,11 +547,12 @@ export function createScene(canvas, options = {}) {
       const m = L.merge[lane];
       const p = L.platforms[lane];
       const sign = L.signs[lane];
-      for (let y = f.y0 + f.len + 18 + li * 11; y < m.y0 - 8; y += 34) {
+      for (let y = f.y0 + f.len + 22 + li * 17; y < m.y0 - 8; y += 50) {
         if (!inTile(y0, y - 12, y + 4)) continue;
-        if (Math.abs(y - p.deckY) < 34 || Math.abs(y - sign.y) < 14) continue;
+        if (Math.abs(y - p.deckY) < 34 || Math.abs(y - sign.y) < 16) continue;
+        if (hash(y, li) < 0.3) continue;
         if (lane === 'fix' && y > L.notches[0] - 10 && y < p.deckY + 30) continue;
-        const j = Math.floor(y / 34);
+        const j = Math.floor(y / 50);
         const dir = (j + li) % 2 ? 1 : -1;
         const x = limbX(L, lane, y) + dir * (L.size.limb + 1);
         drawLeafCluster(g, Math.round(x), y - y0, dir, j * 7 + li, leafPal);
@@ -736,6 +759,7 @@ export function createScene(canvas, options = {}) {
     const t0 = Math.floor(cy / TILE);
     const t1 = Math.floor((cy + H + 1) / TILE);
     for (let t = Math.max(0, t0); t <= t1; t++) w.drawImage(tile(t), 0, t * TILE - cy);
+    prefetch();
     drawSundialNow(w, cy);
     drawAgents(w, cy);
     drawParticles(w, cy);
@@ -807,7 +831,7 @@ export function createScene(canvas, options = {}) {
   function drawMoonSun() {
     const moonA = 1 - smooth((tod - 0.3) / 0.35);
     if (moonA > 0.01) {
-      const mx = Math.round(L.wide ? W - 40 : W - 24);
+      const mx = Math.round(L.wide ? W - 72 : W - 24);
       const my = Math.round((L.wide ? 38 : 50) - camY * MOON_RATE);
       if (my > -30) {
         ctx.globalAlpha = moonA;
@@ -873,18 +897,18 @@ export function createScene(canvas, options = {}) {
       far.col = {
         farFill,
         farRim: mix(farFill, bands[7], 0.45),
-        farTrunk: mix(farFill, bands[5], 0.15),
+        farTrunk: mix(mix(C.woodDark, '#1a2030', 0.5), bands[5], 0.78),
         midFill,
         midRim: mix(midFill, bands[6], 0.35),
-        midTrunk: mix(midFill, '#000000', 0.08),
+        midTrunk: mix(mix(C.woodDark, '#141820', 0.55), bands[6], 0.42),
         hillFar: hills.far,
         hillFarRim: mix(hills.far, bands[6], 0.45),
         hillNear: hills.near,
         hillNearRim: mix(hills.near, bands[7], 0.35),
       };
       far.sprites = {
-        far: { 3: silhouetteCrown(3, far.col.farFill, far.col.farRim), 4: silhouetteCrown(4, far.col.farFill, far.col.farRim) },
-        mid: silhouetteCrown(5, far.col.midFill, far.col.midRim),
+        far: { 3: silhouetteCrown(6, far.col.farFill, far.col.farRim, 3), 4: silhouetteCrown(8, far.col.farFill, far.col.farRim, 4) },
+        mid: silhouetteCrown(12, far.col.midFill, far.col.midRim, 7),
       };
     }
     const col = far.col;
@@ -1117,8 +1141,7 @@ export function createScene(canvas, options = {}) {
 
   function drawMemory(cy, tt, night) {
     const hl = L.hollow;
-    const top = Math.min(...LANE_ORDER.map((l) => L.platforms[l].deckY));
-    if (hl.y + 30 < cy || top > cy + H) return;
+    if (hl.y + 30 < cy || hl.y - H * 0.6 > cy + H) return;
     const inView = hl.y > cy - 30 && hl.y < cy + H + 30;
     const glow = 0.5 + 0.5 * night;
     if (inView) {
@@ -1134,7 +1157,9 @@ export function createScene(canvas, options = {}) {
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
     }
-    // Threads of light: out of the hollow, across to each limb, up to its platform.
+    // Threads of light: out of the hollow, across to each limb, up to its
+    // platform. They fade out on the way up, so they only show near the hollow.
+    const reach = (y) => 1 - smooth((hl.y - y) / (H * 0.55));
     ctx.globalCompositeOperation = 'lighter';
     LANE_ORDER.forEach((lane, li) => {
       const p = L.platforms[lane];
@@ -1148,6 +1173,7 @@ export function createScene(canvas, options = {}) {
       const n = Math.abs(x1 - x0);
       for (let i = 0; i <= n; i++) {
         const x = x0 + side * i;
+        if (x < -2 || x > W + 2) continue;
         const u = i / Math.max(1, n);
         const y = Math.round(hl.y - 2 + (yJoin - hl.y + 2) * u - Math.sin(u * Math.PI) * 4);
         if (y < cy || y > cy + H) continue;
@@ -1162,7 +1188,9 @@ export function createScene(canvas, options = {}) {
       for (let y = from; y <= to; y++) {
         const x = limbX(L, lane, y);
         if (x == null) continue;
-        ctx.globalAlpha = ((y + li) % 3 === 0 ? 0.55 : 0.28) * glow;
+        const fade = reach(y);
+        if (fade <= 0.01) continue;
+        ctx.globalAlpha = ((y + li) % 3 === 0 ? 0.55 : 0.28) * glow * fade;
         ctx.fillStyle = C.primaryPale;
         ctx.fillRect(Math.round(x) - side * 2, y - cy, 1, 1);
       }
@@ -1174,7 +1202,7 @@ export function createScene(canvas, options = {}) {
           if (y < cy - 4 || y > cy + H + 4) continue;
           const x = limbX(L, lane, y);
           if (x == null) continue;
-          ctx.globalAlpha = 0.9 * glow;
+          ctx.globalAlpha = 0.9 * glow * reach(y);
           ctx.drawImage(halo(C.primaryPale, 3, 1), Math.round(x) - side * 2 - 3, y - cy - 3);
         }
       }
@@ -1238,17 +1266,19 @@ export function createScene(canvas, options = {}) {
     const D = p.deckY;
     const head = [p.seatX + 4, D - 18];
     const lamp = [p.lampX + 1, D - 24];
-    const apiX = L.lanes.api;
-    const branchY = D - (L.wide ? 44 : 58);
-    const branchEdge = apiX + L.size.limb + 2;
+    const edgeAt = (y) => Math.round(limbX(L, 'api', y) ?? L.lanes.api) + L.size.limb + 1;
     if (L.wide) {
+      const branchY = D - 44;
+      const apiEdge = edgeAt(branchY);
+      const lx = apiEdge + 7;
       return [
         {
           key: 'branch',
           text: 'git worktree, its own branch',
-          label: [branchEdge + 7, branchY],
+          label: [lx, branchY],
           align: 'left',
-          path: [[branchEdge + 6, branchY], [branchEdge + 1, branchY]],
+          narrow: W - 6 - lx < 82,
+          path: [[lx - 1, branchY], [apiEdge + 1, branchY]],
           end: 'left',
         },
         {
@@ -1270,15 +1300,18 @@ export function createScene(canvas, options = {}) {
       ];
     }
     const trunkR = L.trunkX + L.size.trunk + 3;
+    const branchY = D - 48;
+    const apiEdge = edgeAt(branchY);
+    const lx = Math.min(apiEdge + 6, W - 8 - 62);
     return [
       {
         key: 'branch',
         text: 'git worktree, its own branch',
-        label: [branchEdge + 5, branchY],
+        label: [lx, branchY],
         align: 'left',
-        path: [[branchEdge + 4, branchY], [branchEdge + 1, branchY]],
-        end: 'left',
         narrow: true,
+        path: [[lx - 1, branchY], [apiEdge + 1, branchY]],
+        end: 'left',
       },
       {
         key: 'agent',

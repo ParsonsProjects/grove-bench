@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { animationLoop } from '../shared/motion.js';
   import { buildWorld, evalKnots, clamp, S, GAP, ORDER } from './world.js';
   import { createRenderer, TILE } from './render.js';
@@ -32,6 +32,7 @@
 
   let worldEl = $state();
   let tilesEl = $state();
+  let labelsEl = $state();
   /** @type {ReturnType<typeof buildWorld> | null} */
   let geo = $state(null);
   let heightPx = $state(0);
@@ -60,6 +61,7 @@
   // Reactive bits the overlays need.
   let bubbles = $state({ auth: -1, api: -1, fix: -1 });
   let calloutAlpha = $state(1);
+  let gateLit = $state(false);
   let askEl = $state();
   let askOn = $state(false);
   let statuses = $state({ auth: 'working', api: 'working', fix: 'working' });
@@ -122,6 +124,22 @@
     buildTiles(W, H);
     for (const key of BRANCH_KEYS) motion[key].lastY = null;
     draw(0);
+    tick().then(clampLabels);
+  }
+
+  // Keep in-scene labels inside the page on narrow screens.
+  function clampLabels() {
+    if (!labelsEl) return;
+    const max = page.clientWidth - 4;
+    for (const el of labelsEl.querySelectorAll('.pin > *')) {
+      const node = /** @type {HTMLElement} */ (el);
+      node.style.translate = '';
+      const r = node.getBoundingClientRect();
+      let dx = 0;
+      if (r.right > max) dx = max - r.right;
+      if (r.left + dx < 4) dx = 4 - r.left;
+      if (dx) node.style.translate = `${dx.toFixed(1)}px 0`;
+    }
   }
 
   function buildTiles(W, H) {
@@ -257,7 +275,7 @@
   function growthFor(agents, u) {
     const ys = Object.fromEntries(agents.map((a) => [a.key, a.y]));
     return (p) => {
-      if (p.id?.startsWith('wt-')) return clamp((ys[p.lane] - (p.base - 70)) / 56, 0.1, 1);
+      if (p.id?.startsWith('wt-')) return clamp((ys[p.lane] - (p.base - 120)) / 64, 0.1, 1);
       if (p.id === 'cp-fix') return cpGrowth;
       if (p.id === 'cta') return clamp((u - geo.ctaGrow.from) / (geo.ctaGrow.to - geo.ctaGrow.from), 0.06, 1);
       return 1;
@@ -304,6 +322,7 @@
     }
     const home = agents.filter((a) => a.y > geo.mainGateY).length / 3;
     gateGlow = reduced ? home : gateGlow + (home - gateGlow) * (1 - Math.exp(-dt * 3));
+    if (gateGlow > 0.3 !== gateLit) gateLit = gateGlow > 0.3;
 
     const todv = geo.tod(u);
     const night = 1 - S((todv - 0.3) / 0.55);
@@ -412,6 +431,8 @@
       agents: () => lastAgents,
       focus,
       geo: () => geo,
+      fireflies: () => renderer?.fireflies().map((f) => [Math.round(f.x), Math.round(f.y)]),
+      pointer: () => pointer,
     });
     return () => {
       ro.disconnect();
@@ -438,8 +459,15 @@
     return animationLoop(worldEl, (dt) => draw(dt));
   });
 
+  // New bubbles appear while the agents sit: keep them on the page too.
+  $effect(() => {
+    void bubbles;
+    tick().then(clampLabels);
+  });
+
   // Answers and rewinds.
-  let prevPermission = permission;
+  /** @type {string} */
+  let prevPermission = 'pending';
   $effect(() => {
     const p = permission;
     if (p === prevPermission) return;
@@ -469,7 +497,7 @@
   <div class="tiles" bind:this={tilesEl} aria-hidden="true"></div>
 
   {#if geo}
-    <div class="labels" aria-hidden="true">
+    <div class="labels" aria-hidden="true" bind:this={labelsEl}>
       <!-- Hero callouts -->
       {#each geo.callouts as c (c.key)}
         <span class="pin" style="{pin(c.x, c.y)}; opacity: {calloutAlpha}; visibility: {calloutAlpha < 0.02 ? 'hidden' : 'visible'}">
@@ -526,8 +554,8 @@
       {/each}
 
       <!-- The gate on main -->
-      <span class="pin top" style={pin(geo.gateX, geo.mainGateY - 29)}>
-        <span class="gate-board" class:lit={gateGlow > 0.3}>main</span>
+      <span class="pin" style={pin(geo.gateX, geo.mainGateY - 33)}>
+        <span class="gate-board" class:lit={gateLit}>main</span>
       </span>
     </div>
 
@@ -568,10 +596,6 @@
     left: 0;
     bottom: 0;
     transform: translateX(-50%);
-  }
-  .pin.top > * {
-    top: 0;
-    bottom: auto;
   }
 
   /* Pixel frames with notched corners, sized to the art pixel. */

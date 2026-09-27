@@ -28,12 +28,13 @@ import { clamp, S, HALF, TREE_EXTRA } from './world.js';
 
 export const TILE = 160;
 
-const MEADOW = [
-  mix(C.meadow, C.meadowDeep, 0.45),
-  C.meadow,
-  mix(C.meadow, C.grassDark, 0.4),
-  mix(C.meadow, C.grassDark, 0.7),
-].map(hexToRgb);
+const MEADOW_HEX = [
+  mix(C.meadow, C.meadowDeep, 0.4),
+  mix(C.meadow, C.meadowDeep, 0.12),
+  mix(C.meadow, C.grassDark, 0.22),
+  mix(C.meadow, C.grassDark, 0.42),
+];
+const MEADOW = MEADOW_HEX.map(hexToRgb);
 
 const PROP_H = { lamp: 24, bench: 14, sign: 16, laneGate: 12, mainGate: 36, sundial: 30, cpStone: 6, memStone: 10, bush: 14 };
 
@@ -93,9 +94,10 @@ export function createRenderer(world, opts) {
 
   function seedFireflies(view) {
     const n = clamp(Math.round((W * (view.bottom - view.top)) / 3200), 10, 30);
+    const top = Math.max(view.top, horizon - 20);
     fireflies = Array.from({ length: n }, (_, i) => ({
       x: hash(i, 3) * W,
-      y: view.top + hash(i, 4) * (view.bottom - view.top),
+      y: top + hash(i, 4) * Math.max(40, view.bottom - top),
       vx: 0,
       vy: 0,
       p1: hash(i, 5) * 10,
@@ -135,8 +137,8 @@ export function createRenderer(world, opts) {
         const dx = pointer.x - f.x;
         const dy = pointer.y - f.y;
         const d = Math.hypot(dx, dy) || 1;
-        if (d < 110) {
-          const pull = (1 - d / 110) * 70;
+        if (d < 150) {
+          const pull = Math.sqrt(1 - d / 150) * 95;
           ax += (dx / d) * pull - (dy / d) * pull * 0.5;
           ay += (dy / d) * pull + (dx / d) * pull * 0.5;
           if (d < 8) {
@@ -148,7 +150,7 @@ export function createRenderer(world, opts) {
       f.vx = (f.vx + ax * dt) * (1 - 0.9 * dt);
       f.vy = (f.vy + ay * dt) * (1 - 0.9 * dt);
       const sp = Math.hypot(f.vx, f.vy);
-      const max = pointer ? 38 : 12;
+      const max = pointer ? 48 : 12;
       if (sp > max) {
         f.vx *= max / sp;
         f.vy *= max / sp;
@@ -186,11 +188,14 @@ export function createRenderer(world, opts) {
     c.putImageData(img, 0, 0);
     // Moon, away from the text on wide screens.
     const mx = world.wide ? Math.round(world.R + world.RW * 0.78) : W - 26;
-    const my = world.wide ? Math.max(30, Math.round(horizon * 0.3)) : 30;
+    const my = world.wide ? Math.max(30, Math.round(horizon * 0.3)) : 50;
     c.drawImage(ringHalo(C.primaryPale, 22, [0.1, 0.06, 0.03]), mx - 22, my - 22);
     c.drawImage(moon, mx - 7, my - 7);
-    // Two rows of hills with small trees along the horizon.
-    const hills = hillColours(0);
+    // Two rows of hills with small trees along the horizon. The near row
+    // takes the colour of the night meadow so the land runs on into it.
+    const hills = { ...hillColours(0) };
+    const nt0 = worldTint(0);
+    hills.near = mix(mix(MEADOW_HEX[0], nt0.colour, nt0.alpha), hills.near, 0.35);
     const far = (x) => horizon - 16 - Math.round(7 * Math.sin(x * 0.013 + 1) + 5 * Math.sin(x * 0.031 + 2.2) + 2 * Math.sin(x * 0.07));
     const near = (x) => horizon - 7 - Math.round(4 * Math.sin(x * 0.019 + 0.3) + 3 * Math.sin(x * 0.047 + 1.7));
     const farRim = mix(hills.far, bands.length ? '#3a4a78' : hills.far, 0.35);
@@ -259,8 +264,7 @@ export function createRenderer(world, opts) {
   // -------------------------------------------------------------------------
   // Ground: meadow, paths and flowers. Cached per tile.
 
-  function noise(x, y) {
-    const g = 22;
+  function noise(x, y, g = 22) {
     const gx = x / g;
     const gy = y / g;
     const ix = Math.floor(gx);
@@ -284,9 +288,11 @@ export function createRenderer(world, opts) {
     for (let ry = 0; ry < TILE; ry++) {
       const y = y0 + ry;
       if (y < horizon) continue;
+      // Far meadow near the horizon is darker, like the land running away.
+      const far = clamp((y - horizon) / 18, 0, 1);
       for (let x = 0; x < W; x++) {
-        const n = noise(x, y) * 0.75 + noise(x * 2 + 50, y * 2) * 0.25;
-        const band = clamp(Math.floor(n * 3.4 + (bayer(x, y) - 0.5) * 0.9), 0, 3);
+        const n = noise(x, y, 40) * 0.72 + noise(x + 50, y, 13) * 0.28;
+        const band = clamp(Math.floor((n * 3.7 - 0.35) * far + (bayer(x, y) - 0.5) * 0.45), 0, 3);
         const col = MEADOW[band];
         const o = (ry * W + x) * 4;
         d[o] = col[0];
@@ -300,17 +306,20 @@ export function createRenderer(world, opts) {
     c.translate(0, -y0);
     const yA = Math.max(y0, horizon);
     const yB = y0 + TILE;
-    // Grass blades and flowers.
-    for (let y = yA; y < yB; y++) {
+    // Grass tufts and a few flowers.
+    const tuftDark = mix(C.meadow, C.grassDark, 0.75);
+    for (let y = yA + 2; y < yB; y++) {
       for (let x = 0; x < W; x++) {
         const r = hash(x * 3 + 1, y * 5 + 2);
-        if (r < 0.05) {
-          c.fillStyle = r < 0.02 ? C.grass : C.grassDark;
-          c.fillRect(x, y, 1, 2);
-        } else if (r > 0.9975) {
+        if (r < 0.006) {
+          c.fillStyle = r < 0.002 ? C.grass : tuftDark;
+          c.fillRect(x, y, 1, 1);
+          c.fillRect(x + 2, y, 1, 1);
+          c.fillRect(x + 1, y + 1, 1, 1);
+        } else if (r > 0.9994) {
           c.fillStyle = [C.cream, C.amberLight, C.primaryPale][Math.floor(hash(x, y) * 3)];
           c.fillRect(x, y, 1, 1);
-          c.fillStyle = C.grass;
+          c.fillStyle = tuftDark;
           c.fillRect(x, y + 1, 1, 1);
         }
       }
@@ -323,10 +332,16 @@ export function createRenderer(world, opts) {
     return g.canvas;
   }
 
-  function rowEdges(x, hw) {
-    const cx = Math.round(x);
-    return [cx - hw, cx + hw];
+  /** Row span for a path centred at x, widened on slopes so it keeps its width. */
+  function rowEdges(x, hw, slope = 0) {
+    const w = hw * Math.sqrt(1 + slope * slope);
+    return [Math.round(x - w), Math.round(x + w)];
   }
+  const slopeOf = (fn, y) => {
+    const a = fn(y - 1);
+    const b = fn(y + 1);
+    return a == null || b == null ? 0 : (b - a) / 2;
+  };
 
   function drawLane(c, key, yA, yB) {
     const hw = HALF.lane;
@@ -338,7 +353,7 @@ export function createRenderer(world, opts) {
         prev = null;
         continue;
       }
-      const [l, r] = rowEdges(x, hw);
+      const [l, r] = rowEdges(x, hw, slopeOf((yy) => world.laneX(key, yy), y));
       if (y >= yA) {
         c.fillStyle = C.path;
         c.fillRect(l, y, r - l + 1, 1);
@@ -394,7 +409,7 @@ export function createRenderer(world, opts) {
         prev = null;
         continue;
       }
-      const [l, r] = rowEdges(x, hw);
+      const [l, r] = rowEdges(x, hw, slopeOf((yy) => world.laneX('main', yy), y));
       if (y >= yA) {
         // Flagstones: rows of 4, staggered joints.
         const row = Math.floor(y / 4);
@@ -504,6 +519,17 @@ export function createRenderer(world, opts) {
     }
   }
 
+  let dawnKey = -1;
+  let dawnHex = '#000000';
+  function dawnColour(tod) {
+    const b = Math.round(tod * 50);
+    if (b !== dawnKey) {
+      dawnKey = b;
+      dawnHex = skyBands(b / 50)[6];
+    }
+    return dawnHex;
+  }
+
   const lampGlass = new Map();
 
   function drawProp(c, p, f) {
@@ -592,8 +618,7 @@ export function createRenderer(world, opts) {
     // Props and agents in base order.
     const items = [];
     for (const p of props) {
-      if (p.top > y1 + 2) break;
-      if (p.base + 3 < y0) continue;
+      if (p.top > y1 + 2 || p.base + 3 < y0) continue;
       items.push(p);
     }
     for (const a of f.agents) {
@@ -618,13 +643,19 @@ export function createRenderer(world, opts) {
     L.globalAlpha = 1;
 
     const tint = worldTint(f.tod);
+    const dawn = clamp(1 - Math.abs(f.tod - 0.52) / 0.3, 0, 1);
+    L.setTransform(1, 0, 0, 1, 0, 0);
+    L.globalCompositeOperation = 'source-atop';
     if (tint.alpha > 0.002) {
-      L.setTransform(1, 0, 0, 1, 0, 0);
-      L.globalCompositeOperation = 'source-atop';
       L.fillStyle = rgba(tint.colour, tint.alpha);
       L.fillRect(0, 0, W, TILE);
-      L.globalCompositeOperation = 'source-over';
     }
+    if (dawn > 0.01) {
+      // Low warm light at dawn, from the sky's horizon colour.
+      L.fillStyle = rgba(dawnColour(f.tod), 0.2 * dawn);
+      L.fillRect(0, 0, W, TILE);
+    }
+    L.globalCompositeOperation = 'source-over';
     ctx.drawImage(layer.canvas, 0, 0);
 
     // Lights on top.
@@ -677,8 +708,8 @@ export function createRenderer(world, opts) {
     const ms = world.memStone;
     if (ms.base > y0 - 30 && ms.base - 30 < y1) {
       const pulse = reduced ? 1 : 0.75 + 0.25 * Math.sin(t * 2.2);
-      ctx.globalAlpha = (0.35 + 0.65 * f.memory) * pulse;
-      ctx.drawImage(halo(C.primaryLight, 16, 0.9), ms.x - 15, ms.base - 5 - 16);
+      ctx.globalAlpha = (0.25 + 0.55 * f.memory) * pulse;
+      ctx.drawImage(halo(C.primaryLight, 11, 0.8), ms.x - 10, ms.base - 5 - 11);
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 0.6 + 0.4 * f.memory;
       ctx.fillStyle = mix(C.primaryLight, '#ffffff', 0.35);
@@ -745,5 +776,5 @@ export function createRenderer(world, opts) {
     detourKey = key;
   }
 
-  return { drawTile, update, burst, setDetour, props };
+  return { drawTile, update, burst, setDetour, props, fireflies: () => fireflies };
 }

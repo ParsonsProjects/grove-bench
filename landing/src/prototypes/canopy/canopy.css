@@ -21,11 +21,17 @@
   outline-offset: 3px;
 }
 
-.cn-world {
+.cn-world-wrap {
   position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.cn-world {
+  position: absolute;
   left: 0;
   top: 0;
-  z-index: 0;
   display: block;
   pointer-events: none;
   image-rendering: pixelated;
@@ -273,10 +279,31 @@
     var(--px) 0 0 0 var(--edge);
 }
 
-/* Hanging branch sign: board on two chains. */
+/* Hanging branch sign: a beam out from the limb, a board on two chains. */
+.cn-sign {
+  top: calc(var(--px) * -2);
+  display: flex;
+  flex-direction: column;
+}
+.cn-sign.right {
+  left: 0;
+  align-items: flex-start;
+}
+.cn-sign.left {
+  right: 0;
+  align-items: flex-end;
+}
+.cn-sign .beam {
+  display: block;
+  align-self: stretch;
+  height: calc(var(--px) * 2);
+  background: #5a4230;
+  box-shadow: inset 0 var(--px) 0 0 #8a6a4a, 0 var(--px) 0 0 #2a1f1a;
+}
 .cn-board {
   --edge: #2a1f1a;
-  top: calc(var(--px) * 4);
+  position: relative;
+  margin: calc(var(--px) * 5) calc(var(--px) * 3) 0;
   display: grid;
   gap: 1px;
   padding: 3px 9px 4px;
@@ -290,24 +317,16 @@
 .cn-board::after {
   content: '';
   position: absolute;
-  top: calc(var(--px) * -5);
+  top: calc(var(--px) * -6);
   width: var(--px);
-  height: calc(var(--px) * 4);
-  background: #3a3a3a;
+  height: calc(var(--px) * 5);
+  background: repeating-linear-gradient(180deg, #9a9a9a 0 var(--px), #4a4a4a var(--px) calc(var(--px) * 2));
 }
-.cn-board.right::before,
-.cn-board.left::after {
-  left: calc(var(--px) * 2);
+.cn-board::before {
+  left: calc(var(--px) * 3);
 }
-.cn-board.right::after,
-.cn-board.left::before {
-  right: calc(var(--px) * 2);
-}
-.cn-board.right {
-  left: calc(var(--px) * -2);
-}
-.cn-board.left {
-  right: calc(var(--px) * -2);
+.cn-board::after {
+  right: calc(var(--px) * 3);
 }
 .cn-board b {
   font-weight: 700;
@@ -325,12 +344,20 @@
   --edge: #2a1f1a;
   top: 0;
   transform: translateX(-50%);
-  padding: 0 7px 1px;
+  display: grid;
+  justify-items: center;
+  padding: 1px 7px 2px;
   font-size: 12px;
-  font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
   color: var(--lane-text);
   background: #3a2a1f;
+}
+.cn-plate b {
+  font-weight: 700;
+}
+.cn-plate span {
+  font-family: 'JetBrains Mono', monospace;
+  color: #e9dcc4;
 }
 
 /* Speech bubbles. */
@@ -438,9 +465,6 @@
   background: #ffe7a8;
   transition: opacity 0.1s linear;
 }
-.cn-callout.center {
-  transform: translate(-50%, 50%);
-}
 .cn-callout.left {
   left: 0;
   transform: translateY(50%);
@@ -454,13 +478,13 @@
   bottom: 0;
 }
 .cn-callout.narrow {
-  white-space: normal;
-  width: 9.5em;
+  line-height: 1.25;
 }
 
 /* Memory notes by the hollow. */
 .cn-note {
   top: 0;
+  left: 0;
   display: block;
   padding: 1px 7px 2px 9px;
   font-family: 'JetBrains Mono', monospace;
@@ -468,6 +492,10 @@
   color: #1b1f2a;
   background: #eef3ff;
   transform: translateY(-50%);
+}
+.cn-note.flip {
+  left: auto;
+  right: 0;
 }
 .cn-note::before {
   content: '';

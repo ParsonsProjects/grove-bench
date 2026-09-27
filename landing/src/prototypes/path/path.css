@@ -93,7 +93,7 @@ html:has(.pp-page) {
 }
 .pp-row > [data-panel] {
   order: 1;
-  margin-left: calc(var(--k) * 49);
+  margin-left: calc(var(--k) * 53);
 }
 .pp-scene {
   order: 2;
@@ -279,6 +279,7 @@ html:has(.pp-page) {
     -2px 0 0 0 var(--edge),
     2px 0 0 0 var(--edge),
     inset 0 -3px 0 0 rgb(0 0 0 / 0.18);
+  white-space: nowrap;
   cursor: pointer;
   transition: filter 0.12s ease, transform 0.12s ease;
 }
@@ -354,11 +355,15 @@ html:has(.pp-page) {
 .pp-rewind {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 10px 12px;
+  gap: 10px;
   font-size: 14px;
   color: #a9b4cf;
+}
+.pp-rewind .opt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
 }
 
 /* How it works */
@@ -454,37 +459,35 @@ html:has(.pp-page) {
   text-underline-offset: 3px;
 }
 
-/* Floating key */
+/* The key, in the nav so it is always one click away */
 .pp-keyfloat {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 55;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 12px;
+  position: relative;
+  margin-left: auto;
+}
+.pp-keyfloat + .pp-gh {
+  margin-left: 0;
 }
 .key-btn {
-  --edge: #0b1224;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
-  padding: 6px 14px;
+  min-height: 36px;
+  padding: 6px 12px;
   font-family: 'Pixelify Sans', 'JetBrains Mono', monospace;
   font-size: 15px;
   font-weight: 600;
   color: #eef1f8;
-  background: rgb(11 18 36 / 0.92);
-  box-shadow:
-    0 -3px 0 0 var(--edge),
-    0 3px 0 0 var(--edge),
-    -3px 0 0 0 var(--edge),
-    3px 0 0 0 var(--edge),
-    inset 0 0 0 1px rgb(217 223 240 / 0.25);
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 0 0 1px rgb(217 223 240 / 0.28);
+}
+.key-btn:hover,
+.key-btn[aria-expanded='true'] {
+  background: rgb(255 255 255 / 0.12);
 }
 .key-pop {
+  position: fixed;
+  right: 16px;
+  top: 68px;
   width: min(340px, calc(100vw - 32px));
 }
 

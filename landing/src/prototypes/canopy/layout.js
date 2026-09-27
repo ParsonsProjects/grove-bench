@@ -41,7 +41,7 @@ export function buildLayout(m) {
   const x0 = art(area.x0);
   const x1 = art(area.x1);
   const aw = x1 - x0;
-  const f = wide ? [0.1, 0.38, 0.65, 0.9] : [0.08, 0.4, 0.66, 0.9];
+  const f = wide ? [0.1, 0.38, 0.65, 0.885] : [0.07, 0.38, 0.6, 0.86];
   const trunkX = Math.round(x0 + aw * f[1]);
   const lanes = {
     auth: Math.round(x0 + aw * f[0]),
@@ -50,49 +50,52 @@ export function buildLayout(m) {
   };
   const size = stemSizes(wide);
 
-  // Crown: the logo's crown, every logo block made of n x n small leaf blocks.
+  // Fork lengths depend only on how far each limb has to travel.
+  const forkLen = {};
+  LANE_ORDER.forEach((lane) => (forkLen[lane] = Math.round(24 + Math.abs(lanes[lane] - trunkX) * 0.42)));
+
+  // Crown: the logo's crown, drawn big. On phones it hangs just above the
+  // first platform so both fit in the first screen.
   const heroTop = top('hero');
   const heroBottom = bottom('hero');
-  const n = 3;
-  const target = wide ? Math.min((heroBottom - heroTop) * 0.5, (aw * 0.92 * 5) / 7) : Math.min((aw * 0.95 * 5) / 7, 118);
-  const block = clamp(Math.floor(target / (5 * n)) - 1, 5, 9);
-  const step = block + 1;
-  const crownW = 7 * n * step - 1;
-  const crownH = 5 * n * step - 1;
-  const crownTop = wide ? heroTop + 6 : Math.round(heroTop - crownH * 0.62);
-  const crown = { cx: trunkX, top: crownTop, block, n, w: crownW, h: crownH, left: Math.round(trunkX - (crownW - 1) / 2) };
+  const target = wide ? Math.min((heroBottom - heroTop) * 0.48, 140) : Math.min((aw * 0.7 * 5) / 7, 92);
+  const step = clamp(Math.floor(target / 5), 12, 30);
+  const block = step - 1;
+  const crownW = 7 * step - 1;
+  const crownH = 5 * step - 1;
+  const authDeckNarrow = heroBottom - 14;
+  const crownTop = wide
+    ? heroTop + 8
+    : Math.round(Math.max(heroTop - crownH * 0.5, authDeckNarrow - 16 - forkLen.auth - 8 - crownH));
+  const crown = { cx: trunkX, top: crownTop, block, w: crownW, h: crownH, left: Math.round(trunkX - (crownW - 1) / 2) };
 
   // Fork: each limb leaves the trunk a little lower than the last.
   const forkY = crownTop + crownH - 2;
   const fork = {};
-  LANE_ORDER.forEach((lane, i) => {
-    const dx = Math.abs(lanes[lane] - trunkX);
-    const len = Math.round(24 + dx * 0.42);
-    fork[lane] = { y0: forkY + 6 + i * 7, len };
-  });
+  LANE_ORDER.forEach((lane, i) => (fork[lane] = { y0: forkY + 6 + i * 7, len: forkLen[lane] }));
 
   // Platforms.
-  const authDeck = Math.max(fork.auth.y0 + fork.auth.len + 16, heroBottom - (wide ? 20 : 14));
+  const authDeck = wide ? Math.max(fork.auth.y0 + fork.auth.len + 16, heroBottom - 20) : Math.max(fork.auth.y0 + fork.auth.len + 12, authDeckNarrow);
   const apiDeck = at('api');
   const fixDeck = at('fix');
   const platforms = {
-    auth: platform('auth', lanes.auth, authDeck, 1, size, { lampInside: true }),
-    api: platform('api', lanes.api, apiDeck, -1, size),
-    fix: platform('fix', lanes.fix, fixDeck, -1, size, { sundial: true }),
+    auth: platform(lanes.auth, authDeck, 1, size, { lampInside: true }),
+    api: wide ? platform(lanes.api, apiDeck, -1, size) : platform(lanes.api, apiDeck, 1, size, { lampInside: true }),
+    fix: platform(lanes.fix, fixDeck, -1, size, { lampInside: !wide, sundial: true, W }),
   };
 
   // Hanging branch signs (Worktrees). Staggered so the boards never share a row.
   const signsY = at('signs');
   const signGap = wide ? 30 : 44;
   const signs = {
-    auth: { lane: 'auth', y: signsY - signGap, side: 1 },
-    api: { lane: 'api', y: signsY, side: -1 },
-    fix: { lane: 'fix', y: signsY + signGap, side: -1 },
+    auth: { y: signsY - signGap, side: 1 },
+    api: { y: signsY, side: -1 },
+    fix: { y: signsY + signGap, side: -1 },
   };
 
   // Checkpoint notches on the fix limb, turn 1 highest.
   const notchGap = wide ? 13 : 12;
-  const notches = [0, 1, 2, 3].map((i) => fixDeck - 22 - (3 - i) * notchGap);
+  const notches = [0, 1, 2, 3].map((i) => fixDeck - 34 - (3 - i) * notchGap);
 
   // Project memory: a hollow in the trunk.
   const hollow = { x: trunkX, y: at('memory'), w: size.trunk * 2 - (wide ? 7 : 5), h: wide ? 24 : 20 };
@@ -109,24 +112,25 @@ export function buildLayout(m) {
   const gateX = Math.round(x0 + aw * (wide ? 0.8 : 0.84));
   const spots = [0, 1, 2].map((i) => gateX - (wide ? 58 : 52) + i * (wide ? 14 : 13));
 
-  // Scroll schedule (CSS px) for the walk down to the gate.
-  const groundCss = groundY * k;
-  let s1 = groundCss - 0.6 * vh;
-  let s0 = s1 - 0.55 * vh;
-  const fixClear = (fixDeck + 8) * k;
-  if (s0 < fixClear) {
-    s0 = fixClear;
-    s1 = Math.max(s1, s0 + 0.3 * vh);
-  }
-  let s2 = s1 + 0.28 * vh;
-  if (s2 > maxScroll - 4) {
-    s2 = Math.max(s1 + 40, maxScroll - 4);
-  }
-  const walk = { s0, s1, s2 };
+  // Walking down to the gate, all in CSS scroll pixels. Each agent appears
+  // at climbTop just below the screen (its platform is long gone above),
+  // climbs down its limb a little slower than the page scrolls, lands, then
+  // walks to the gate.
+  const vhA = vh / k;
+  let climbTop = wide ? Math.max(hollow.y + 40, fixDeck + vhA + 24) : Math.max(top('ground') + 12, fixDeck + vhA + 24);
+  climbTop = Math.min(climbTop, groundY - 40);
+  const s0 = (climbTop - 18) * k - vh;
+  const s1 = Math.max(s0 + 40, groundY * k - 0.72 * vh);
+  let s2 = s1 + 0.16 * vh;
+  const dc = 0.08 * vh;
+  const dl = 0.05 * vh;
+  if (s2 + dl > maxScroll - 2) s2 = Math.max(s1 + 60, maxScroll - 2 - dl);
+  const walk = { climbTop, s0, s1, s2, dc, dl };
 
-  // Time of day by scroll: night until the memory hollow comes up, dawn at
-  // the ground, full day by How it works.
+  // Time of day by scroll: night until the memory hollow comes up, dawn as
+  // the agents land, full day by How it works.
   const memCss = hollow.y * k;
+  const groundCss = groundY * k;
   const howCss = anchors.how ? anchors.how.top : groundCss + vh;
   const t0 = memCss - 0.9 * vh;
   const t1 = Math.max(t0 + 1, groundCss - 0.55 * vh);
@@ -175,9 +179,10 @@ export function buildLayout(m) {
 /**
  * A treehouse platform. `side` is which way the deck runs from the limb:
  * 1 to the right, -1 to the left. Limb | bench | lamp, mirrored for -1, or
- * limb | lamp | bench with `lampInside`.
+ * limb | lamp | bench with `lampInside`. A sundial goes on the far side of
+ * the limb when it fits on screen, else past the bench.
  */
-function platform(lane, limbX, deckY, side, size, { lampInside = false, sundial = false } = {}) {
+function platform(limbX, deckY, side, size, { lampInside = false, sundial = false, W = 9999 } = {}) {
   const edge = limbX + side * (size.limb - 1);
   const benchW = 24;
   // Offsets along the deck, measured outward from the limb.
@@ -186,22 +191,20 @@ function platform(lane, limbX, deckY, side, size, { lampInside = false, sundial 
   const endOff = lampInside ? benchOff + benchW + 4 : lampOff + 6;
   const lampX = side > 0 ? edge + lampOff : edge - lampOff - 2;
   const benchX = side > 0 ? edge + benchOff : edge - benchOff - benchW;
-  const deck0 = side > 0 ? edge : edge - endOff;
-  const deck1 = side > 0 ? edge + endOff : edge;
   const out = {
-    lane,
     limbX,
     deckY,
     side,
     benchX,
     seatX: benchX + 8,
     lampX,
-    deck0,
-    deck1,
+    deck0: side > 0 ? edge : edge - endOff,
+    deck1: side > 0 ? edge + endOff : edge,
   };
   if (sundial) {
-    // The sundial sits on a small deck on the other side of the limb.
-    const sx = limbX - side * (size.limb + 17);
+    const across = limbX - side * (size.limb + 15);
+    const fits = across - 12 >= 1 && across + 12 <= W - 1;
+    const sx = fits ? across : side > 0 ? out.deck1 + 14 : out.deck0 - 14;
     out.sundialX = sx;
     out.deck0 = Math.min(out.deck0, sx - 14);
     out.deck1 = Math.max(out.deck1, sx + 14);

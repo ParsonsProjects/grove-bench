@@ -172,6 +172,13 @@
     line-height: 1.4;
     color: #c7cfe0;
   }
+  @media (max-width: 520px) {
+    .act {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+  }
   .result {
     margin-top: 10px;
     min-height: 21px;

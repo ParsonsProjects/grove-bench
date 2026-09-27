@@ -1,51 +1,102 @@
 // Pixel art pieces that only the Canopy scene needs. Everything else comes
 // from the Night Grove sprites and palette (imported, not copied).
 
-import { treeBlocks, drawTree, makeCanvas, spriteFromMap, hash } from '../grove/sprites.js';
-import { C, mix } from '../grove/palette.js';
+import { treeBlocks, makeCanvas, spriteFromMap, hash, bayer } from '../grove/sprites.js';
+import { C, mix, hexToRgb } from '../grove/palette.js';
 
 // ---------------------------------------------------------------------------
-// The crown: the logo tree's crown, each logo block made of n x n leaf blocks.
+// The crown: the logo tree's crown drawn big, each block a leafy clump lit
+// from the upper left. A 2 px margin leaves room for leaves poking out.
+
+export const CROWN_PAD = 2;
 
 /**
- * @param {number} block small leaf block size in art pixels
- * @param {number} n sub blocks per logo block
+ * @param {number} block leaf block size in art pixels
  * @param {ReturnType<typeof import('../grove/palette.js').treePalette>} pal
  */
-export function buildCrown(block, n, pal) {
+export function buildCrown(block, pal) {
   const logo = treeBlocks(0).filter((b) => b.kind === 'leaf');
-  const rows = 5 * n;
-  const has = new Set();
-  const blocks = [];
+  const step = block + 1;
+  const P = CROWN_PAD;
+  const w = 7 * step - 1 + P * 2;
+  const h = 5 * step - 1 + P * 2;
+  const made = makeCanvas(w, h);
+  const img = made.ctx.createImageData(w, h);
+  const data = img.data;
+  const set = new Set(logo.map((b) => b.c + ',' + b.r));
+  const has = (c, r) => set.has(c + ',' + r);
+  const rgb = (hex) => hexToRgb(hex);
+  const tones = [rgb(pal.hi), ...pal.leaves.map(rgb), rgb(pal.seam), rgb(pal.deep)];
+  const put = (x, y, t) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const c = tones[Math.max(0, Math.min(tones.length - 1, t))];
+    const o = (y * w + x) * 4;
+    data[o] = c[0];
+    data[o + 1] = c[1];
+    data[o + 2] = c[2];
+    data[o + 3] = 255;
+  };
   for (const b of logo) {
-    for (let j = 0; j < n; j++) {
-      for (let i = 0; i < n; i++) {
-        const c = b.c * n + i;
-        const r = b.r * n + j;
-        has.add(c + ',' + r);
-        blocks.push({ c, r, kind: 'leaf', tone: 0, order: 0 });
+    const x0 = P + b.c * step;
+    const y0 = P + b.r * step;
+    const openTop = !has(b.c, b.r - 1);
+    const openLeft = !has(b.c - 1, b.r);
+    const openRight = !has(b.c + 1, b.r);
+    const openBottom = !has(b.c, b.r + 1);
+    // Fill the block, and the seam to the right / below where a neighbour continues the mass.
+    const wx = openRight ? block : step;
+    const hy = openBottom ? block : step;
+    for (let yy = 0; yy < hy; yy++) {
+      for (let xx = 0; xx < wx; xx++) {
+        const x = x0 + xx;
+        const y = y0 + yy;
+        const u = xx / block;
+        const v = yy / block;
+        // Tone 1..4 are the leaf greens light to dark; 0 is the highlight.
+        let t = 1 + b.tone * 0.75 - 0.9 + (u * 0.8 + v * 1.1);
+        // Leafy texture in 2 x 2 clumps.
+        const n = hash((x >> 1) + 11, (y >> 1) + 7);
+        if (n < 0.14) t -= 1;
+        else if (n > 0.9) t += 1;
+        const lo = Math.floor(t);
+        let tone = t - lo > bayer(x, y) ? lo + 1 : lo;
+        tone = Math.max(1, Math.min(5, tone));
+        // Seams between clumps stay a touch darker so the logo blocks still read.
+        if ((xx === block || yy === block) && hash(x, y + 3) < 0.7) tone = Math.max(tone, 4);
+        put(x, y, tone);
+      }
+    }
+    // Lit rims where the block meets the sky, with a few leaves poking out.
+    if (openTop) {
+      for (let xx = 0; xx < block; xx++) {
+        const x = x0 + xx;
+        put(x, y0, hash(x, 1) < 0.25 ? 1 : 0);
+        if (hash(x, 2) < 0.18) put(x, y0 - 1, 1);
+        if (hash(x, 3) < 0.07) put(x, y0 - 2, 2);
+      }
+    }
+    if (openLeft) {
+      for (let yy = 0; yy < block; yy++) {
+        const y = y0 + yy;
+        put(x0, y, hash(4, y) < 0.3 ? 1 : 0);
+        if (hash(5, y) < 0.16) put(x0 - 1, y, 2);
+      }
+    }
+    if (openRight) {
+      for (let yy = 0; yy < block; yy++) {
+        const y = y0 + yy;
+        if (hash(6, y) < 0.16) put(x0 + block, y, 4);
+      }
+    }
+    if (openBottom) {
+      for (let xx = 0; xx < block; xx++) {
+        const x = x0 + xx;
+        put(x, y0 + block - 1, 5);
+        if (hash(x, 9) < 0.2) put(x, y0 + block, 5);
       }
     }
   }
-  // Round the silhouette: drop most outer corner blocks and a few along the bottom.
-  const open = (c, r) => !has.has(c + ',' + r);
-  const drop = new Set();
-  for (const b of blocks) {
-    const exposed = [open(b.c - 1, b.r), open(b.c + 1, b.r), open(b.c, b.r - 1), open(b.c, b.r + 1)].filter(Boolean).length;
-    if (exposed >= 2 && hash(b.c, b.r + 71) < 0.8) drop.add(b.c + ',' + b.r);
-    else if (b.r === rows - 1 && Math.abs(b.c - (7 * n - 1) / 2) > n && hash(b.c, 5) < 0.4) drop.add(b.c + ',' + b.r);
-  }
-  const kept = blocks.filter((b) => !drop.has(b.c + ',' + b.r));
-  for (const b of kept) {
-    const t = (b.r / rows) * 4.1 + (hash(b.c, b.r) - 0.5) * 0.9;
-    b.tone = Math.max(0, Math.min(3, Math.floor(t)));
-  }
-  const step = block + 1;
-  const w = 7 * n * step - 1;
-  const h = rows * step - 1;
-  const made = makeCanvas(w, h);
-  // drawTree centres a 7 x 8 block tree on cx; these numbers put our blocks at 0,0.
-  drawTree(made.ctx, (7 * step - 2) / 2, 8 * step - 2, pal, { block, extraTrunk: 0, blocks: kept });
+  made.ctx.putImageData(img, 0, 0);
   return made.canvas;
 }
 
@@ -137,36 +188,36 @@ export function stemRow(ctx, y, yy, cx, half, slope, seed) {
 }
 
 // ---------------------------------------------------------------------------
-// Small leaf clusters along the limbs
+// Small leaf sprigs along the limbs
+
+function blob(ctx, cx, cy, r, fill, outline, hi) {
+  for (let dy = -r; dy <= r; dy++) {
+    const half = Math.round(Math.sqrt(Math.max(0, r * r - dy * dy)) + 0.2);
+    ctx.fillStyle = outline;
+    ctx.fillRect(cx - half - 1, cy + dy, half * 2 + 3, 1);
+  }
+  ctx.fillRect(cx - 1, cy - r - 1, 3, 1);
+  ctx.fillRect(cx - 1, cy + r + 1, 3, 1);
+  for (let dy = -r; dy <= r; dy++) {
+    const half = Math.round(Math.sqrt(Math.max(0, r * r - dy * dy)) + 0.2);
+    ctx.fillStyle = fill;
+    ctx.fillRect(cx - half, cy + dy, half * 2 + 1, 1);
+  }
+  ctx.fillStyle = hi;
+  ctx.fillRect(cx - r + 1, cy - 1, 1, 2);
+  ctx.fillRect(cx - 1, cy - r + 1, 2, 1);
+}
 
 export function drawLeafCluster(ctx, x, y, dir, seed, pal) {
   // A twig out from the bark.
   ctx.fillStyle = C.woodDark;
-  for (let i = 0; i < 5; i++) ctx.fillRect(x + dir * i, y - Math.floor(i / 2), 1, 1);
-  const bx = x + dir * 5;
-  const spots = [
-    [0, -3],
-    [dir * 4, -5],
-    [dir * 4, -1],
-    [dir * 8, -3],
-    [0, -7],
-  ];
-  spots.forEach(([dx, dy], i) => {
-    if (i > 2 && hash(seed, i) < 0.45) return;
-    ctx.fillStyle = pal.seam;
-    ctx.fillRect(bx + dx - 3, y + dy - 3, 6, 6);
-  });
-  spots.forEach(([dx, dy], i) => {
-    if (i > 2 && hash(seed, i) < 0.45) return;
-    const tone = Math.min(3, 1 + Math.floor(hash(seed, i + 9) * 3));
-    const px = bx + dx - 2;
-    const py = y + dy - 2;
-    ctx.fillStyle = pal.leaves[tone];
-    ctx.fillRect(px, py, 4, 4);
-    ctx.fillStyle = pal.leaves[Math.max(0, tone - 1)];
-    ctx.fillRect(px, py, 3, 1);
-    ctx.fillRect(px, py, 1, 3);
-  });
+  for (let i = 0; i < 6; i++) ctx.fillRect(x + dir * i, y - Math.floor(i / 2), 1, 1);
+  const bx = x + dir * 7;
+  const by = y - 4;
+  const big = hash(seed, 1) < 0.5;
+  blob(ctx, bx, by, big ? 4 : 3, pal.leaves[2], pal.seam, pal.leaves[0]);
+  blob(ctx, bx + dir * (big ? 5 : 4), by + 2, 3, pal.leaves[3], pal.seam, pal.leaves[1]);
+  if (hash(seed, 2) < 0.5) blob(ctx, bx - dir, by - 5, 2, pal.leaves[1], pal.seam, pal.hi);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,19 +331,24 @@ export function drawBush(ctx, x, base, seed, small = false) {
   }
 }
 
-/** A silhouette crown for a distant tree, in one colour with a lit top edge. */
-export function silhouetteCrown(block, fill, rim) {
-  const logo = treeBlocks(0).filter((b) => b.kind === 'leaf');
-  const step = block + 1;
-  const made = makeCanvas(7 * step, 5 * step);
+/** A rounded silhouette crown for a distant tree: a few overlapping puffs in one colour, lit along the top. */
+export function silhouetteCrown(r, fill, rim, seed = 1) {
+  const w = r * 5;
+  const h = Math.round(r * 3.4);
+  const made = makeCanvas(w, h);
   const ctx = made.ctx;
-  const set = new Set(logo.map((b) => b.c + ',' + b.r));
-  for (const b of logo) {
-    ctx.fillStyle = fill;
-    ctx.fillRect(b.c * step, b.r * step, step, step);
-    if (!set.has(b.c + ',' + (b.r - 1))) {
-      ctx.fillStyle = rim;
-      ctx.fillRect(b.c * step, b.r * step, step, 1);
+  const puffs = [
+    [w * 0.5, r * 1.2, r * 1.15],
+    [w * 0.3, r * 1.9, r * 0.95],
+    [w * 0.7, r * 1.9, r * 0.95],
+    [w * (0.42 + hash(seed, 1) * 0.16), r * 2.4, r],
+  ];
+  const inside = (x, y) => puffs.some(([cx, cy, pr]) => Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= pr);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!inside(x, y)) continue;
+      ctx.fillStyle = inside(x, y - 1) ? fill : rim;
+      ctx.fillRect(x, y, 1, 1);
     }
   }
   return made.canvas;

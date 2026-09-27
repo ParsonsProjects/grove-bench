@@ -41,13 +41,11 @@
 
   function answer(value) {
     permission = value;
-    trackLandingEvent('prototype_interaction', { prototype: 'path', action: 'permission', value });
   }
 
   function rewind(mode) {
     rewindMode = mode;
     rewoundTo = turn;
-    trackLandingEvent('prototype_interaction', { prototype: 'path', action: 'rewind', value: mode });
   }
 
   // ---------------------------------------------------------------------------
@@ -125,6 +123,9 @@
     onagent(a.key, { status: statuses[a.key], sitting: a.pose === 'sit', target: e.currentTarget });
   }
   const cssPx = (v) => `${(v * k).toFixed(1)}px`;
+  // Agent hit areas: the sprite plus a margin, never smaller than a finger.
+  const hitW = $derived(Math.round(Math.max(13 * k, 34)));
+  const hitH = $derived(Math.round(Math.max(19 * k, 44)));
 
   const footerLinks = [
     { label: 'GitHub', href: links.github },
@@ -195,6 +196,24 @@
         {@render logo(16)}
         <span>Grove Bench</span>
       </a>
+      <div class="pp-keyfloat">
+        <button
+          type="button"
+          class="key-btn"
+          bind:this={keyBtn}
+          aria-expanded={keyOpen}
+          aria-controls="pp-key-pop"
+          onclick={() => (keyOpen = !keyOpen)}
+        >
+          {@render logo(12)}
+          Key
+        </button>
+        {#if keyOpen}
+          <div class="key-pop" id="pp-key-pop">
+            <Key />
+          </div>
+        {/if}
+      </div>
       <a
         href={links.github}
         target="_blank"
@@ -219,7 +238,7 @@
           aria-label="Night. The main path starts under a big tree, the project's own worktree. Three agents stand on the path beside a blue status lamp."
         ></div>
         <div class="hero-text">
-          <p class="hero-meta"><code>4b1e0c7</code> <span class="pp-chip" style="--lane: {LANES.main.colour}; --lane-text: {LANES.main.text}">(HEAD -&gt; main)</span></p>
+          <p class="hero-meta"><code>4b1e0c7</code> <span class="pp-chip" style="--lane: {LANES.main.colour}; --lane-text: {LANES.main.text}">(main)</span></p>
           <h1>Run several AI coding agents on one project at once</h1>
           <p class="lede">
             Grove Bench is a Windows app for AI coding agents. Each conversation works in its own git worktree, on its own
@@ -235,7 +254,7 @@
               class="pp-hit"
               type="button"
               bind:this={hitEls[i]}
-              style="width: {cssPx(13)}; height: {cssPx(19)}; margin-left: {cssPx(-6.5)}; margin-top: {cssPx(-18)}"
+              style="width: {hitW}px; height: {hitH}px; margin-left: {-hitW / 2}px; margin-top: {k - hitH}px"
               aria-label="{LANES[a.key].name} agent, {statusWord[statuses[a.key]]}. Open details"
               onclick={(e) => clickAgent(i, e)}
             ></button>
@@ -253,7 +272,7 @@
         <div
           class="pp-scene"
           data-scene="worktrees"
-          style="--scene-h: 176"
+          style="--scene-h: 212"
           role="img"
           aria-label="Main forks into three side paths, feat/auth, feat/api and fix/login-bug, each with a signpost and a young tree for its worktree. Each agent steps onto its own path."
         ></div>
@@ -356,10 +375,14 @@
               Turn <b>{turn}</b> of 4: <span class="you">"{TURNS[turn - 1].you}"</span>
             </p>
             <div class="pp-rewind">
-              <button type="button" class="pp-pixbtn" disabled={turn >= 4} onclick={() => rewind('all')}>Rewind all</button>
-              <span>files and conversation go back</span>
-              <button type="button" class="pp-pixbtn" disabled={turn >= 4} onclick={() => rewind('conv')}>Conv. only</button>
-              <span>just the conversation, files stay</span>
+              <div class="opt">
+                <button type="button" class="pp-pixbtn" disabled={turn >= 4} onclick={() => rewind('all')}>Rewind all</button>
+                <span>files and conversation go back</span>
+              </div>
+              <div class="opt">
+                <button type="button" class="pp-pixbtn" disabled={turn >= 4} onclick={() => rewind('conv')}>Conv. only</button>
+                <span>just the conversation, files stay</span>
+              </div>
             </div>
             <p class="prompt-result" aria-live="polite">
               {#if rewindMode === 'all'}
@@ -402,7 +425,7 @@
         <div
           class="pp-scene"
           data-scene="review"
-          style="--scene-h: 160"
+          style="--scene-h: 176"
           role="img"
           aria-label="The three lanes curve back into main and pass through a gate. Their lamps turn green as each agent walks through."
         ></div>
@@ -477,26 +500,6 @@
       </ul>
     </div>
   </footer>
-
-  <!-- The key, always one click away -->
-  <div class="pp-keyfloat">
-    {#if keyOpen}
-      <div class="key-pop" id="pp-key-pop">
-        <Key />
-      </div>
-    {/if}
-    <button
-      type="button"
-      class="key-btn"
-      bind:this={keyBtn}
-      aria-expanded={keyOpen}
-      aria-controls="pp-key-pop"
-      onclick={() => (keyOpen = !keyOpen)}
-    >
-      {@render logo(12)}
-      Key
-    </button>
-  </div>
 
   {#if open}
     {@const def = AGENTS.find((a) => a.key === open.key)}
