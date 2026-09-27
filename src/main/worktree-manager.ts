@@ -2,10 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
-import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity } from './git.js';
+import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
 import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists } from './fs-utils.js';
-import type { WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
+import type { BranchSwitchResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 
 const CONFIG_FILE = 'config.json';
@@ -43,6 +43,16 @@ interface ManifestEntry {
 }
 
 type Manifest = Record<string, ManifestEntry>;
+
+/** Path equality that ignores separator style and, on Windows, case: git
+ *  prints worktree paths with forward slashes. */
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return norm(a) === norm(b);
+}
 
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeInfo>();
@@ -465,6 +475,12 @@ export class WorktreeManager {
   }
 
   private async deleteBranchQuietly(repoPath: string, branch: string): Promise<void> {
+    // A conversation can switch onto the default branch; closing it must not
+    // take that branch with it.
+    if (branch === (await getDefaultBranch(repoPath).catch(() => null))) {
+      logger.info(`Keeping branch ${branch}: it is the repository's default branch`);
+      return;
+    }
     try {
       await git(['branch', '-d', branch], repoPath);
     } catch {
@@ -667,6 +683,101 @@ export class WorktreeManager {
     });
 
     return newName;
+  }
+
+  /** Ids of every conversation on `id`'s checkout: itself, direct
+   *  conversations on the same project folder, and conversations attached
+   *  to the same worktree. Includes ones not loaded this run. */
+  async checkoutSharers(id: string): Promise<string[]> {
+    const info = this.worktrees.get(id);
+    if (!info) return [];
+    const ids = new Set<string>([id]);
+    for (const w of this.worktrees.values()) {
+      if (samePath(w.path, info.path)) ids.add(w.id);
+    }
+    const manifest = await this.loadManifest();
+    for (const [otherId, entry] of Object.entries(manifest)) {
+      if (entry.pendingRemoval) continue;
+      const entryPath = entry.path ?? (entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), this.repoHash(entry.repoPath), otherId));
+      if (samePath(entryPath, info.path)) ids.add(otherId);
+    }
+    return [...ids];
+  }
+
+  /**
+   * Check out another branch in a conversation's checkout: an existing local
+   * branch, a remote-only branch (a local tracking branch is created), or
+   * with `create` a new branch at HEAD. Every conversation sharing the
+   * checkout moves with it, so all their recorded branches are updated.
+   *
+   * Refused when a conversation sharing the checkout is mid-turn
+   * (`busySessionIds`, which only the renderer knows), when the tree has
+   * uncommitted changes, or when the branch is checked out in another
+   * worktree. A new branch at HEAD skips the dirty check: no file changes,
+   * so the uncommitted work just comes along.
+   */
+  async switchBranch(
+    id: string,
+    branch: string,
+    opts: { create?: boolean; busySessionIds?: string[] } = {},
+  ): Promise<BranchSwitchResult> {
+    const info = this.worktrees.get(id);
+    if (!info) return { success: false, error: 'This conversation is not active.' };
+    const name = branch.trim();
+    if (!name || name.startsWith('-') || !(await validateBranchName(name))) {
+      return { success: false, error: `"${name}" is not a valid branch name.` };
+    }
+    const create = opts.create === true;
+    const cwd = info.path;
+
+    return this.withRepoLock(info.repoPath, async (): Promise<BranchSwitchResult> => {
+      const sharers = await this.checkoutSharers(id);
+      const busy = new Set(opts.busySessionIds ?? []);
+      if (sharers.some((s) => busy.has(s))) {
+        return { success: false, error: 'An agent is working in this checkout. Wait for its turn to finish, then switch.' };
+      }
+
+      try {
+        // Already there (e.g. the agent switched in its own shell): nothing to
+        // check out, just bring the recorded branch in line.
+        if ((await currentBranch(cwd)) !== name) {
+          const isLocal = await localBranchExists(cwd, name);
+          let track: string | undefined;
+          if (create) {
+            if (isLocal) return { success: false, error: `A branch named "${name}" already exists.` };
+          } else if (!isLocal) {
+            track = (await remoteTrackingRef(cwd, name)) ?? undefined;
+            if (!track) return { success: false, error: `Branch "${name}" doesn't exist.` };
+          }
+
+          if (!create && !(await isWorkingTreeClean(cwd))) {
+            return { success: false, error: 'This checkout has uncommitted changes or untracked files. Commit, stash or remove them first.' };
+          }
+
+          if (isLocal) {
+            const usedBy = (await worktreeBranches(info.repoPath)).get(name);
+            if (usedBy && !samePath(usedBy, cwd)) {
+              return { success: false, error: `"${name}" is already checked out in ${usedBy}. A branch can only be checked out in one place.` };
+            }
+          }
+
+          await checkoutBranch(cwd, name, { create, track });
+        }
+      } catch (e: any) {
+        return { success: false, error: (e?.stderr || e?.message || String(e)).trim().slice(0, 500) };
+      }
+
+      const sharerSet = new Set(sharers);
+      for (const w of this.worktrees.values()) {
+        if (sharerSet.has(w.id)) w.branch = name;
+      }
+      await this.withManifest((manifest) => {
+        for (const s of sharers) {
+          if (manifest[s]) manifest[s].branch = name;
+        }
+      });
+      return { success: true, branch: name, sessionIds: sharers };
+    });
   }
 
   getWorktree(id: string): WorktreeInfo | undefined {

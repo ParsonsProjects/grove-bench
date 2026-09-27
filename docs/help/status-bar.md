@@ -28,6 +28,19 @@ Read-safe and Auto differ in who decides: Read-safe uses a fixed allowlist insid
 
 The mode, effort, thinking, and speed badges are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a badge (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.
 
+## Project and Branch
+
+The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. Under it are the sync state (commits to push or pull) and the pull request.
+
+Click the branch name to switch branches. Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
+
+- A branch that only exists on the remote gets a local branch that tracks it.
+- Switching is refused while the checkout has uncommitted changes or untracked files, so commit, stash or remove them first. Creating a new branch is still allowed: no files change, so your uncommitted work comes along.
+- A branch can only be checked out in one place. A branch in use by another worktree (your project folder included) can't be picked.
+- The branch name can't be clicked while the agent is working. Switch once its turn ends.
+- Conversations that share a checkout move together. For a direct conversation that checkout is your project folder, so your editor sees the switch too.
+- Closing a conversation with "Also delete the branch" never deletes the project's default branch, even if the conversation switched onto it.
+
 ## Speed
 
 On models that support it, a **Speed** badge toggles between **Standard** and **Fast** output. Fast keeps the same model but returns responses more quickly.

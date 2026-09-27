@@ -20,6 +20,7 @@
   import type { McpServerInfo, SkillInfo, SkillSuggestion } from '../../shared/types.js';
   import { CONTROL_IDS } from '../../shared/types.js';
   import SessionControlsPopover from './SessionControlsPopover.svelte';
+  import BranchPicker from './BranchPicker.svelte';
   import { formatResetTime } from '../lib/reset-time.js';
   import { filterVisibleMessages, NEXT_VIEW_MODE, VIEW_MODE_HINTS, VIEW_MODE_LABELS } from '../lib/message-view.js';
 
@@ -119,6 +120,7 @@
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
 
   let sessionBranch = $derived(store.sessions.find(s => s.id === sessionId)?.branch ?? '');
+  let sessionDirect = $derived(store.sessions.find(s => s.id === sessionId)?.direct === true);
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   /** The agent path to creating a PR needs a live, idle session. */
@@ -244,8 +246,22 @@
   let contextRef = $state<HTMLDivElement | null>(null);
   let shortcutsRef = $state<HTMLDivElement | null>(null);
   let mcpRef = $state<HTMLDivElement | null>(null);
-  /** Branch stack: anchors both the PR popover and the Create PR menu. */
+  /** Branch stack: anchors the branch picker, the PR popover and the Create PR menu. */
   let branchStackRef = $state<HTMLDivElement | null>(null);
+  let branchPickerOpen = $state(false);
+
+  // A turn starting mid-pick would switch files under the agent.
+  $effect(() => {
+    if (isRunning) branchPickerOpen = false;
+  });
+
+  function toggleBranchPicker() {
+    branchPickerOpen = !branchPickerOpen;
+    if (branchPickerOpen) {
+      prPopoverOpen = false;
+      createPrMenuOpen = false;
+    }
+  }
 
   // ─── MCP server control ───
 
@@ -524,6 +540,9 @@
     }
     if (createPrMenuOpen && branchStackRef && !branchStackRef.contains(target)) {
       createPrMenuOpen = false;
+    }
+    if (branchPickerOpen && branchStackRef && target.isConnected && !branchStackRef.contains(target)) {
+      branchPickerOpen = false;
     }
     // Same isConnected guard: "watch" on another PR re-keys the list, so the
     // clicked row is gone from the DOM by the time the click bubbles here.
@@ -1023,17 +1042,44 @@
   </div>
   {/if}
 
-  <!-- Branch stack: branch name on top; underneath, its sync state
-       (ahead / behind / push error) followed by the PR for this branch —
-       the "Create PR" link before one exists, the PR pill once it does.
-       Both popovers anchor to the stack. -->
+  <!-- Branch stack: project / branch on top (click the branch to switch);
+       underneath, its sync state (ahead / behind / push error) followed by
+       the PR for this branch: the "Create PR" link before one exists, the
+       PR pill once it does. All popovers anchor to the stack. -->
   {#if sessionBranch || gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo}
   {@const showCreatePr = !prInfo && !!sessionBranch && ghAvailable}
   <div class="relative flex flex-col gap-px leading-snug min-w-0" bind:this={branchStackRef}>
     {#if sessionBranch}
-      <span class="text-muted-foreground/70 truncate max-w-40" title={sessionBranch}>
-        {sessionBranch}
+      <span class="flex items-center gap-1 min-w-0">
+        {#if sessionRepoPath}
+          <span class="text-muted-foreground/50 truncate max-w-28" title={sessionRepoPath}>
+            {store.repoDisplayName(sessionRepoPath)}
+          </span>
+          <span class="text-muted-foreground/30 shrink-0">/</span>
+        {/if}
+        <button
+          onclick={toggleBranchPicker}
+          disabled={isRunning}
+          class="text-muted-foreground/70 hover:text-foreground truncate max-w-40 transition-colors disabled:hover:text-muted-foreground/70"
+          title={isRunning
+            ? `${sessionBranch} (switch branches once the agent finishes its turn)`
+            : `${sessionBranch}: click to switch branch`}
+        >
+          {sessionBranch}
+        </button>
       </span>
+    {/if}
+
+    {#if branchPickerOpen && sessionBranch}
+      <div transition:fly={{ y: 6, duration: 140 }} class="absolute bottom-full left-0 mb-2 z-50">
+        <BranchPicker
+          {sessionId}
+          repoPath={sessionRepoPath}
+          currentBranch={sessionBranch}
+          direct={sessionDirect}
+          onclose={() => branchPickerOpen = false}
+        />
+      </div>
     {/if}
 
     {#if gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo || showCreatePr}
@@ -1066,7 +1112,7 @@
             : prInfo.isDraft ? 'text-muted-foreground hover:text-foreground'
             : 'text-blue-400 hover:text-blue-300'}
           <button
-            onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { addressReviewsNotice = null; fixCiNotice = null; } }}
+            onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { branchPickerOpen = false; addressReviewsNotice = null; fixCiNotice = null; } }}
             class="flex items-center gap-1.5 {prColor} transition-colors"
             title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}{otherPrs.length > 0 ? ` (+${otherPrs.length} more in this session)` : ''}: click for checks, reviews, and automation"
           >
@@ -1090,7 +1136,7 @@
               Create PR
             </button>
             <button
-              onclick={() => createPrMenuOpen = !createPrMenuOpen}
+              onclick={() => { createPrMenuOpen = !createPrMenuOpen; if (createPrMenuOpen) branchPickerOpen = false; }}
               class="ml-0.5 text-blue-400/70 hover:text-blue-300 transition-colors"
               title="Create PR options"
             >

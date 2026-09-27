@@ -40,6 +40,10 @@ import {
   currentBranch,
   recentCheckouts,
   parseCheckoutBranches,
+  localBranchExists,
+  remoteTrackingRef,
+  parseWorktreeBranches,
+  checkoutBranch,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -193,6 +197,16 @@ describe('listBranches()', () => {
     const branches = await listBranches('/repo');
     expect(branches).not.toContain('HEAD');
     expect(branches).not.toContain('origin/HEAD');
+  });
+
+  it('skips the fetch when asked', async () => {
+    mockExeca.mockReset();
+    mockExeca
+      .mockResolvedValueOnce({ stdout: 'origin' } as any) // remote
+      .mockResolvedValueOnce({ stdout: 'main\norigin/dev' } as any); // branch -a
+    const branches = await listBranches('/repo', { fetch: false });
+    expect(branches).toEqual(['main', 'dev']);
+    expect(mockExeca).not.toHaveBeenCalledWith('git', ['fetch', '--prune'], expect.anything());
   });
 
   it('handles fetch failure gracefully', async () => {
@@ -723,5 +737,87 @@ describe('recentCheckouts()', () => {
   it('returns an empty list when git fails', async () => {
     mockExeca.mockRejectedValue(new Error('boom'));
     expect(await recentCheckouts('/wt', 0)).toEqual([]);
+  });
+});
+
+describe('localBranchExists()', () => {
+  it('checks refs/heads only, so a tag or SHA with the name does not count', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    expect(await localBranchExists('/wt', 'feat/x')).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['show-ref', '--verify', '--quiet', 'refs/heads/feat/x'], { cwd: '/wt' });
+  });
+
+  it('returns false when the ref is missing', async () => {
+    mockExeca.mockRejectedValue(new Error('not a valid ref'));
+    expect(await localBranchExists('/wt', 'nope')).toBe(false);
+  });
+});
+
+describe('remoteTrackingRef()', () => {
+  /** `git remote` lists `remotes`; `show-ref` succeeds only for refs in `present`. */
+  function mockRefs(remotes: string, present: string[]) {
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) => {
+      if (args[0] === 'remote') return Promise.resolve({ stdout: remotes });
+      return present.includes(args[3]) ? Promise.resolve({ stdout: '' }) : Promise.reject(new Error('not a valid ref'));
+    }) as any);
+  }
+
+  it('prefers origin when several remotes have the branch', async () => {
+    mockRefs('upstream\norigin', ['refs/remotes/upstream/feat/x', 'refs/remotes/origin/feat/x']);
+    expect(await remoteTrackingRef('/wt', 'feat/x')).toBe('origin/feat/x');
+  });
+
+  it('falls back to another remote that has the branch', async () => {
+    mockRefs('origin\nfork', ['refs/remotes/fork/feat/x']);
+    expect(await remoteTrackingRef('/wt', 'feat/x')).toBe('fork/feat/x');
+  });
+
+  it('returns null when no remote has the branch', async () => {
+    mockRefs('origin', []);
+    expect(await remoteTrackingRef('/wt', 'feat/x')).toBeNull();
+  });
+});
+
+describe('parseWorktreeBranches()', () => {
+  it('maps each checked-out branch to its worktree path and skips detached ones', () => {
+    const raw = [
+      'worktree C:/Users/me/repo',
+      'HEAD 1111111111111111111111111111111111111111',
+      'branch refs/heads/main',
+      '',
+      'worktree C:/Users/me/AppData/grove/abc/wt-1',
+      'HEAD 2222222222222222222222222222222222222222',
+      'detached',
+      '',
+      'worktree C:/Users/me/AppData/grove/abc/wt-2',
+      'HEAD 3333333333333333333333333333333333333333',
+      'branch refs/heads/feat/x',
+      '',
+    ].join('\n');
+    expect(parseWorktreeBranches(raw)).toEqual(new Map([
+      ['main', 'C:/Users/me/repo'],
+      ['feat/x', 'C:/Users/me/AppData/grove/abc/wt-2'],
+    ]));
+  });
+});
+
+describe('checkoutBranch()', () => {
+  beforeEach(() => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+  });
+
+  it('checks out an existing branch with -- so the name is never read as a path', async () => {
+    await checkoutBranch('/wt', 'feat/x');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['checkout', 'feat/x', '--'], { cwd: '/wt' });
+  });
+
+  it('creates a local branch tracking a remote-only branch', async () => {
+    await checkoutBranch('/wt', 'feat/x', { track: 'origin/feat/x' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['checkout', '-b', 'feat/x', '--track', 'origin/feat/x'], { cwd: '/wt' });
+  });
+
+  it('creates a new branch at HEAD', async () => {
+    await checkoutBranch('/wt', 'feat/new', { create: true });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['checkout', '-b', 'feat/new'], { cwd: '/wt' });
   });
 });
