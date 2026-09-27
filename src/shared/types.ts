@@ -1020,7 +1020,8 @@ export interface GroveBenchSettings {
   /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */
   repoColors: Record<string, string>;
   /** Show small pixel characters for conversation status: in the sidebar in
-   *  place of the status dot, in permission prompts and in the empty states.
+   *  place of the status dot, in permission and question prompts and in the
+   *  empty states.
    *  Each status gets its own pose as well as its colour. Default true. */
   groveCharacters: boolean;
 

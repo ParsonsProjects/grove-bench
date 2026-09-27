@@ -19,7 +19,10 @@ export type AgentSpriteState =
   | 'ready'
   // Permission prompts once answered.
   | 'allowed'
-  | 'denied';
+  | 'denied'
+  // Question prompts, in the question block's own colours.
+  | 'asking'
+  | 'answered';
 
 export interface AgentSpriteInput {
   destroying: boolean;
@@ -81,6 +84,7 @@ const BANG = ['..c.', '..c.', '..c.', '....', '..c.'];
 const ZZZ = ['cccc', '..c.', '.c..', 'cccc'];
 const CHECK = ['', '...c', 'c.c.', '.c..'];
 const CROSS = ['', '.c.c', '..c.', '.c.c'];
+const BUBBLE = ['', 'cccc', 'cccc', 'c...'];
 
 // Waving: the right arm is raised and the hand rocks side to side.
 const WAVE_POSE = [...HEAD, ...HOODIE, 'sLllL.....', ...LEGS_SIT];
@@ -159,6 +163,8 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   removing: sprite('Removing', 'text-muted-foreground', [ASLEEP], { fade: true }),
   allowed: sprite('Allowed', 'text-green-400', [withSymbol(SIT, CHECK)]),
   denied: sprite('Denied', 'text-destructive', [withSymbol(SIT, CROSS)]),
+  asking: sprite('Asking you a question', 'text-cyan-400', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
+  answered: sprite('Answered', 'text-blue-400', [withSymbol(SIT, BUBBLE)]),
 };
 
 /** Exported for tests: every pose map, so their sizes can be checked. */

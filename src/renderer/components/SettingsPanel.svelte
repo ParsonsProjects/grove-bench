@@ -562,7 +562,7 @@
               <Checkbox bind:checked={settingsStore.draft.groveCharacters} />
               Show grove characters
             </label>
-            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission prompts, and when no conversation is open.</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, and when no conversation is open.</p>
           </div>
 
           <Separator />
