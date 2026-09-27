@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { PIXEL_TREE } from '../lib/pixel-tree.js';
   import UpdateNotification from './UpdateNotification.svelte';
   import HelpPanel from './HelpPanel.svelte';
 
@@ -122,32 +123,9 @@
   <div class="flex-1 app-drag px-3 flex items-center h-full relative z-10">
     <svg width="11" height="13" viewBox="0 0 21 24" fill="none" class="mr-1.5 shrink-0">
       <!-- Pixel art tree: 2px pixels with 1px gaps on a 3px grid -->
-      <rect x="9" y="0" width="2" height="2" fill="#6ec87a"/>
-      <rect x="6" y="3" width="2" height="2" fill="#5ab868"/>
-      <rect x="9" y="3" width="2" height="2" fill="#5ab868"/>
-      <rect x="12" y="3" width="2" height="2" fill="#5ab868"/>
-      <rect x="3" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="6" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="9" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="12" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="15" y="6" width="2" height="2" fill="#4aaa58"/>
-      <rect x="0" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="3" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="6" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="9" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="12" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="15" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="18" y="9" width="2" height="2" fill="#3a9a48"/>
-      <rect x="3" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="6" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="9" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="12" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="15" y="12" width="2" height="2" fill="#3a9a48"/>
-      <rect x="9" y="15" width="2" height="2" fill="#8a6a4a"/>
-      <rect x="9" y="18" width="2" height="2" fill="#8a6a4a"/>
-      <rect x="6" y="21" width="2" height="2" fill="#6a5040"/>
-      <rect x="9" y="21" width="2" height="2" fill="#6a5040"/>
-      <rect x="12" y="21" width="2" height="2" fill="#6a5040"/>
+      {#each PIXEL_TREE as p (`${p.x},${p.y}`)}
+        <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+      {/each}
     </svg>
     <span class="text-xs text-muted-foreground">Grove Bench</span>
     <UpdateNotification />
