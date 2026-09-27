@@ -7,9 +7,11 @@ import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPro
 import { decideAutoName } from './session-auto-name.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
-import { checkCorePrerequisites, checkGh } from './prerequisites.js';
-import { prerequisitesSatisfied } from '../shared/prerequisites.js';
+import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
+import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
+import type { AgentAdapter } from './adapters/types.js';
+import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
@@ -24,7 +26,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, clearPrerequisiteCache } from './app-state.js';
+import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import crypto from 'node:crypto';
@@ -329,6 +331,8 @@ export function registerHandlers() {
       const providerSessionId = await worktreeManager.getProviderSessionId(id);
       // Restore the model the session last ran with (falls back to default if unset)
       const savedModel = await worktreeManager.getModel(id);
+      // ...on the agent it ran with. A Codex conversation must not come back on Claude.
+      const adapterType = await worktreeManager.getAdapterType(id);
       logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
 
       const session = await sessionManager.createSession({
@@ -339,6 +343,7 @@ export function registerHandlers() {
         window: win,
         resumeSessionId: providerSessionId,
         model: savedModel,
+        adapterType,
       });
 
       logger.info(`Session resumed: id=${session.id}`);
@@ -386,11 +391,12 @@ export function registerHandlers() {
     const live = sessionManager.getSession(sessionId);
     const next = await decideAutoName(state, {
       providerTitle: async () => {
-        // Stopped sessions have no live adapter; the default one wrote them.
-        const adapter = live?.adapter ?? adapterRegistry.getDefault();
+        // Stopped sessions have no live adapter: use the agent they ran on.
+        const adapterType = live ? undefined : await worktreeManager.getAdapterType(sessionId);
+        const adapter = live?.adapter ?? (adapterType ? adapterRegistry.get(adapterType) : undefined);
         const providerSessionId = live?.providerSessionId ?? await worktreeManager.getProviderSessionId(sessionId);
         const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
-        if (!adapter.getConversationTitle || !providerSessionId || !cwd) return null;
+        if (!adapter?.getConversationTitle || !providerSessionId || !cwd) return null;
         try {
           return await adapter.getConversationTitle(providerSessionId, cwd);
         } catch (e) {
@@ -443,12 +449,13 @@ export function registerHandlers() {
   // ─── Prerequisites ───
 
   // Core check (git + agent). Carries forward the last known gh status so the
-  // renderer keeps PR features enabled while the slower gh check runs.
+  // renderer keeps PR features enabled while the slower gh check runs. Every
+  // result is cached, pass or fail: the renderer shows it at the next launch
+  // while a fresh check runs, and nothing blocks on it.
   ipcMain.handle(IPC.PREREQUISITES_CHECK, async (): Promise<PrerequisiteStatus> => {
     const core = await checkCorePrerequisites();
     const status: PrerequisiteStatus = { ...core, gh: loadPrerequisiteCache()?.status.gh };
-    if (prerequisitesSatisfied(status)) savePrerequisiteCache(status);
-    else clearPrerequisiteCache();
+    savePrerequisiteCache(status);
     return status;
   });
 
@@ -461,6 +468,40 @@ export function registerHandlers() {
     const cached = loadPrerequisiteCache();
     if (cached) savePrerequisiteCache({ ...cached.status, gh });
     return gh;
+  });
+
+  // Saving or removing a key only changes that agent's key state, so patch
+  // the last check rather than re-running every CLI probe (which can take
+  // seconds).
+  async function withFreshApiKeyState(adapter: AgentAdapter): Promise<PrerequisiteStatus> {
+    const cached = loadPrerequisiteCache()?.status;
+    const status: PrerequisiteStatus = cached?.agents[adapter.id]
+      ? {
+          ...cached,
+          agents: { ...cached.agents, [adapter.id]: { ...cached.agents[adapter.id], apiKey: apiKeyState(adapter) } },
+        }
+      : { ...(await checkCorePrerequisites()), gh: cached?.gh };
+    savePrerequisiteCache(status);
+    return status;
+  }
+
+  function adapterForKey(adapterId: unknown): AgentAdapter {
+    const adapter = typeof adapterId === 'string' ? adapterRegistry.get(adapterId) : undefined;
+    if (!adapter) throw new Error(`Unknown agent: ${String(adapterId)}`);
+    if (!adapter.apiKey) throw new Error(`${adapter.displayName} does not take an API key.`);
+    return adapter;
+  }
+
+  ipcMain.handle(IPC.CREDENTIALS_SET_API_KEY, async (_event, adapterId: unknown, key: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = adapterForKey(adapterId);
+    saveApiKey(adapter.id, key);
+    return withFreshApiKeyState(adapter);
+  });
+
+  ipcMain.handle(IPC.CREDENTIALS_CLEAR_API_KEY, async (_event, adapterId: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = adapterForKey(adapterId);
+    clearApiKey(adapter.id);
+    return withFreshApiKeyState(adapter);
   });
 
   ipcMain.on(IPC.APP_RESTORE_COMPLETE, () => {
@@ -856,8 +897,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.GIT_GENERATE_COMMIT_MESSAGE, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    // Prefer the session's own adapter; fall back to the default for stopped sessions.
-    const adapter = sessionManager.getSession(sessionId)?.adapter ?? adapterRegistry.getDefault();
+    // The conversation's own agent, recorded in the manifest when it isn't running.
+    const adapter = sessionManager.getSession(sessionId)?.adapter ?? await recordedAgent(sessionId);
     return generateCommitMessage(worktree.path, adapter);
   });
 
@@ -1178,11 +1219,28 @@ export function registerHandlers() {
 
   // ─── Agent Adapters ───
 
+  // An agent's model list can change at run time (the Claude adapter reads
+  // the SDK's list when a conversation starts). Tell every window so pickers
+  // and the status bar refetch.
+  for (const adapter of adapterRegistry.list()) {
+    adapter.onModelsChanged?.(() => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send(IPC.AGENT_MODELS_CHANGED, adapter.id);
+      }
+    });
+  }
+
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
+    const defaultId = adapterRegistry.getDefault().id;
     return adapterRegistry.list().map(a => ({
       id: a.id,
       displayName: a.displayName,
-      capabilities: { ...a.capabilities },
+      // mcpConfig: the adapter can list and edit configured MCP servers (the
+      // Settings MCP tab). Derived from the optional methods, which have no
+      // capability flag of their own.
+      capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
+      isDefault: a.id === defaultId,
+      ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
     }));
   });
 
@@ -1223,8 +1281,11 @@ export function registerHandlers() {
     return memory.deleteMemoryFile(repoPath, relativePath);
   });
 
-  ipcMain.handle(IPC.MEMORY_COMPACT, (_event, repoPath: string) => {
-    return memoryCompact.compactMemory({ repoPath, force: true });
+  ipcMain.handle(IPC.MEMORY_COMPACT, async (_event, repoPath: string) => {
+    // Manual compaction belongs to no one conversation: run it on the agent the
+    // project was most recently used with.
+    const adapter = await agentForProject(repoPath);
+    return memoryCompact.compactMemory({ repoPath, force: true, adapterType: adapter.id });
   });
 
   ipcMain.handle(IPC.MEMORY_COMPACT_CANCEL, (_event, repoPath: string) => {

@@ -1,8 +1,9 @@
-import type { PrerequisiteStatus } from '../shared/types.js';
+import type { AgentPrerequisiteStatus, PrerequisiteStatus } from '../shared/types.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
-import type { AdapterPrerequisiteStatus } from './adapters/types.js';
+import type { AdapterPrerequisiteStatus, AgentAdapter } from './adapters/types.js';
+import { canStoreApiKey, hasApiKey } from './credentials.js';
 
 const MIN_GIT_MAJOR = 2;
 const MIN_GIT_MINOR = 17;
@@ -36,34 +37,49 @@ export async function checkGh(): Promise<NonNullable<PrerequisiteStatus['gh']>> 
 }
 
 /**
- * Everything the app needs before it can run: git plus an authenticated agent
- * CLI. Deliberately excludes the GitHub CLI, whose auth check hits the network
- * and must not delay the startup gate.
+ * Git and agent status. Nothing here blocks the app: git only gates git-backed
+ * features and agent credentials are asked for when a conversation starts.
+ * Deliberately excludes the GitHub CLI, whose auth check hits the network and
+ * is slower than the rest.
  */
 export async function checkCorePrerequisites(): Promise<PrerequisiteStatus> {
-  const adapter = adapterRegistry.getDefault();
-  const [gitStatus, agentStatus] = await Promise.all([
-    checkGit(),
-    adapter.checkPrerequisites(),
-  ]);
-  return buildStatus(gitStatus, agentStatus, adapter.authErrorMessage);
+  const [git, agents] = await Promise.all([checkGit(), checkAgents()]);
+  return { git, agents };
 }
 
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
-  const adapter = adapterRegistry.getDefault();
-  const [gitStatus, agentStatus, ghStatus] = await Promise.all([
-    checkGit(),
-    adapter.checkPrerequisites(),
-    checkGh(),
-  ]);
-  return { ...buildStatus(gitStatus, agentStatus, adapter.authErrorMessage), gh: ghStatus };
+  const [git, agents, gh] = await Promise.all([checkGit(), checkAgents(), checkGh()]);
+  return { git, agents, gh };
 }
 
-function buildStatus(
-  gitStatus: PrerequisiteStatus['git'],
-  agentStatus: AdapterPrerequisiteStatus,
-  adapterAuthErrorMessage: string,
-): PrerequisiteStatus {
+/** Every registered agent, checked in parallel. One agent failing its check
+ *  (a crashed CLI, a bug in an adapter) doesn't hide the others. */
+export async function checkAgents(): Promise<Record<string, AgentPrerequisiteStatus>> {
+  const entries = await Promise.all(adapterRegistry.list().map(async (adapter) => {
+    let raw: AdapterPrerequisiteStatus;
+    try {
+      raw = await adapter.checkPrerequisites();
+    } catch (err) {
+      raw = { available: false, errorMessage: `${adapter.displayName} check failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    return [adapter.id, buildAgentStatus(raw, adapter)] as const;
+  }));
+  return Object.fromEntries(entries);
+}
+
+/** What the renderer needs to offer API key entry for `adapter`, without the
+ *  key itself. Undefined when the adapter takes no API key. */
+export function apiKeyState(adapter: AgentAdapter): AgentPrerequisiteStatus['apiKey'] {
+  if (!adapter.apiKey) return undefined;
+  return {
+    label: adapter.apiKey.label,
+    helpUrl: adapter.apiKey.helpUrl,
+    saved: hasApiKey(adapter.id),
+    canStore: canStoreApiKey(),
+  };
+}
+
+function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: AgentAdapter): AgentPrerequisiteStatus {
   // Build error/auth message from adapter when not available or not authenticated
   let errorMessage: string | undefined;
   let authErrorMessage: string | undefined;
@@ -74,19 +90,17 @@ function buildStatus(
         : 'Agent CLI not found.');
   }
   if (agentStatus.available && !agentStatus.authenticated) {
-    authErrorMessage = adapterAuthErrorMessage;
+    authErrorMessage = adapter.authErrorMessage;
   }
 
   return {
-    git: gitStatus,
-    agent: {
-      available: agentStatus.available,
-      path: agentStatus.path,
-      authenticated: agentStatus.authenticated,
-      authMethod: agentStatus.authMethod,
-      email: agentStatus.email,
-      errorMessage,
-      authErrorMessage,
-    },
+    available: agentStatus.available,
+    path: agentStatus.path,
+    authenticated: agentStatus.authenticated,
+    authMethod: agentStatus.authMethod,
+    email: agentStatus.email,
+    errorMessage,
+    authErrorMessage,
+    apiKey: apiKeyState(adapter),
   };
 }

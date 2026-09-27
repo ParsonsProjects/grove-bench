@@ -27,7 +27,7 @@ const SETTINGS = {
   disableBypassMode: false,
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
-  defaultModel: '',
+  defaultModels: {},
   adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
@@ -35,13 +35,14 @@ const SETTINGS = {
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
-  memoryModel: 'claude-haiku-4-5',
+  backgroundModels: {},
   autoInstallDeps: false,
   idleAutoStopMinutes: 30,
   defaultBaseBranch: '',
   theme: 'dark',
   alwaysOnTop: false,
   repoColors: {},
+  groveCharacters: true,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,
@@ -269,7 +270,7 @@ const api: Record<string, unknown> = {
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
     gh: { available: true, version: '2.65.0', authenticated: true },
-    agent: { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+    agents: { 'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' } },
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
@@ -331,7 +332,7 @@ const api: Record<string, unknown> = {
     '+    <SessionSearch />',
   ].join('\n'),
   listMcpServers: async () => [],
-  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Code', capabilities: {} }],
+  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001' }],
   getAdapterControls: async () => [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [
@@ -388,6 +389,8 @@ const api: Record<string, unknown> = {
   checkForUpdate: async () => null,
   ptyIsAlive: async () => false,
   winIsMaximized: async () => false,
+  // The MCP settings tab reads `.length` of this list.
+  mcpConfigList: async () => [],
 };
 
 (window as unknown as { groveBench: unknown }).groveBench = new Proxy(api, {

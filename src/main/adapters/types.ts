@@ -188,6 +188,18 @@ export interface AdapterPrerequisiteStatus {
   installInstructions?: string;
 }
 
+/** An API key the user can enter in the app instead of signing in through the
+ *  provider's CLI. The main process stores it encrypted (see credentials.ts)
+ *  and the adapter passes it to the agent in `envVar`. */
+export interface ApiKeyDescriptor {
+  /** Environment variable the agent reads the key from. */
+  envVar: string;
+  /** Field label shown in the UI, e.g. "Anthropic API key". */
+  label: string;
+  /** Page where the user can create a key. */
+  helpUrl: string;
+}
+
 // ─── The Adapter Interface ───
 
 export interface AgentAdapter {
@@ -198,8 +210,13 @@ export interface AgentAdapter {
   /** What this adapter supports */
   readonly capabilities: AgentCapabilities;
 
-  /** Available models for this provider */
+  /** Available models for this provider, default first. May change at run
+   *  time when the provider reports its current list (see onModelsChanged). */
   getModels(): ModelInfo[];
+
+  /** Subscribe to changes in getModels() (and anything derived from it, such
+   *  as getControls or backgroundModel). Returns an unsubscribe function. */
+  onModelsChanged?(listener: () => void): () => void;
 
   /** Runtime controls this provider exposes for `model` (null = provider
    *  default model). Must include a `permissionMode` descriptor whose values
@@ -217,6 +234,14 @@ export interface AgentAdapter {
   /** Human-readable error message shown when authentication fails.
    *  E.g. 'Please run "claude auth login"' or 'Set OPENAI_API_KEY'. */
   readonly authErrorMessage: string;
+
+  /** Set when the provider accepts an API key entered in the app. */
+  readonly apiKey?: ApiKeyDescriptor;
+
+  /** Cheap model for background tasks run on this agent: memory notes and
+   *  compaction, commit messages, skill suggestions. Used unless the user
+   *  picks another in Settings > Agent. Omit to use the agent's own default. */
+  readonly backgroundModel?: string;
 
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */

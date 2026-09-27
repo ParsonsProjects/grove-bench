@@ -1,6 +1,8 @@
 <script lang="ts">
   import { messageStore, type QuestionItem } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import AgentSprite from './AgentSprite.svelte';
 
   let {
     sessionId,
@@ -91,6 +93,9 @@
   {#each questions as q, qIdx}
     <div class={qIdx > 0 ? 'mt-3' : ''}>
       <div class="flex items-center gap-2 text-xs">
+        {#if qIdx === 0 && settingsStore.current.groveCharacters}
+          <AgentSprite state={resolved ? 'answered' : 'asking'} scale={resolved ? 2 : 3} />
+        {/if}
         <span class="text-cyan-400 font-bold">question</span>
         <span class="text-foreground font-medium">{q.header}</span>
       </div>

@@ -150,6 +150,23 @@ describe('schema versioning', () => {
     expect(upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'plan' }).settings.defaultPermissionMode).toBe('plan');
   });
 
+  it('turns the global memory model into per-agent background models (5 → 6)', () => {
+    const custom = upgradeSettings({ schemaVersion: 5, memoryModel: 'claude-sonnet-4-6' }).settings;
+    expect(custom.backgroundModels).toEqual({ 'claude-code': 'claude-sonnet-4-6' });
+    expect(custom).not.toHaveProperty('memoryModel');
+    // The old shipped default and "provider default" both mean: use the agent's own default.
+    expect(upgradeSettings({ schemaVersion: 5, memoryModel: 'claude-haiku-4-5' }).settings.backgroundModels).toEqual({});
+    expect(upgradeSettings({ schemaVersion: 5, memoryModel: '' }).settings.backgroundModels).toEqual({});
+  });
+
+  it('moves a saved default model under the Claude agent (4 → 5)', () => {
+    const { settings } = upgradeSettings({ schemaVersion: 4, defaultModel: 'claude-sonnet-4-6' });
+    expect(settings.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6' });
+    expect(settings).not.toHaveProperty('defaultModel');
+    expect(upgradeSettings({ schemaVersion: 4, defaultModel: '' }).settings.defaultModels).toEqual({});
+    expect(upgradeSettings({ schemaVersion: 4 }).settings.defaultModels).toEqual({});
+  });
+
   it('drops a saved Claude thinking budget, keeping Off/adaptive and other controls (3 → 4)', () => {
     const { settings } = upgradeSettings({
       schemaVersion: 3,

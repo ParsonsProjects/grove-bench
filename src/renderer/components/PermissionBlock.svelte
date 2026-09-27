@@ -4,6 +4,8 @@
   import DiffView, { computeDiffLines } from './DiffView.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import AgentSprite from './AgentSprite.svelte';
 
   let {
     sessionId,
@@ -190,6 +192,11 @@
       : 'border-amber-500'
   );
 
+  // Grove character: waits with a "?" until answered, then sits still with the outcome.
+  let spriteState = $derived<'permission' | 'allowed' | 'denied'>(
+    isResolved ? (effectiveDecision === 'allow' ? 'allowed' : 'denied') : 'permission'
+  );
+
   let labelColor = $derived(
     isResolved
       ? (effectiveDecision === 'allow' ? 'text-green-400' : 'text-destructive')
@@ -199,6 +206,9 @@
 
 <div class="py-1 my-1 border-l-4 {borderColor} pl-3">
   <div class="flex items-center gap-2 text-xs">
+    {#if settingsStore.current.groveCharacters}
+      <AgentSprite state={spriteState} scale={isResolved ? 2 : 3} />
+    {/if}
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
     <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolName}</span>
     {#if isExitPlanMode && planText}

@@ -435,7 +435,7 @@ App close event (before-quit)
 
 `node-pty` uses Windows ConPTY (available since Windows 10 1809). Key points:
 
-- **Native module rebuild**: node-pty is a native Node addon. It must be rebuilt for Electron's Node version using `electron-rebuild` or `@electron/rebuild`.
+- **Native module**: node-pty is a native Node addon. Version 1.1.0 ships Node-API prebuilds, which load in any Electron version, so it is not rebuilt (`npmRebuild: false` in `electron-builder.yml`).
 - **Shell selection**: Should detect the best available shell rather than hardcoding. See shell detection below.
 - **ConPTY quirks**: ConPTY can have rendering issues with certain escape sequences. xterm.js handles most of these, but testing is needed with Claude Code's specific output (spinner animations, syntax highlighting, etc.).
 
@@ -536,7 +536,10 @@ const version = await git(['--version'], repoPath);
 
 ### 8.4 Prerequisite Detection
 
-Before spawning a session, verify that required tools are available:
+Checks run in the background at startup and never block the app. The last
+result is cached in `app-state.json` and shown at the next launch while a fresh
+check runs. Git gates only git-backed features; agent credentials are asked for
+when the user starts a conversation.
 
 **Git availability and version:**
 
@@ -556,7 +559,7 @@ async function checkGit(): Promise<{ available: boolean; version?: string; meets
 }
 ```
 
-If git is not found or below 2.17, show a blocking error. Git 2.5 introduced worktrees, but 2.17+ has important Windows fixes and `git worktree move` support.
+If git is not found or below 2.17, show a dismissible notice under the title bar. Projects, worktrees and the Changes tab need it; the rest of the app loads. Git 2.5 introduced worktrees, but 2.17+ has important Windows fixes and `git worktree move` support.
 
 **Claude Code availability:**
 
@@ -572,9 +575,33 @@ async function findClaudeCode(): Promise<string | null> {
 }
 ```
 
-If not found, show a helpful error: "Claude Code not found. Install it with `npm install -g @anthropic-ai/claude-code`" (or whatever the current install method is -- verify at build time).
+Conversations don't need the installed CLI: the Agent SDK runs its own bundled Claude Code binary unless `pathToClaudeCodeExecutable` is set ([quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart)). The CLI is used to read an existing sign-in (`claude auth status --json`) and for MCP and plugin configuration. Both CLI calls have a time limit so a hung CLI can't stall the check.
 
-**All prerequisite checks should run once at app startup** and again when the user tries to create a session. Results are cached until the app restarts.
+**Credentials.** The agent is ready when any of these is true:
+
+- An API key is saved in the app. It is encrypted with Electron `safeStorage` in `<userData>/credentials.json` (`src/main/credentials.ts`), never sent to the renderer, and passed to the agent as `ANTHROPIC_API_KEY`. While saved it wins over a CLI sign-in, which matches how Claude Code treats that variable ([env vars](https://code.claude.com/docs/en/env-vars)).
+- `ANTHROPIC_API_KEY` or a provider switch (`CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`) is set in the environment.
+- `claude auth status` reports a sign-in.
+
+If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
+
+**Several agents.** Every check above runs for each registered adapter, and `PrerequisiteStatus.agents` holds the result per adapter id. Saved keys, default models (`settings.defaultModels`) and the Settings > Agent groups are per adapter too. The New Conversation dialog shows an Agent picker when more than one adapter is registered and asks for the picked agent's credentials; the status bar lists the models of the conversation's own agent. The Settings MCP and Plugins tabs configure the default agent and are hidden when it doesn't support them.
+
+**Background tasks.** Memory notes, memory compaction, commit messages and skill suggestions call `adapter.generateText()` (`src/main/background-tasks.ts`). Each runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider chosen for it. The manifest records every conversation's agent (`adapterType`), which also lets a restart resume it on the same agent. Project-level tasks use the project's most recently used agent: manual compaction any agent, skill suggestions only an agent with skills, and suggestions only read that agent's conversations. The model is the user's pick in `settings.backgroundModels`, else the adapter's own `backgroundModel` (Claude: the SDK's current Haiku), else the agent's default.
+
+**Model lists.** The Claude adapter reads the SDK's list (`Query.supportedModels()`) when a conversation starts, once per run, and caches it in `app-state.json` (`modelCatalogs`) for the next launch; `FALLBACK_MODELS` covers the first launch. The SDK lists aliases (`opus`, `sonnet`, `haiku`) with the model each resolves to; Grove keeps the resolved id so saved choices keep matching, skips the account's `default` row (Grove has its own Default), and lists Opus first so new conversations still start on Opus. The SDK's effort levels, adaptive thinking, fast mode and auto mode drive the session controls; each model's default effort and whether thinking can be switched off still come from the adapter's table, since the SDK doesn't report them. When the list changes, the main process sends `agent:modelsChanged` and the status bar and Settings refetch.
+
+**Authentication rules.** Anthropic's terms decide which sign-in paths the app may offer ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)):
+
+- **Allowed: the user's own Claude subscription through Claude Code.** The terms don't prevent "an end user from signing in to the unmodified Claude Code binary with their own Claude subscription". The user signs in with `claude auth login`, which is Anthropic's own flow. Grove only runs `claude auth status` to see whether they are signed in. It never reads, stores or forwards the sign-in token; the agent process reads it itself.
+- **Allowed: the user's own API key or cloud provider credentials,** billed to the user under their own agreement.
+- **Not allowed: a Claude login inside Grove.** Third-party developers may not offer Claude.ai login in their own apps, collect or store Claude.ai credentials or session tokens, or route requests through Free, Pro or Max credentials on their users' behalf. Don't add a "Sign in with Claude" button or read the CLI's stored tokens without Anthropic's approval.
+- **Keep the binary as published.** Don't modify the bundled Claude Code binary or remove or disable any of its sign-in methods.
+- **Don't pay for or resell usage.** Each user brings their own subscription, key or cloud credentials.
+- **Commercial Terms.** Running Claude Code inside a product requires agreeing to Anthropic's Commercial Terms of Service, which also govern the Agent SDK.
+- **Naming.** Plain-text statements that Grove runs Claude Code are fine. The agent is labelled "Claude Agent" in the UI, as the SDK branding guidelines suggest for menus. Don't use "Claude Code" or Anthropic's names or logos as part of Grove's own product, feature or company name.
+
+For anything these rules don't settle, Anthropic asks developers to contact its sales team.
 
 ## 9. Project Structure
 
@@ -674,7 +701,7 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 | Category | Example | How it surfaces |
 |----------|---------|-----------------|
-| Prerequisite failure | Git not found, Claude Code missing, git too old | Blocking dialog on startup or session creation. Cannot proceed. |
+| Prerequisite failure | Git not found or too old, no agent credentials | Git: dismissible notice under the title bar. Credentials: API key step in the New Conversation dialog. Neither blocks the app. |
 | Worktree creation failure | Branch already exists, disk full, permission denied | Error toast + details. Session creation aborted, no terminal opens. |
 | PTY crash | Claude Code exits unexpectedly, shell crashes | Terminal shows exit message in red. Agent status changes to "stopped". User can destroy and recreate. |
 | Worktree cleanup failure | File locked by another process | Warning toast. Retry button. Flag for cleanup on next startup. |
@@ -684,7 +711,7 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 - **Status bar** at the bottom of each terminal pane showing agent status (running/stopped/error)
 - **Toast notifications** for non-blocking errors (worktree cleanup issues, background warnings)
-- **Modal dialogs** for blocking errors (prerequisites missing, can't create session)
+- **Modal dialogs** for blocking errors (can't create session)
 - **Terminal inline messages** for PTY-level events (process exited, connection lost)
 
 ### 13.3 Logging

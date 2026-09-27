@@ -11,16 +11,22 @@ Control how the agent handles actions that need approval:
 
 ## Agent
 
-Configure agent behavior:
+Configure agent behavior. There is one group per installed agent, each with:
 
-- **Default Model** — Select which Claude model to use for new conversations
-- **Agent defaults** — One group per installed agent, listing the conversation controls that agent declares for the default model (for Claude Code: Thinking, and Speed on models that support fast mode). Pick the value new conversations start with; each conversation can still change it from the status bar
+- **Credentials** — Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
+- **Default Model** — Pick the model new conversations with this agent start on. The list comes from the agent itself and updates after a conversation starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
+- **Background Model** — The model used for this agent's background tasks: memory notes, memory compaction, commit messages and skill suggestions. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider you chose for it
+- **Conversation controls** — The controls the agent declares for its default model (for Claude Agent: Thinking, and Speed on models that support fast mode). Pick the value new conversations start with; each conversation can still change it from the status bar
+
+These apply to every agent:
+
 - **System Prompt Append** — Add custom instructions that apply to all conversations
 - **Additional Working Directories** — Extra directories the agent can access
 
 ## General
 
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
+- **Grove Characters**: Show small pixel agents for each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, and when no conversation is open. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when stopped. On by default
 - **Project Colors** — Customize the accent color for each project in the sidebar
 - **Always on Top** — Keep the Grove Bench window above other windows
 - **Spell Check** — Enable or disable spell checking in the prompt editor

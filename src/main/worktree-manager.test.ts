@@ -63,6 +63,39 @@ beforeEach(() => {
   mockFs.mkdir.mockResolvedValue(undefined);
 });
 
+describe('saveAdapterType / getAdapterType', () => {
+  it('records which agent a session runs', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000 },
+    }));
+
+    await manager.saveAdapterType('wt-1', 'codex');
+
+    expect(savedManifest).toEqual({
+      'wt-1': { repoPath: '/repo', branch: 'feature', createdAt: 1000, adapterType: 'codex' },
+    });
+  });
+
+  it('reads the recorded agent, and treats older entries as Claude Code', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-new': { repoPath: '/repo', branch: 'a', createdAt: 1, adapterType: 'codex' },
+      'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 2 },
+    }));
+
+    expect(await manager.getAdapterType('wt-new')).toBe('codex');
+    expect(await manager.getAdapterType('wt-old')).toBe('claude-code');
+    expect(await manager.getAdapterType('missing')).toBeUndefined();
+  });
+
+  it('includes the agent when a stopped session is rebuilt from the manifest', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-codex': { repoPath: '/repo', branch: 'a', createdAt: 1, direct: true, adapterType: 'codex' },
+    }));
+
+    expect((await manager.getWorktreeOrManifest('wt-codex'))?.agentType).toBe('codex');
+  });
+});
+
 describe('saveProviderSessionId / getProviderSessionId', () => {
   it('persists session ID to manifest for existing entry', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

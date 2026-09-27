@@ -16,6 +16,13 @@ const DEFAULT_COPY_PATTERNS = ['.env', '.env.local', '.env.development', '.npmrc
 /** Cap on `git fetch` when pulling the base branch — a dead network must not block session creation. */
 const FETCH_TIMEOUT_MS = 30_000;
 
+/** Entries written before the agent was recorded all ran Claude Code. */
+const LEGACY_AGENT_TYPE = 'claude-code';
+
+function agentTypeOf(entry: ManifestEntry): string {
+  return entry.adapterType ?? LEGACY_AGENT_TYPE;
+}
+
 interface ManifestEntry {
   repoPath: string;
   branch: string;
@@ -26,6 +33,9 @@ interface ManifestEntry {
   claudeSessionId?: string;
   /** Last model the session ran with, so it can be restored after app restart. */
   model?: string;
+  /** Adapter id of the agent the session runs. Absent on entries written
+   *  before this was recorded, which were all Claude Code. */
+  adapterType?: string;
   direct?: boolean;
   /** Explicit checkout path for sessions that share another session's worktree
    *  (attached sessions). Absent for normal direct (repoPath) and worktree
@@ -359,6 +369,23 @@ export class WorktreeManager {
     return manifest[worktreeId]?.model;
   }
 
+  /** Record which agent a session runs, so a restart resumes it on the same
+   *  agent and background tasks for it use that agent. */
+  async saveAdapterType(worktreeId: string, adapterType: string): Promise<void> {
+    await this.withManifest((manifest) => {
+      if (manifest[worktreeId]) {
+        manifest[worktreeId].adapterType = adapterType;
+      }
+    });
+  }
+
+  /** The agent a session runs, or undefined for an unknown session. */
+  async getAdapterType(worktreeId: string): Promise<string | undefined> {
+    const manifest = await this.loadManifest();
+    const entry = manifest[worktreeId];
+    return entry ? agentTypeOf(entry) : undefined;
+  }
+
   /** Persist a name the user gave a session so it survives app restart and
    *  is never replaced by auto-naming. Passing an empty name clears it
    *  (reverting the label back to the branch name). */
@@ -576,6 +603,7 @@ export class WorktreeManager {
             direct: true,
             displayName: entry.displayName ?? null,
             completedAt: entry.completedAt ?? null,
+            agentType: agentTypeOf(entry),
           });
           continue;
         }
@@ -600,6 +628,7 @@ export class WorktreeManager {
           lastActiveAt: entry.lastActiveAt,
           displayName: entry.displayName ?? null,
           completedAt: entry.completedAt ?? null,
+          agentType: agentTypeOf(entry),
         });
       }
 
@@ -721,6 +750,7 @@ export class WorktreeManager {
       direct: entry.direct,
       displayName: entry.displayName ?? null,
       completedAt: entry.completedAt ?? null,
+      agentType: agentTypeOf(entry),
     };
 
     // Cache in memory for subsequent lookups
