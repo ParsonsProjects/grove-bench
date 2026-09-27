@@ -2,6 +2,7 @@ import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS } from '../shared/types.js';
+import { displayTextFromSent } from '../shared/prompt-text.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
@@ -1034,7 +1035,8 @@ class AgentSessionManager {
     // checkpoint would silently include part of the turn. capture() never
     // throws; a false result means there is no checkpoint for this message,
     // which the thread shows so a later rewind attempt is not a surprise.
-    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, content);
+    // Label the checkpoint with what the chat shows, not attached file content.
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content));
     if (!captured) {
       logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
       session.emit?.({

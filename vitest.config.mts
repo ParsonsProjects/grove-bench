@@ -42,7 +42,7 @@ export default defineConfig({
       {
         test: {
           name: 'main',
-          include: ['src/main/**/*.test.ts'],
+          include: ['src/main/**/*.test.ts', 'src/shared/**/*.test.ts'],
           environment: 'node',
           setupFiles: ['src/main/__mocks__/setup.ts'],
         },

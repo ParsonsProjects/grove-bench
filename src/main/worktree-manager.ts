@@ -7,6 +7,7 @@ import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists } from './fs-utils.js';
 import type { BranchSwitchResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
+import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
 
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
@@ -42,6 +43,9 @@ interface ManifestEntry {
   path?: string;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string;
+  /** Who set displayName. Auto-naming never replaces a 'user' name. Absent
+   *  on entries saved before this was tracked (see decideAutoName). */
+  displayNameSource?: DisplayNameSource;
   /** Epoch ms when the user marked the session completed; absent while open. */
   completedAt?: number;
   /** The session was destroyed but its directory could not be deleted (Windows
@@ -392,13 +396,37 @@ export class WorktreeManager {
     return entry ? agentTypeOf(entry) : undefined;
   }
 
-  /** Persist a session's display name so it survives app restart. Passing an
-   *  empty name clears it (reverting the label back to the branch name). */
+  /** Persist a name the user gave a session so it survives app restart and
+   *  is never replaced by auto-naming. Passing an empty name clears it
+   *  (reverting the label back to the branch name). */
   async saveDisplayName(worktreeId: string, displayName: string): Promise<void> {
     await this.withManifest((manifest) => {
       if (manifest[worktreeId]) {
         manifest[worktreeId].displayName = displayName || undefined;
+        manifest[worktreeId].displayNameSource = 'user';
       }
+    });
+  }
+
+  /** A session's persisted name and who set it (undefined for unknown ids). */
+  async getDisplayNameState(worktreeId: string): Promise<DisplayNameState | undefined> {
+    const entry = (await this.loadManifest())[worktreeId];
+    if (!entry || entry.pendingRemoval) return undefined;
+    return { displayName: entry.displayName ?? null, source: entry.displayNameSource };
+  }
+
+  /** Save an auto-naming decision only if the name is still what it was when
+   *  `expected` was read, so a rename made in the meantime is never
+   *  overwritten. Returns whether it was saved. */
+  async saveAutoDisplayName(worktreeId: string, expected: DisplayNameState, next: AutoNameDecision): Promise<boolean> {
+    return this.withManifest((manifest) => {
+      const entry = manifest[worktreeId];
+      if (!entry || (entry.displayName ?? null) !== expected.displayName || entry.displayNameSource !== expected.source) {
+        return false;
+      }
+      entry.displayName = next.displayName;
+      entry.displayNameSource = next.source;
+      return true;
     });
   }
 
