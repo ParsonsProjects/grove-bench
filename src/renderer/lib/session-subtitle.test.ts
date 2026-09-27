@@ -87,6 +87,16 @@ describe('message helpers', () => {
     expect(lastTextSnippet(messages)).toBe('Done — sidebar fixed');
   });
 
+  it('shows the typed text of replayed messages, not attached file content', () => {
+    const replayed: ChatMessage[] = [
+      { kind: 'user', id: 'u1', text: '<file path="a.ts">\nconst secret = 1;\n</file>\n\nexplain @a.ts' },
+      { kind: 'user', id: 'u2', text: '<file path="b.ts">\nx\n</file>\n\n' },
+    ];
+    expect(firstPromptSnippet(replayed)).toBe('explain @a.ts');
+    // The attachment-only message has no typed text, so the one before it shows.
+    expect(lastTextSnippet(replayed)).toBe('explain @a.ts');
+  });
+
   it('pendingPermissionTool ignores resolved permissions', () => {
     expect(pendingPermissionTool(messages)).toBeNull();
   });

@@ -1,4 +1,5 @@
 import type { AgentEvent, EventSearchHit, SessionPreview } from '../shared/types.js';
+import { stripFileContext } from '../shared/session-name.js';
 
 export type { EventSearchHit };
 
@@ -102,13 +103,20 @@ function collapse(text: string): string {
   return normalized.length > PREVIEW_MAX_LEN ? `${normalized.slice(0, PREVIEW_MAX_LEN)}…` : normalized;
 }
 
-/** Text of the first real user prompt (slash commands skipped), trimmed but
- *  otherwise as sent, or null when the history has none. */
+/** What the user typed in a message: user_message events hold the text as
+ *  sent, which starts with file content blocks for attachments and @-refs. */
+function typedText(sentText: string): string {
+  return stripFileContext(sentText).trim();
+}
+
+/** Text of the first real user prompt (slash commands and attachment-only
+ *  messages skipped), trimmed but otherwise as sent, or null when the history
+ *  has none. */
 export function firstUserPrompt(events: AgentEvent[]): string | null {
   for (const e of events) {
     if (e.type !== 'user_message') continue;
-    const text = e.text.trim();
-    if (text && !text.startsWith('/')) return text;
+    const typed = typedText(e.text);
+    if (typed && !typed.startsWith('/')) return e.text.trim();
   }
   return null;
 }
@@ -116,17 +124,18 @@ export function firstUserPrompt(events: AgentEvent[]): string | null {
 /**
  * Derive a lightweight conversation preview from a session's event history:
  * the first real user prompt (slash commands skipped) and the most recent
- * user/assistant text. Both empty when the history has no such events.
+ * user/assistant text, showing what the user typed rather than attached file
+ * content. Both empty when the history has no such events.
  */
 export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
   const first = firstUserPrompt(events);
-  const firstPrompt = first ? collapse(first) : '';
+  const firstPrompt = first ? collapse(typedText(first)) : '';
 
   let lastText = '';
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === 'assistant_text' || e.type === 'user_message') {
-      const text = e.text.trim();
+      const text = e.type === 'user_message' ? typedText(e.text) : e.text.trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
       lastText = collapse(text);
       break;
