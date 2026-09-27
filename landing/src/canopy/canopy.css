@@ -1,0 +1,578 @@
+/* Canopy landing page: page frame, panels and the overlays pinned to the world. */
+
+.cn-page {
+  --ink: #0b1224;
+  --panel: rgb(10 15 30 / 0.9);
+  --panel-edge: rgb(217 223 240 / 0.16);
+  --text: #e3e7f1;
+  --muted: #a4aec6;
+  --cream: #f4ecdd;
+  position: relative;
+  min-height: 100vh;
+  overflow-x: clip;
+  color: var(--text);
+  background: #0c1224;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+.cn-page :focus-visible {
+  outline: 2px dashed #ffe7a8;
+  outline-offset: 3px;
+}
+
+.cn-world-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.cn-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  pointer-events: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  will-change: transform;
+}
+
+/* Everything in the page flow sits over the art. Empty space lets clicks
+   through to the characters. */
+.cn-main,
+.cn-footer {
+  position: relative;
+  z-index: 2;
+}
+.cn-main {
+  pointer-events: none;
+}
+.cn-main :where(a, button, input, label, h1, h2, h3, p, li, code, .cn-panel, .cn-hero-copy) {
+  pointer-events: auto;
+}
+
+.cn-wrap {
+  max-width: 1280px;
+  margin-inline: auto;
+  padding-inline: 16px;
+}
+@media (min-width: 768px) {
+  .cn-wrap {
+    padding-inline: 32px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Panels */
+
+.cn-panel {
+  position: relative;
+  width: 100%;
+  padding: 22px 22px 24px;
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px var(--panel-edge),
+    0 -3px 0 0 var(--ink),
+    0 3px 0 0 var(--ink),
+    -3px 0 0 0 var(--ink),
+    3px 0 0 0 var(--ink),
+    0 9px 0 0 rgb(0 0 0 / 0.28);
+}
+@media (min-width: 960px) {
+  .cn-panel {
+    width: 440px;
+    padding: 26px 28px 28px;
+  }
+}
+.cn-panel.day {
+  --ink: #3a2a1c;
+  color: #231a12;
+  background: rgb(244 236 221 / 0.95);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.6),
+    0 -3px 0 0 var(--ink),
+    0 3px 0 0 var(--ink),
+    -3px 0 0 0 var(--ink),
+    3px 0 0 0 var(--ink),
+    0 9px 0 0 rgb(40 30 10 / 0.25);
+}
+
+.cn-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.cn-hash {
+  color: var(--muted);
+  font-family: inherit;
+  letter-spacing: 0.02em;
+}
+.day .cn-hash {
+  color: #6b5a48;
+}
+.cn-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  color: var(--lane-text, var(--text));
+  background: color-mix(in oklch, var(--lane, #999) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--lane, #999) 50%, transparent);
+  white-space: nowrap;
+}
+.cn-chip b {
+  font-weight: 700;
+}
+.day .cn-chip {
+  color: #2b3a1c;
+  background: rgb(110 200 122 / 0.18);
+  border-color: rgb(58 154 72 / 0.55);
+}
+
+.cn-h2 {
+  margin-top: 12px;
+  font-size: clamp(24px, 1.2vw + 17px, 32px);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: #f3f5fa;
+  text-wrap: balance;
+}
+.day .cn-h2 {
+  color: #1d150e;
+}
+.cn-text {
+  margin-top: 12px;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #c7cfe0;
+  text-wrap: pretty;
+}
+.cn-text + .cn-text {
+  margin-top: 8px;
+}
+.day .cn-text {
+  color: #3d3024;
+}
+.cn-text code,
+.cn-code {
+  font-family: inherit;
+  font-size: 0.93em;
+  color: #ffe7a8;
+  background: rgb(255 255 255 / 0.07);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.day .cn-text code {
+  color: #5b3a0a;
+  background: rgb(90 60 20 / 0.1);
+}
+.cn-metaphor {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-family: 'Pixelify Sans', 'JetBrains Mono', monospace;
+  font-size: 15px;
+  color: #b5d8bb;
+}
+.cn-metaphor::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: #6ec87a;
+  box-shadow: 0 0 0 2px var(--ink);
+  transform: translateY(-1px);
+}
+
+/* ------------------------------------------------------------------ */
+/* Pixel buttons */
+
+.cn-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #eef1f8;
+  background: #1c2a4c;
+  cursor: pointer;
+  box-shadow:
+    0 -2px 0 0 var(--ink),
+    0 2px 0 0 var(--ink),
+    -2px 0 0 0 var(--ink),
+    2px 0 0 0 var(--ink),
+    inset 0 2px 0 0 rgb(255 255 255 / 0.14),
+    inset 0 -3px 0 0 rgb(0 0 0 / 0.3);
+  transition: transform 0.08s steps(2), filter 0.12s ease;
+}
+.cn-btn:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+.cn-btn:active:not(:disabled) {
+  transform: translateY(2px);
+}
+.cn-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.cn-btn.allow {
+  background: #1b6b35;
+}
+.cn-btn.deny {
+  background: #7a2323;
+}
+.cn-btn.primary {
+  background: var(--color-primary);
+}
+.cn-btn.ghost {
+  background: rgb(255 255 255 / 0.06);
+}
+.cn-btn.chosen {
+  outline: 2px solid #ffe7a8;
+  outline-offset: 3px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Overlays pinned to world positions (CSS px = art px * k) */
+
+.cn-overlays {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  font-family: 'Pixelify Sans', 'JetBrains Mono', monospace;
+}
+.cn-pin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+}
+.cn-pin > * {
+  position: absolute;
+}
+
+.cn-board,
+.cn-bubble,
+.cn-callout,
+.cn-note,
+.cn-plate {
+  --edge: #1b1f2a;
+  white-space: nowrap;
+  box-shadow:
+    0 calc(var(--px) * -1) 0 0 var(--edge),
+    0 var(--px) 0 0 var(--edge),
+    calc(var(--px) * -1) 0 0 0 var(--edge),
+    var(--px) 0 0 0 var(--edge);
+}
+
+/* Hanging branch sign: a beam out from the limb, a board on two chains. */
+.cn-sign {
+  top: calc(var(--px) * -2);
+  display: flex;
+  flex-direction: column;
+}
+.cn-sign.right {
+  left: 0;
+  align-items: flex-start;
+}
+.cn-sign.left {
+  right: 0;
+  align-items: flex-end;
+}
+.cn-sign .beam {
+  display: block;
+  align-self: stretch;
+  height: calc(var(--px) * 2);
+  background: #5a4230;
+  box-shadow: inset 0 var(--px) 0 0 #8a6a4a, 0 var(--px) 0 0 #2a1f1a;
+}
+.cn-board {
+  --edge: #2a1f1a;
+  position: relative;
+  margin: calc(var(--px) * 5) calc(var(--px) * 3) 0;
+  display: grid;
+  gap: 1px;
+  padding: 3px 9px 4px;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--cream);
+  background: #7a5b3e;
+  border-bottom: var(--px) solid #5a4230;
+}
+.cn-board::before,
+.cn-board::after {
+  content: '';
+  position: absolute;
+  top: calc(var(--px) * -6);
+  width: var(--px);
+  height: calc(var(--px) * 5);
+  background: repeating-linear-gradient(180deg, #9a9a9a 0 var(--px), #4a4a4a var(--px) calc(var(--px) * 2));
+}
+.cn-board::before {
+  left: calc(var(--px) * 3);
+}
+.cn-board::after {
+  right: calc(var(--px) * 3);
+}
+.cn-board b {
+  font-weight: 700;
+  color: var(--lane-text);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.5);
+}
+.cn-board span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #f4ecdd;
+}
+
+/* Name plate under a deck. */
+.cn-plate {
+  --edge: #2a1f1a;
+  top: 0;
+  transform: translateX(calc(-50% + var(--shift, 0px)));
+  display: grid;
+  justify-items: center;
+  padding: 1px 7px 2px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--lane-text);
+  background: #3a2a1f;
+}
+.cn-plate b {
+  font-weight: 700;
+}
+.cn-plate span {
+  font-family: 'JetBrains Mono', monospace;
+  color: #e9dcc4;
+}
+
+/* Speech bubbles. */
+.cn-bubble {
+  bottom: calc(var(--px) * 3);
+  left: 0;
+  transform: translateX(calc(-50% + var(--shift, 0px)));
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 3px;
+  font-size: 13px;
+  line-height: 1.25;
+  color: #1b1f2a;
+  background: var(--cream);
+}
+.cn-bubble::after {
+  content: '';
+  position: absolute;
+  left: calc(50% - var(--shift, 0px));
+  top: 100%;
+  width: calc(var(--px) * 2);
+  height: calc(var(--px) * 2);
+  margin-left: calc(var(--px) * -1);
+  background: inherit;
+  box-shadow:
+    var(--px) 0 0 0 var(--edge),
+    calc(var(--px) * -1) 0 0 0 var(--edge),
+    0 var(--px) 0 0 var(--edge);
+}
+.cn-bubble b.tool {
+  font-weight: 700;
+}
+.cn-bubble .read {
+  color: #0b5cb8;
+}
+.cn-bubble .edit {
+  color: #a3570a;
+}
+.cn-bubble .write {
+  color: #22803a;
+}
+.cn-bubble .bash {
+  color: #4a4f60;
+}
+.cn-bubble .turn {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--cream);
+  background: #1b1f2a;
+}
+.cn-bubble .check {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  background: #22803a;
+  clip-path: polygon(0 50%, 20% 50%, 40% 70%, 80% 10%, 100% 10%, 100% 30%, 40% 100%, 0 70%);
+}
+.cn-bubble.ask {
+  --edge: #3a2204;
+  min-width: calc(var(--px) * 8);
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: #3a2204;
+  background: #f59e0b;
+  animation: cn-ask 1s steps(2) infinite;
+}
+@keyframes cn-ask {
+  50% {
+    translate: 0 calc(var(--px) * -1);
+  }
+}
+.cn-bubble.term {
+  --edge: #05070d;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding: 3px 8px 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #c9d2e8;
+  background: #111111;
+}
+.cn-bubble .t-prompt {
+  color: #6aa8ff;
+}
+.cn-bubble .t-out {
+  color: #6ec87a;
+}
+.cn-bubble.say {
+  white-space: normal;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 40px));
+}
+
+/* Hero callouts. */
+.cn-callout {
+  --edge: #0b1224;
+  bottom: 0;
+  padding: 2px 8px 3px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1b1f2a;
+  background: #ffe7a8;
+  transition: opacity 0.1s linear;
+}
+.cn-callout.left {
+  left: 0;
+  transform: translateY(50%);
+}
+.cn-callout.right {
+  right: 0;
+  transform: translateY(50%);
+}
+.cn-callout.center {
+  transform: translate(-50%, 0);
+  bottom: 0;
+}
+.cn-callout.narrow {
+  line-height: 1.25;
+}
+
+/* Memory notes by the hollow. */
+.cn-note {
+  top: 0;
+  left: 0;
+  display: block;
+  padding: 1px 7px 2px 9px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #1b1f2a;
+  background: #eef3ff;
+  transform: translateY(-50%);
+}
+.cn-note.flip {
+  left: auto;
+  right: 0;
+}
+.cn-note::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin-top: -1px;
+  background: oklch(0.7 0.14 254.6);
+}
+
+.cn-notch {
+  top: 0;
+  right: 0;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  color: #cfe8d2;
+  text-shadow:
+    1px 0 0 #0b1224,
+    -1px 0 0 #0b1224,
+    0 1px 0 #0b1224,
+    0 -1px 0 #0b1224;
+}
+
+.cn-gate {
+  --edge: #2a1f1a;
+  top: 0;
+  transform: translateX(-50%);
+  padding: 1px 9px 2px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--cream);
+  background: #6a5040;
+  box-shadow:
+    0 calc(var(--px) * -1) 0 0 var(--edge),
+    0 var(--px) 0 0 var(--edge),
+    calc(var(--px) * -1) 0 0 0 var(--edge),
+    var(--px) 0 0 0 var(--edge);
+  transition: background-color 0.3s steps(3), color 0.3s steps(3);
+}
+.cn-gate.lit {
+  color: #0f2a16;
+  background: #22c55e;
+}
+
+/* Character hit areas: real buttons over the sprites. */
+.cn-hits {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+.cn-hit {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  background: transparent;
+}
+.cn-hit:focus-visible {
+  outline: 2px dashed #ffe7a8;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-bubble.ask {
+    animation: none;
+  }
+  .cn-btn {
+    transition: none;
+  }
+  .cn-page,
+  .cn-page * {
+    scroll-behavior: auto !important;
+  }
+}

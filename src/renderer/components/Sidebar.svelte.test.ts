@@ -7,6 +7,7 @@ import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 beforeEach(() => {
@@ -74,6 +75,21 @@ describe('Sidebar session rows', () => {
     render(Sidebar);
     expect(await screen.findByText('parser fixed')).toBeInTheDocument();
     expect(mockGroveBench.getSessionPreviews).toHaveBeenCalledWith(['s2']);
+  });
+
+  it('shows a character by default and the plain dot when grove characters are off', async () => {
+    messageStore.messagesBySession['s1'] = [
+      { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
+    ];
+    render(Sidebar);
+    expect(await screen.findByRole('img', { name: 'Waiting for you' })).toBeInTheDocument();
+
+    settingsStore.current = { ...settingsStore.current, groveCharacters: false };
+    try {
+      await waitFor(() => expect(screen.queryByRole('img', { name: 'Waiting for you' })).toBeNull());
+    } finally {
+      settingsStore.current = { ...settingsStore.current, groveCharacters: true };
+    }
   });
 
   it('opens the session finder from the search field', async () => {

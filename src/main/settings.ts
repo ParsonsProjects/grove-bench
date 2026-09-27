@@ -40,6 +40,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Appearance
   repoColors: {},
+  groveCharacters: true,
 
   // Editor
   diffViewMode: 'unified',
@@ -191,6 +192,7 @@ const settingsSchema = z.object({
   alwaysOnTop: z.boolean().catch(DEFAULT_SETTINGS.alwaysOnTop),
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
+  groveCharacters: z.boolean().catch(DEFAULT_SETTINGS.groveCharacters),
 
   diffViewMode: z.enum(['unified', 'side-by-side']).catch(DEFAULT_SETTINGS.diffViewMode),
   defaultActivityView: z.enum(['detailed', 'summary', 'focus']).catch(DEFAULT_SETTINGS.defaultActivityView),

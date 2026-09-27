@@ -652,6 +652,17 @@
 
           <Separator />
 
+          <!-- Grove characters -->
+          <div>
+            <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <Checkbox bind:checked={settingsStore.draft.groveCharacters} />
+              Show grove characters
+            </label>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, and when no conversation is open.</p>
+          </div>
+
+          <Separator />
+
           <!-- Repository Accent Colors -->
           {#if store.repos.length > 0}
             <div>
