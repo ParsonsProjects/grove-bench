@@ -43,9 +43,13 @@
 
   const CPS = 58;
 
+  // Memoised so a parent re-render with the same string does not restart typing.
+  const current = $derived(text);
+  const skipTyping = $derived(instant);
+
   $effect(() => {
-    const full = text;
-    if (instant) {
+    const full = current;
+    if (skipTyping) {
       shown = full.length;
       return;
     }
@@ -53,7 +57,8 @@
     const start = performance.now();
     let raf = 0;
     const tick = (now) => {
-      shown = Math.min(full.length, Math.floor(((now - start) / 1000) * CPS));
+      // Never go backwards, so a skip sticks.
+      shown = Math.max(shown, Math.min(full.length, Math.floor(((now - start) / 1000) * CPS)));
       if (shown < full.length) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -153,7 +158,7 @@
     </button>
   {/if}
 
-  <div class="body">
+  <div class="body" class:closable={!!onclose}>
     {#if meta.length}
       <dl class="meta">
         {#each meta as m}
@@ -322,6 +327,12 @@
     display: flex;
     gap: 20px;
   }
+  .closable .main {
+    padding-right: 36px;
+  }
+  .closable .meta + .main {
+    padding-right: 0;
+  }
   .main {
     flex: 1;
     min-width: 0;
@@ -339,6 +350,7 @@
     color: transparent;
   }
   code {
+    white-space: nowrap;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.86em;
     color: #ffe7a8;
@@ -469,6 +481,12 @@
       display: flex;
       gap: 6px;
       align-items: baseline;
+    }
+    .closable .meta {
+      padding-right: 36px;
+    }
+    .closable .main {
+      padding-right: 0;
     }
     .choice {
       font-size: 16px;

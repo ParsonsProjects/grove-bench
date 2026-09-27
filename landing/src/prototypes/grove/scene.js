@@ -388,7 +388,11 @@ export function createScene(canvas, options = {}) {
     }
   }
 
-  const growthForTurn = (n) => 0.3 + (0.7 * (n - 1)) / (MAX_TURN - 1);
+  // Whole blocks only, so a rewound tree never rests on a half-grown block.
+  const growthForTurn = (n) => {
+    const total = blocksSmall.length;
+    return Math.round((0.3 + (0.7 * (n - 1)) / (MAX_TURN - 1)) * total) / total;
+  };
 
   function focusPlot(index) {
     const p = plots[index];

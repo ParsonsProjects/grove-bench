@@ -30,8 +30,8 @@
       text: 'The sundial keeps a checkpoint for every message you send. Drag its shadow back, then pick Rewind All (files and conversation) or Conv. Only.',
     },
     {
-      name: 'Merge',
-      text: 'At dawn the branches come home. Review each diff in the Changes tab, then merge it or open a pull request.',
+      name: 'Home to main',
+      text: 'At dawn the branches come home. Review each diff in the Changes tab, then open a PR from the app or merge the branch the way you always do.',
     },
   ];
   const SEGMENTS = CHAPTERS.length;
@@ -116,9 +116,16 @@
     const pos = lookup(L, key);
     if (!pos) return;
     let [x, y] = pos;
-    if ((key === 'sundial' || key.startsWith('tag')) && stageEl) {
-      const half = (el.firstElementChild?.offsetWidth ?? 0) / 2;
-      x = clamp(x, half + 12, stageEl.clientWidth - half - 12);
+    const child = el.firstElementChild;
+    if (child && stageEl && key !== 'gate' && !key.startsWith('hit')) {
+      const w = stageEl.clientWidth;
+      const half = child.offsetWidth / 2;
+      const labelled = key.startsWith('bubble') || key.startsWith('sign');
+      // Labels of agents that are off screen are hidden, the rest stay fully visible.
+      if (labelled) el.style.visibility = x < 0 || x > w ? 'hidden' : '';
+      const cx = clamp(x, half + 8, w - half - 8);
+      if (key.startsWith('bubble')) child.style.setProperty('--tail', `${clamp(x - cx, -half + 8, half - 8).toFixed(1)}px`);
+      x = cx;
     }
     el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
     if (pos.length > 2) {
@@ -207,7 +214,7 @@
     if (a.realStatus === 'permission') return `wants to run ${a.ask}`;
     if (!b) return '';
     if (b.tool === 'done') return b.detail;
-    if (b.tool === 'merge') return 'merged into main';
+    if (b.tool === 'merge') return 'ready for main';
     return `${b.tool} ${b.detail}`;
   }
 
@@ -219,7 +226,7 @@
     if (a.realStatus === 'permission') {
       openText = `I'd like to run \`${a.ask}\` to validate the profile input. Is that okay?`;
     } else if (a.bubble?.tool === 'merge') {
-      openText = 'My branch is merged into main. Ready for the next task.';
+      openText = 'My branch is ready to come home to main. Open a PR, or merge it the way you usually do.';
     } else if (a.realStatus === 'working' && a.bubble) {
       openText = `${a.task} Right now: \`${a.bubble.tool} ${a.bubble.detail}\`.`;
     } else {
@@ -451,7 +458,7 @@
   {:else if a.bubble?.tool === 'done'}
     <span class="b-check" aria-hidden="true"></span>{a.bubble.detail}
   {:else if a.bubble?.tool === 'merge'}
-    <span class="b-check" aria-hidden="true"></span>Merged into main
+    <span class="b-check" aria-hidden="true"></span>Ready for main
   {:else if a.bubble?.tool === 'rewind'}
     Rewound to {a.bubble.detail}
   {:else if a.bubble?.tool === 'conv'}
@@ -499,7 +506,28 @@
         onpointerleave={onStagePointer}
         onpointercancel={onStagePointer}
       >
-        <canvas bind:this={canvasEl} class="scene" role="img" aria-label={sceneLabel}></canvas>
+        <div class="scene-wrap" role="img" aria-label={sceneLabel}>
+          <canvas bind:this={canvasEl} class="scene" aria-hidden="true"></canvas>
+        </div>
+
+        <!-- Title screen -->
+        <header
+          class="title-card"
+          bind:this={titleEl}
+          style="opacity: {1 - titleOut}; transform: translateY({-titleOut * 28}px); visibility: {titleOut > 0.98 ? 'hidden' : 'visible'}"
+        >
+          <p class="kicker">{@render logo(14)} Grove Bench for Windows</p>
+          <h1>Claude Code agents, side by side.</h1>
+          <p class="lede">
+            Each conversation gets its own git worktree, branch and terminal. Run several at once on one project.
+          </p>
+          <div class="actions">
+            <a href={links.releases} target="_blank" rel="noopener" class="pix-btn primary" onclick={() => onDownload('grove-hero')}>
+              {@render downloadIcon()} Download for Windows
+            </a>
+            <a href={links.github} target="_blank" rel="noopener" class="pix-btn" onclick={() => onGithub('grove-hero')}>View source</a>
+          </div>
+        </header>
 
         <div class="overlays">
           <!-- Memory folders around the old tree -->
@@ -601,25 +629,6 @@
           </div>
         </div>
 
-        <!-- Title screen -->
-        <header
-          class="title-card"
-          bind:this={titleEl}
-          style="opacity: {1 - titleOut}; transform: translateY({-titleOut * 28}px); visibility: {titleOut > 0.98 ? 'hidden' : 'visible'}"
-        >
-          <p class="kicker">{@render logo(14)} Grove Bench for Windows</p>
-          <h1>Claude Code agents, side by side.</h1>
-          <p class="lede">
-            Each conversation gets its own git worktree, branch and terminal. Run several at once on one project.
-          </p>
-          <div class="actions">
-            <a href={links.releases} target="_blank" rel="noopener" class="pix-btn primary" onclick={() => onDownload('grove-hero')}>
-              {@render downloadIcon()} Download for Windows
-            </a>
-            <a href={links.github} target="_blank" rel="noopener" class="pix-btn" onclick={() => onGithub('grove-hero')}>View source</a>
-          </div>
-        </header>
-
         <!-- HUD and dialogue -->
         <div class="bottom-ui" class:talking={dlg.mode === 'agent'} bind:this={bottomEl}>
           <div class="hud">
@@ -672,7 +681,7 @@
     <section id="how" class="how border-t border-border">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 md:py-28">
         <p class="eyebrow">How it works</p>
-        <h2 class="section-title">Three steps from project to merge</h2>
+        <h2 class="section-title">Three steps from project to pull request</h2>
         <ol class="steps">
           <li class="step">
             <span class="step-num" aria-hidden="true">1</span>
@@ -699,32 +708,39 @@
               <rect x="9" y="0" width="1" height="3" fill="#5aa0ff" /><rect x="8" y="3" width="1" height="1" fill="#5aa0ff" /><rect x="7" y="4" width="1" height="1" fill="#5aa0ff" /><rect x="6" y="5" width="1" height="1" fill="#5aa0ff" /><rect x="5" y="6" width="1" height="1" fill="#5aa0ff" /><rect x="4" y="7" width="1" height="1" fill="#5aa0ff" /><rect x="3" y="7" width="1" height="1" fill="#5aa0ff" /><rect x="2" y="7" width="1" height="1" fill="#6ec87a" />
               <rect x="0" y="9" width="3" height="1" fill="#22c55e" />
             </svg>
-            <h3>Review and merge</h3>
-            <p>Read the diffs in the Changes tab, revert what you don't want, then merge or open a PR.</p>
+            <h3>Review and bring it home</h3>
+            <p>Read the diffs in the Changes tab and revert what you don't want. Then open a PR from the app, or merge the way you always do.</p>
           </li>
         </ol>
       </div>
     </section>
 
-    <!-- Call to action -->
+    <!-- Call to action: a small pixel grove at night -->
     <section class="cta" use:inView={{ once: true, threshold: 0.3, onchange: (v) => v && (ctaSeen = true) }}>
       <div class="cta-sky" aria-hidden="true">
-        {#each Array(28) as _, i}
-          <span class="cta-star" style="left: {(i * 37 + 11) % 97}%; top: {(i * 53 + 7) % 70}%; animation-delay: {(i * 0.7) % 4}s"></span>
+        {#each Array(30) as _, i}
+          <span class="cta-star" style="left: {(i * 37 + 11) % 97}%; top: {(i * 53 + 7) % 88}%; animation-delay: {(i * 0.7) % 4}s"></span>
         {/each}
+      </div>
+      <div class="cta-head mx-auto max-w-6xl px-4 sm:px-6">
+        <p class="eyebrow">Free and open source</p>
+        <h2 class="cta-title">Plant your own grove</h2>
+        <p class="cta-sub">Give every task its own tree, and keep an eye on all of them from one window.</p>
       </div>
       <div class="cta-grove" aria-hidden="true">
         {#key ctaSeen}
           {#each [28, 42, 63, 84, 63, 42, 28] as w, i}
-            <PixelTree width={w} grow={ctaSeen && !reduced} delay={Math.abs(3 - i) * 0.15} opacity={0.55 + (w / 84) * 0.45} />
+            <div class="cta-plot" style="--w: {w}px">
+              <PixelTree width={w} grow={ctaSeen && !reduced} delay={Math.abs(3 - i) * 0.15} opacity={0.5 + (w / 84) * 0.5} />
+              {#if i >= 2 && i <= 4}
+                <span class="cta-lamp {['working', 'permission', 'ready'][i - 2]}"></span>
+              {/if}
+            </div>
           {/each}
         {/key}
       </div>
-      <div class="cta-ground" aria-hidden="true"></div>
-      <div class="mx-auto max-w-6xl px-4 sm:px-6">
-        <div class="cta-panel">
-          <h2 class="section-title">Plant your own grove</h2>
-          <p class="cta-sub">Give every task its own tree, and see them all from one window.</p>
+      <div class="cta-meadow">
+        <div class="mx-auto max-w-6xl px-4 sm:px-6">
           <div class="actions center">
             <a href={links.releases} target="_blank" rel="noopener" class="pix-btn primary" onclick={() => onDownload('grove-cta')}>
               {@render downloadIcon()} Download for Windows
@@ -797,6 +813,10 @@
     background: #0d1228;
     touch-action: pan-y;
   }
+  .scene-wrap {
+    position: absolute;
+    inset: 0;
+  }
   .scene {
     position: absolute;
     left: 0;
@@ -807,6 +827,7 @@
   }
   .overlays {
     position: absolute;
+    z-index: 1;
     inset: 0;
     pointer-events: none;
     font-family: 'Pixelify Sans', 'JetBrains Mono', monospace;
@@ -890,7 +911,7 @@
   .bubble::after {
     content: '';
     position: absolute;
-    left: 50%;
+    left: calc(50% + var(--tail, 0px));
     top: 100%;
     width: calc(var(--px) * 2);
     height: calc(var(--px) * 2);
@@ -1103,7 +1124,7 @@
   }
   .dial-note {
     margin-top: 8px;
-    min-height: 2.6em;
+    min-height: 3.9em;
     font-size: 13px;
     line-height: 1.3;
     color: #c9d2e8;
@@ -1124,6 +1145,7 @@
   /* Title screen */
   .title-card {
     position: absolute;
+    z-index: 2;
     left: 0;
     top: 0;
     width: 100%;
@@ -1233,6 +1255,7 @@
   /* HUD and dialogue */
   .bottom-ui {
     position: absolute;
+    z-index: 3;
     left: 0;
     right: 0;
     bottom: 0;
@@ -1448,20 +1471,19 @@
   .cta {
     position: relative;
     overflow: hidden;
-    padding: 190px 0 88px;
+    padding-top: 96px;
+    text-align: center;
     background: linear-gradient(
       180deg,
-      #0b1020 0 18%,
-      #0e1530 18% 36%,
-      #121b3c 36% 54%,
-      #172249 54% 62%,
-      #1a2a1f 62% 63%,
-      #16241c 63% 100%
+      #0b1020 0 22%,
+      #0e1530 22% 44%,
+      #121b3c 44% 62%,
+      #172249 62% 100%
     );
   }
   .cta-sky {
     position: absolute;
-    inset: 0 0 40% 0;
+    inset: 0 0 30% 0;
   }
   .cta-star {
     position: absolute;
@@ -1476,51 +1498,96 @@
       opacity: 0.9;
     }
   }
+  .cta-head {
+    position: relative;
+  }
+  .cta-title {
+    font-family: 'Pixelify Sans', 'JetBrains Mono', monospace;
+    font-size: clamp(32px, 5vw, 52px);
+    font-weight: 700;
+    line-height: 1.05;
+    color: #f4ecdd;
+    text-shadow: 3px 3px 0 #0b1224;
+    text-wrap: balance;
+  }
+  .cta-sub {
+    margin: 14px auto 0;
+    max-width: 46ch;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #c9d2e8;
+  }
   .cta-grove {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: calc(62% - 96px);
+    position: relative;
     display: flex;
     justify-content: center;
     align-items: flex-end;
-    gap: clamp(4px, 2vw, 18px);
-    height: 96px;
+    gap: clamp(6px, 2.4vw, 22px);
+    height: 120px;
+    margin-top: 48px;
   }
-  .cta-ground {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 62%;
-    height: 6px;
-    background: repeating-linear-gradient(90deg, #5ab868 0 6px, #4aaa58 6px 9px, #5ab868 9px 15px, #3a9a48 15px 18px);
-  }
-  .cta-panel {
+  .cta-plot {
     position: relative;
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 36px 28px 30px;
-    text-align: center;
-    background: rgb(17 17 17 / 0.9);
-    box-shadow:
-      0 -4px 0 0 #0b1224,
-      0 4px 0 0 #0b1224,
-      -4px 0 0 0 #0b1224,
-      4px 0 0 0 #0b1224,
-      inset 0 0 0 3px #26324f;
+    display: flex;
+    align-items: flex-end;
+    width: var(--w);
   }
-  .cta-sub {
-    margin: 12px auto 0;
-    max-width: 44ch;
-    font-size: 15px;
-    line-height: 1.6;
-    color: var(--color-muted-foreground);
+  .cta-lamp {
+    position: absolute;
+    right: -10px;
+    bottom: 0;
+    width: 3px;
+    height: 22px;
+    background: #6a5040;
+  }
+  .cta-lamp::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: -9px;
+    width: 9px;
+    height: 9px;
+    box-shadow: 0 0 0 2px #1e1e1e;
+  }
+  .cta-lamp.working::before {
+    background: var(--color-primary);
+    box-shadow:
+      0 0 0 2px #1e1e1e,
+      0 0 14px 4px oklch(0.541 0.181 254.624 / 0.55);
+    animation: lamp-pulse 1.5s steps(3) infinite;
+  }
+  .cta-lamp.permission::before {
+    background: #f59e0b;
+    box-shadow:
+      0 0 0 2px #1e1e1e,
+      0 0 14px 4px rgb(245 158 11 / 0.5);
+    animation: lamp-pulse 1s steps(3) infinite;
+  }
+  .cta-lamp.ready::before {
+    background: #22c55e;
+    box-shadow:
+      0 0 0 2px #1e1e1e,
+      0 0 14px 4px rgb(34 197 94 / 0.45);
+  }
+  @keyframes lamp-pulse {
+    50% {
+      opacity: 0.5;
+    }
+  }
+  .cta-meadow {
+    position: relative;
+    padding: 44px 0 72px;
+    background:
+      linear-gradient(180deg, #5ab868 0 3px, #4aaa58 3px 6px, #3a9a48 6px 9px, #1e3325 9px 26px, #16241c 26px);
+  }
+  .cta-meadow .actions {
+    margin-top: 0;
   }
   .req {
     margin-top: 22px;
     font-size: 14px;
     line-height: 1.6;
-    color: var(--color-muted-foreground);
+    color: #a9b8ad;
   }
 
   /* ------------------------------------------------------------------------
@@ -1545,7 +1612,8 @@
     .sign-board.bounce,
     .bubble.ask,
     .tag-note.show,
-    .cta-star {
+    .cta-star,
+    .cta-lamp::before {
       animation: none;
     }
     .tag-note,
