@@ -1331,7 +1331,7 @@ class AgentSessionManager {
     }
   }
 
-  renameBranch(id: string, newBranch: string): void {
+  setBranch(id: string, newBranch: string): void {
     const session = this.sessions.get(id);
     if (session) {
       session.branch = newBranch;

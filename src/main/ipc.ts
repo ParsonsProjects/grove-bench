@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
 import { editorLaunchCommand } from './editor-launch.js';
@@ -390,8 +390,8 @@ export function registerHandlers() {
 
   // ─── Branches ───
 
-  ipcMain.handle(IPC.BRANCH_LIST, async (_event, repoPath: string) => {
-    return listBranches(repoPath);
+  ipcMain.handle(IPC.BRANCH_LIST, async (_event, repoPath: string, opts?: { fetch?: boolean }) => {
+    return listBranches(repoPath, { fetch: opts?.fetch !== false });
   });
 
   ipcMain.handle(IPC.BRANCH_DEFAULT, async (_event, repoPath: string) => {
@@ -400,8 +400,24 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.BRANCH_RENAME, async (_event, sessionId: string, newBranchName: string) => {
     const newName = await worktreeManager.renameBranch(sessionId, newBranchName);
-    sessionManager.renameBranch(sessionId, newName);
+    sessionManager.setBranch(sessionId, newName);
     return { branch: newName };
+  });
+
+  ipcMain.handle(IPC.BRANCH_SWITCH, async (
+    _event, sessionId: string, branch: string, opts?: { create?: boolean; busySessionIds?: string[] },
+  ): Promise<BranchSwitchResult> => {
+    if (typeof branch !== 'string') return { success: false, error: 'Pick a branch.' };
+    const create = opts?.create === true;
+    const busySessionIds = Array.isArray(opts?.busySessionIds) ? opts.busySessionIds : [];
+    logger.info(`Switching session ${sessionId} to ${create ? 'new ' : ''}branch ${branch}`);
+    const result = await worktreeManager.switchBranch(sessionId, branch, { create, busySessionIds });
+    if (result.success) {
+      for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
+    } else {
+      logger.warn(`Branch switch failed for session ${sessionId}: ${result.error}`);
+    }
+    return result;
   });
 
   // ─── Worktrees ───
