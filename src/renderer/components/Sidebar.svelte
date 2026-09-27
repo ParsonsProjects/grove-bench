@@ -42,7 +42,7 @@
   const SIDEBAR_MIN = 240;
   const SIDEBAR_MAX = 480;
   const SIDEBAR_DEFAULT = 300;
-  // Below this width the "+ Repository" / "+ Conversation" labels no longer
+  // Below this width the "+ Project" / "+ Conversation" labels no longer
   // fit side by side, so the bottom buttons collapse to icons.
   const SIDEBAR_COMPACT_BELOW = 280;
   let sidebarWidth = $state(SIDEBAR_DEFAULT);

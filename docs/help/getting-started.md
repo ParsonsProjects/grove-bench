@@ -8,13 +8,13 @@ Click the **+ Project** button at the bottom of the sidebar to add a project. Br
 
 ## Starting a Conversation
 
-Click the **+ Agent** button to start a new conversation. You have three options:
+Click the **+ Conversation** button at the bottom of the sidebar to open the **New Conversation** dialog. Pick a project, then choose one of three options under **Branch Mode**:
 
-- **New Worktree** — Creates a new git branch and worktree for isolated work. This is the recommended approach for most tasks, as changes are completely isolated from your main branch.
-- **Existing Worktree** — Attach to a worktree that already exists on disk.
-- **Direct** — Run the agent directly in the repository without creating a worktree. Use this for quick tasks where isolation isn't needed.
+- **New branch** — Creates a new branch and a new worktree for it, so the agent's changes stay away from your other branches. This is the recommended choice for most tasks. Enter a **Branch Name**, and optionally a **Base Branch** (a branch, tag or commit hash) to start from. The base is prefilled with **Default Base Branch** from **Settings → General**, or the project's default branch (e.g. `main`), and Grove Bench fetches its latest commits from `origin` first when it can.
+- **Existing branch** — Creates a new worktree for a branch that already exists, local or remote. The list leaves out branches that another conversation in this project is already using.
+- **Direct** — Runs the agent in the project folder itself, on whatever branch is checked out there. No worktree is created and changes are made in place. Use this for quick tasks where isolation isn't needed.
 
-When creating a new worktree, you'll choose a base branch (e.g. `main`) and name your new branch.
+Click **Create** to start the conversation.
 
 ## Interacting with an Agent
 

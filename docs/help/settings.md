@@ -6,15 +6,21 @@ Open Settings from the gear icon in the sidebar bottom controls. Settings are or
 
 Control how the agent handles actions that need approval:
 
-- **Default permission mode** — The mode new conversations start in: Default (ask before edits and non-trivial commands), Accept Edits, Plan (read-only), Auto (Claude's classifier approves or blocks each action), Bypass Permissions, or, under the "Grove Bench" divider, Read-safe (edits and read-only commands run without asking; everything else prompts). See [Status bar](status-bar.md#mode) for what each mode allows
-- **Tool allow / deny rules** — Rules the app applies before the agent asks. Deny rules win. A rule is `<tool>` or `<tool>(<glob>)`, where `<tool>` is a neutral keyword that works for every agent: `shell` (the glob matches the command), `edit` and `read` (the file path), `web` (the URL), `agent` (the sub-agent prompt), `question`, or `mcp` (the tool name after `mcp__`). A provider's own tool name also works, e.g. `Bash(git push *)`. `*` matches anything. Examples: `shell(npm run *)`, `edit(src/**)`, `read(**/.env*)`, `web(*github.com*)`, `mcp(github__*)`
+- **Default Permission Mode** — The mode new conversations start in. See [Status bar](status-bar.md#mode) for what each mode allows:
+  - **Default**: asks before edits and non-trivial commands
+  - **Accept Edits**
+  - **Plan (read-only)**
+  - **Auto (Claude classifier approves actions)**: Claude's classifier approves or blocks each action
+  - **Bypass Permissions**: hidden when **Disable bypass permissions mode** is ticked
+  - **Read-safe (edits + read-only commands)**: Grove Bench's own mode, under the "Grove Bench" divider; everything else prompts
+- **Tool Allow Rules** / **Tool Deny Rules** — Rules the app applies before the agent asks. Deny rules win. A rule is `<tool>` or `<tool>(<glob>)`, where `<tool>` is a neutral keyword that works for every agent: `shell` (the glob matches the command), `edit` and `read` (the file path), `web` (the URL), `agent` (the sub-agent prompt), `question`, or `mcp` (the tool name after `mcp__`). A provider's own tool name also works, e.g. `Bash(git push *)`. `*` matches anything. Examples: `shell(npm run *)`, `edit(src/**)`, `read(**/.env*)`, `web(*github.com*)`, `mcp(github__*)`
 
 ## Agent
 
 Configure agent behavior:
 
-- **Default Model** — Select which Claude model to use for new conversations
-- **Agent defaults** — One group per installed agent, listing the conversation controls that agent declares for the default model (for Claude Code: Thinking, and Speed on models that support fast mode). Pick the value new conversations start with; each conversation can still change it from the status bar
+- **Default Model** — The model ID new conversations use. Leave it empty to use the SDK default
+- **Claude Code defaults** — One such group per installed agent, named after the agent, listing the conversation controls that agent declares for the default model (for Claude Code: **Default Effort**, **Default Thinking** and **Default Speed**, each shown only when the default model offers it). Pick the value new conversations start with; each conversation can still change it from the status bar
 - **System Prompt Append** — Add custom instructions that apply to all conversations
 - **Additional Working Directories** — Extra directories the agent can access
 
@@ -22,11 +28,11 @@ Configure agent behavior:
 
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
 - **Project Colors** — Customize the accent color for each project in the sidebar
-- **Always on Top** — Keep the Grove Bench window above other windows
-- **Spell Check** — Enable or disable spell checking in the prompt editor
+- **Always on top** — Keep the Grove Bench window above other windows
+- **Enable spell checking** — Turn spell checking in the prompt editor on or off
 - **Default Diff View** — Choose between unified or side-by-side diffs
-- **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation. The taskbar-flash toggle controls whether the taskbar button also flashes; it stops as soon as the window regains focus
-- **Auto-install Dependencies** — Automatically run dependency installation in new worktrees
+- **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation. **Flash the taskbar button** controls whether the taskbar button also flashes; it stops as soon as the window regains focus
+- **Auto-install dependencies in new worktrees** — Run `npm install` automatically when a worktree is created (off by default)
 
 ## MCP
 

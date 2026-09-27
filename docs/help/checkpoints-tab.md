@@ -19,10 +19,10 @@ When you select a checkpoint, the right panel shows a diff with two modes:
 
 When you're ready to rewind, you have two choices:
 
-- **Rewind All** — Restores both the files and the conversation to the checkpoint state. This is a full undo.
-- **Conv. Only** — Resets only the conversation to the checkpoint. Files on disk are left as-is.
+- **Rewind all** — Restores both the files and the conversation to the checkpoint state. This is a full undo.
+- **Conv. only** — Resets only the conversation to the checkpoint. Files on disk are left as-is.
 
-A checkpoint whose message is no longer in the conversation (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the conversation is left untouched.
+A checkpoint whose message is no longer in the conversation (one from before a `/clear`, or the target of an earlier rewind) can only have its files restored; the conversation is left untouched. Checkpoints from before a `/clear` show a single **Restore files** button in place of the two above.
 
 After a rewind, the agent keeps its memory of the conversation up to the rewind point and genuinely forgets the turns that were rewound away. One caveat: project memory files (the Memory panel) are not rolled back — notes the agent saved during rewound turns are kept, so it may still recall facts it wrote to memory.
 
@@ -32,4 +32,4 @@ Checkpoints are useful when:
 
 - The agent went down the wrong path and you want to try a different approach
 - A series of changes introduced a bug and you want to roll back
-- You want to keep file changes but reset the conversation context (use Conv. Only)
+- You want to keep file changes but reset the conversation context (use **Conv. only**)
