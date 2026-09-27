@@ -1,0 +1,217 @@
+/* Branches prototype: page frame, lane rail and shared pieces. */
+
+.bx-page {
+  min-height: 100vh;
+  overflow-x: clip;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+.bx-page :focus-visible {
+  outline: 2px solid oklch(0.74 0.13 254.6);
+  outline-offset: 3px;
+}
+
+/* Lane rail. The graph overlay reads these to place lanes, the content
+   column uses --gutter so text always starts to the right of the graph. */
+.bx-log {
+  --lane-gap: 10px;
+  --lane-x0: 6px;
+  --gutter: 50px;
+  position: relative;
+}
+@media (min-width: 640px) {
+  .bx-log {
+    --lane-gap: 16px;
+    --lane-x0: 10px;
+    --gutter: 84px;
+  }
+}
+@media (min-width: 1024px) {
+  .bx-log {
+    --lane-gap: 24px;
+    --lane-x0: 16px;
+    --gutter: 124px;
+  }
+}
+
+.bx-wrap {
+  max-width: 1232px;
+  margin-inline: auto;
+  padding-inline: 16px;
+}
+@media (min-width: 768px) {
+  .bx-wrap {
+    padding-inline: 32px;
+  }
+}
+
+.bx-col {
+  position: relative;
+  z-index: 2;
+  padding-left: var(--gutter);
+  min-width: 0;
+}
+
+.bx-section {
+  padding-block: 72px;
+}
+@media (min-width: 768px) {
+  .bx-section {
+    padding-block: 104px;
+  }
+}
+
+/* Commit header */
+.bx-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.bx-hash {
+  color: var(--color-muted-foreground);
+  font-family: inherit;
+  letter-spacing: 0.02em;
+}
+.bx-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  color: var(--lane-text, var(--color-foreground));
+  background: color-mix(in oklch, var(--lane, #999) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--lane, #999) 45%, transparent);
+  white-space: nowrap;
+}
+.bx-chip b {
+  font-weight: 700;
+}
+
+.bx-h2 {
+  margin-top: 14px;
+  font-size: clamp(26px, 1.6vw + 18px, 42px);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: oklch(0.93 0 0);
+  text-wrap: balance;
+}
+.bx-sub {
+  margin-top: 14px;
+  max-width: 58ch;
+  font-size: 15px;
+  line-height: 1.7;
+  color: oklch(0.68 0 0);
+  text-wrap: pretty;
+}
+@media (min-width: 768px) {
+  .bx-sub {
+    font-size: 16px;
+  }
+}
+.bx-sub code,
+.bx-code {
+  font-family: inherit;
+  color: oklch(0.86 0 0);
+  background: oklch(0.27 0 0);
+  padding: 1px 5px;
+}
+
+/* Mock UI surfaces */
+.bx-card {
+  position: relative;
+  background: var(--color-card);
+  border: 1px solid oklch(0.3 0 0);
+  box-shadow: 0 24px 60px -30px rgb(0 0 0 / 0.8);
+}
+.bx-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+  font-size: 12px;
+}
+
+/* Status dot: square, like the app */
+.bx-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  background: var(--dot, #737373);
+}
+.bx-dot.pulse {
+  animation: bx-dot-pulse 1.4s ease-in-out infinite;
+}
+@keyframes bx-dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--dot) 60%, transparent);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklch, var(--dot) 0%, transparent);
+    opacity: 0.55;
+  }
+}
+
+.bx-add {
+  color: #4ade80;
+}
+.bx-del {
+  color: #f87171;
+}
+
+/* Small buttons inside mock UI */
+.bx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid oklch(0.34 0 0);
+  background: oklch(0.27 0 0);
+  color: oklch(0.88 0 0);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+.bx-btn:hover:not(:disabled) {
+  background: oklch(0.31 0 0);
+  border-color: oklch(0.42 0 0);
+}
+.bx-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.bx-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bx-btn.primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.bx-btn.primary:hover:not(:disabled) {
+  background: oklch(0.6 0.18 254.6);
+  border-color: oklch(0.6 0.18 254.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-dot.pulse {
+    animation: none;
+  }
+  .bx-page * {
+    scroll-behavior: auto !important;
+  }
+}
