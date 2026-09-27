@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
-  defaultModel: '',
+  defaultModels: {},
   adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
@@ -186,6 +186,20 @@ describe('adapter defaults', () => {
     settingsStore.setAdapterDefault('codex', 'effort', null);
     settingsStore.setAdapterDefault('claude-code', 'speed', '');
     expect(settingsStore.draft.adapterDefaults).toEqual({ 'claude-code': { thinking: 'low' } });
+    expect(settingsStore.dirty).toBe(true);
+  });
+});
+
+describe('default models', () => {
+  it('keeps one default model per agent and clears it with an empty value', () => {
+    expect(settingsStore.defaultModel('claude-code')).toBe('');
+    settingsStore.setDefaultModel('claude-code', 'claude-sonnet-4-6');
+    settingsStore.setDefaultModel('codex', 'gpt-model');
+    expect(settingsStore.draft.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6', codex: 'gpt-model' });
+    expect(settingsStore.defaultModel('codex')).toBe('gpt-model');
+
+    settingsStore.setDefaultModel('codex', '');
+    expect(settingsStore.draft.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6' });
     expect(settingsStore.dirty).toBe(true);
   });
 });

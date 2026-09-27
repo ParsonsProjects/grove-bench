@@ -66,33 +66,45 @@ export interface SessionInfo {
 
 // ─── Prerequisites ───
 
+/** A registered agent as the renderer sees it. */
+export interface AgentSummary {
+  id: string;
+  displayName: string;
+  capabilities: Record<string, boolean>;
+  isDefault?: boolean;
+}
+
+/** One agent's install and sign-in state. */
+export interface AgentPrerequisiteStatus {
+  available: boolean;
+  path?: string;
+  authenticated?: boolean;
+  authMethod?: string;
+  email?: string;
+  /** Adapter-provided error message when not available (e.g. install instructions). */
+  errorMessage?: string;
+  /** Adapter-provided message when not authenticated. */
+  authErrorMessage?: string;
+  /** Present when the provider accepts an API key entered in the app. The
+   *  key itself never reaches the renderer. */
+  apiKey?: {
+    label: string;
+    helpUrl: string;
+    /** A key is saved. While saved it is used instead of any CLI sign-in. */
+    saved: boolean;
+    /** The OS can encrypt a key. Without it no key can be saved. */
+    canStore: boolean;
+  };
+}
+
 export interface PrerequisiteStatus {
   git: {
     available: boolean;
     version?: string;
     meetsMinimum?: boolean;
   };
-  agent: {
-    available: boolean;
-    path?: string;
-    authenticated?: boolean;
-    authMethod?: string;
-    email?: string;
-    /** Adapter-provided error message when not available (e.g. install instructions). */
-    errorMessage?: string;
-    /** Adapter-provided message when not authenticated. */
-    authErrorMessage?: string;
-    /** Present when the provider accepts an API key entered in the app. The
-     *  key itself never reaches the renderer. */
-    apiKey?: {
-      label: string;
-      helpUrl: string;
-      /** A key is saved. While saved it is used instead of any CLI sign-in. */
-      saved: boolean;
-      /** The OS can encrypt a key. Without it no key can be saved. */
-      canStore: boolean;
-    };
-  };
+  /** One entry per registered agent, keyed by adapter id. */
+  agents: Record<string, AgentPrerequisiteStatus>;
   /** GitHub CLI — optional; only gates PR automation, never blocks the app. */
   gh?: {
     available: boolean;
@@ -726,12 +738,12 @@ export interface GroveBenchAPI {
   getCachedPrerequisites(): Promise<PrerequisiteStatus | null>;
   /** GitHub CLI availability/auth — may hit the network, never gates the app. */
   checkGhPrerequisite(): Promise<NonNullable<PrerequisiteStatus['gh']>>;
-  /** Encrypt and save an API key for the default agent. Rejects with a
-   *  user-facing message when the key is malformed or can't be stored.
-   *  Resolves with the updated status. */
-  setApiKey(key: string): Promise<PrerequisiteStatus>;
-  /** Remove the saved API key. Resolves with the updated status. */
-  clearApiKey(): Promise<PrerequisiteStatus>;
+  /** Encrypt and save an API key for one agent. Rejects with a user-facing
+   *  message when the key is malformed or can't be stored. Resolves with the
+   *  updated status. */
+  setApiKey(adapterId: string, key: string): Promise<PrerequisiteStatus>;
+  /** Remove an agent's saved API key. Resolves with the updated status. */
+  clearApiKey(adapterId: string): Promise<PrerequisiteStatus>;
   /** Tell main that startup session restore has finished. */
   notifyRestoreComplete(): void;
 
@@ -920,7 +932,9 @@ export interface GroveBenchAPI {
   winIsMaximized(): Promise<boolean>;
 
   // Agent adapters
-  listAdapters(): Promise<Array<{ id: string; displayName: string; capabilities: Record<string, boolean> }>>;
+  /** Registered agents, in registration order. `isDefault` marks the one new
+   *  conversations use unless another is picked. */
+  listAdapters(): Promise<AgentSummary[]>;
   /** Control descriptors an adapter declares for `model` (null = its default
    *  model), without needing a session. Used by Settings for per-adapter
    *  defaults. Unknown adapter = []. */
@@ -989,7 +1003,9 @@ export interface GroveBenchSettings {
   autoSkillSuggestions: boolean;
 
   // Agent Defaults
-  defaultModel: string;
+  /** Model new conversations start on, keyed by adapter id. Missing or empty
+   *  means the adapter's first model. */
+  defaultModels: Record<string, string>;
   /** Default values for each adapter's declared session controls (thinking,
    *  speed, ...), keyed by adapter id then control id. Only ids the adapter
    *  actually offers for the session's model are applied; anything else is

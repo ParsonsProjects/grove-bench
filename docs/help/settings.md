@@ -11,11 +11,14 @@ Control how the agent handles actions that need approval:
 
 ## Agent
 
-Configure agent behavior:
+Configure agent behavior. There is one group per installed agent, each with:
 
 - **Credentials** — Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
-- **Default Model** — Pick the model new conversations start on. **Default** follows the app's default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
-- **Agent defaults** — One group per installed agent, listing the conversation controls that agent declares for the default model (for Claude Agent: Thinking, and Speed on models that support fast mode). Pick the value new conversations start with; each conversation can still change it from the status bar
+- **Default Model** — Pick the model new conversations with this agent start on. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
+- **Conversation controls** — The controls the agent declares for its default model (for Claude Agent: Thinking, and Speed on models that support fast mode). Pick the value new conversations start with; each conversation can still change it from the status bar
+
+These apply to every agent:
+
 - **System Prompt Append** — Add custom instructions that apply to all conversations
 - **Additional Working Directories** — Extra directories the agent can access
 

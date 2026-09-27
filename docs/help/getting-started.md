@@ -8,9 +8,9 @@ Click the **+ Project** button at the bottom of the sidebar to add a project. Br
 
 ## Starting a Conversation
 
-Click the **+ Agent** button to start a new conversation.
+Click the **+ Agent** button to start a new conversation. If more than one agent is installed, pick one under **Agent**; otherwise the dialog skips that choice.
 
-The first time, you may be asked for credentials. Paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. The key is stored encrypted on this computer. If you already signed in with `claude auth login` in a terminal, or set `ANTHROPIC_API_KEY`, click **Re-check** instead. You can change or remove the key later in **Settings > Agent**.
+The first time you use an agent, you may be asked for its credentials. Paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. The key is stored encrypted on this computer. If you already signed in with `claude auth login` in a terminal, or set `ANTHROPIC_API_KEY`, click **Re-check** instead. You can change or remove the key later in **Settings > Agent**.
 
 You have three options:
 

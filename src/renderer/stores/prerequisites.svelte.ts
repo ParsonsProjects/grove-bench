@@ -35,18 +35,18 @@ class PrerequisitesStore {
     return this.inFlight;
   }
 
-  /** Save an API key for the default agent. Throws a user-facing message. */
-  async saveApiKey(key: string): Promise<void> {
+  /** Save an API key for one agent. Throws a user-facing message. */
+  async saveApiKey(adapterId: string, key: string): Promise<void> {
     try {
-      this.apply(await window.groveBench.setApiKey(key));
+      this.apply(await window.groveBench.setApiKey(adapterId, key));
     } catch (err) {
       throw new Error(errorMessage(err));
     }
   }
 
-  async clearApiKey(): Promise<void> {
+  async clearApiKey(adapterId: string): Promise<void> {
     try {
-      this.apply(await window.groveBench.clearApiKey());
+      this.apply(await window.groveBench.clearApiKey(adapterId));
     } catch (err) {
       throw new Error(errorMessage(err));
     }

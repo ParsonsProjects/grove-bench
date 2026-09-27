@@ -230,7 +230,12 @@ export function saveSkillSuggestionCache(repoPath: string, cache: SkillSuggestio
 }
 
 export function loadPrerequisiteCache(): PrerequisiteCache | null {
-  return loadAppState().prerequisiteCache ?? null;
+  const cache = loadAppState().prerequisiteCache ?? null;
+  // Caches written before per-agent status had a single `agent` field.
+  // Dropping them just means one fresh check at launch.
+  const agents = (cache?.status as { agents?: unknown } | undefined)?.agents;
+  if (!cache || typeof agents !== 'object' || agents === null) return null;
+  return cache;
 }
 
 /** Write-through — prerequisite checks run once or twice per launch. */

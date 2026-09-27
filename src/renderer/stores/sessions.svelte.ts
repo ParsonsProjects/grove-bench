@@ -156,10 +156,15 @@ class SessionStore {
    *  branch, sharing its checkout. The main process resolves the branch + path
    *  from the source session, so a new session forked off a worktree session
    *  stays on that branch instead of the repo's default branch. Runs in-place
-   *  (direct), so it never creates or removes a worktree. */
+   *  (direct), so it never creates or removes a worktree. It runs the same
+   *  agent as the source session. */
   async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
     try {
-      const result = await window.groveBench.createSession({ repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId });
+      const adapterType = this.sessions.find((s) => s.id === sourceSessionId)?.agentType;
+      const result = await window.groveBench.createSession({
+        repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId,
+        ...(adapterType ? { adapterType } : {}),
+      });
       this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now() });
     } catch (e: any) {
       this.setError(e?.message || String(e));

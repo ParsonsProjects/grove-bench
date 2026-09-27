@@ -585,6 +585,8 @@ Conversations don't need the installed CLI: the Agent SDK runs its own bundled C
 
 If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
 
+**Several agents.** Every check above runs for each registered adapter, and `PrerequisiteStatus.agents` holds the result per adapter id. Saved keys, default models (`settings.defaultModels`) and the Settings > Agent groups are per adapter too. The New Conversation dialog shows an Agent picker when more than one adapter is registered and asks for the picked agent's credentials; the status bar lists the models of the conversation's own agent. The Settings MCP and Plugins tabs configure the default agent and are hidden when it doesn't support them.
+
 **Authentication rules.** Anthropic's terms decide which sign-in paths the app may offer ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)):
 
 - **Allowed: the user's own Claude subscription through Claude Code.** The terms don't prevent "an end user from signing in to the unmodified Claude Code binary with their own Claude subscription". The user signs in with `claude auth login`, which is Anthropic's own flow. Grove only runs `claude auth status` to see whether they are signed in. It never reads, stores or forwards the sign-in token; the agent process reads it itself.

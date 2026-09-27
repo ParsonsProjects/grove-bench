@@ -1,4 +1,4 @@
-import type { PrerequisiteStatus } from '../shared/types.js';
+import type { AgentPrerequisiteStatus, PrerequisiteStatus } from '../shared/types.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
@@ -43,27 +43,33 @@ export async function checkGh(): Promise<NonNullable<PrerequisiteStatus['gh']>> 
  * is slower than the rest.
  */
 export async function checkCorePrerequisites(): Promise<PrerequisiteStatus> {
-  const adapter = adapterRegistry.getDefault();
-  const [gitStatus, agentStatus] = await Promise.all([
-    checkGit(),
-    adapter.checkPrerequisites(),
-  ]);
-  return buildStatus(gitStatus, agentStatus, adapter);
+  const [git, agents] = await Promise.all([checkGit(), checkAgents()]);
+  return { git, agents };
 }
 
 export async function checkAllPrerequisites(): Promise<PrerequisiteStatus> {
-  const adapter = adapterRegistry.getDefault();
-  const [gitStatus, agentStatus, ghStatus] = await Promise.all([
-    checkGit(),
-    adapter.checkPrerequisites(),
-    checkGh(),
-  ]);
-  return { ...buildStatus(gitStatus, agentStatus, adapter), gh: ghStatus };
+  const [git, agents, gh] = await Promise.all([checkGit(), checkAgents(), checkGh()]);
+  return { git, agents, gh };
+}
+
+/** Every registered agent, checked in parallel. One agent failing its check
+ *  (a crashed CLI, a bug in an adapter) doesn't hide the others. */
+export async function checkAgents(): Promise<Record<string, AgentPrerequisiteStatus>> {
+  const entries = await Promise.all(adapterRegistry.list().map(async (adapter) => {
+    let raw: AdapterPrerequisiteStatus;
+    try {
+      raw = await adapter.checkPrerequisites();
+    } catch (err) {
+      raw = { available: false, errorMessage: `${adapter.displayName} check failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    return [adapter.id, buildAgentStatus(raw, adapter)] as const;
+  }));
+  return Object.fromEntries(entries);
 }
 
 /** What the renderer needs to offer API key entry for `adapter`, without the
  *  key itself. Undefined when the adapter takes no API key. */
-export function apiKeyState(adapter: AgentAdapter): PrerequisiteStatus['agent']['apiKey'] {
+export function apiKeyState(adapter: AgentAdapter): AgentPrerequisiteStatus['apiKey'] {
   if (!adapter.apiKey) return undefined;
   return {
     label: adapter.apiKey.label,
@@ -73,11 +79,7 @@ export function apiKeyState(adapter: AgentAdapter): PrerequisiteStatus['agent'][
   };
 }
 
-function buildStatus(
-  gitStatus: PrerequisiteStatus['git'],
-  agentStatus: AdapterPrerequisiteStatus,
-  adapter: AgentAdapter,
-): PrerequisiteStatus {
+function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: AgentAdapter): AgentPrerequisiteStatus {
   // Build error/auth message from adapter when not available or not authenticated
   let errorMessage: string | undefined;
   let authErrorMessage: string | undefined;
@@ -92,16 +94,13 @@ function buildStatus(
   }
 
   return {
-    git: gitStatus,
-    agent: {
-      available: agentStatus.available,
-      path: agentStatus.path,
-      authenticated: agentStatus.authenticated,
-      authMethod: agentStatus.authMethod,
-      email: agentStatus.email,
-      errorMessage,
-      authErrorMessage,
-      apiKey: apiKeyState(adapter),
-    },
+    available: agentStatus.available,
+    path: agentStatus.path,
+    authenticated: agentStatus.authenticated,
+    authMethod: agentStatus.authMethod,
+    email: agentStatus.email,
+    errorMessage,
+    authErrorMessage,
+    apiKey: apiKeyState(adapter),
   };
 }

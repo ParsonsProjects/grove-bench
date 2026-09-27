@@ -414,7 +414,7 @@ class AgentSessionManager {
 
     // Apply settings defaults for values not explicitly provided
     const appSettings = settings.getSettings();
-    const initialModel = opts.model ?? (appSettings.defaultModel || adapter.getModels()[0]?.id || null);
+    const initialModel = opts.model ?? (appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null);
     const requestedMode: PermissionMode = opts.permissionMode
       || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
       || 'default';

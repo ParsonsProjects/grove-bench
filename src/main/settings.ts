@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoSkillSuggestions: false,
 
   // Agent Defaults
-  defaultModel: '',
+  defaultModels: {},
   adapterDefaults: {},
   cavemanMode: 'off',
   workingDirectories: [],
@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 4;
+export const SETTINGS_SCHEMA_VERSION = 5;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -123,6 +123,20 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
     }
     return raw;
   },
+  // 4 → 5: `defaultModel` was one string for every agent, so a Claude model
+  // would have been handed to any other agent. It became `defaultModels`,
+  // keyed by adapter id. Claude Code was the only agent before this, so a
+  // saved model moves under it.
+  (raw) => {
+    const { defaultModel, ...rest } = raw;
+    const existing = (typeof rest.defaultModels === 'object' && rest.defaultModels !== null)
+      ? (rest.defaultModels as Record<string, string>)
+      : {};
+    rest.defaultModels = typeof defaultModel === 'string' && defaultModel
+      ? { ...existing, 'claude-code': defaultModel }
+      : existing;
+    return rest;
+  },
 ];
 
 // ─── Validation ───
@@ -140,7 +154,7 @@ const settingsSchema = z.object({
   disabledSkills: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledSkills),
   autoSkillSuggestions: z.boolean().catch(DEFAULT_SETTINGS.autoSkillSuggestions),
 
-  defaultModel: z.string().catch(DEFAULT_SETTINGS.defaultModel),
+  defaultModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.defaultModels),
   adapterDefaults: z.record(z.string(), z.record(z.string(), z.string())).catch(DEFAULT_SETTINGS.adapterDefaults),
   cavemanMode: z.enum(['off', 'lite', 'full', 'ultra']).catch(DEFAULT_SETTINGS.cavemanMode),
   workingDirectories: z.array(z.string()).catch(DEFAULT_SETTINGS.workingDirectories),

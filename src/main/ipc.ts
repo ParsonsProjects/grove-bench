@@ -9,6 +9,7 @@ import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
+import type { AgentAdapter } from './adapters/types.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
@@ -437,27 +438,38 @@ export function registerHandlers() {
     return gh;
   });
 
-  // Saving or removing a key only changes the key state, so patch the last
-  // check rather than re-running the CLI probe (which can take seconds).
-  async function withFreshApiKeyState(): Promise<PrerequisiteStatus> {
+  // Saving or removing a key only changes that agent's key state, so patch
+  // the last check rather than re-running every CLI probe (which can take
+  // seconds).
+  async function withFreshApiKeyState(adapter: AgentAdapter): Promise<PrerequisiteStatus> {
     const cached = loadPrerequisiteCache()?.status;
-    const status: PrerequisiteStatus = cached
-      ? { ...cached, agent: { ...cached.agent, apiKey: apiKeyState(adapterRegistry.getDefault()) } }
-      : await checkCorePrerequisites();
+    const status: PrerequisiteStatus = cached?.agents[adapter.id]
+      ? {
+          ...cached,
+          agents: { ...cached.agents, [adapter.id]: { ...cached.agents[adapter.id], apiKey: apiKeyState(adapter) } },
+        }
+      : { ...(await checkCorePrerequisites()), gh: cached?.gh };
     savePrerequisiteCache(status);
     return status;
   }
 
-  ipcMain.handle(IPC.CREDENTIALS_SET_API_KEY, async (_event, key: unknown): Promise<PrerequisiteStatus> => {
-    const adapter = adapterRegistry.getDefault();
+  function adapterForKey(adapterId: unknown): AgentAdapter {
+    const adapter = typeof adapterId === 'string' ? adapterRegistry.get(adapterId) : undefined;
+    if (!adapter) throw new Error(`Unknown agent: ${String(adapterId)}`);
     if (!adapter.apiKey) throw new Error(`${adapter.displayName} does not take an API key.`);
+    return adapter;
+  }
+
+  ipcMain.handle(IPC.CREDENTIALS_SET_API_KEY, async (_event, adapterId: unknown, key: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = adapterForKey(adapterId);
     saveApiKey(adapter.id, key);
-    return withFreshApiKeyState();
+    return withFreshApiKeyState(adapter);
   });
 
-  ipcMain.handle(IPC.CREDENTIALS_CLEAR_API_KEY, async (): Promise<PrerequisiteStatus> => {
-    clearApiKey(adapterRegistry.getDefault().id);
-    return withFreshApiKeyState();
+  ipcMain.handle(IPC.CREDENTIALS_CLEAR_API_KEY, async (_event, adapterId: unknown): Promise<PrerequisiteStatus> => {
+    const adapter = adapterForKey(adapterId);
+    clearApiKey(adapter.id);
+    return withFreshApiKeyState(adapter);
   });
 
   ipcMain.on(IPC.APP_RESTORE_COMPLETE, () => {
@@ -1176,10 +1188,15 @@ export function registerHandlers() {
   // ─── Agent Adapters ───
 
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
+    const defaultId = adapterRegistry.getDefault().id;
     return adapterRegistry.list().map(a => ({
       id: a.id,
       displayName: a.displayName,
-      capabilities: { ...a.capabilities },
+      // mcpConfig: the adapter can list and edit configured MCP servers (the
+      // Settings MCP tab). Derived from the optional methods, which have no
+      // capability flag of their own.
+      capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
+      isDefault: a.id === defaultId,
     }));
   });
 

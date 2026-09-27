@@ -5,12 +5,13 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
 
-  /** API key entry for the default agent. Used by the New Conversation dialog
-   *  and Settings > Agent. The saved key never comes back to the renderer;
-   *  only whether one is saved. */
-  let { autofocus = false }: { autofocus?: boolean } = $props();
+  /** API key entry for one agent. Used by the New Conversation dialog and
+   *  Settings > Agent. The saved key never comes back to the renderer; only
+   *  whether one is saved. */
+  let { adapterId, autofocus = false }: { adapterId: string; autofocus?: boolean } = $props();
 
-  const apiKey = $derived(store.prerequisites?.agent.apiKey);
+  const apiKey = $derived(store.prerequisites?.agents[adapterId]?.apiKey);
+  const inputId = $derived(`api-key-${adapterId}`);
 
   let value = $state('');
   let busy = $state(false);
@@ -30,7 +31,7 @@
     busy = true;
     error = '';
     try {
-      await prerequisitesStore.saveApiKey(value);
+      await prerequisitesStore.saveApiKey(adapterId, value);
       value = '';
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -44,7 +45,7 @@
     busy = true;
     error = '';
     try {
-      await prerequisitesStore.clearApiKey();
+      await prerequisitesStore.clearApiKey(adapterId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -56,7 +57,7 @@
 {#if apiKey}
   <div class="flex flex-col gap-1">
     <div class="flex items-baseline justify-between">
-      <Label for="api-key">{apiKey.label}</Label>
+      <Label for={inputId}>{apiKey.label}</Label>
       <button
         type="button"
         class="text-xs text-primary hover:underline"
@@ -69,7 +70,7 @@
     {#if apiKey.canStore}
       <div class="flex items-center gap-2">
         <Input
-          id="api-key"
+          id={inputId}
           type="password"
           autocomplete="off"
           spellcheck={false}

@@ -9,10 +9,11 @@ export function gitReady(status: PrerequisiteStatus): boolean {
 }
 
 /**
- * True when the agent has credentials to start a conversation: a CLI sign-in,
+ * True when an agent has credentials to start a conversation: a CLI sign-in,
  * credentials in the environment, or an API key saved in the app. Checked when
  * the user starts a conversation, never at app startup.
  */
-export function agentReady(status: PrerequisiteStatus): boolean {
-  return status.agent.authenticated === true || status.agent.apiKey?.saved === true;
+export function agentReady(status: PrerequisiteStatus, adapterId: string): boolean {
+  const agent = status.agents[adapterId];
+  return !!agent && (agent.authenticated === true || agent.apiKey?.saved === true);
 }

@@ -1879,6 +1879,24 @@ describe('AgentSessionManager model handling', () => {
     await sessionManager.destroySession('test-model-default');
   });
 
+  const BASE_SETTINGS = { defaultPermissionMode: 'default', defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
+
+  it("starts on this agent's saved default model", async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...BASE_SETTINGS, defaultModels: { mock: 'mock-saved', 'claude-code': 'claude-sonnet-4-6' } });
+    await sessionManager.createSession({ id: 'test-model-saved', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.model).toBe('mock-saved');
+    await sessionManager.destroySession('test-model-saved');
+  });
+
+  it("never hands another agent's default model to this agent", async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...BASE_SETTINGS, defaultModels: { 'claude-code': 'claude-sonnet-4-6' } });
+    await sessionManager.createSession({ id: 'test-model-other', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.model).toBe('mock-model');
+    await sessionManager.destroySession('test-model-other');
+  });
+
   it('honours an explicit model passed to createSession (resume path)', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({

@@ -397,3 +397,18 @@ describe('SessionStore', () => {
     });
   });
 });
+
+describe('createAttachedSession', () => {
+  it("runs the source conversation's agent", async () => {
+    store.sessions = [];
+    store.addSession({ id: 'src', branch: 'feat/x', repoPath: '/repo/test', status: 'running', agentType: 'codex' } as never);
+    const createSession = vi.fn().mockResolvedValue({ id: 'attached', branch: 'feat/x', agentType: 'codex' });
+    (mockGroveBench as unknown as { createSession: typeof createSession }).createSession = createSession;
+
+    await store.createAttachedSession('src', '/repo/test');
+
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ attachToSessionId: 'src', adapterType: 'codex' }));
+    expect(store.sessions.find((s) => s.id === 'attached')?.agentType).toBe('codex');
+    store.sessions = [];
+  });
+});

@@ -119,6 +119,19 @@
   let modelOptions = $state<Array<{ value: string; label: string; contextWindow?: number }>>([]);
 
   let sessionBranch = $derived(store.sessions.find(s => s.id === sessionId)?.branch ?? '');
+
+  // The model picker lists this conversation's own agent's models; a Codex
+  // conversation must not be offered Claude models. Unknown agent type falls
+  // back to the default agent, as before.
+  let sessionAgentType = $derived(store.sessions.find((s) => s.id === sessionId)?.agentType);
+  $effect(() => {
+    const agentType = sessionAgentType;
+    let cancelled = false;
+    window.groveBench.getModels(agentType).then((models) => {
+      if (!cancelled) modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
+    }).catch(() => { /* keep the last list */ });
+    return () => { cancelled = true; };
+  });
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   /** The agent path to creating a PR needs a live, idle session. */
@@ -535,9 +548,6 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('click', handleClickOutside);
-    window.groveBench.getModels().then((models) => {
-      modelOptions = models.map((m) => ({ value: m.id, label: m.label, contextWindow: m.contextWindow }));
-    });
     // Populate the Skills item up front — the collapsed count and suggestion
     // badge shouldn't wait for the popover to be opened.
     refreshSkills();

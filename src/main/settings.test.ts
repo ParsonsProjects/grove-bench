@@ -150,6 +150,14 @@ describe('schema versioning', () => {
     expect(upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'plan' }).settings.defaultPermissionMode).toBe('plan');
   });
 
+  it('moves a saved default model under the Claude agent (4 → 5)', () => {
+    const { settings } = upgradeSettings({ schemaVersion: 4, defaultModel: 'claude-sonnet-4-6' });
+    expect(settings.defaultModels).toEqual({ 'claude-code': 'claude-sonnet-4-6' });
+    expect(settings).not.toHaveProperty('defaultModel');
+    expect(upgradeSettings({ schemaVersion: 4, defaultModel: '' }).settings.defaultModels).toEqual({});
+    expect(upgradeSettings({ schemaVersion: 4 }).settings.defaultModels).toEqual({});
+  });
+
   it('drops a saved Claude thinking budget, keeping Off/adaptive and other controls (3 → 4)', () => {
     const { settings } = upgradeSettings({
       schemaVersion: 3,

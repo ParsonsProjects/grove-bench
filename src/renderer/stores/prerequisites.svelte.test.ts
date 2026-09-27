@@ -6,11 +6,11 @@ import type { PrerequisiteStatus } from '../../shared/types.js';
 
 const signedOut: PrerequisiteStatus = {
   git: { available: true, meetsMinimum: true },
-  agent: { available: true, authenticated: false },
+  agents: { 'claude-code': { available: true, authenticated: false } },
 };
 const signedIn: PrerequisiteStatus = {
   git: { available: true, meetsMinimum: true },
-  agent: { available: true, authenticated: true },
+  agents: { 'claude-code': { available: true, authenticated: true } },
 };
 
 beforeEach(() => {
@@ -28,12 +28,12 @@ describe('prerequisitesStore', () => {
     mockGroveBench.checkPrerequisites.mockReturnValue(new Promise((r) => { resolveCheck = r; }));
 
     const done = prerequisitesStore.init();
-    await vi.waitFor(() => expect(store.prerequisites?.agent.authenticated).toBe(false));
+    await vi.waitFor(() => expect(store.prerequisites?.agents['claude-code'].authenticated).toBe(false));
     expect(prerequisitesStore.checking).toBe(true);
 
     resolveCheck(signedIn);
     await done;
-    expect(store.prerequisites?.agent.authenticated).toBe(true);
+    expect(store.prerequisites?.agents['claude-code'].authenticated).toBe(true);
     expect(prerequisitesStore.checking).toBe(false);
   });
 
@@ -61,15 +61,15 @@ describe('prerequisitesStore', () => {
   });
 
   it('applies the status returned after saving a key', async () => {
-    await prerequisitesStore.saveApiKey('sk-test');
-    expect(mockGroveBench.setApiKey).toHaveBeenCalledWith('sk-test');
-    expect(store.prerequisites?.agent.apiKey?.saved).toBe(true);
+    await prerequisitesStore.saveApiKey('claude-code', 'sk-test');
+    expect(mockGroveBench.setApiKey).toHaveBeenCalledWith('claude-code', 'sk-test');
+    expect(store.prerequisites?.agents['claude-code'].apiKey?.saved).toBe(true);
   });
 
   it('strips the Electron IPC wrapper from save errors', async () => {
     mockGroveBench.setApiKey.mockRejectedValueOnce(
       new Error("Error invoking remote method 'credentials:setApiKey': Error: An API key cannot contain spaces."),
     );
-    await expect(prerequisitesStore.saveApiKey('bad key')).rejects.toThrow(/^An API key cannot contain spaces\.$/);
+    await expect(prerequisitesStore.saveApiKey('claude-code', 'bad key')).rejects.toThrow(/^An API key cannot contain spaces\.$/);
   });
 });

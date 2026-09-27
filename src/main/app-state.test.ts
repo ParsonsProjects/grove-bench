@@ -15,6 +15,7 @@ vi.mock('node:fs', () => ({
 import {
   loadAppState, saveActiveTab, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
   saveKnownSkills, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
+  loadPrerequisiteCache,
 } from './app-state.js';
 
 /** The file as the last write left it, so read-modify-write chains see their own updates. */
@@ -141,5 +142,21 @@ describe('debounced writers', () => {
     const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, knownSkills: { '/a': ['x'] } });
     saveKnownSkills('/b', ['y']);
     expect(disk.get().knownSkills).toEqual({ '/a': ['x'], '/b': ['y'] });
+  });
+});
+
+describe('loadPrerequisiteCache', () => {
+  it('returns a per-agent cache', () => {
+    const status = { git: { available: true }, agents: { 'claude-code': { available: true, authenticated: true } } };
+    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, prerequisiteCache: { status, checkedAt: 1 } });
+    expect(loadPrerequisiteCache()?.status).toEqual(status);
+  });
+
+  it('drops a cache written before per-agent status', () => {
+    useDisk({
+      schemaVersion: APP_STATE_SCHEMA_VERSION,
+      prerequisiteCache: { status: { git: { available: true }, agent: { available: true, authenticated: true } }, checkedAt: 1 },
+    });
+    expect(loadPrerequisiteCache()).toBeNull();
   });
 });
