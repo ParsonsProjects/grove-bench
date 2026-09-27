@@ -64,6 +64,7 @@ const mockGroveBench = {
   searchEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').EventSearchHit[])),
   searchAllEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').CrossSessionSearchHit[])),
   getSessionPreviews: vi.fn(() => Promise.resolve({} as Record<string, import('../../shared/types.js').SessionPreview>)),
+  autoNameSession: vi.fn(() => Promise.resolve(null as string | null)),
   getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
   getFileDiff: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve({ kind: 'text', patch: '' } as import('../../shared/types.js').FileDiffResult)),
   openInEditor: vi.fn(() => Promise.resolve()),

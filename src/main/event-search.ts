@@ -102,20 +102,25 @@ function collapse(text: string): string {
   return normalized.length > PREVIEW_MAX_LEN ? `${normalized.slice(0, PREVIEW_MAX_LEN)}…` : normalized;
 }
 
+/** Text of the first real user prompt (slash commands skipped), trimmed but
+ *  otherwise as sent, or null when the history has none. */
+export function firstUserPrompt(events: AgentEvent[]): string | null {
+  for (const e of events) {
+    if (e.type !== 'user_message') continue;
+    const text = e.text.trim();
+    if (text && !text.startsWith('/')) return text;
+  }
+  return null;
+}
+
 /**
  * Derive a lightweight conversation preview from a session's event history:
  * the first real user prompt (slash commands skipped) and the most recent
  * user/assistant text. Both empty when the history has no such events.
  */
 export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
-  let firstPrompt = '';
-  for (const e of events) {
-    if (e.type !== 'user_message') continue;
-    const text = e.text.trim();
-    if (!text || text.startsWith('/')) continue;
-    firstPrompt = collapse(text);
-    break;
-  }
+  const first = firstUserPrompt(events);
+  const firstPrompt = first ? collapse(first) : '';
 
   let lastText = '';
   for (let i = events.length - 1; i >= 0; i--) {

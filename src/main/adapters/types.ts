@@ -265,6 +265,13 @@ export interface AgentAdapter {
    *  `model` overrides the provider default (e.g. a cheaper model for background calls). */
   generateText?(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string>;
 
+  // ─── Optional conversation title ───
+
+  /** The provider's own title for a conversation (e.g. one it generated from
+   *  the first prompt), or null when it has none yet. `cwd` is the directory
+   *  the conversation ran in. Grove falls back to a heuristic name without it. */
+  getConversationTitle?(providerSessionId: string, cwd: string): Promise<string | null>;
+
   // ─── Optional worktree configuration ───
 
   /** Generate agent-specific settings files inside a worktree directory.

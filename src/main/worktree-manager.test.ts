@@ -155,6 +155,7 @@ describe('saveDisplayName', () => {
     await manager.saveDisplayName('wt-123', 'My Session');
 
     expect((savedManifest as any)['wt-123'].displayName).toBe('My Session');
+    expect((savedManifest as any)['wt-123'].displayNameSource).toBe('user');
   });
 
   it('clears the name when passed an empty string', async () => {
@@ -175,6 +176,47 @@ describe('saveDisplayName', () => {
     await manager.saveDisplayName('wt-unknown', 'X');
 
     expect(savedManifest['wt-unknown']).toBeUndefined();
+  });
+});
+
+describe('getDisplayNameState', () => {
+  it('returns the name and its source, with no source for older entries', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-new': { repoPath: '/repo', branch: 'a', createdAt: 1000, displayName: 'Fix sort', displayNameSource: 'auto' },
+      'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 1000, displayName: 'can you fix…' },
+      'wt-none': { repoPath: '/repo', branch: 'c', createdAt: 1000 },
+    }));
+
+    expect(await manager.getDisplayNameState('wt-new')).toEqual({ displayName: 'Fix sort', source: 'auto' });
+    expect(await manager.getDisplayNameState('wt-old')).toEqual({ displayName: 'can you fix…', source: undefined });
+    expect(await manager.getDisplayNameState('wt-none')).toEqual({ displayName: null, source: undefined });
+    expect(await manager.getDisplayNameState('wt-unknown')).toBeUndefined();
+  });
+});
+
+describe('saveAutoDisplayName', () => {
+  it('saves when the name is unchanged since it was read', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, displayName: 'can you fix…' },
+    }));
+
+    const saved = await manager.saveAutoDisplayName('wt-123', { displayName: 'can you fix…' }, { displayName: 'Fix sort', source: 'auto' });
+
+    expect(saved).toBe(true);
+    expect((savedManifest as any)['wt-123'].displayName).toBe('Fix sort');
+    expect((savedManifest as any)['wt-123'].displayNameSource).toBe('auto');
+  });
+
+  it('does not overwrite a rename made after the name was read', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, displayName: 'Mine', displayNameSource: 'user' },
+    }));
+
+    const saved = await manager.saveAutoDisplayName('wt-123', { displayName: null, source: 'auto' }, { displayName: 'Fix sort', source: 'auto' });
+
+    expect(saved).toBe(false);
+    expect((savedManifest as any)['wt-123'].displayName).toBe('Mine');
+    expect((savedManifest as any)['wt-123'].displayNameSource).toBe('user');
   });
 });
 

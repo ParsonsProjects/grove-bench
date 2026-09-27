@@ -3,7 +3,8 @@ import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
 import type { CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
-import { searchEvents, findEventIndexByUuid, extractSessionPreview } from './event-search.js';
+import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
+import { decideAutoName } from './session-auto-name.js';
 import { editorLaunchCommand } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { checkCorePrerequisites, checkGh } from './prerequisites.js';
@@ -377,6 +378,32 @@ export function registerHandlers() {
     sessionManager.renameSession(sessionId, displayName);
     // Persist so the name survives app restart (displayName was in-memory only).
     await worktreeManager.saveDisplayName(sessionId, displayName);
+  });
+
+  ipcMain.handle(IPC.SESSION_AUTO_NAME, async (_event, sessionId: string): Promise<string | null> => {
+    const state = await worktreeManager.getDisplayNameState(sessionId);
+    if (!state || state.source === 'user') return null;
+    const live = sessionManager.getSession(sessionId);
+    const next = await decideAutoName(state, {
+      providerTitle: async () => {
+        // Stopped sessions have no live adapter; the default one wrote them.
+        const adapter = live?.adapter ?? adapterRegistry.getDefault();
+        const providerSessionId = live?.providerSessionId ?? await worktreeManager.getProviderSessionId(sessionId);
+        const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
+        if (!adapter.getConversationTitle || !providerSessionId || !cwd) return null;
+        try {
+          return await adapter.getConversationTitle(providerSessionId, cwd);
+        } catch (e) {
+          logger.debug(`[session-auto-name] no provider title for ${sessionId}:`, e);
+          return null;
+        }
+      },
+      firstPrompt: () => firstUserPrompt(prelaunchPrefixedEvents(sessionId)),
+    });
+    if (!next || !(await worktreeManager.saveAutoDisplayName(sessionId, state, next))) return null;
+    if (next.source !== 'auto') return null;
+    sessionManager.renameSession(sessionId, next.displayName);
+    return next.displayName;
   });
 
   ipcMain.handle(IPC.SESSION_SET_COMPLETED, async (_event, sessionId: string, completed: boolean) => {

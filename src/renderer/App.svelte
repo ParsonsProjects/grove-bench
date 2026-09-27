@@ -9,7 +9,6 @@
   import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
-  import { deriveSessionName } from './lib/session-name.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -110,6 +109,10 @@
 
     restored = true;
     window.groveBench.notifyRestoreComplete();
+
+    // Bring stopped conversations' names up to date too (provider titles,
+    // and names from the older heuristic). One at a time, in the background.
+    void refreshAutoNames(store.sessions.map((s) => s.id));
   }
 
   // Track per-session running state to detect turn completion. Flash state
@@ -125,27 +128,24 @@
         if (store.activeSessionId !== session.id) {
           store.markNeedsAttention(session.id);
         }
-        maybeAutoNameSession(session);
+        void autoNameSession(session.id);
       }
       prevRunningState[session.id] = running;
     }
   });
 
-  /** After a turn completes, give an unnamed session a heuristic name derived
-   *  from its first (non-command) user message. The displayName guard makes
-   *  this fire once and never overwrites a manually-set name. */
-  function maybeAutoNameSession(session: { id: string; displayName?: string | null }) {
-    if (session.displayName) return;
-    const firstUser = messageStore
-      .getMessages(session.id)
-      .find((m) => m.kind === 'user' && !m.text.startsWith('/'));
-    if (!firstUser || firstUser.kind !== 'user') return;
-    const name = deriveSessionName(firstUser.text);
-    if (!name) return;
-    window.groveBench
-      .renameSession(session.id, name)
-      .then(() => store.updateDisplayName(session.id, name))
-      .catch(() => { /* non-fatal — naming is best-effort */ });
+  /** Refresh a session's automatic name: the provider's title when it has
+   *  one, else a name from the first prompt. Main decides whether it changes
+   *  and never replaces a name the user set. */
+  async function autoNameSession(sessionId: string): Promise<void> {
+    try {
+      const name = await window.groveBench.autoNameSession(sessionId);
+      if (name) store.updateDisplayName(sessionId, name);
+    } catch { /* non-fatal — naming is best-effort */ }
+  }
+
+  async function refreshAutoNames(sessionIds: string[]): Promise<void> {
+    for (const id of sessionIds) await autoNameSession(id);
   }
 
   // Clear flash when switching to a session

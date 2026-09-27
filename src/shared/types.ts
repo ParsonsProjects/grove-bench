@@ -668,6 +668,10 @@ export interface GroveBenchAPI {
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
+  /** Refresh a conversation's automatic name (provider title, else a name
+   *  from the first prompt). Resolves to the new name, or null when it is
+   *  unchanged or was set by the user. */
+  autoNameSession(sessionId: string): Promise<string | null>;
   /** Persist the completed flag (see WorktreeInfo.completedAt). */
   setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
@@ -1193,6 +1197,7 @@ export const IPC = {
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
+  SESSION_AUTO_NAME: 'session:autoName',
   SESSION_SET_COMPLETED: 'session:setCompleted',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
