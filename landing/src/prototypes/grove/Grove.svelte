@@ -225,8 +225,10 @@
 
   function updateInset() {
     if (!scene) return;
+    // The room kept for the title shrinks as it fades, so the camera slides
+    // right with the scroll instead of jumping.
     const out = smoothstep((progress - 0.02) / 0.07);
-    const inset = titleEl && wide && out < 0.5 ? titleEl.offsetLeft + titleEl.offsetWidth + 8 : 0;
+    const inset = titleEl && wide ? (titleEl.offsetLeft + titleEl.offsetWidth + 8) * (1 - out) : 0;
     scene.setInsetLeft(inset);
   }
 
@@ -441,7 +443,7 @@
   const sceneLabel = $derived(
     `Pixel art grove at ${chapter >= 5 ? 'dawn' : 'night'}. Each tree is a git worktree, each agent on a bench is one AI conversation, and each lamp shows its status. ${NUMBER_WORDS[count] ?? count} conversations: ` +
       agents.map((a) => `${a.branch} (${statusLabel(a.status).toLowerCase()})`).join(', ') +
-      '. An old tree with a glowing stone stands on the left, a sundial and a gate marked main on the right.',
+      '. Further along the path: an old tree with a glowing stone, a sundial, and a gate marked main.',
   );
 
   const toolTone = {

@@ -42,14 +42,34 @@ import {
 } from './sprites.js';
 import { STARTING_AGENTS, PLANTED_AGENTS, createAgent, stepAgent, answerAgent, activityFor } from './agents.js';
 
+// The world reads left to right in chapter order, so scrolling only ever
+// walks the camera one way: the grove of benches (Welcome, Worktrees,
+// Terminals), the old tree (Project memory), the sundial (Checkpoints) and
+// the gate to main (Review and ship).
 export const LAYOUT = {
-  oldTree: -34,
-  stone: -6,
-  // Slots in the order they fill: three starting trees, then new ones to the left.
-  slots: [260, 330, 400, 190, 120],
-  sundial: 466,
-  gate: 534,
+  // Slots in the order they fill: three starting trees, then new ones to the
+  // left, behind you rather than on the road ahead.
+  slots: [120, 190, 260, 50, -20],
+  oldTree: 412,
+  stone: 384, // left of the old tree, facing the benches its threads run to
+  sundial: 494,
+  gate: 572,
 };
+
+// Bushes and flowers along the road between the stops.
+const DECOR = [
+  { x: 312, kind: 'bush' },
+  { x: 334, kind: 'flowers' },
+  { x: 354, kind: 'small' },
+  { x: 462, kind: 'flowers' },
+  { x: 532, kind: 'small' },
+  { x: 544, kind: 'flowers' },
+  { x: 614, kind: 'bush' },
+  { x: 642, kind: 'flowers' },
+];
+
+// Share of each chapter the camera holds still before it moves on.
+const HOLD = 0.6;
 
 const TREE_BLOCK = 7;
 const TREE_EXTRA = 1;
@@ -93,15 +113,18 @@ export function createScene(canvas, options = {}) {
   let insetLeftCss = 0;
   let camX = 200;
   let camReady = false;
-  let focusOverride = null; // { range, pri, until }
+  // A short look at one tree (a planted one, or an agent you tabbed to),
+  // blended over the scroll position and released smoothly.
+  let override = null; // { pri, until }
+  let overrideW = 0;
 
   // Layers.
   const world = makeCanvas(W, H);
   const skyLayer = makeCanvas(W, H);
   let skyKey = '';
   let ground = null; // cached ground strip
-  const GROUND_FROM = -420;
-  const GROUND_TO = 1000;
+  const GROUND_FROM = -700;
+  const GROUND_TO = 1400;
   const treeCache = new Map();
   const moon = moonSprite();
   const sun = sunSprite();
@@ -251,33 +274,63 @@ export function createScene(canvas, options = {}) {
     return [Math.min(...xs) - 34, Math.max(...xs) + 34];
   }
 
-  function focusFor(ch) {
-    const [a, b] = plotsRange();
-    const rewindX = LAYOUT.slots[REWIND_SLOT];
+  /** Camera left edge that fits `range`, or centres `pri` when it cannot. */
+  function fitCam(range, pri, inset = 0) {
+    inset = Math.min(inset, W * 0.6);
+    const avail = W - inset;
+    const [a, b] = range;
+    const centre = b - a <= avail ? (a + b) / 2 : clamp(pri, a + avail / 2, b - avail / 2);
+    return centre - avail / 2 - inset;
+  }
+
+  /** Where the camera rests for a chapter, before the one-way rule. */
+  function anchorFor(ch) {
+    const grove = plotsRange();
+    const middle = LAYOUT.slots[1] + 4;
     switch (ch) {
       case 0:
         // Keep every tree clear of the title: if they do not all fit, crop on the right.
-        return { range: [a, b], pri: insetLeftCss > 0 ? -Infinity : LAYOUT.slots[1] + 4, inset: insetLeftCss / k };
+        return fitCam(grove, insetLeftCss > 0 ? -Infinity : middle, insetLeftCss / k);
+      case 1:
+      case 2:
+        return fitCam(grove, middle);
       case 3:
-        return { range: [LAYOUT.oldTree - 46, b], pri: LAYOUT.oldTree + 38 };
-      case 4:
-        return { range: [rewindX - 32, LAYOUT.sundial + 20], pri: LAYOUT.sundial - 10 };
-      case 5:
-        return { range: [a, LAYOUT.gate + 22], pri: Infinity };
+        // The old tree in the middle, its threads running back to the benches.
+        return LAYOUT.oldTree - W * 0.5;
+      case 4: {
+        const range = [LAYOUT.slots[REWIND_SLOT] - 32, LAYOUT.sundial + 20];
+        // Narrow screens: sundial on the left, gate ahead, the old tree just behind you.
+        return range[1] - range[0] <= W ? fitCam(range, LAYOUT.sundial) : LAYOUT.sundial - W * 0.25;
+      }
       default:
-        return { range: [a, b], pri: LAYOUT.slots[1] + 4 };
+        // The gate on the right, the light arriving along the path from the left.
+        return LAYOUT.gate - W * 0.7;
     }
   }
 
+  /** One anchor per chapter, never decreasing, so the camera only moves right. */
+  function anchors() {
+    const out = [];
+    for (let ch = 0; ch < 6; ch++) out.push(ch ? Math.max(anchorFor(ch), out[ch - 1]) : anchorFor(0));
+    return out;
+  }
+
+  /**
+   * The camera as a pure function of scroll: hold at a chapter's anchor for
+   * the first part of the chapter, then ease to the next one. Scrolling up
+   * retraces the same path.
+   */
+  function scrollCam() {
+    const a = anchors();
+    if (chapter >= 5 || local <= HOLD) return a[Math.min(chapter, 5)];
+    const u = smooth(HOLD, 1, local);
+    return a[chapter] + (a[chapter + 1] - a[chapter]) * u;
+  }
+
   function cameraTarget() {
-    const f = focusOverride && focusOverride.until > time ? focusOverride : focusFor(chapter);
-    const inset = Math.min(f.inset ?? 0, W * 0.6);
-    const avail = W - inset;
-    const [a, b] = f.range;
-    let centre;
-    if (b - a <= avail) centre = (a + b) / 2;
-    else centre = clamp(f.pri, a + avail / 2, b - avail / 2);
-    return centre - avail / 2 - inset;
+    const base = scrollCam();
+    if (!override || overrideW <= 0) return base;
+    return base + (fitCam(plotsRange(), override.pri) - base) * overrideW;
   }
 
   // -------------------------------------------------------------------------
@@ -289,7 +342,7 @@ export function createScene(canvas, options = {}) {
     local = loc;
     tod = t;
     if (changed) {
-      focusOverride = null;
+      if (override) override.until = 0;
       if (ch === 1 && !reduced) {
         for (const p of plots) p.shake = 0.5;
         for (const p of plots) burstLeaves(p.x, groundY - 50, 5, 0.6);
@@ -349,10 +402,9 @@ export function createScene(canvas, options = {}) {
     plot.agent.bubble = null;
     if (reduced) {
       plot.agent.bubble = { tool: def.script[0][0], detail: def.script[0][1] };
-      camX = cameraTarget();
+      camX = scrollCam();
     } else {
-      const [a, b] = plotsRange();
-      focusOverride = { range: [a, b], pri: plot.x, until: time + 7 };
+      override = { pri: plot.x, until: time + 7 };
     }
     onchange();
     return index;
@@ -400,13 +452,10 @@ export function createScene(canvas, options = {}) {
 
   function focusPlot(index) {
     const p = plots[index];
-    if (!p) return;
-    const [a, b] = plotsRange();
-    const view = cameraTarget();
-    const sx = p.x - view;
+    if (!p || reduced) return;
+    const sx = p.x - camX;
     if (sx > 34 && sx < W - 34) return; // already on screen
-    focusOverride = { range: [a, b], pri: p.x, until: time + 6 };
-    if (reduced) camX = cameraTarget();
+    override = { pri: p.x, until: time + 6 };
   }
 
   // -------------------------------------------------------------------------
@@ -459,9 +508,15 @@ export function createScene(canvas, options = {}) {
     // Time of day eases after the scroll position.
     todShown += (tod - todShown) * (1 - Math.exp(-dt * 4));
 
-    // Camera.
+    // Camera: follows the scroll, with only light smoothing for wheel steps.
+    const looking = override && override.until > time;
+    overrideW += ((looking ? 1 : 0) - overrideW) * (1 - Math.exp(-dt * 2.5));
+    if (!looking && overrideW < 0.002) {
+      override = null;
+      overrideW = 0;
+    }
     const target = cameraTarget();
-    camX += (target - camX) * (1 - Math.exp(-dt * 2.4));
+    camX += (target - camX) * (1 - Math.exp(-dt * 14));
 
     // Chapter animations.
     const t = targets();
@@ -640,6 +695,7 @@ export function createScene(canvas, options = {}) {
     w.globalCompositeOperation = 'source-over';
     w.clearRect(0, 0, W, H);
     drawGround(w, cam);
+    drawDecor(w, cam);
     drawTufts(w, cam, tt, 1);
     drawOldTree(w, cam);
     drawFences(w, cam);
@@ -751,8 +807,9 @@ export function createScene(canvas, options = {}) {
     ctx.globalAlpha = alpha;
     for (const c of clouds) {
       const span = W + c.w + 20;
+      // Clouds drift the same way the world pans as you scroll on.
       const drift = reduced ? 0 : tt * c.speed;
-      const x0 = Math.round(((((c.x - camX * c.par + drift) % span) + span) % span) - c.w - 10);
+      const x0 = Math.round(((((c.x - camX * c.par - drift) % span) + span) % span) - c.w - 10);
       c.rows.forEach((run, y) => {
         if (!run) return;
         const [a, b] = run;
@@ -790,7 +847,7 @@ export function createScene(canvas, options = {}) {
     if (a <= 0.01) return;
     ctx.fillStyle = rgba('#1e2433', a * 0.85);
     for (let i = 0; i < 3; i++) {
-      const x = Math.round((((reduced ? 40 + i * 60 : tt * 11) + i * 23 + 60) % (W + 60)) - 30);
+      const x = Math.round(W + 30 - ((((reduced ? 40 + i * 60 : tt * 11) + i * 23 + 60) % (W + 60))));
       const y = Math.round(Math.max(18, groundY - 110) + i * 7 + Math.sin(tt * 0.8 + i) * 2);
       const up = Math.floor(tt * 4 + i) % 2 === 0;
       if (up) {
@@ -1093,6 +1150,23 @@ export function createScene(canvas, options = {}) {
       w.fillStyle = C.wood;
       w.fillRect(x - 2, groundY - 1, 1, 1);
       w.fillRect(x + 2, groundY, 1, 1);
+    });
+  }
+
+  function drawDecor(w, cam) {
+    DECOR.forEach((d, i) => {
+      const x = d.x - cam;
+      if (x < -20 || x > W + 20) return;
+      if (d.kind === 'flowers') {
+        for (const [fx, col] of [[-4, C.amberLight], [0, C.cream], [3, C.primaryPale], [6, C.cream]]) {
+          w.fillStyle = C.grassDark;
+          w.fillRect(x + fx, groundY - 2, 1, 3);
+          w.fillStyle = col;
+          w.fillRect(x + fx, groundY - 3, 1, 1);
+        }
+      } else {
+        drawBush(w, x, groundY, 40 + i, d.kind === 'small');
+      }
     });
   }
 
@@ -1578,6 +1652,7 @@ export function createScene(canvas, options = {}) {
     },
     setInsetLeft(css) {
       insetLeftCss = css;
+      if (reduced) camX = cameraTarget();
     },
     setHover(i) {
       hover = i;
@@ -1603,6 +1678,10 @@ export function createScene(canvas, options = {}) {
     },
     get merged() {
       return merged;
+    },
+    /** Camera left edge in art pixels, for checking the one-way pan. */
+    get camera() {
+      return camX;
     },
   };
 }
