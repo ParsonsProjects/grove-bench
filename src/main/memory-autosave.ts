@@ -4,6 +4,7 @@ import * as memoryCompact from './memory-compact.js';
 import * as settings from './settings.js';
 import type { AgentEvent } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
+import { backgroundModelFor } from './background-tasks.js';
 
 // ─── Types ───
 
@@ -257,7 +258,7 @@ async function runExtraction(
   // Safety timeout: 60 seconds
   const timeout = setTimeout(() => abortController.abort(), 60_000);
   try {
-    const model = settings.getSettings().memoryModel || undefined;
+    const model = backgroundModelFor(adapter);
     const resultText = await adapter.generateText(
       systemPrompt,
       'Extract memories from the conversation above. Respond with JSON only.',

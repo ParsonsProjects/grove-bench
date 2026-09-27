@@ -34,7 +34,7 @@ beforeEach(() => {
   messageStore.modeBySession = { [SID]: 'default' };
   messageStore.controlsBySession = { [SID]: { descriptors: DESCRIPTORS as any, values: { thinking: 'high', speed: 'standard' } } };
   mockGroveBench.listAdapters.mockResolvedValue([
-    { id: 'claude-code', displayName: 'Claude Code', capabilities: {} },
+    { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} },
     { id: 'codex', displayName: 'Codex', capabilities: {} },
   ]);
 });
@@ -63,7 +63,7 @@ describe('SessionControlsPopover', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     const trigger = screen.getByTitle(/Agent settings/);
-    expect(trigger).toHaveTextContent('Claude Code');
+    expect(trigger).toHaveTextContent('Claude Agent');
     expect(trigger).toHaveTextContent('Opus 5');
     expect(trigger).toHaveTextContent('Code');
     expect(trigger).not.toHaveTextContent('High');
@@ -88,14 +88,14 @@ describe('SessionControlsPopover', () => {
     }
     // Other agents are listed but cannot be switched mid-session
     expect(screen.getByRole('button', { name: 'Codex' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Claude Code' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Claude Code' })).toHaveAttribute('title', 'Current agent');
+    expect(screen.getByRole('button', { name: 'Claude Agent' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Claude Agent' })).toHaveAttribute('title', 'Current agent');
   });
 
   it('divides grouped options from the provider\'s own with the group as a heading', async () => {
     const dialog = await openPopover();
     const heading = within(dialog).getByText('Grove Bench');
-    expect(heading).toHaveAttribute('title', 'Not a Claude Code option');
+    expect(heading).toHaveAttribute('title', 'Not a Claude Agent option');
     // The heading sits between the provider's modes and the grouped one.
     const modeButtons = within(dialog).getAllByRole('button', { name: /^(Code|Plan|Read-safe)$/ });
     expect(modeButtons.map((b) => b.textContent?.trim())).toEqual(['Code', 'Plan', 'Read-safe']);

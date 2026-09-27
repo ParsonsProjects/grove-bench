@@ -8,7 +8,11 @@ Click the **+ Project** button at the bottom of the sidebar to add a project. Br
 
 ## Starting a Conversation
 
-Click the **+ Conversation** button at the bottom of the sidebar to open the **New Conversation** dialog. Pick a project, then choose one of three options under **Branch Mode**:
+Click the **+ Conversation** button at the bottom of the sidebar to open the **New Conversation** dialog. If more than one agent is installed, pick one under **Agent**; otherwise the dialog skips that choice.
+
+The first time you use an agent, you may be asked for its credentials. Paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. The key is stored encrypted on this computer. If you already signed in with `claude auth login` in a terminal, or set `ANTHROPIC_API_KEY`, click **Re-check** instead. You can change or remove the key later in **Settings > Agent**.
+
+Pick a project, then choose one of three options under **Branch Mode**:
 
 - **New branch** — Creates a new branch and a new worktree for it, so the agent's changes stay away from your other branches. This is the recommended choice for most tasks. Enter a **Branch Name**, and optionally a **Base Branch** (a branch, tag or commit hash) to start from. The base is prefilled with **Default Base Branch** from **Settings → General**, or the project's default branch (e.g. `main`), and Grove Bench fetches its latest commits from `origin` first when it can.
 - **Existing branch** — Creates a new worktree for a branch that already exists, local or remote. The list leaves out branches that another conversation in this project is already using.

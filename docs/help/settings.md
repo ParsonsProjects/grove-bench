@@ -17,10 +17,15 @@ Control how the agent handles actions that need approval:
 
 ## Agent
 
-Configure agent behavior:
+Configure agent behavior. There is one group per installed agent, each with:
 
-- **Default Model** — The model ID new conversations use. Leave it empty to use the SDK default
-- **Claude Code defaults** — One such group per installed agent, named after the agent, listing the conversation controls that agent declares for the default model (for Claude Code: **Default Effort**, **Default Thinking** and **Default Speed**, each shown only when the default model offers it). Pick the value new conversations start with; each conversation can still change it from the status bar
+- **Credentials** — Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
+- **Default Model** — Pick the model new conversations with this agent start on. The list comes from the agent itself and updates after a conversation starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
+- **Background Model** — The model used for this agent's background tasks: memory notes, memory compaction, commit messages and skill suggestions. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider you chose for it
+- **Default Effort**, **Default Thinking**, **Default Speed** — The conversation controls the agent declares for its default model (for Claude Agent, each one shows only when the default model offers it). Pick the value new conversations start with; each conversation can still change it from the status bar
+
+These apply to every agent:
+
 - **System Prompt Append** — Add custom instructions that apply to all conversations
 - **Additional Working Directories** — Extra directories the agent can access
 
