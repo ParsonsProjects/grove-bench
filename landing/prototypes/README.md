@@ -68,15 +68,47 @@ Good: shows the product instead of describing it, which suits a developer audien
 
 The name made literal: a pixel-art grove where each agent works at its own bench under its own tree. It's drawn on a small canvas scaled up by whole pixels.
 
+- A key and first-view callouts explain the metaphor (tree = git worktree, agent = AI conversation, lamp = status), and a small app-styled panel shows the real view for each chapter.
 - Fireflies follow the pointer. Click an agent for an RPG-style dialogue; one asks for permission.
-- Plant a tree starts a new conversation: the tree grows, and an agent walks in and sits down.
-- Scrolling moves night to day through five chapters: worktrees, terminals, memory, a sundial for checkpoints, and branches heading home to main.
+- + Conversation plants a tree: it grows, and an agent walks in and sits down.
+- Scrolling moves night to day and walks the camera left to right through five chapters: Worktrees, Terminals, Project memory, Checkpoints (a sundial) and Review and ship (the main gate). The camera follows scroll and never goes back.
 
 Good: the most memorable and shareable, with a strong personality. Watch: it may undersell a serious developer tool, it holds less information, and the scene is canvas (the copy in the dialogue box is still HTML).
 
+## Vertical grove mixes
+
+After reviewing A to C, three more mix Branches' vertical scroll with Night Grove's characters, kept mostly pixel. They follow the Night Grove feedback: a plain description up top, a labelled key, plain section titles, and scroll-driven motion that only goes one way (each was checked by sampling positions at 40 scroll points; scrolling up retraces exactly). They import Night Grove's `sprites.js`, `palette.js`, `agents.js` and `Dialogue.svelte` read-only, so changes there affect them too.
+
+### D. Grove Path (`src/prototypes/path/`, about 3,500 lines)
+
+The git graph is a top-down pixel map: main is a stone path, each branch a dirt lane. The three characters walk down their lanes in step with the scroll, sit at benches to work, and pass through the main gate at the end.
+
+- feat/api waits at a gate until you answer Allow / Always Allow / Deny. Deny sends it round a detour.
+- Dragging the sundial walks fix/login-bug back up to earlier checkpoint stones.
+
+Watch: the characters are small, and the sky only exists in the hero, so day arrives as light on the meadow.
+
+### E. Grove Log (`src/prototypes/log/`, about 5,200 lines)
+
+Branches' layout kept whole, with a pixel-style gutter graph (lantern nodes in status colours) and a small pixel scene for every commit. One night passes from the first scene to the last.
+
+- The feat/api lane in the gutter pauses at the permission commit until you answer.
+- A sundial shrinks the fix/login-bug tree back through earlier turns.
+
+Watch: nine small canvases and three characters per scene make for a lot of tab stops.
+
+### F. Canopy (`src/prototypes/canopy/`, about 4,100 lines)
+
+One fixed canvas behind the page draws a tall grove. You scroll from the night sky down through one giant tree: the trunk is main, the three limbs are worktrees with an agent on a deck each, and the roots lead to the main gate at dawn.
+
+- Permission prompt and a slider that winds the fix/login-bug limb back through its rings.
+- At the end the agents climb down and walk to the gate.
+
+Watch: three decks serve five sections, so the Terminals section mostly shows limbs, and the sundial is crowded on phones.
+
 ## My take
 
-Branches is the safest base. Workbench makes the strongest case for the product. A mix could work: the Branches page structure with the Workbench simulator as its hero. Night Grove would suit a launch post or release page better than the main page. That is a judgement call, so push back if you see it differently.
+Branches is the safest base. Workbench makes the strongest case for the product. Of the mixes, Canopy has the most personality and Grove Log keeps the most of the Branches clarity. That is a judgement call, so push back if you see it differently.
 
 ## Not checked yet
 
