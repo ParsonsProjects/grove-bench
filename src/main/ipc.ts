@@ -712,29 +712,33 @@ export function registerHandlers() {
     // Cross-session search for the SessionFinder. Same prelaunch-prefixed index
     // space as AGENT_HISTORY_SEARCH, so hits feed the same jump path.
     const generation = ++searchAllGeneration;
-    sessionManager.beginSearch();
-    const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
-    const perSession = limitPerSession ?? 5;
-    let sliceStart = performance.now();
-    for (const id of sessionIds ?? []) {
-      if (maxHits !== undefined && hits.length >= maxHits) break;
-      try {
-        for (const hit of searchPrefixedHistory(id, query, perSession)) {
-          hits.push({ ...hit, sessionId: id });
+    const endSweep = sessionManager.beginSearch({ sweep: true });
+    try {
+      const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
+      const perSession = limitPerSession ?? 5;
+      let sliceStart = performance.now();
+      for (const id of sessionIds ?? []) {
+        if (maxHits !== undefined && hits.length >= maxHits) break;
+        try {
+          for (const hit of searchPrefixedHistory(id, query, perSession)) {
+            hits.push({ ...hit, sessionId: id });
+          }
+        } catch (e) {
+          logger.warn(`[history-search-all] search failed for ${id}:`, e);
         }
-      } catch (e) {
-        logger.warn(`[history-search-all] search failed for ${id}:`, e);
+        // The first search after launch parses every log it reaches. Yield now
+        // and then so terminals and other IPC keep flowing, and give up once a
+        // newer query has replaced this one (the renderer drops stale results).
+        if (performance.now() - sliceStart > 16) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (generation !== searchAllGeneration) return [];
+          sliceStart = performance.now();
+        }
       }
-      // The first search after launch parses every log it reaches. Yield now
-      // and then so terminals and other IPC keep flowing, and give up once a
-      // newer query has replaced this one (the renderer drops stale results).
-      if (performance.now() - sliceStart > 16) {
-        await new Promise((resolve) => setImmediate(resolve));
-        if (generation !== searchAllGeneration) return [];
-        sliceStart = performance.now();
-      }
+      return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
+    } finally {
+      endSweep();
     }
-    return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
   });
 
   ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {

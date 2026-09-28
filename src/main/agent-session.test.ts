@@ -2838,6 +2838,23 @@ describe('AgentSessionManager skill suggestions', () => {
   });
 });
 
+describe('AgentSessionManager.beginSearch()', () => {
+  it("doesn't let a single-conversation search start a new pass during a sweep", () => {
+    const beginPass = vi.spyOn((sessionManager as unknown as { searchIndexes: { beginPass(): void } }).searchIndexes, 'beginPass');
+    const endSweep = sessionManager.beginSearch({ sweep: true });
+    expect(beginPass).toHaveBeenCalledTimes(1);
+
+    sessionManager.beginSearch(); // Ctrl+F while the sweep is paused
+    expect(beginPass).toHaveBeenCalledTimes(1);
+
+    endSweep();
+    endSweep(); // ending twice is harmless
+    sessionManager.beginSearch();
+    expect(beginPass).toHaveBeenCalledTimes(2);
+    beginPass.mockRestore();
+  });
+});
+
 describe('MCP elicitation', () => {
   async function startSession(id: string) {
     await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });

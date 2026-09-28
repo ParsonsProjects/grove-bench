@@ -2024,10 +2024,26 @@ class AgentSessionManager {
     });
   }
 
-  /** Start a search request. Indexes it touches stay cached for the whole
-   *  request, so a sweep over every conversation can't evict its own work. */
-  beginSearch(): void {
-    this.searchIndexes.beginPass();
+  /** Cross-conversation search sweeps in progress (see beginSearch). */
+  private searchSweeps = 0;
+
+  /**
+   * Start a search request. Indexes it touches stay cached for the whole
+   * request, so a sweep over every conversation can't evict its own work.
+   * A single-conversation search that runs while a sweep is paused between
+   * slices joins the sweep's pass: a new pass would make the indexes the
+   * sweep already built evictable. Returns a function that ends the request.
+   */
+  beginSearch(opts: { sweep?: boolean } = {}): () => void {
+    if (opts.sweep || this.searchSweeps === 0) this.searchIndexes.beginPass();
+    if (!opts.sweep) return () => {};
+    this.searchSweeps++;
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      this.searchSweeps--;
+    };
   }
 
   /** Search a session's history, newest match first (see searchEvents). */
