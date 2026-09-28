@@ -6,7 +6,7 @@
 > - Release weekly.
 > - Going stable is decided later.
 > - Code signing is not a blocker.
-> - Add a 7-day minimum package age for npm installs.
+> - Add a 7-day minimum package age for npm installs. **Done:** Part 3 is implemented on this branch.
 
 ## Where things stand
 
@@ -154,7 +154,7 @@ Pre-release numbers compare numerically (`alpha.10 > alpha.9`), per SemVer 2.0.0
 - **A release on every merge.** Too many restart prompts (see the burst numbers above).
 - **A workflow that bumps and pushes to `main`.** Blocked by branch protection.
 
-## Part 3: minimum package age (`.npmrc`)
+## Part 3: minimum package age (`.npmrc`) (implemented)
 
 **Goal:** don't install a package version until it has been public for 7 days. A hijacked release is usually spotted and pulled within that time.
 

@@ -9,6 +9,9 @@
     "url": "https://github.com/ParsonsProjects/grove-bench.git"
   },
   "main": "dist/main/index.js",
+  "engines": {
+    "npm": ">=11.10.0"
+  },
   "scripts": {
     "start": "node scripts/dev.mjs",
     "build": "npm run build:main && npm run build:preload && npm run build:renderer",
