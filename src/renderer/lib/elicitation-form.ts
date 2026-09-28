@@ -27,8 +27,9 @@ export type ElicitationField =
   | FieldBase & { kind: 'select'; options: ElicitationOption[]; default?: string }
   | FieldBase & { kind: 'multiselect'; options: ElicitationOption[]; minItems?: number; maxItems?: number; default?: string[] };
 
-/** What the form holds while the user types: text and number inputs stay strings. */
-export type ElicitationValues = Record<string, string | boolean | string[] | undefined>;
+/** What the form holds while the user types. A bound `<input type="number">`
+ *  holds a number, or null when empty; defaults start as strings. */
+export type ElicitationValues = Record<string, string | number | boolean | string[] | null | undefined>;
 
 type Content = NonNullable<McpElicitationResponse['content']>;
 
@@ -142,7 +143,7 @@ export function elicitationContent(fields: ElicitationField[], values: Elicitati
       else if (picked.length > 0) content[f.key] = picked;
       continue;
     }
-    const text = typeof v === 'string' ? v.trim() : '';
+    const text = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : '';
     if (!text) {
       if (f.required) errors[f.key] = 'Required';
       continue;

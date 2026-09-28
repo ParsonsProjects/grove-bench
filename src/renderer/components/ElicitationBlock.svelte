@@ -144,7 +144,7 @@
                 step={field.integer ? 1 : 'any'}
                 min={field.minimum}
                 max={field.maximum}
-                bind:value={values[field.key] as string}
+                bind:value={values[field.key] as number | null}
                 class="w-full bg-card border border-border px-2 py-1 text-foreground focus:outline-none focus:border-primary"
               />
             {:else if field.kind === 'select'}

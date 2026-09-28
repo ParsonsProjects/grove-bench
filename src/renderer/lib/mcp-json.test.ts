@@ -30,7 +30,7 @@ describe('parseMcpJson()', () => {
       ok: true,
       servers: [{ name: 'x', transport: 'http', commandOrUrl: 'https://x.example/mcp' }],
     });
-    expect(parseMcpJson('{"url":"https://x.example/mcp"}')).toMatchObject({ ok: false, error: expect.stringMatching(/Name field/) });
+    expect(parseMcpJson('{"url":"https://x.example/mcp"}')).toMatchObject({ ok: false, needsName: true });
   });
 
   it('maps streamable-http to http', () => {

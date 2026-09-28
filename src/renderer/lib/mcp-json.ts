@@ -5,7 +5,7 @@ export type ParsedMcpServer = Omit<McpAddServerOpts, 'scope' | 'cwd'>;
 
 export type McpJsonParseResult =
   | { ok: true; servers: ParsedMcpServer[] }
-  | { ok: false; error: string };
+  | { ok: false; error: string; /** A single config with no name: ask for one. */ needsName?: boolean };
 
 /** The CLI's own rule for server names (`claude mcp add` rejects the rest). */
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
@@ -36,7 +36,7 @@ export function parseMcpJson(text: string, fallbackName = ''): McpJsonParseResul
     entries = Object.entries(wrapped);
   } else if (looksLikeServer(data)) {
     const name = fallbackName.trim();
-    if (!name) return { ok: false, error: 'This config has no server name. Enter one in the Name field.' };
+    if (!name) return { ok: false, error: 'This config has no server name. Enter one below.', needsName: true };
     entries = [[name, data]];
   } else {
     entries = Object.entries(data);

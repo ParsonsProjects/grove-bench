@@ -43,6 +43,19 @@ describe('ElicitationBlock', () => {
     });
   });
 
+  it('sends what the user types into a number field as a number', async () => {
+    const request = {
+      serverName: 'deploy',
+      message: 'How many replicas?',
+      mode: 'form' as const,
+      requestedSchema: { type: 'object', properties: { replicas: { type: 'integer', title: 'Replicas' } }, required: ['replicas'] },
+    };
+    render(ElicitationBlock, { sessionId: 's1', requestId: 'e5', request, resolved: false });
+    await fireEvent.input(screen.getByLabelText(/Replicas/), { target: { value: '3' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    expect(window.groveBench.respondToElicitation).toHaveBeenCalledWith('s1', 'e5', { action: 'accept', content: { replicas: 3 } });
+  });
+
   it('declines', async () => {
     render(ElicitationBlock, { sessionId: 's1', requestId: 'e2', request: formRequest, resolved: false });
     await fireEvent.click(screen.getByRole('button', { name: 'Decline' }));

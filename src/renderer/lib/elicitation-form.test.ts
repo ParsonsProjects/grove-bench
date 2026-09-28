@@ -56,6 +56,14 @@ describe('elicitationContent()', () => {
     });
   });
 
+  it('accepts the numbers a bound number input holds', () => {
+    const base = { ...initialElicitationValues(fields), name: 'Ada', color: 'r' };
+    expect(elicitationContent(fields, { ...base, count: 4 })).toMatchObject({ content: { count: 4 } });
+    expect(elicitationContent(fields, { ...base, count: 0 })).toEqual({ errors: { count: 'Must be at least 1' } });
+    // Cleared input: null, and count is optional
+    expect(elicitationContent(fields, { ...base, count: null })).not.toHaveProperty('content.count');
+  });
+
   it('rejects non-integers for integer fields', () => {
     const values = { ...initialElicitationValues(fields), name: 'Ada', color: 'r', count: '1.5' };
     expect(elicitationContent(fields, values)).toEqual({ errors: { count: 'Enter a whole number' } });

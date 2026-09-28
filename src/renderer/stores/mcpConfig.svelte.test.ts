@@ -18,6 +18,7 @@ beforeEach(() => {
   mcpConfigStore.loaded = false;
   mcpConfigStore.error = null;
   mcpConfigStore.actionInProgress = null;
+  mcpConfigStore.cwd = undefined;
 });
 
 describe('refresh', () => {
@@ -34,6 +35,33 @@ describe('refresh', () => {
     await mcpConfigStore.refresh();
     expect(mcpConfigStore.error).toBe('boom');
     expect(mcpConfigStore.loaded).toBe(false);
+  });
+});
+
+describe('project', () => {
+  const list = () => mockGroveBench.mcpConfigList as ReturnType<typeof vi.fn>;
+
+  it('switches back to user servers only', async () => {
+    list().mockResolvedValue([]);
+    await mcpConfigStore.showProject('C:/dev/app');
+    await mcpConfigStore.showProject(undefined);
+    expect(mcpConfigStore.cwd).toBeUndefined();
+    expect(list()).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('shows the project a project-scope server was added to', async () => {
+    list().mockResolvedValue([]);
+    await mcpConfigStore.showProject('C:/dev/a');
+    await mcpConfigStore.add({ name: 'x', transport: 'stdio', commandOrUrl: 'y', scope: 'project', cwd: 'C:/dev/b' });
+    expect(mcpConfigStore.cwd).toBe('C:/dev/b');
+    expect(list()).toHaveBeenLastCalledWith('C:/dev/b');
+  });
+
+  it('keeps the listed project after adding a user server', async () => {
+    list().mockResolvedValue([]);
+    await mcpConfigStore.showProject('C:/dev/a');
+    await mcpConfigStore.add({ name: 'x', transport: 'stdio', commandOrUrl: 'y', scope: 'user' });
+    expect(list()).toHaveBeenLastCalledWith('C:/dev/a');
   });
 });
 

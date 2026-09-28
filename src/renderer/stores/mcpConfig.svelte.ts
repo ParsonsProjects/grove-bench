@@ -23,16 +23,22 @@ class McpConfigStore {
    *  for one project; undefined lists user-level servers only. */
   cwd = $state<string | undefined>(undefined);
 
-  async refresh(cwd: string | undefined = this.cwd) {
+  /** List the servers for `cwd`; undefined lists user servers only. */
+  async showProject(cwd: string | undefined) {
+    this.cwd = cwd;
+    await this.refresh();
+  }
+
+  /** Reload the list for the project it shows. */
+  async refresh() {
     if (!bridgeHas('mcpConfigList')) {
       this.error = STALE_BRIDGE_ERROR;
       return;
     }
-    this.cwd = cwd;
     this.loading = true;
     this.error = null;
     try {
-      this.servers = await window.groveBench.mcpConfigList(cwd);
+      this.servers = await window.groveBench.mcpConfigList(this.cwd);
       this.loaded = true;
     } catch (e: any) {
       this.error = e.message || String(e);
@@ -51,7 +57,7 @@ class McpConfigStore {
     this.error = null;
     try {
       await window.groveBench.mcpConfigAdd(opts);
-      await this.refresh();
+      await this.showAdded(opts);
       return true;
     } catch (e: any) {
       this.error = e.message || String(e);
@@ -104,10 +110,17 @@ class McpConfigStore {
       this.actionInProgress = null;
       this.actionKind = null;
     }
-    // refresh() clears the error, so set it after
-    if (added.length > 0) await this.refresh();
+    // Refreshing clears the error, so set it after
+    if (added.length > 0) await this.showAdded(list[0]);
     if (error) this.error = added.length > 0 ? `Added ${added.join(', ')}, then failed: ${error}` : error;
     return added;
+  }
+
+  /** Reload after adding, switching to the project a project or local
+   *  server went into so it shows up in the list. */
+  private async showAdded(opts: McpAddServerOpts) {
+    if (opts.scope !== 'user' && opts.cwd && opts.cwd !== this.cwd) await this.showProject(opts.cwd);
+    else await this.refresh();
   }
 
   /** Approve a project (.mcp.json) server for the listed project. */

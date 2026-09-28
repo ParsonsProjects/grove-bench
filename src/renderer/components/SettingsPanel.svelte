@@ -77,7 +77,7 @@
     if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
       // Project and local servers only list for one project: start with the
       // open conversation's.
-      mcpConfigStore.refresh(mcpConfigStore.cwd ?? store.activeSession?.repoPath ?? store.repos[0]);
+      mcpConfigStore.showProject(mcpConfigStore.cwd ?? store.activeSession?.repoPath ?? store.repos[0]);
     }
     // Once per open. Keying this on `mcpRepos.length === 0` looped when there
     // were no projects: each empty result is a new array, which re-ran the
@@ -918,7 +918,7 @@
           <Select.Root
             type="single"
             value={mcpConfigStore.cwd ?? MCP_NO_PROJECT}
-            onValueChange={(v) => { if (v) mcpConfigStore.refresh(v === MCP_NO_PROJECT ? undefined : v); }}
+            onValueChange={(v) => { if (v) mcpConfigStore.showProject(v === MCP_NO_PROJECT ? undefined : v); }}
           >
             <Select.Trigger class="w-full" disabled={mcpConfigStore.loading}>
               <span class="truncate">{mcpConfigStore.cwd ?? 'None (user servers only)'}</span>
@@ -1104,7 +1104,7 @@
             </div>
             {#if mcpJsonParsed && !mcpJsonParsed.ok}
               <p class="text-xs text-destructive">{mcpJsonParsed.error}</p>
-              {#if mcpJsonParsed.error.includes('Name field')}
+              {#if mcpJsonParsed.needsName}
                 <div>
                   <Label for="mcp-json-name" class="mb-1 block">Name</Label>
                   <input
