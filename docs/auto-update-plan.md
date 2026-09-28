@@ -1,6 +1,12 @@
 # Auto-update plan
 
-> **Status: Proposed.** Nothing here is built yet. Decisions so far: cover both the in-app updater and release automation; download updates in the background and prompt to restart.
+> **Status: Proposed.** Nothing here is built yet. Decisions so far:
+> - Cover both the in-app updater and release automation.
+> - Download updates in the background and prompt to restart.
+> - Release weekly.
+> - Going stable is decided later.
+> - Code signing is not a blocker.
+> - Add a 7-day minimum package age for npm installs.
 
 ## Where things stand
 
@@ -108,7 +114,7 @@ Things that already work and should stay:
 - **Merges come in bursts.** Up to 8 a day (8 on both 18 and 27 Sep 2026). Releasing on every merge would mean several restart prompts a day.
 - **Commit titles are mostly not conventional commits.** 9 of the last 45 merges use them. Tools that pick the version from commit types (release-please, semantic-release) would miss most changes.
 
-### Recommended design: nightly pre-release when `main` has changed
+### Recommended design: weekly pre-release when `main` has changed
 
 The release version is worked out in CI and stamped into the build. `package.json` on `main` becomes the floor version, not the exact released one. That is the trade-off for not needing a bot commit or a personal access token.
 
@@ -124,7 +130,7 @@ Pre-release numbers compare numerically (`alpha.10 > alpha.9`), per SemVer 2.0.0
 
 **`.github/workflows/release.yml`**
 - Triggers:
-  - `schedule` (weekday nights, for example `'23 2 * * 1-5'`).
+  - `schedule`: weekly, for example Tuesday 05:23 UTC (`'23 5 * * 2'`). This is a different day from the Monday Package run (`'17 6 * * 1'`).
   - `workflow_dispatch` ("release now", optional `version` override).
   - `push` to `main` touching `package.json`. For push runs, only rule 2 can release, so dependency bumps don't cut releases.
   - Drop the tag-push trigger.
@@ -140,7 +146,7 @@ Pre-release numbers compare numerically (`alpha.10 > alpha.9`), per SemVer 2.0.0
 **Scripts and docs**
 - `scripts/release-check.mjs`: replace with `next-version.mjs`. Keep the semver validation, and drop "tag must equal package.json".
 - Add `scripts/**/*.test.mjs` to the `main` project in `vitest.config.mts`, and test the version rule: every branch above, plus alpha.9 to alpha.10.
-- `docs/electron-install.md`: rewrite "Release Workflow" (nightly, manual bump, pause switch, "release now").
+- `docs/electron-install.md`: rewrite "Release Workflow" (weekly, manual bump, pause switch, "release now").
 
 ### Alternatives considered
 
@@ -148,17 +154,65 @@ Pre-release numbers compare numerically (`alpha.10 > alpha.9`), per SemVer 2.0.0
 - **A release on every merge.** Too many restart prompts (see the burst numbers above).
 - **A workflow that bumps and pushes to `main`.** Blocked by branch protection.
 
+## Part 3: minimum package age (`.npmrc`)
+
+**Goal:** don't install a package version until it has been public for 7 days. A hijacked release is usually spotted and pulled within that time.
+
+### What npm does (tested)
+
+Tested on 28 Sep 2026 with `@types/node` 26.6.3, which was published 3 days earlier. The previous version, 26.6.2, was 9 days old.
+
+| Setup | Result |
+|---|---|
+| npm 11.20.0, `min-release-age=7`, `npm install @types/node@^26` | Installed 26.6.2, skipping the 3-day-old version |
+| Same with npm 10.9.7 | Installed 26.6.3 with no warning: older npm ignores the setting |
+| Lockfile already pins 26.6.3, setting on, `npm ci` | Installed 26.6.3, exit code 0 |
+| Same, `npm install` with no arguments | Kept 26.6.3 |
+| Root `.npmrc` only, install inside a nested package (like `landing/`) | Installed 26.6.3: the root file doesn't apply there |
+| `engine-strict=true` and `"engines": { "npm": ">=11.10.0" }`, npm 10.9.7 | `npm install` and `npm ci` both stop with `notsup` |
+
+Other facts:
+- **First supported version.** `min-release-age` (in days) first appears in npm 11.10.0, released 11 Feb 2026. It is in the config definitions of the 11.10.0 tarball but not 11.9.0.
+- **How it works.** It sets npm's `before` date to now minus N days.
+- **CI already supports it.** Node 24 bundles npm 11.19.0 (`deps/npm/package.json` on the `nodejs/node` `v24.x` branch), and every workflow uses `node-version: 24`.
+
+**The takeaway:** the setting only applies when npm picks a version, which happens when you add a package, run `npm update`, or rebuild the lockfile. Anything already in `package-lock.json` installs whatever its age.
+
+### Changes
+
+- `.npmrc` at the root and `landing/.npmrc`:
+  ```ini
+  min-release-age=7
+  engine-strict=true
+  ```
+- `package.json` and `landing/package.json`: add `"engines": { "npm": ">=11.10.0" }`. An older npm then stops with an error instead of quietly skipping the check.
+- **`engine-strict` side effect.** It also turns every dependency's `engines` warning into an error. Checked today:
+  - All 467 entries with `engines` in `package-lock.json` accept Node 22.22.2, 24.19.0 and 24.21.0.
+  - All 98 such entries in `landing/package-lock.json` do too.
+- **Lockfile check in CI**, to close the gap above: `scripts/check-release-age.mjs`, run by `ci.yml` on PRs that change a `package-lock.json`.
+  - It lists entries added or changed since the base branch.
+  - It reads each version's publish time from the registry (`time[version]` in the full package document).
+  - It fails if any of them is less than 7 days old.
+  - This also catches lockfile changes made with an old npm, or by tools that don't read `.npmrc`.
+- `CLAUDE.md`: add `.npmrc` to "Config Files".
+
+### Side effects and exceptions
+
+- **Urgent security fixes.** If a fix was published less than 7 days ago, `npm audit fix` keeps the vulnerable version, warns and exits non-zero (from npm's own description of the setting). To allow one package, add `min-release-age-exclude[]=<name>` to `.npmrc`. For a one-off install, use `npm install <pkg>@<version> --min-release-age=0` (command-line settings win over the project `.npmrc`). The CI check should read the same exclude list from `.npmrc`.
+- **Brand-new packages.** Adding a package whose only versions are under 7 days old fails. Wait, or exclude it.
+- **Every machine needs npm 11.10.0 or later.** This cloud environment has npm 10.9.7 (Node 22.22.2), so `npm ci` will fail here once this lands. Add `npm install -g npm@11` to the environment's setup script (cloud environment menu in the session title bar, then Edit, then Setup script). Do the same on your Windows machine if `npm -v` shows less than 11.10.0. npm 11 supports Node `^20.17.0 || >=22.9.0`.
+
 ## Rollout
 
-1. **PR 1: in-app updater** (Part 1). Ship it inside a normal release, so the safer restart is in users' hands before automatic releases start.
-2. **PR 2: release automation** (Part 2). Merging it makes the next weeknight produce `0.0.0-alpha.3`, or you can run "release now".
-3. **First update from alpha.2 uses the old code.** Its restart race still applies for that one update. Clicking "download", then quitting the app instead of clicking "Restart to update", avoids it (install on quit is safe, see problem 2). The alpha.2 installer shows 1 download on GitHub, so this likely only affects you.
+1. **PR 1: minimum package age** (Part 3). Small and independent.
+2. **PR 2: in-app updater** (Part 1). Ship it in a normal release, so the safer restart reaches installed apps before automatic releases start.
+3. **PR 3: release automation** (Part 2). After it merges, the next weekly run produces `0.0.0-alpha.3`, or you can run "release now" straight away.
+4. **The first update from alpha.2 uses the old code**, so the restart problem still applies for that one update. To avoid it, click "download", then quit the app instead of clicking "Restart to update". Install on quit is safe (see problem 2). The alpha.2 installer shows 1 download on GitHub, so this likely only affects you.
 
 ## Open questions
 
-- **Release schedule.** Is nightly on weekdays right, or would weekly suit you better?
-- **Moving to stable.** When should the app go stable (`0.1.0` or `1.0.0`)? After that, stable installs only get deliberate releases.
-- **Code signing.** Should it be done before wider distribution? SmartScreen warns on first install, and signing also turns on update signature checks.
+- **Moving to stable.** You'll decide later. Until then, every release is an alpha pre-release. After the switch, stable installs only get deliberate version bumps.
+- **Code signing.** Not a blocker. It can be added at any time. Once it is, electron-updater starts checking update signatures, so every later release must be signed by the same publisher.
 
 ## Sources
 
@@ -168,3 +222,5 @@ Pre-release numbers compare numerically (`alpha.10 > alpha.9`), per SemVer 2.0.0
 - release-please-action README: https://github.com/googleapis/release-please-action
 - Semantic Versioning 2.0.0, section 11: https://semver.org/#spec-item-11
 - GitHub releases for this repo: https://github.com/ParsonsProjects/grove-bench/releases
+- npm 11.9.0, 11.10.0, 11.20.0 and 12.1.0 (npm tarballs): `node_modules/@npmcli/config/lib/definitions/definitions.js` (`min-release-age`, `min-release-age-exclude`, `before`). Release dates from `npm view npm time`.
+- Node 24 bundled npm version: https://github.com/nodejs/node/blob/v24.x/deps/npm/package.json
