@@ -29,6 +29,12 @@ describe('GroveWalk', () => {
     expect(fills).toContain('currentColor');
   });
 
+  it('puts the project colour on the laptop logo while seated', () => {
+    const { container } = render(GroveWalk, { seed: 's1', projectColor: '#61afef', wake: { sessionId: 's1', from: 'sleeping', startedAt: Date.now() } });
+    const fills = [...container.querySelectorAll('svg.seated rect')].map((r) => r.getAttribute('fill'));
+    expect(fills).toContain('#61afef');
+  });
+
   describe('waking up', () => {
     const wake = (from: 'sleeping' | 'stopped') => ({ sessionId: 's1', from, startedAt: Date.now() });
 

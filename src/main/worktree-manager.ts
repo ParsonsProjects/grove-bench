@@ -5,7 +5,7 @@ import { app } from 'electron';
 import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getGitIdentity, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
 import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists } from './fs-utils.js';
-import type { BranchSwitchResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
 
@@ -868,21 +868,54 @@ export class WorktreeManager {
         return { success: false, error: (e?.stderr || e?.message || String(e)).trim().slice(0, 500) };
       }
 
-      const sharerSet = new Set(sharers);
-      for (const w of this.worktrees.values()) {
-        if (sharerSet.has(w.id)) w.branch = name;
-      }
-      await this.withManifest((manifest) => {
-        for (const s of sharers) {
-          const entry = manifest[s];
-          if (!entry) continue;
-          entry.branch = name;
-          if (create && entry.createdBranches && !entry.createdBranches.includes(name)) {
-            entry.createdBranches = [...entry.createdBranches, name];
-          }
-        }
-      });
+      await this.recordBranch(sharers, name, { created: create });
       return { success: true, branch: name, sessionIds: sharers };
+    });
+  }
+
+  /**
+   * Bring the recorded branch in line with the branch the checkout is on now.
+   * The agent (or the user, in a terminal) can run `git checkout` itself,
+   * which the app never sees. Every conversation sharing the checkout is
+   * updated. Returns null when nothing moved: same branch, detached HEAD
+   * (mid-rebase, or a commit checked out), or the conversation is not active.
+   */
+  async syncBranch(id: string): Promise<BranchSyncResult | null> {
+    const info = this.worktrees.get(id);
+    if (!info) return null;
+    // Cheap check outside the lock: nearly every call finds nothing to do.
+    const seen = await currentBranch(info.path);
+    if (!seen || seen === info.branch) return null;
+
+    return this.withRepoLock(info.repoPath, async () => {
+      // Re-read under the lock: a switch or removal may have run meanwhile.
+      if (this.worktrees.get(id) !== info) return null;
+      const name = await currentBranch(info.path);
+      if (!name || name === info.branch) return null;
+      const sharers = await this.checkoutSharers(id);
+      await this.recordBranch(sharers, name);
+      return { branch: name, sessionIds: sharers };
+    });
+  }
+
+  /** Record `name` as the branch of every conversation in `ids`, in memory
+   *  and in the manifest. `created` marks a branch Grove just made, which
+   *  removal may force-delete (see createdBranches). A switch the agent made
+   *  in its own shell never counts: it may have checked out someone's branch. */
+  private async recordBranch(ids: string[], name: string, opts: { created?: boolean } = {}): Promise<void> {
+    const idSet = new Set(ids);
+    for (const w of this.worktrees.values()) {
+      if (idSet.has(w.id)) w.branch = name;
+    }
+    await this.withManifest((manifest) => {
+      for (const s of ids) {
+        const entry = manifest[s];
+        if (!entry) continue;
+        entry.branch = name;
+        if (opts.created && entry.createdBranches && !entry.createdBranches.includes(name)) {
+          entry.createdBranches = [...entry.createdBranches, name];
+        }
+      }
     });
   }
 

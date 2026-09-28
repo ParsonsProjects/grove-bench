@@ -432,6 +432,13 @@ export type BranchSwitchResult =
   | { success: true; branch: string; sessionIds: string[] }
   | { success: false; error: string };
 
+/** The recorded branch moved to follow the checkout (the agent or a terminal
+ *  ran `git checkout`). `sessionIds` are every conversation sharing it. */
+export interface BranchSyncResult {
+  branch: string;
+  sessionIds: string[];
+}
+
 // ─── Thinking Level ───
 
 /** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
@@ -803,6 +810,9 @@ export interface GroveBenchAPI {
    *  `create` a new one at HEAD. `busySessionIds` are conversations mid-turn;
    *  the switch is refused if any of them shares the checkout. */
   switchBranch(sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }): Promise<BranchSwitchResult>;
+  /** Record the branch the conversation's checkout is on now, if it moved
+   *  outside the app. Null when nothing changed. */
+  syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -1359,6 +1369,7 @@ export const IPC = {
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
+  BRANCH_SYNC: 'branch:sync',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',

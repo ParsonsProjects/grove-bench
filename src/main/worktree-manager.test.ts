@@ -952,6 +952,68 @@ describe('remove: which branches go', () => {
   });
 });
 
+describe('syncBranch', () => {
+  const WT = '/worktrees/abc/wt-a';
+
+  beforeEach(() => {
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+    vi.mocked(currentBranch).mockResolvedValue('feat-a');
+  });
+
+  function addWorktreeSession() {
+    savedManifest = { 'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 } };
+    manager.register({ id: 'wt-a', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 1000 });
+  }
+
+  it('records the branch the agent checked out in its own shell', async () => {
+    addWorktreeSession();
+    vi.mocked(currentBranch).mockResolvedValue('feat-b');
+
+    const result = await manager.syncBranch('wt-a');
+
+    expect(result).toEqual({ branch: 'feat-b', sessionIds: ['wt-a'] });
+    expect(currentBranch).toHaveBeenCalledWith(WT);
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-b');
+    expect((savedManifest['wt-a'] as { branch: string }).branch).toBe('feat-b');
+  });
+
+  it('does nothing when the checkout is still on the recorded branch', async () => {
+    addWorktreeSession();
+
+    expect(await manager.syncBranch('wt-a')).toBeNull();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the recorded branch while HEAD is detached (e.g. mid-rebase)', async () => {
+    addWorktreeSession();
+    vi.mocked(currentBranch).mockResolvedValue(null);
+
+    expect(await manager.syncBranch('wt-a')).toBeNull();
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+  });
+
+  it('returns null for a conversation that is not active', async () => {
+    expect(await manager.syncBranch('nope')).toBeNull();
+    expect(currentBranch).not.toHaveBeenCalled();
+  });
+
+  it('moves every conversation sharing the checkout, and no others', async () => {
+    addWorktreeSession();
+    const a = await manager.registerDirect('/repo', 'main');
+    const b = await manager.registerDirect('/repo', 'main');
+    vi.mocked(currentBranch).mockImplementation(async (cwd) => (cwd === '/repo' ? 'develop' : 'feat-a'));
+
+    const result = await manager.syncBranch(a.id);
+
+    expect(result?.branch).toBe('develop');
+    expect([...(result?.sessionIds ?? [])].sort()).toEqual([a.id, b.id].sort());
+    expect(manager.getWorktree(b.id)?.branch).toBe('develop');
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+    expect((savedManifest[b.id] as { branch: string }).branch).toBe('develop');
+    expect((savedManifest['wt-a'] as { branch: string }).branch).toBe('feat-a');
+  });
+});
+
 describe('remove: default branch guard', () => {
   it('never deletes the default branch, even when the conversation switched onto it', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

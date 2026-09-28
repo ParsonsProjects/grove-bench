@@ -44,6 +44,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
   switchBranch: (sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }) =>
     ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
+  syncBranch: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_SYNC, sessionId),
 
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>

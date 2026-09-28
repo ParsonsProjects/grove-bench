@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { BranchSwitchResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -482,6 +482,15 @@ export function registerHandlers() {
       for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     } else {
       logger.warn(`Branch switch failed for session ${sessionId}: ${result.error}`);
+    }
+    return result;
+  });
+
+  ipcMain.handle(IPC.BRANCH_SYNC, async (_event, sessionId: string): Promise<BranchSyncResult | null> => {
+    const result = await worktreeManager.syncBranch(sessionId);
+    if (result) {
+      logger.info(`Session ${sessionId} checkout is now on branch ${result.branch}`);
+      for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     }
     return result;
   });
