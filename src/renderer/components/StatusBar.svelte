@@ -545,6 +545,9 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
+    // Every live conversation's status bar is mounted at once (hidden ones via
+    // CSS), each with this window listener, so only the visible one may act.
+    if (store.activeSessionId !== sessionId) return;
     if (e.altKey && e.key.toLowerCase() === 'm') {
       e.preventDefault();
       messageStore.cycleControl(sessionId, CONTROL_IDS.permissionMode);
