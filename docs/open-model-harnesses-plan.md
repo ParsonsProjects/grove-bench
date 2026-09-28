@@ -169,7 +169,7 @@ One `AcpAdapter` instance per profile is registered in
 | `agent_thought_chunk` | `partial_thinking` / `thinking` |
 | `tool_call` | `assistant_tool_use` with `toolCategory` from `kind` |
 | `tool_call_update` (completed / failed) | `tool_result` (`isError` on failed) |
-| `plan` | new `plan` display (or a todo-style tool call) **(decide in Phase 2)** |
+| `plan` | new `todo_list` event (see "Agent to-do lists" below) |
 | `usage_update` (unstable) | `usage` |
 | `current_mode_update` | `mode_sync` |
 | `config_option_update` | `controls_sync` |
@@ -211,6 +211,25 @@ type ToolView =
   and only then by Claude tool name (kept as a fallback for old saved history).
 - Summary view, the last-turn changes list and the git refresh switch from
   tool names to categories.
+
+### Agent to-do lists
+
+ACP's `plan` update is the agent's live to-do list: entries with text, a
+priority (`high` / `medium` / `low`) and a status (`pending` /
+`in_progress` / `completed`). Each update sends the full list and the client
+replaces what it showed. It needs no approval.
+
+It is **not** Claude's plan mode (the approve-a-plan step handled by
+`isPlanExecution` / `planText` in `PermissionBlock.svelte`). It is the same
+idea as Claude Code's `TodoWrite` tool. Grove has no to-do display today:
+nothing in `src` handles `TodoWrite`, so Claude's lists show as a generic
+tool block.
+
+Proposal: add a neutral `todo_list` event and one checklist block in the
+activity stream, where each update replaces the last one. The ACP adapter
+emits it from `plan`; the Claude adapter emits it from `TodoWrite`. A pinned
+panel can come later. The unstable `plan_update` / `plan_removed` updates
+(plans with ids) are ignored until they are stable.
 
 ### Permissions and modes
 
@@ -319,8 +338,9 @@ unsupported modes. Tests for each.
 
 **Phase 2: neutral tool display.** Add `ToolView`, fill it in the Claude
 adapter, switch the renderer and main-process checks from names to
-`toolView` / `toolCategory`. Claude conversations must look the same before
-and after.
+`toolView` / `toolCategory`. Add the `todo_list` event and checklist block
+(Claude's `TodoWrite` gets it too). Apart from that block, Claude
+conversations must look the same before and after.
 
 **Phase 3: ACP adapter + OpenCode profile + OpenRouter.** Adapter, event
 mapper tests driven by the Phase 0 fixtures, permissions, models, key,
@@ -354,8 +374,8 @@ Codex CLI through `codex-acp` needs a Responses-compatible provider [6].
   feature parity.
 - **Question prompts.** ACP has no standard "ask the user" tool. In v1 an ACP
   agent's questions show as normal text. Is that acceptable?
-- **Plan display.** Map ACP `plan` updates to a new panel, or reuse the
-  existing todo rendering?
+- **To-do display.** Checklist block in the activity stream (proposed), a
+  pinned panel, or drop `plan` updates in v1?
 - **Provider scope.** OpenRouter only in v1. The profile design allows DeepSeek
   direct and local models later without changing the adapter.
 - **Naming.** The picker would show "OpenCode". Check OpenCode's trademark or
@@ -366,7 +386,7 @@ Codex CLI through `codex-acp` needs a Responses-compatible provider [6].
 
 ## Sources
 
-1. [Agent Client Protocol: agents](https://agentclientprotocol.com/get-started/agents) and the `@agentclientprotocol/sdk` 1.5.1 type definitions (`npm view`, `dist/acp.d.ts`, `dist/schema/types.gen.d.ts`).
+1. [Agent Client Protocol: agents](https://agentclientprotocol.com/get-started/agents), [Agent Plan](https://agentclientprotocol.com/protocol/agent-plan), and the `@agentclientprotocol/sdk` 1.5.1 type definitions (`npm view`, `dist/acp.d.ts`, `dist/schema/types.gen.d.ts`).
 2. [Zed: The ACP Registry is live](https://zed.dev/blog/acp-registry); [ACP agents list](https://agentclientprotocol.com/get-started/agents).
 3. [Datadog Security Labs: OpenCode RCE (GHSA-632h-h47v-g4x4)](https://securitylabs.datadoghq.com/articles/opencode-upgrade-remote-code-execution/); [SentinelOne: CVE-2026-22812](https://www.sentinelone.com/vulnerability-database/cve-2026-22812/).
 4. [DeepSeek API docs: Using the Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api/).
