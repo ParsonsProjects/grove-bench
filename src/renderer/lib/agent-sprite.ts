@@ -150,7 +150,7 @@ export const HAIR_TONES: string[] = [
 ];
 
 /** FNV-1a: a small stable hash, so a conversation keeps its look across restarts. */
-function hashString(str: string): number {
+export function hashString(str: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);

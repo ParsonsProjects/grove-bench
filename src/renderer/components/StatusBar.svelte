@@ -21,6 +21,7 @@
   import { CONTROL_IDS } from '../../shared/types.js';
   import SessionControlsPopover from './SessionControlsPopover.svelte';
   import BranchPicker from './BranchPicker.svelte';
+  import ContextGrove from './ContextGrove.svelte';
   import { formatResetTime } from '../lib/reset-time.js';
   import { filterVisibleMessages, NEXT_VIEW_MODE, VIEW_MODE_HINTS, VIEW_MODE_LABELS } from '../lib/message-view.js';
 
@@ -601,6 +602,11 @@
   });
 </script>
 
+{#if settingsStore.current.groveCharacters}
+  <!-- Stands on the bar's top border, so the border is the grove's ground.
+       Only the open conversation's grove plays out its growth. -->
+  <ContextGrove seed={sessionId} percent={usedPercent} animate={store.activeSessionId === sessionId} />
+{/if}
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
 

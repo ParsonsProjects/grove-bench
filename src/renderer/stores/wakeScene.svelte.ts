@@ -1,5 +1,6 @@
 import { settingsStore } from './settings.svelte.js';
 import { WAKE_SCENE_MS } from '../lib/grove-walk.js';
+import { prefersReducedMotion } from '../lib/utils.js';
 
 export interface WakeScene {
   sessionId: string;
@@ -8,14 +9,6 @@ export interface WakeScene {
   from: 'sleeping' | 'stopped';
   /** Date.now() when the scene started. */
   startedAt: number;
-}
-
-function prefersReducedMotion(): boolean {
-  try {
-    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-  } catch {
-    return false;
-  }
 }
 
 /**
