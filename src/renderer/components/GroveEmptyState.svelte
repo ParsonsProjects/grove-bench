@@ -9,21 +9,18 @@
   /**
    * Grove character versions of the main area's empty states.
    * - `empty`: no conversations at all. An empty bench under the tree.
-   * - `pick`: conversations exist but none is open. Each agent sits on its
-   *   bench showing its status; clicking one opens that conversation.
+   * - `pick`: conversations exist but none is open. Each agent in the
+   *   sidebar's Conversations list sits on its bench showing its status;
+   *   clicking one opens that conversation.
    */
   let { variant }: { variant: 'empty' | 'pick' } = $props();
 
-  const MAX_PICKS = 6;
   const bench = toRuns(BENCH, SCENERY_PALETTE);
   const lamp = toRuns(LAMP, SCENERY_PALETTE);
 
-  let picks = $derived(
-    [...store.sessions]
-      .filter((s) => !s.completedAt)
-      .sort((a, b) => (b.lastActiveAt ?? b.createdAt ?? 0) - (a.lastActiveAt ?? a.createdAt ?? 0))
-      .slice(0, MAX_PICKS),
-  );
+  // Same list, same order as the sidebar's Conversations section (its triage
+  // filter aside), so the landing never shows a conversation the sidebar doesn't.
+  let picks = $derived(store.openConversations);
 
   function stateFor(s: (typeof store.sessions)[number]) {
     return agentSpriteState({
@@ -68,28 +65,33 @@
     </p>
   </div>
 {:else}
-  <div class="relative z-10 flex flex-col items-center text-center px-6">
-    <p class="text-sm mb-6 text-foreground/80">Pick a conversation</p>
-    <div class="flex flex-wrap justify-center gap-x-6 gap-y-5 max-w-4xl">
-      {#each picks as s (s.id)}
-        {@const name = s.displayName || s.branch}
-        <button type="button" class="pick flex flex-col items-center gap-2 p-2 w-28" onclick={() => open(s.id)} title={name}>
-          <span class="seat relative flex justify-center">
-            <!-- The bench sits behind the agent's legs. -->
-            <svg class="absolute bottom-0" width="36" height="15" viewBox="0 0 12 5" shape-rendering="crispEdges" aria-hidden="true">
-              {#each bench as r (`${r.x},${r.y}`)}
-                <rect x={r.x} y={r.y} width={r.w} height="1" fill={r.fill} />
-              {/each}
-            </svg>
-            <span class="relative -mb-1.5 ml-3">
-              <AgentSprite state={stateFor(s)} seed={s.id} projectColor={sessionRepoColor(s.id)} scale={3} />
+  <div class="relative z-10 flex flex-col items-center text-center px-6 py-6 max-h-full overflow-y-auto">
+    {#if picks.length === 0}
+      <p class="text-sm mb-2 text-foreground/80">No open conversations</p>
+      <p class="text-xs text-muted-foreground">Pick one under Projects in the sidebar to open it again.</p>
+    {:else}
+      <p class="text-sm mb-6 text-foreground/80">Pick a conversation</p>
+      <div class="flex flex-wrap justify-center gap-x-6 gap-y-5 max-w-4xl">
+        {#each picks as s (s.id)}
+          {@const name = s.displayName || s.branch}
+          <button type="button" class="pick flex flex-col items-center gap-2 p-2 w-28" onclick={() => open(s.id)} title={name}>
+            <span class="seat relative flex justify-center">
+              <!-- The bench sits behind the agent's legs. -->
+              <svg class="absolute bottom-0" width="36" height="15" viewBox="0 0 12 5" shape-rendering="crispEdges" aria-hidden="true">
+                {#each bench as r (`${r.x},${r.y}`)}
+                  <rect x={r.x} y={r.y} width={r.w} height="1" fill={r.fill} />
+                {/each}
+              </svg>
+              <span class="relative -mb-1.5 ml-3">
+                <AgentSprite state={stateFor(s)} seed={s.id} projectColor={sessionRepoColor(s.id)} scale={3} />
+              </span>
             </span>
-          </span>
-          <span class="text-xs text-muted-foreground truncate max-w-full">{name}</span>
-        </button>
-      {/each}
-    </div>
-    <p class="text-xs text-muted-foreground mt-6">Or choose one from the sidebar.</p>
+            <span class="text-xs text-muted-foreground truncate max-w-full">{name}</span>
+          </button>
+        {/each}
+      </div>
+      <p class="text-xs text-muted-foreground mt-6">Or choose one from the sidebar.</p>
+    {/if}
   </div>
 {/if}
 

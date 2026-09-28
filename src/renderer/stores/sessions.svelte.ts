@@ -1,4 +1,8 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
+import { sortSessions, DEFAULT_SORT, type SessionSortState } from '../lib/session-sort.js';
+
+/** "Show completed" is a per-viewer convenience, so it lives in localStorage. */
+const SHOW_COMPLETED_KEY = 'grove-bench:sidebar-show-completed';
 
 interface SessionEntry {
   id: string;
@@ -40,6 +44,15 @@ class SessionStore {
    *  reconnect the first time the user focuses them. */
   deferredResume = $state<Record<string, boolean>>({});
 
+  /** Conversation ordering (name/age, asc/desc). Loaded and persisted by the
+   *  sidebar via app-state; kept here so the landing lists conversations in
+   *  the same order. */
+  sessionSort = $state<SessionSortState>({ ...DEFAULT_SORT });
+
+  /** Whether conversations marked completed are shown in the sidebar (and so
+   *  on the landing). */
+  showCompleted = $state(false);
+
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
@@ -47,8 +60,26 @@ class SessionStore {
   /** LIFO stack of recently-closed session IDs for Ctrl+Shift+T re-open. */
   private recentlyClosedStack: string[] = [];
 
+  constructor() {
+    try { this.showCompleted = localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; } catch { /* storage unavailable */ }
+  }
+
   get count() {
     return this.sessions.length;
+  }
+
+  toggleShowCompleted() {
+    this.showCompleted = !this.showCompleted;
+    try { localStorage.setItem(SHOW_COMPLETED_KEY, this.showCompleted ? '1' : '0'); } catch { /* ignore */ }
+  }
+
+  /** The sidebar's Conversations list before its triage filter: open tabs,
+   *  completed ones only when shown, in the sidebar's sort order. */
+  get openConversations(): SessionEntry[] {
+    return sortSessions(
+      this.sessions.filter((s) => this.isOpenTab(s) && (this.showCompleted || !s.completedAt)),
+      this.sessionSort,
+    );
   }
 
   get canCreate() {

@@ -5,6 +5,7 @@ import StatusBar from './StatusBar.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
@@ -101,5 +102,49 @@ describe('StatusBar MCP controls follow the agent', () => {
     render(StatusBar, { props: { sessionId: ID } });
 
     await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
+  });
+});
+
+describe('StatusBar context grove', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    settingsStore.current = { ...settingsStore.current, groveCharacters: true };
+    for (const id of [ACTIVE, HIDDEN]) {
+      delete messageStore.usageBySession[id];
+      delete messageStore.contextWindowBySession[id];
+    }
+  });
+
+  function useContext(tokens: number) {
+    messageStore.contextWindowBySession[ACTIVE] = 200_000;
+    messageStore.usageBySession[ACTIVE] = { inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  }
+
+  it('is bare ground before any context is used', () => {
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('context-grove').querySelectorAll('path')).toHaveLength(0);
+  });
+
+  it('grows as the context fills', async () => {
+    vi.useFakeTimers();
+    useContext(100_000);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    // The open conversation's grove grows in, so give it time to.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
+  });
+
+  it('shows a hidden conversation\'s grove at once', () => {
+    messageStore.contextWindowBySession[HIDDEN] = 200_000;
+    messageStore.usageBySession[HIDDEN] = { inputTokens: 100_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    const { getByTestId } = render(StatusBar, { props: { sessionId: HIDDEN } });
+    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
+  });
+
+  it('is hidden with grove characters off', () => {
+    settingsStore.current = { ...settingsStore.current, groveCharacters: false };
+    useContext(100_000);
+    const { queryByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(queryByTestId('context-grove')).toBeNull();
   });
 });
