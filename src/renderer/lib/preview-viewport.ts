@@ -51,3 +51,22 @@ export function isCovered(
   }
   return false;
 }
+
+/** True when two boxes share any area. */
+export function overlaps(a: PreviewBounds, b: { left: number; top: number; right: number; bottom: number }): boolean {
+  return b.left < a.x + a.width && b.right > a.x && b.top < a.y + a.height && b.bottom > a.y;
+}
+
+/**
+ * True when a visible tooltip overlaps the box. Tooltips use
+ * pointer-events: none, so the hit test in isCovered can't see them, but they
+ * would still be drawn behind the page.
+ */
+export function tooltipCovers(bounds: PreviewBounds, doc: Document): boolean {
+  for (const el of Array.from(doc.querySelectorAll('[role="tooltip"]'))) {
+    if ((el as HTMLElement).hidden) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && overlaps(bounds, r)) return true;
+  }
+  return false;
+}

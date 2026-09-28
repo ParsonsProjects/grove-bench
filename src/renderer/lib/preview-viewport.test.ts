@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isCovered, sameBounds, samplePoints, toBounds } from './preview-viewport.js';
+import { isCovered, overlaps, sameBounds, samplePoints, toBounds, tooltipCovers } from './preview-viewport.js';
 
 describe('toBounds', () => {
   it('rounds to whole pixels', () => {
@@ -48,5 +48,41 @@ describe('isCovered', () => {
   it('ignores points that hit nothing', () => {
     const host = document.createElement('div');
     expect(isCovered(bounds, host, () => null)).toBe(false);
+  });
+});
+
+describe('overlaps', () => {
+  const box = { x: 100, y: 100, width: 200, height: 100 };
+  it('is true for shared area and false for touching or apart', () => {
+    expect(overlaps(box, { left: 290, top: 190, right: 320, bottom: 220 })).toBe(true);
+    expect(overlaps(box, { left: 300, top: 100, right: 350, bottom: 200 })).toBe(false);
+    expect(overlaps(box, { left: 0, top: 0, right: 50, bottom: 50 })).toBe(false);
+  });
+});
+
+describe('tooltipCovers', () => {
+  const bounds = { x: 0, y: 100, width: 800, height: 500 };
+
+  function tooltip(rect: { top: number; height: number }, hidden = false) {
+    const tip = document.createElement('div');
+    tip.setAttribute('role', 'tooltip');
+    tip.hidden = hidden;
+    tip.getBoundingClientRect = () => ({ left: 10, right: 110, top: rect.top, bottom: rect.top + rect.height, width: 100, height: rect.height, x: 10, y: rect.top, toJSON() {} }) as DOMRect;
+    document.body.appendChild(tip);
+    return tip;
+  }
+
+  it('sees a visible tooltip over the page, which the hit test misses', () => {
+    const tip = tooltip({ top: 90, height: 24 });
+    expect(tooltipCovers(bounds, document)).toBe(true);
+    tip.remove();
+  });
+
+  it('ignores hidden tooltips and ones outside the page', () => {
+    const hidden = tooltip({ top: 150, height: 24 }, true);
+    const above = tooltip({ top: 40, height: 24 });
+    expect(tooltipCovers(bounds, document)).toBe(false);
+    hidden.remove();
+    above.remove();
   });
 });

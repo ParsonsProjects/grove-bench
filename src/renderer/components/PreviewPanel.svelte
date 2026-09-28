@@ -11,7 +11,7 @@
   import GlobeIcon from '@lucide/svelte/icons/globe';
   import { previewStore, type PreviewMode } from '../stores/preview.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
-  import { isCovered, sameBounds, toBounds } from '$lib/preview-viewport.js';
+  import { isCovered, sameBounds, toBounds, tooltipCovers } from '$lib/preview-viewport.js';
   import { loadErrorHint } from '$lib/preview-text.js';
   import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
   import { formatAge } from '$lib/format-age.js';
@@ -110,7 +110,7 @@
       const moved = !sameBounds(bounds, lastBounds);
       lastBounds = bounds;
       if (bounds && (moved || (coverDirty && time - lastCoverCheck > 60))) {
-        covered = isCovered(bounds, host, (x, y) => document.elementFromPoint(x, y));
+        covered = isCovered(bounds, host, (x, y) => document.elementFromPoint(x, y)) || tooltipCovers(bounds, document);
         coverDirty = false;
         lastCoverCheck = time;
       }
