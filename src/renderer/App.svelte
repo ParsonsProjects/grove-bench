@@ -9,6 +9,7 @@
   import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
+  import { installTooltips } from './lib/tooltip.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -294,6 +295,7 @@
 
   onMount(() => {
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
+    const uninstallTooltips = installTooltips();
     const unsubAppError = window.groveBench.onAppError(handleErrorReport);
 
     // Git and agent checks run in the background and never block the app.
@@ -372,6 +374,7 @@
       unsubFocus();
       unsubAppError();
       uninstallErrors();
+      uninstallTooltips();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
     };

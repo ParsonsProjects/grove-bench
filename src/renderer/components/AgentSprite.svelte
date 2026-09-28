@@ -21,8 +21,8 @@
   style="--frame: {sprite.frameSeconds}s; --frame-w: {SPRITE_W}px"
   role="img"
   aria-label={sprite.label}
+  title={sprite.label}
 >
-  <title>{sprite.label}</title>
   <!-- Frames sit side by side and the viewBox shows one at a time. One
        animation slides the whole strip, so a frame is always in view. -->
   <g class="strip">
