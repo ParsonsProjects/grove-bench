@@ -2,8 +2,9 @@
 
 > **Status: Proposal.** Nothing here is implemented yet. Facts about outside
 > projects were checked on 28 September 2026 and are linked in
-> [Sources](#sources). Items marked **(verify)** are unconfirmed and are the
-> job of Phase 0.
+> [Sources](#sources). The offline half of the Phase 0 spike is done (see
+> [Spike findings](#spike-findings-phase-0a)); items still marked
+> **(verify)** need the Windows run with a real key.
 
 ## Goals
 
@@ -28,7 +29,7 @@
 | Route | Verdict | Reason |
 |---|---|---|
 | Generic ACP adapter | **Chosen** | ACP is a JSON-RPC 2.0 standard between editors and coding agents [1]. The TypeScript SDK `@agentclientprotocol/sdk` is at 1.5.1, Apache-2.0 (`npm view`). The ACP registry lists about 50 agents, including OpenCode, Goose, Qwen Code, Gemini CLI, Kimi CLI and Codex CLI [2]. One adapter, many harnesses. |
-| Dedicated OpenCode SDK adapter | Later, maybe | Richer (session revert/unrevert, fork, provider lists, todos), MIT, but tied to one vendor. It runs a local HTTP server, and OpenCode had an unauthenticated-server RCE, CVE-2026-22812, fixed in 1.0.216 [3]. The SDK also ships a `v2` folder, so its API is still moving. Worth revisiting only if ACP's gaps (rewind, models) hurt. |
+| Dedicated OpenCode SDK adapter | Later, maybe | Richer (session revert/unrevert, fork, provider lists, todos), MIT, but tied to one vendor. The SDK also ships a `v2` folder, so its API is still moving. Worth revisiting only if ACP's gaps (rewind) hurt. Its local HTTP server is not a reason against it: `opencode acp` opens the same server (see Spike findings), and OpenCode's earlier unauthenticated-server RCE, CVE-2026-22812, was fixed in 1.0.216 [3]. |
 | Claude adapter pointed at another endpoint | Rejected | DeepSeek offers an Anthropic-format endpoint that Claude Code can use [4], but Anthropic's docs say it "doesn't support routing Claude Code to non-Claude models through any gateway" [5]. Claude Code is also not open source, so it misses goal 2. |
 | Codex app-server | Rejected for this goal | Codex removed the Chat Completions wire API in February 2026; only `wire_api = "responses"` is accepted [6]. DeepSeek's own API is Chat Completions and Anthropic format [4], so it needs a gateway. Codex stays on `TODO.md` as its own adapter and can also come in through ACP (`@zed-industries/codex-acp`). |
 
@@ -52,11 +53,38 @@
   `openrouter/<slug>` [11].
 - Config can be passed per process: `OPENCODE_CONFIG` (file path) and
   `OPENCODE_CONFIG_CONTENT` (inline JSON) [12].
-- **Known ACP gaps.** OpenCode's ACP mode has had no way for a client to pick
-  the model per session; the model came from config at startup [13].
-  There is also an open request to expose automatic approval through ACP [14].
-  Both were reported on older versions **(verify on 1.18.x)**. The design
-  below works even if they are still open.
+- **Reported ACP gaps.** Issues said a client couldn't pick the model per
+  session [13] and asked for automatic approval through ACP [14]. On 1.18.33
+  the first is fixed (live model switching works, see Spike findings) and the
+  second doesn't matter, because Grove answers permission requests itself.
+
+## Spike findings (Phase 0a)
+
+`scripts/acp-spike/probe-offline.mjs` runs `opencode acp` 1.18.33 against a
+local fake of OpenRouter's chat completions API, so each check runs without
+a network or a key. It passes 33 of 33 checks; the trimmed recordings are in
+`scripts/acp-spike/fixtures/`. Run on Linux; Windows is Phase 0b.
+
+| Question | Answer | Effect on the design |
+|---|---|---|
+| What does it advertise? | `loadSession`, session `resume` / `fork` / `list` / `close`, HTTP and SSE MCP servers, image and embedded-context prompts. Config options `model`, `effort` (`thought_level`) and `mode` (`build`, `plan`). Slash commands `init`, `review`, `customize-opencode`. | Resume, images and memory tools are all possible. |
+| Model per session? | Yes. `session/set_config_option` switches live (Flash to V4 Pro and back); an unknown id returns `-32602`. The model list has 392 OpenRouter models. | No restart for a model switch. Model list comes from ACP, not OpenRouter's API. |
+| Effort per model? | Yes, it changes with the model: Flash offers low / high / max, V4 Pro offers high / xhigh. | Maps onto Grove's per-model controls. |
+| Does the config reach it? | Yes. `OPENCODE_CONFIG_CONTENT` sets the model, and `{env:OPENROUTER_API_KEY}` puts the key in the `Authorization` header. | Key stays in the child's env only. |
+| Permission prompts? | `permission: { edit: "ask", bash: "ask" }` makes write, edit and every command ask. Options are `once` / `always` / `reject`. A write's request carries a full diff (`oldText: ""`). "Always" holds for the rest of the session. | Permission UI can show real diffs. |
+| What does rejecting do? | The tool call fails and **the turn ends**; the model isn't called again. | "Deny with a message" can't steer an ACP agent the way it steers Claude. |
+| Plan mode? | `mode: plan` alone still lets edits through (they just ask). With `agent.plan.permission.edit: "deny"` the edit and write tools are removed from what the model sees. | The profile's config must set the plan-agent deny. |
+| Stop during a prompt? | `session/cancel` plus answering the pending request `cancelled` gives `stopReason: "cancelled"`. | Maps to Grove's stop. |
+| Provider error? | A 401 fails `session/prompt` with `-32603` and the provider's message (`"Internal error: User not found."`). No retry, no hang. | Show it as an error; map 401 to "OpenRouter key rejected". |
+| Tool call shape? | `tool_call` arrives with an empty `rawInput`; the input comes in the first `in_progress` update. Completed updates don't repeat `kind`. Edits finish with a `diff` (the changed snippet). | The mapper keeps per-call state and emits `assistant_tool_use` once the input is known. |
+| To-do lists? | OpenCode sends **no** ACP `plan` update. To-dos are a `todowrite` tool call (`kind: "other"`, `rawInput.todos`). | The OpenCode profile maps `todowrite` to `todo_list`. |
+| Usage? | `usage_update` gives tokens used, context size (1,048,576) and the session's running cost in USD. The prompt result also has token counts. | Grove can show cost, which it can't for Claude today. |
+| Message ids? | Chunks carry `messageId`. | Use them as event `uuid`s. |
+| Restart? | `session/load` in a new process replays the whole conversation; `session/resume` doesn't. `fork` copies the whole session and takes no message id. | Resume with `session/resume`, since Grove keeps its own history. No conversation rewind. |
+| Memory tools? | An `http` MCP server with a bearer header in `session/new` works. The model sees `grove-memory_memory_read`; MCP calls don't ask permission. | Memory design confirmed. |
+| Where does it write? | With `HOME` / `XDG_*` pointed at a temp folder: a SQLite database, a log, and, for git projects, its own snapshot git repo under `data/opencode/snapshot`. Nothing in the worktree. | Grove can give OpenCode a home under its own `userData`. |
+| Extra traffic? | One title-generation request per new session (uses `small_model`). At start-up it fetches `models.opencode.ai` (falls back to a bundled list) and tries a background `npm install` of its plugin package. | Behind a firewall both fail quietly. Note in help. |
+| **Local server** | `opencode acp` also opens an HTTP server on `127.0.0.1` (4096, or a random port if taken). **Without a password it serves the API key in plain text** (`GET /config`) and lets any local process create sessions. `OPENCODE_SERVER_PASSWORD` makes it return 401; basic auth `opencode:<password>` gets in. | Grove must set a random password for every process. |
 
 ## Where we are today
 
@@ -122,7 +150,7 @@ src/main/adapters/
     acp-permissions.ts   # request_permission <-> Grove PermissionHandler + modes
     profiles.ts          # HarnessProfile type + registry of profiles
     opencode.ts          # the OpenCode profile
-  openrouter.ts          # model list, key check, generateText (plain fetch)
+  openrouter.ts          # key check, generateText (plain fetch)
 ```
 
 `AcpAdapter` is generic. Everything harness-specific sits in a profile:
@@ -148,8 +176,18 @@ One `AcpAdapter` instance per profile is registered in
 
 - One agent process per conversation, spawned in the worktree `cwd`, stdio
   piped into `ClientSideConnection` from the SDK.
-- Resolve the real `.exe` with `where.exe`. If only a `.cmd` npm shim is found,
-  run it through `cmd.exe /d /s /c` **(verify quoting)**.
+- Resolve a real `.exe`. Node refuses to spawn `.cmd` / `.bat` files without
+  a shell since the CVE-2024-27980 fix [15], so when `where.exe` finds only the
+  npm shim, use the `opencode.exe` that the `opencode-ai` package ships in
+  `node_modules/opencode-ai/bin/` next to it (`resolveOpencode()` in
+  `scripts/acp-spike/lib.mjs`) **(verify on Windows)**.
+- Set a random `OPENCODE_SERVER_PASSWORD` for every process. Without it the
+  local server hands out the API key (see Spike findings).
+- Point `HOME`, `APPDATA`, `LOCALAPPDATA` and `XDG_*` at a folder under
+  Grove's `userData`, so OpenCode's database, logs and snapshots stay out of
+  the user's own OpenCode setup **(verify on Windows)**. Open question: should
+  a user's own OpenCode config (plugins, MCP servers, `AGENTS.md`) apply
+  instead? Isolated is safer and predictable, so it is the default.
 - `processId()` returns the child pid, so the existing process-tree kill on
   close (`src/main/process-tree.ts`) covers it.
 - Handshake: `initialize` with Grove's client info, then `session/new`
@@ -167,18 +205,19 @@ One `AcpAdapter` instance per profile is registered in
 | `session/new` response | `system_init` (session id, model) |
 | `agent_message_chunk` | `partial_text`, then `assistant_text` when the turn's message ends |
 | `agent_thought_chunk` | `partial_thinking` / `thinking` |
-| `tool_call` | `assistant_tool_use` with `toolCategory` from `kind` |
+| `tool_call` + first `tool_call_update` with input | `assistant_tool_use` with `toolCategory` from `kind` (input arrives in the update) |
 | `tool_call_update` (completed / failed) | `tool_result` (`isError` on failed) |
-| `plan` | new `todo_list` event (see "Agent to-do lists" below) |
-| `usage_update` (unstable) | `usage` |
+| `plan` | new `todo_list` event (see "Agent to-do lists" below). OpenCode sends a `todowrite` tool call instead, which its profile maps to the same event. |
+| `usage_update` (unstable) | `usage`, plus context window and running cost |
 | `current_mode_update` | `mode_sync` |
 | `config_option_update` | `controls_sync` |
 | `session/request_permission` (request) | `permission_request` via `onPermissionRequest` |
 | `session/prompt` response `stopReason` | `result` (`cancelled` is not an error) |
 | process exit | `process_exit` |
 
-`uuid` on assistant events: ACP has no message ids, so the adapter makes
-them. They are only used for rewind, which ACP adapters won't offer in v1.
+`uuid` on assistant events: OpenCode sends a `messageId` on each chunk, so
+the adapter uses it and only makes one up when an agent sends none. Grove
+only needs them for rewind, which ACP adapters won't offer in v1.
 
 ACP `kind` to `ToolCategory`:
 
@@ -227,15 +266,17 @@ tool block.
 
 Proposal: add a neutral `todo_list` event and one checklist block in the
 activity stream, where each update replaces the last one. The ACP adapter
-emits it from `plan`; the Claude adapter emits it from `TodoWrite`. A pinned
+emits it from `plan`; the Claude adapter emits it from `TodoWrite`. OpenCode
+never sends `plan` (spike): its to-dos are a `todowrite` tool call, so the
+OpenCode profile maps that tool to `todo_list`. A pinned
 panel can come later. The unstable `plan_update` / `plan_removed` updates
 (plans with ids) are ignored until they are stable.
 
 ### Permissions and modes
 
 - The OpenCode profile writes a config that sets edit, bash and web fetch to
-  `ask`, so every risky call reaches Grove **(verify OpenCode's permission
-  keys and defaults)**.
+  `ask`, so every risky call reaches Grove, and denies edits to the plan
+  agent (`agent.plan.permission.edit: "deny"`). Both confirmed in the spike.
 - Grove answers requests itself, which removes the need for ACP-level
   auto-approve [14]:
 
@@ -244,28 +285,28 @@ panel can come later. The unstable `plan_update` / `plan_removed` updates
 | `default` | Every request goes to the user. |
 | `acceptEdits` | Auto-allow `edit`/`delete`/`move` kinds, ask for the rest. |
 | `readSafe` | Auto-allow `read`/`search`, ask for the rest. |
-| `plan` | Only if the agent advertises a plan mode; switch with `session/set_mode`. Hidden otherwise. |
+| `plan` | Only if the agent advertises a plan mode; switch with the `mode` config option (OpenCode) or `session/set_mode`. Hidden otherwise. |
 | `auto` | Not offered. |
 
 - Grove's answer maps to the offered `PermissionOption`: allow → `allow_once`,
   allow always → `allow_always` (and Grove's own always-allow list), deny →
-  `reject_once`.
+  `reject_once`. Deny ends the turn in OpenCode, so the prompt should say so.
 - The renderer's forced `acceptEdits` (`messages.svelte.ts:1827`) must first
   check that the conversation's controls offer it.
 
 ### Models and controls
 
 - `getModels()` returns a short curated list first, with
-  `deepseek/deepseek-v4.1-flash` as the default. The rest come from
-  OpenRouter's model list, filtered to models that support tools, and are
-  cached in `app-state.json` like Claude's `modelCatalogs` **(verify the
-  exact list endpoint and filter)**.
+  `deepseek/deepseek-v4.1-flash` as the default. The rest come from the
+  `model` config option the agent sends at `session/new` (392 OpenRouter
+  models in the spike), cached in `app-state.json` like Claude's
+  `modelCatalogs` so the New Conversation dialog has a list before any
+  session starts. No call to OpenRouter's own model API is needed.
 - Grove stores the plain OpenRouter slug. The profile turns it into the
   harness id (`openrouter/deepseek/deepseek-v4.1-flash` for OpenCode).
-- The model is set per process through `OPENCODE_CONFIG_CONTENT`. If
-  `session/set_config_option` for the model works on the installed version,
-  use it for live switching. If not, a model switch restarts the process and
-  reloads the session (`capabilities.modelSwitching` reflects which).
+- The starting model is set through `OPENCODE_CONFIG_CONTENT`; switching
+  mid-conversation uses `session/set_config_option` (works on 1.18.33), so
+  `capabilities.modelSwitching` is true.
 - Controls come from ACP `configOptions` when the agent sends them
   (`model`, `mode`, `thought_level` categories map onto `ControlDescriptor`),
   plus the Grove permission-mode control above.
@@ -275,8 +316,8 @@ panel can come later. The unstable `plan_update` / `plan_removed` updates
 - `apiKey: { envVar: 'OPENROUTER_API_KEY', label: 'OpenRouter API key',
   helpUrl: 'https://openrouter.ai/keys' }`. It uses the existing encrypted
   store (`src/main/credentials.ts`); no new UI.
-- The key goes into the child's env only. The profile's config points
-  OpenCode at it **(verify `{env:...}` substitution or plain env pickup)**.
+- The key goes into the child's env only, and the profile's config reads it
+  with `{env:OPENROUTER_API_KEY}` (confirmed in the spike).
 - `checkPrerequisites()`: harness found on PATH, `--version` works, and a key
   is saved. A cheap key check against OpenRouter is optional.
 
@@ -287,7 +328,9 @@ The current memory server is in-process and Claude-SDK-only. For ACP:
 - Run a small MCP server in the main process over HTTP on `127.0.0.1`, random
   port, random bearer token per app run. Pass it in `session/new`
   `mcpServers` as `type: "http"` with an `Authorization` header, when the
-  agent advertises HTTP MCP support. Stdio fallback if it doesn't.
+  agent advertises HTTP MCP support. Stdio fallback if it doesn't. The spike
+  confirmed this with OpenCode; its tools appear as
+  `grove-memory_memory_read` and so on, and don't ask permission.
 - The main process stays the only writer of the memory folder.
 - Add a capability flag (for example `memoryTools`) and only add the memory
   part of the system prompt (`src/main/memory.ts:243`) when it is true.
@@ -304,9 +347,12 @@ the rule in `DESIGN.md` ("Background tasks").
 
 ### Resume and rewind
 
-- Resume: use `session/load` or `session/resume` when the agent advertises
-  them; set `capabilities.resume` from the handshake.
-- Conversation rewind: not in ACP. Add a capability flag
+- Resume: prefer `session/resume`, which picks the conversation up without
+  replaying it; Grove already has the history. `session/load` replays every
+  message, so it is only a fallback. Set `capabilities.resume` from the
+  handshake.
+- Conversation rewind: not in ACP (`fork` copies the whole session and takes
+  no message id). Add a capability flag
   (`conversationRewind`) and hide "rewind conversation" when false. File-only
   restore still works because it is git-based.
 
@@ -319,18 +365,20 @@ the adapter (ACP sends `available_commands_update`) instead of a fixed list.
 
 ## Phases
 
-**Phase 0: spike (1 to 2 days).** A throwaway script, not app code. Spawn
-`opencode acp` on Windows with an OpenRouter key and record every JSON-RPC
-message to a fixture file. Answer:
-- Does `session/set_config_option` for the model work on 1.18.x?
-- Which `modes`, `configOptions` and `agentCapabilities` (load, resume, MCP
-  HTTP, images) does it advertise?
-- Does the `ask` permission config make every edit and command reach
-  `request_permission`?
-- Does `OPENCODE_CONFIG_CONTENT` with the key reference work, and does it
-  leave the user's own OpenCode config and `auth.json` alone?
-- What do diff, command and plan updates look like in practice?
-- How does it behave when the key is wrong or out of credit?
+**Phase 0a: offline spike (done).** `scripts/acp-spike/probe-offline.mjs`,
+results in [Spike findings](#spike-findings-phase-0a).
+
+**Phase 0b: Windows run with a real key.** `scripts/acp-spike/probe-real.mjs`
+runs one small task on DeepSeek V4.1 Flash in a temp folder (well under
+$0.01) and records it to `fixtures/real-win32.jsonl`. Answers:
+- Does the real model use the tools well: to-do list, edits, running a test?
+- Which shell runs commands on Windows, and what do paths look like in
+  `locations` and diffs?
+- Do the `XDG_*` / `APPDATA` overrides keep OpenCode out of the user's own
+  setup on Windows?
+- Does resolving `opencode.exe` beside the npm shim work?
+- Time to first update, turn time and cost per turn.
+- What a wrong key looks like against the real OpenRouter.
 
 **Phase 1: multi-adapter fixes (independent value).** Fix the three bugs
 above, gate the memory prompt and rewind on capabilities, stop forcing
@@ -368,7 +416,14 @@ Codex CLI through `codex-acp` needs a Responses-compatible provider [6].
 
 - **Harness quality varies.** ACP makes the protocol common, not the
   behaviour. OpenCode's ACP mode has had real gaps [13][14]. Each profile needs
-  its own test pass.
+  its own test pass; `probe-offline.mjs` is that pass for OpenCode and should
+  be re-run before bumping its version.
+- **OpenCode's local server.** It holds the API key and can run commands.
+  The random password closes it to other processes, but it is still one more
+  listening port per conversation. Worth an upstream request for a way to turn
+  it off in ACP mode.
+- **Disk use.** OpenCode keeps a snapshot git repo per project in its data
+  folder. Grove should clean up with the project, or at least document it.
 - **Model quality.** A cheap model inside a harness is a different product
   from Claude Code. We should say that plainly in the UI and not promise
   feature parity.
@@ -400,3 +455,4 @@ Codex CLI through `codex-acp` needs a Responses-compatible provider [6].
 12. [OpenCode docs: Config](https://opencode.ai/docs/config/).
 13. [anomalyco/opencode #31750: ACP per-session model selection](https://github.com/anomalyco/opencode/issues/31750); [#14098: ACP session config options](https://github.com/anomalyco/opencode/issues/14098).
 14. [anomalyco/opencode #47918: Expose per-session automatic approval through ACP](https://github.com/anomalyco/opencode/issues/47918).
+15. [Node.js April 2024 security releases (CVE-2024-27980)](https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2).
