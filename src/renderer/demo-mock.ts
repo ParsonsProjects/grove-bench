@@ -314,6 +314,7 @@ const api: Record<string, unknown> = {
   switchBranch: async (id: string, branch: string) => branch === 'main'
     ? { success: false, error: `"main" is already checked out in ${REPO_B}. A branch can only be checked out in one place.` }
     : { success: true, branch, sessionIds: [id] },
+  syncBranch: async () => null,
   gitLogCommits: async () => [
     { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
     { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },
