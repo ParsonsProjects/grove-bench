@@ -29,6 +29,8 @@ describe('SessionStore', () => {
     store.creating = false;
     store.repos = [];
     store.deferredResume = {};
+    store.showCompleted = false;
+    store.sessionSort = { key: 'name', dir: 'asc' };
     localStorageMock.clear();
   });
 
@@ -158,6 +160,34 @@ describe('SessionStore', () => {
       ];
       store.deferResume('a');
       expect(store.stoppedSessionsOlderThan(14).map((s) => s.id)).toEqual(['b']);
+    });
+  });
+
+  describe('openConversations', () => {
+    it('lists open tabs only, in the sidebar sort order', () => {
+      store.sessions = [
+        { ...makeSession({ id: 'b', branch: 'bravo', status: 'running' }), lastActiveAt: 1 },
+        { ...makeSession({ id: 'gone', branch: 'alpha', status: 'stopped' }), lastActiveAt: 9 },
+        { ...makeSession({ id: 'c', branch: 'charlie', status: 'stopped' }), lastActiveAt: 3 },
+        { ...makeSession({ id: 'a', branch: 'able', status: 'sleeping' }), lastActiveAt: 2 },
+      ];
+      store.deferResume('c');
+
+      expect(store.openConversations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+      store.sessionSort = { key: 'age', dir: 'desc' };
+      expect(store.openConversations.map((s) => s.id)).toEqual(['c', 'a', 'b']);
+    });
+
+    it('includes completed open tabs only while "Show completed" is on, and remembers the toggle', () => {
+      store.sessions = [
+        makeSession({ id: 'a' }),
+        { ...makeSession({ id: 'done' }), completedAt: 5 },
+      ];
+      expect(store.openConversations.map((s) => s.id)).toEqual(['a']);
+
+      store.toggleShowCompleted();
+      expect(store.openConversations.map((s) => s.id).sort()).toEqual(['a', 'done']);
+      expect(localStorageMock.getItem('grove-bench:sidebar-show-completed')).toBe('1');
     });
   });
 
