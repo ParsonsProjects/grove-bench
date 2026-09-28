@@ -1276,7 +1276,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     const abortController = new AbortController();
     let sessionId: string | null = null;
-    let processId: number | undefined;
+    let agentProcess: ReturnType<typeof spawnClaudeCodeProcess> | undefined;
 
     // Build the canUseTool callback from the adapter config.
     const canUseTool = async (
@@ -1400,9 +1400,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           : {}),
         canUseTool: canUseTool as any,
         spawnClaudeCodeProcess: (o: SpawnOptions) => {
-          const child = spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`));
-          processId = child.pid;
-          return child;
+          agentProcess = spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`));
+          return agentProcess;
         },
         env: {
           ...cleanEnv(),
@@ -1498,7 +1497,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
 
       processId() {
-        return processId;
+        // Only while it runs: once it has exited, Windows can give its PID to
+        // an unrelated process.
+        const running = agentProcess?.exitCode === null && agentProcess.signalCode == null;
+        return running ? agentProcess?.pid : undefined;
       },
 
       closeInput() {
