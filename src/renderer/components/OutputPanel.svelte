@@ -8,6 +8,7 @@
   import ToolCallBlock from './ToolCallBlock.svelte';
   import PermissionBlock from './PermissionBlock.svelte';
   import QuestionBlock from './QuestionBlock.svelte';
+  import ElicitationBlock from './ElicitationBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -392,6 +393,15 @@
           resolved={msg.resolved}
           response={msg.response}
           selectedLabels={msg.selectedLabels}
+        />
+
+      {:else if msg.kind === 'elicitation'}
+        <ElicitationBlock
+          {sessionId}
+          requestId={msg.requestId}
+          request={msg.request}
+          resolved={msg.resolved}
+          action={msg.action}
         />
 
       {:else if msg.kind === 'thinking'}

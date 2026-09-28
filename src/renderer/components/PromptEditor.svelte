@@ -15,6 +15,7 @@
     TEXT_EXTENSIONS,
   } from '$lib/file-attachments.js';
   import { extractAtRefs, buildRefTags, buildOutgoingMessage } from '$lib/prompt-file-refs.js';
+  import { buildContentBlock } from '../../shared/prompt-text.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -144,9 +145,7 @@
     const imageFiles = attachedFiles.filter((f): f is AttachedFile & { type: 'image' } => f.type === 'image');
 
     // Build file tags from text attachments
-    const droppedTags = textFiles.map(
-      (f) => `<file path="${f.name}">\n${f.content}\n</file>`,
-    );
+    const droppedTags = textFiles.map((f) => buildContentBlock('file', f.name, f.content));
 
     // Extract base64 image data for the API
     const images = imageFiles.map((f) => {

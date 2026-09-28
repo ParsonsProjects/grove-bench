@@ -24,7 +24,7 @@ describe('formatMcpActionError', () => {
   });
 
   it('explains disabled and pending statuses', () => {
-    expect(formatMcpActionError(new Error('Server status: disabled'), 'reconnect', 'x')).toMatch(/disabled/);
+    expect(formatMcpActionError(new Error('Server status: disabled'), 'reconnect', 'x')).toMatch(/disconnected/);
     expect(formatMcpActionError(new Error('Server status: pending'), 'reconnect', 'x')).toMatch(/still connecting/);
   });
 

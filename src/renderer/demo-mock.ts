@@ -344,7 +344,14 @@ const api: Record<string, unknown> = {
     '+    <SessionSearch />',
   ].join('\n'),
   listMcpServers: async () => [],
-  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001' }],
+  listAdapters: async () => [{
+    id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
+    // The MCP popover only offers controls the agent declares.
+    mcp: {
+      controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
+      disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+    },
+  }],
   getAdapterControls: async () => [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [

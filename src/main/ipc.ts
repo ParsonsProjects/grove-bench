@@ -614,6 +614,10 @@ export function registerHandlers() {
     return sessionManager.listMcpServers(sessionId);
   });
 
+  ipcMain.handle(IPC.AGENT_MCP_CONTEXT_COST, (_event, sessionId: string) => {
+    return sessionManager.getMcpContextCost(sessionId);
+  });
+
   ipcMain.handle(IPC.AGENT_MCP_RECONNECT, (_event, sessionId: string, serverName: string) => {
     return sessionManager.reconnectMcpServer(sessionId, serverName);
   });
@@ -666,6 +670,10 @@ export function registerHandlers() {
     return sessionManager.respondToPermission(sessionId, decision);
   });
 
+  ipcMain.handle(IPC.AGENT_ELICITATION, (_event, sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) => {
+    return sessionManager.respondToElicitation(sessionId, requestId, response);
+  });
+
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     const history = sessionManager.getEventHistory(sessionId);
@@ -713,29 +721,33 @@ export function registerHandlers() {
     // Cross-session search for the SessionFinder. Same prelaunch-prefixed index
     // space as AGENT_HISTORY_SEARCH, so hits feed the same jump path.
     const generation = ++searchAllGeneration;
-    sessionManager.beginSearch();
-    const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
-    const perSession = limitPerSession ?? 5;
-    let sliceStart = performance.now();
-    for (const id of sessionIds ?? []) {
-      if (maxHits !== undefined && hits.length >= maxHits) break;
-      try {
-        for (const hit of searchPrefixedHistory(id, query, perSession)) {
-          hits.push({ ...hit, sessionId: id });
+    const endSweep = sessionManager.beginSearch({ sweep: true });
+    try {
+      const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
+      const perSession = limitPerSession ?? 5;
+      let sliceStart = performance.now();
+      for (const id of sessionIds ?? []) {
+        if (maxHits !== undefined && hits.length >= maxHits) break;
+        try {
+          for (const hit of searchPrefixedHistory(id, query, perSession)) {
+            hits.push({ ...hit, sessionId: id });
+          }
+        } catch (e) {
+          logger.warn(`[history-search-all] search failed for ${id}:`, e);
         }
-      } catch (e) {
-        logger.warn(`[history-search-all] search failed for ${id}:`, e);
+        // The first search after launch parses every log it reaches. Yield now
+        // and then so terminals and other IPC keep flowing, and give up once a
+        // newer query has replaced this one (the renderer drops stale results).
+        if (performance.now() - sliceStart > 16) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (generation !== searchAllGeneration) return [];
+          sliceStart = performance.now();
+        }
       }
-      // The first search after launch parses every log it reaches. Yield now
-      // and then so terminals and other IPC keep flowing, and give up once a
-      // newer query has replaced this one (the renderer drops stale results).
-      if (performance.now() - sliceStart > 16) {
-        await new Promise((resolve) => setImmediate(resolve));
-        if (generation !== searchAllGeneration) return [];
-        sliceStart = performance.now();
-      }
+      return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
+    } finally {
+      endSweep();
     }
-    return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
   });
 
   ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {
@@ -1227,6 +1239,16 @@ export function registerHandlers() {
     await adapter.removeConfiguredMcpServer(name, scope, cwd);
   });
 
+  ipcMain.handle(IPC.MCP_CONFIG_APPROVE, async (_event, name: string, repoPath: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.approveProjectMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP server approval`);
+    if (!(await worktreeManager.validateRepo(repoPath))) {
+      throw new Error(`${repoPath} is not a git repository`);
+    }
+    const worktrees = await worktreeManager.list(repoPath);
+    await adapter.approveProjectMcpServer(name, [repoPath, ...worktrees.map((w) => w.path)]);
+  });
+
   ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
     const adapter = resolveAdapter(adapterType);
     if (!adapter.capabilities.plugins || !adapter.listPlugins) {
@@ -1317,6 +1339,7 @@ export function registerHandlers() {
       capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
       isDefault: a.id === defaultId,
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
+      ...(a.mcp ? { mcp: a.mcp } : {}),
     }));
   });
 
