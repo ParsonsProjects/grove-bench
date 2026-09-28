@@ -219,6 +219,11 @@ interface ManagedSession {
   /** Resolves once sleepSession() has shut the agent process down. A wake,
    *  close or destroy waits on it so two agents never share a transcript. */
   sleepSettled: Promise<void> | null;
+  /** The query whose turn is in progress: set when a message is sent or the
+   *  agent starts replying, cleared on its result. Tied to the handle, so a
+   *  replaced query never counts as mid-turn. Idle sleep refuses while set,
+   *  rather than trusting the renderer's view alone. */
+  turnHandle: AgentQueryHandle | null;
 }
 
 export interface SessionCompletionResult {
@@ -548,6 +553,7 @@ class AgentSessionManager {
       checkpoints: new CheckpointManager(),
       statusBeforeSleep: null,
       sleepSettled: null,
+      turnHandle: null,
     };
 
     this.sessions.set(id, session);
@@ -839,6 +845,13 @@ class AgentSessionManager {
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
 
+        // A reply means a turn is running, including ones the agent starts
+        // itself (e.g. when a background task finishes).
+        if (event.type === 'assistant_text' || event.type === 'assistant_tool_use'
+          || event.type === 'thinking' || event.type === 'partial_text') {
+          session.turnHandle = handle;
+        }
+
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
           session.status = 'running';
@@ -915,6 +928,7 @@ class AgentSessionManager {
 
         // Track result for completion callback
         if (event.type === 'result') {
+          if (session.turnHandle === handle) session.turnHandle = null;
           session.lastResult = {
             isError: event.isError,
             totalCostUsd: event.totalCostUsd,
@@ -962,6 +976,8 @@ class AgentSessionManager {
         }
       }
     }
+
+    if (session.turnHandle === handle) session.turnHandle = null;
 
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
@@ -1126,6 +1142,7 @@ class AgentSessionManager {
     const sessionId = session.providerSessionId ?? '';
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
+      session.turnHandle = queryHandle;
       queryHandle.sendMessage({
         text: content,
         images: images,
@@ -1534,6 +1551,8 @@ class AgentSessionManager {
       logger.warn(`[interruptQuery] session=${id} interrupt failed, falling back to teardown:`, err);
       return this.stopQuery(id);
     }
+    // The turn is over even if the agent never reports a result for it.
+    if (session.turnHandle === handle) session.turnHandle = null;
 
     // Re-sync the renderer with the current permission mode (parity with
     // stopQuery) — this also clears the renderer's stoppingSession guard so
@@ -1566,6 +1585,16 @@ class AgentSessionManager {
     // Asleep: there is no query to stop. A rewind's fork point (set before
     // this is called) is picked up when the session wakes.
     if (session.status === 'sleeping') return;
+    // Waking while the sleep is still killing the old agent: starting a run
+    // now would put a second agent on the transcript beside it, and the
+    // wake would then start a third. Wait for the wake's run to begin; this
+    // stop then restarts it through restartRequested like any stop during
+    // startup.
+    if (session.sleepSettled) {
+      await session.sleepSettled;
+      // Re-read after the wait (TypeScript keeps the check above's narrowing)
+      if (session.destroying || (session.status as SessionStatus) === 'sleeping' || !this.sessions.has(id)) return;
+    }
 
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
@@ -1606,10 +1635,14 @@ class AgentSessionManager {
     // reflects the correct state after a stop/restart cycle.
     emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
-    // Create a deferred promise so sendMessage() can wait for the new queryHandle
-    session.queryReady = new Promise<void>((resolve) => {
-      session.resolveQueryReady = resolve;
-    });
+    // Create a deferred promise so sendMessage() can wait for the new
+    // queryHandle. Keep one that's still pending (e.g. a wake's): messages
+    // already waiting on it would otherwise never be delivered.
+    if (!session.resolveQueryReady) {
+      session.queryReady = new Promise<void>((resolve) => {
+        session.resolveQueryReady = resolve;
+      });
+    }
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1628,7 +1661,7 @@ class AgentSessionManager {
    * so the conversation keeps its place, mode, controls and always-allowed
    * tools. The terminal is left alone. It wakes (see wake()) when opened or
    * sent a message. Returns false, leaving it awake, unless the agent is up
-   * and not waiting on a permission or an MCP elicitation.
+   * and not mid-turn or waiting on a permission or an MCP elicitation.
    */
   async sleepSession(id: string): Promise<boolean> {
     const session = this.sessions.get(id);
@@ -1636,6 +1669,7 @@ class AgentSessionManager {
     if (session.status !== 'running' && session.status !== 'starting') return false;
     const handle = session.queryHandle;
     if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
+    if (session.turnHandle === handle) return false;
 
     session.statusBeforeSleep = session.status;
     session.status = 'sleeping';
@@ -1743,14 +1777,19 @@ class AgentSessionManager {
     await this.closing.get(id);
     const session = this.sessions.get(id);
     if (!session) {
-      // A closed conversation has no live session, but its checkpoint refs
-      // are still in the repository.
+      // A closed conversation has no live session, but a memory auto-save may
+      // still be pending, its metadata hasn't been saved, and its checkpoint
+      // refs are still in the repository.
+      memoryAutosave.cancelAutoSave(id);
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
       if (worktree) {
+        memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
         await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }
+      this.historyCache.delete(id);
+      this.searchIndexes.delete(id);
       return;
     }
 
