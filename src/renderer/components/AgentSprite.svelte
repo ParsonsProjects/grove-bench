@@ -18,41 +18,36 @@
   height={SPRITE_H * scale}
   viewBox="0 0 {SPRITE_W} {SPRITE_H}"
   shape-rendering="crispEdges"
-  style="--frame: {sprite.frameSeconds}s"
+  style="--frame: {sprite.frameSeconds}s; --frame-w: {SPRITE_W}px"
   role="img"
   aria-label={sprite.label}
 >
   <title>{sprite.label}</title>
-  {#each sprite.frames as frame, i (i)}
-    <g class="frame frame-{i}">
-      {#each frame as run (`${run.x},${run.y}`)}
-        <rect x={run.x} y={run.y} width={run.w} height="1" fill={look[run.key] ?? run.fill} class:symbol={run.symbol} />
-      {/each}
-    </g>
-  {/each}
+  <!-- Frames sit side by side and the viewBox shows one at a time. One
+       animation slides the whole strip, so a frame is always in view. -->
+  <g class="strip">
+    {#each sprite.frames as frame, i (i)}
+      <g transform="translate({i * SPRITE_W} 0)">
+        {#each frame as run (`${run.x},${run.y}`)}
+          <rect x={run.x} y={run.y} width={run.w} height="1" fill={look[run.key] ?? run.fill} class:symbol={run.symbol} />
+        {/each}
+      </g>
+    {/each}
+  </g>
 </svg>
 
 <style>
   .agent-sprite {
     image-rendering: pixelated;
-  }
-  .frame-1 {
-    visibility: hidden;
+    overflow: hidden;
   }
   /* Two frames swap at a low, steady rate: a flip-book, not smooth motion. */
-  .animated .frame-0 {
-    animation: sprite-frame-a calc(var(--frame) * 2) steps(1, end) infinite;
+  .animated .strip {
+    animation: sprite-flip calc(var(--frame) * 2) steps(1, end) infinite;
   }
-  .animated .frame-1 {
-    animation: sprite-frame-b calc(var(--frame) * 2) steps(1, end) infinite;
-  }
-  @keyframes sprite-frame-a {
-    0% { visibility: visible; }
-    50% { visibility: hidden; }
-  }
-  @keyframes sprite-frame-b {
-    0% { visibility: hidden; }
-    50% { visibility: visible; }
+  /* On SVG content, px in a transform are viewBox units. */
+  @keyframes sprite-flip {
+    50% { transform: translateX(calc(var(--frame-w) * -1)); }
   }
   /* Same rhythm as Tailwind's animate-pulse on the status dot. */
   .pulse-symbol .symbol,
@@ -63,13 +58,7 @@
     50% { opacity: 0.4; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .animated .frame-0 {
-      animation: none;
-    }
-    .animated .frame-1 {
-      animation: none;
-      visibility: hidden;
-    }
+    .animated .strip,
     .pulse-symbol .symbol,
     .fade {
       animation: none;
