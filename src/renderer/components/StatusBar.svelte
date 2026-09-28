@@ -531,6 +531,10 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
+    // Every conversation's StatusBar is mounted at once (inactive panes hidden
+    // via CSS), so ignore shortcuts unless this is the active conversation.
+    // Otherwise Alt+M/T/E cycles the control on every open conversation.
+    if (store.activeSessionId !== sessionId) return;
     if (e.altKey && e.key.toLowerCase() === 'm') {
       e.preventDefault();
       messageStore.cycleControl(sessionId, CONTROL_IDS.permissionMode);
