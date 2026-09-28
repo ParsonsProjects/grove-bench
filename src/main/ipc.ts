@@ -384,6 +384,19 @@ export function registerHandlers() {
     logger.info(`Session closed: id=${id}`);
   });
 
+  // Idle sleep: only the agent process goes. The terminal and anything
+  // running in it are left alone, so a dev server there keeps serving.
+  ipcMain.handle(IPC.SESSION_SLEEP, async (_event, id: string) => {
+    const slept = await sessionManager.sleepSession(id);
+    if (slept) logger.info(`Session asleep: id=${id}`);
+    return slept;
+  });
+
+  ipcMain.handle(IPC.SESSION_WAKE, async (_event, id: string) => {
+    logger.info(`Waking session: id=${id}`);
+    sessionManager.wakeSession(id);
+  });
+
   ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
     logger.info(`Stopping background task: session=${id} task=${taskId}`);
     await sessionManager.stopTask(id, taskId);

@@ -589,6 +589,8 @@
           <span class="w-2 h-2 bg-green-400 shrink-0 needs-attention-flash"></span>
         {:else if session.status === 'stopped'}
           <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
+        {:else if session.status === 'sleeping'}
+          <span class="w-2 h-2 bg-green-500/40 shrink-0" title="Sleeping: wakes when opened"></span>
         {:else}
           <span class="w-2 h-2 bg-green-500 shrink-0"></span>
         {/if}

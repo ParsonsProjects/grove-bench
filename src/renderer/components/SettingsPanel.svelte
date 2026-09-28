@@ -824,19 +824,19 @@
 
           <Separator />
 
-          <!-- Idle Auto-Stop -->
+          <!-- Idle Sleep -->
           <div>
-            <Label class="mb-1 block">Auto-stop idle conversations</Label>
+            <Label class="mb-1 block">Sleep idle conversations</Label>
             <div class="flex items-center gap-2">
               <input
                 type="number"
                 min="0"
-                bind:value={settingsStore.draft.idleAutoStopMinutes}
+                bind:value={settingsStore.draft.idleSleepMinutes}
                 class="w-20 text-sm bg-card border border-border px-2 py-1.5 text-foreground focus:outline-none focus:border-primary"
               />
               <span class="text-sm text-muted-foreground">minutes</span>
             </div>
-            <p class="text-xs text-muted-foreground mt-1">Stop a conversation after it's been idle this long, closing its terminal and anything it started (it auto-resumes when you click it). Set to 0 to disable. Default 30.</p>
+            <p class="text-xs text-muted-foreground mt-1">Shut down a conversation's agent after it's been idle this long, to save memory and CPU. It stays in your Conversations list, keeps its mode and &quot;always allow&quot; choices, and wakes when you open it or send it a message. Its terminal keeps running. Conversations with a background task running don't sleep. Set to 0 to disable. Default 30.</p>
           </div>
 
           <Separator />

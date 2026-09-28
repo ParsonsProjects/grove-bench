@@ -17,6 +17,7 @@ export type AgentSpriteState =
   | 'working'
   | 'unread'
   | 'stopped'
+  | 'sleeping'
   | 'ready'
   // Permission prompts once answered.
   | 'allowed'
@@ -43,6 +44,7 @@ export function agentSpriteState(s: AgentSpriteInput): AgentSpriteState {
   if (s.isRunning) return 'working';
   if (s.needsAttention) return 'unread';
   if (s.status === 'stopped') return 'stopped';
+  if (s.status === 'sleeping') return 'sleeping';
   return 'ready';
 }
 
@@ -212,6 +214,8 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
   ready: sprite('Ready', 'text-green-500', [SIT]),
   stopped: sprite('Stopped', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
+  // Still open, agent shut down until it is opened: a dimmed Ready.
+  sleeping: sprite('Sleeping', 'text-green-500/50', [withSymbol(ASLEEP, ZZZ)]),
   error: sprite('Error', 'text-red-500', [withSymbol(SIT, BANG)]),
   starting: sprite('Starting', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
   installing: sprite('Installing dependencies', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),

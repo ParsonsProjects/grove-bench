@@ -1400,6 +1400,201 @@ describe('AgentSessionManager.closeSession()', () => {
   });
 });
 
+describe('AgentSessionManager sleep and wake', () => {
+  /** A live session whose provider session has initialised (status 'running'). */
+  async function startSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return { win, session: sessionManager.getSession(id)! };
+  }
+
+  const statusesSent = (win: ReturnType<typeof makeMockWindow>, id: string) =>
+    win._send.mock.calls
+      .filter(([channel, sessionId]: [string, string]) => channel === IPC.SESSION_STATUS && sessionId === id)
+      .map(([, , status]: [string, string, string]) => status);
+
+  it('kills the agent but keeps the session open and reports it sleeping', async () => {
+    mockAdapter.pid = 6100;
+    const { win, session } = await startSession('test-sleep');
+    const handle = session.queryHandle!;
+
+    expect(await sessionManager.sleepSession('test-sleep')).toBe(true);
+
+    expect(processTree.killTree).toHaveBeenCalledWith(6100);
+    expect(processTree.killTree.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
+    expect(sessionManager.getSession('test-sleep')).toBe(session);
+    expect(session.status).toBe('sleeping');
+    expect(session.queryHandle).toBeNull();
+    expect(statusesSent(win, 'test-sleep').at(-1)).toBe('sleeping');
+
+    await sessionManager.destroySession('test-sleep');
+  });
+
+  it('is not reported as the conversation ending or as an error', async () => {
+    mockAdapter.pid = 6200;
+    const { win } = await startSession('test-sleep-quiet');
+    processTree.killTree.mockImplementationOnce(async () => {
+      mockAdapter.control!.error(new Error('Claude Code process exited with code 1'));
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    await sessionManager.sleepSession('test-sleep-quiet');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const events = win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event?.type);
+    expect(events).not.toContain('error');
+    expect(events).not.toContain('process_exit');
+    expect(statusesSent(win, 'test-sleep-quiet')).not.toContain('stopped');
+    const { triggerAutoSaveImmediate } = await import('./memory-autosave.js');
+    expect(triggerAutoSaveImmediate).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-sleep-quiet');
+  });
+
+  it('wakes on the same transcript with its mode, controls and always-allowed tools', async () => {
+    const { win, session } = await startSession('test-wake');
+    sessionManager.setMode('test-wake', 'plan');
+    await sessionManager.setControl('test-wake', 'thinking', 'low');
+    session.alwaysAllowedTools.add('Bash(npm test)');
+
+    await sessionManager.sleepSession('test-wake');
+    sessionManager.wakeSession('test-wake');
+
+    expect(session.status).toBe('running');
+    expect(statusesSent(win, 'test-wake').at(-1)).toBe('running');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    expect(mockAdapter.lastConfig).toMatchObject({
+      resumeSessionId: 'mock-session-id',
+      permissionMode: 'plan',
+      controls: expect.objectContaining({ thinking: 'low' }),
+    });
+    expect(mockAdapter.lastConfig!.alwaysAllowedTools).toBe(session.alwaysAllowedTools);
+    expect(session.alwaysAllowedTools.has('Bash(npm test)')).toBe(true);
+
+    await sessionManager.destroySession('test-wake');
+  });
+
+  it('wakes when sent a message and delivers it to the new agent', async () => {
+    const { session } = await startSession('test-wake-send');
+    await sessionManager.sleepSession('test-wake-send');
+
+    const sent = await sessionManager.sendMessage('test-wake-send', 'Are you there?');
+
+    expect(sent).toBe(true);
+    expect(mockAdapter.startCallCount).toBe(2);
+    expect(session.status).toBe('running');
+    expect(session.queryHandle).toBe(mockAdapter.lastHandle);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Are you there?' }));
+
+    await sessionManager.destroySession('test-wake-send');
+  });
+
+  it('wakes back into starting when the agent had not initialised yet', async () => {
+    await sessionManager.createSession({
+      id: 'test-wake-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-wake-starting')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-wake-starting')!;
+    expect(session.status).toBe('starting');
+
+    expect(await sessionManager.sleepSession('test-wake-starting')).toBe(true);
+    sessionManager.wakeSession('test-wake-starting');
+
+    expect(session.status).toBe('starting');
+    await sessionManager.destroySession('test-wake-starting');
+  });
+
+  it('stays awake while a permission is pending', async () => {
+    const { session } = await startSession('test-sleep-perm');
+    void mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(await sessionManager.sleepSession('test-sleep-perm')).toBe(false);
+    expect(session.status).toBe('running');
+    expect(session.queryHandle).not.toBeNull();
+
+    await sessionManager.destroySession('test-sleep-perm');
+  });
+
+  it('stays awake while its agent is still starting', async () => {
+    let openGate!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+    await sessionManager.createSession({
+      id: 'test-sleep-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+    expect(await sessionManager.sleepSession('test-sleep-starting')).toBe(false);
+    expect(sessionManager.getSession('test-sleep-starting')!.status).toBe('starting');
+
+    openGate();
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-starting')?.queryHandle).toBeTruthy());
+    await sessionManager.destroySession('test-sleep-starting');
+  });
+
+  it('is left alone by the wake-from-suspend health check', async () => {
+    await startSession('test-sleep-health');
+    sessionManager.captureSuspendState();
+    await sessionManager.sleepSession('test-sleep-health');
+
+    sessionManager.healthCheckAll();
+
+    expect(sessionManager.getSession('test-sleep-health')!.status).toBe('sleeping');
+    await sessionManager.destroySession('test-sleep-health');
+  });
+
+  it('a stop does not wake it', async () => {
+    await startSession('test-sleep-stop');
+    await sessionManager.sleepSession('test-sleep-stop');
+
+    await sessionManager.interruptQuery('test-sleep-stop');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockAdapter.startCallCount).toBe(1);
+    expect(sessionManager.getSession('test-sleep-stop')!.status).toBe('sleeping');
+    await sessionManager.destroySession('test-sleep-stop');
+  });
+
+  it('can be closed while asleep', async () => {
+    const { win } = await startSession('test-sleep-close');
+    await sessionManager.sleepSession('test-sleep-close');
+
+    await sessionManager.closeSession('test-sleep-close');
+
+    expect(sessionManager.getSession('test-sleep-close')).toBeUndefined();
+    expect(statusesSent(win, 'test-sleep-close').at(-1)).toBe('stopped');
+  });
+
+  it('a close during the sleep waits for the agent to be killed', async () => {
+    mockAdapter.pid = 6300;
+    await startSession('test-sleep-close-race');
+    let releaseKill!: () => void;
+    processTree.killTree.mockImplementationOnce(() => new Promise((r) => { releaseKill = () => r(); }));
+
+    const sleeping = sessionManager.sleepSession('test-sleep-close-race');
+    const closing = sessionManager.closeSession('test-sleep-close-race');
+    let closed = false;
+    void closing.then(() => { closed = true; });
+    await vi.waitFor(() => expect(releaseKill).toBeDefined());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(closed).toBe(false);
+
+    releaseKill();
+    await sleeping;
+    await closing;
+    expect(closed).toBe(true);
+    expect(mockAdapter.startCallCount).toBe(1);
+  });
+});
+
 describe('AgentSessionManager.searchEventHistory()', () => {
   const log = (...texts: string[]) => texts.map((text) => JSON.stringify({ type: 'user_message', text })).join('\n') + '\n';
 

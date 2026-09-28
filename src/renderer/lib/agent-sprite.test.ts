@@ -13,6 +13,8 @@ describe('agentSpriteState', () => {
     expect(agentSpriteState({ ...base, isRunning: true, needsAttention: true })).toBe('working');
     expect(agentSpriteState({ ...base, status: 'stopped', needsAttention: true })).toBe('unread');
     expect(agentSpriteState({ ...base, status: 'stopped' })).toBe('stopped');
+    expect(agentSpriteState({ ...base, status: 'sleeping' })).toBe('sleeping');
+    expect(agentSpriteState({ ...base, status: 'sleeping', needsAttention: true })).toBe('unread');
     expect(agentSpriteState(base)).toBe('ready');
   });
 });

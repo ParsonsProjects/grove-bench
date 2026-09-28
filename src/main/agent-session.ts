@@ -188,6 +188,12 @@ interface ManagedSession {
   resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
   checkpoints: CheckpointManager;
+  /** Status to go back to when a sleeping session wakes: 'running', or
+   *  'starting' when its query had not reported system_init yet. */
+  statusBeforeSleep: SessionStatus | null;
+  /** Resolves once sleepSession() has shut the agent process down. A wake,
+   *  close or destroy waits on it so two agents never share a transcript. */
+  sleepSettled: Promise<void> | null;
 }
 
 export interface SessionCompletionResult {
@@ -514,6 +520,8 @@ class AgentSessionManager {
       queryReady: null,
       resolveQueryReady: null,
       checkpoints: new CheckpointManager(),
+      statusBeforeSleep: null,
+      sleepSettled: null,
     };
 
     this.sessions.set(id, session);
@@ -907,8 +915,9 @@ class AgentSessionManager {
       // interrupting covers an in-place interrupt that tears down the event loop
       // (the SDK throws "Request was aborted" rather than yielding a result).
       // destroying covers a close or delete, which kills the agent process
-      // before closing its query.
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying) {
+      // before closing its query. A handle that is no longer the session's
+      // belongs to a run that was put to sleep, which also kills the process.
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else {
@@ -940,6 +949,13 @@ class AgentSessionManager {
     // and hold it locked while removal runs).
     if (session.destroying) {
       logger.debug(`[runQuery] session=${id} event loop ended during destroy`);
+      return;
+    }
+
+    // Put to sleep (or already replaced by a newer run): the conversation
+    // stays open, so this is not the end of it. Nothing to report.
+    if (session.queryHandle !== handle) {
+      logger.debug(`[runQuery] session=${id} event loop ended for a retired query`);
       return;
     }
 
@@ -999,6 +1015,9 @@ class AgentSessionManager {
    */
   private async awaitQueryHandle(session: ManagedSession): Promise<boolean> {
     const id = session.id;
+    // A message for a sleeping conversation wakes it; the send then waits for
+    // the restarted agent like a send right after a stop does.
+    if (session.status === 'sleeping') this.wake(session);
     if (!session.queryHandle && session.queryReady) {
       logger.debug(`[sendMessage] session=${id} waiting for queryHandle after stop`);
       const QUERY_READY_TIMEOUT_MS = 30_000;
@@ -1459,6 +1478,9 @@ class AgentSessionManager {
   async stopQuery(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    // Asleep: there is no query to stop. A rewind's fork point (set before
+    // this is called) is picked up when the session wakes.
+    if (session.status === 'sleeping') return;
 
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
@@ -1511,6 +1533,86 @@ class AgentSessionManager {
       emit({ type: 'error', message: isAuthError
         ? session.adapter.authErrorMessage
         : errMsg });
+    });
+  }
+
+  /**
+   * Put an idle conversation to sleep to free its agent process. The agent
+   * and everything under it (MCP servers) are killed, but the session stays,
+   * so the conversation keeps its place, mode, controls and always-allowed
+   * tools. The terminal is left alone. It wakes (see wake()) when opened or
+   * sent a message. Returns false, leaving it awake, unless the agent is up
+   * and not waiting on a permission.
+   */
+  async sleepSession(id: string): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying) return false;
+    if (session.status !== 'running' && session.status !== 'starting') return false;
+    const handle = session.queryHandle;
+    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0) return false;
+
+    session.statusBeforeSleep = session.status;
+    session.status = 'sleeping';
+    // Detach the query first: runQuery treats a run whose handle is no longer
+    // the session's as retired, so the agent exiting below is neither an error
+    // nor the end of the conversation.
+    session.queryHandle = null;
+    const abortController = session.abortController;
+    session.abortController = new AbortController();
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, id, 'sleeping');
+    }
+
+    const settled = (async () => {
+      // Kill the tree while the agent is still running, as shutDown() does.
+      const pid = handle.processId?.();
+      if (pid) {
+        await killTree(pid);
+        logger.info(`Put session ${id} to sleep: killed agent pid=${pid}`);
+      }
+      try { handle.close(); } catch { /* may already be closed */ }
+      abortController.abort();
+    })();
+    session.sleepSettled = settled;
+    await settled;
+    if (session.sleepSettled === settled) session.sleepSettled = null;
+    return true;
+  }
+
+  /** Wake a sleeping conversation. No-op for any other state. */
+  wakeSession(id: string): void {
+    const session = this.sessions.get(id);
+    if (session?.status === 'sleeping') this.wake(session);
+  }
+
+  /** Restart a sleeping session's agent on the same provider transcript.
+   *  Messages sent meanwhile wait on queryReady (see awaitQueryHandle). */
+  private wake(session: ManagedSession): void {
+    const { id } = session;
+    session.status = session.statusBeforeSleep ?? 'running';
+    session.statusBeforeSleep = null;
+    session.queryReady = new Promise<void>((resolve) => {
+      session.resolveQueryReady = resolve;
+    });
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, id, 'running');
+    }
+    const emit = session.emit ?? this.createEmitter(session);
+    const asleep = session.sleepSettled;
+    (async () => {
+      await asleep;
+      // Closed or deleted while the sleep was still finishing.
+      if (session.destroying) return;
+      await this.runQuery(session, emit);
+    })().catch((err) => {
+      console.error(`[runQuery] session=${id} FAILED on wake:`, err);
+      const errMsg = String(err?.message || err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      session.status = 'error';
+      if (!session.window.isDestroyed()) {
+        session.window.webContents.send(IPC.SESSION_STATUS, id, 'error');
+      }
     });
   }
 
@@ -1598,6 +1700,10 @@ class AgentSessionManager {
     // runQuery's event loop, whose tail would otherwise treat this as a normal
     // query end (see runQuery).
     session.destroying = true;
+
+    // A sleep still killing the agent: let it finish, so a reopen right after
+    // the close can't start a second agent on the same transcript.
+    await session.sleepSettled;
 
     // Kill the agent's process tree while the agent is still running. Once it
     // exits, whatever it left running can no longer be traced back to it.

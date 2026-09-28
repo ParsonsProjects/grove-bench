@@ -78,6 +78,9 @@ export const WALK_BACK = layer(150, 4, [
   ['far-tree', 128],
 ]);
 
+/** The path's bench, where the wake-up happens (see below). */
+const PATH_BENCH_X = 116;
+
 /** The path: trees, lamps, a bench and grass tufts. */
 export const WALK_FRONT = layer(200, PATH_SPEED, [
   ['tree', 4],
@@ -86,7 +89,7 @@ export const WALK_FRONT = layer(200, PATH_SPEED, [
   ['tree', 54],
   ['tree', 80],
   ['tuft', 106],
-  ['bench', 116],
+  ['bench', PATH_BENCH_X],
   ['lamp', 136],
   ['tuft', 146],
   ['tree', 160],
@@ -95,3 +98,32 @@ export const WALK_FRONT = layer(200, PATH_SPEED, [
 
 /** Seconds per walking frame: one step for every 3px of path. */
 export const WALK_FRAME_SECONDS = 3 / PATH_SPEED;
+
+// ─── Wake-up ───
+// Opening a conversation whose agent is asleep (sleeping or stopped) opens
+// the walk with a short scene: the agent asleep on the path's bench, then
+// awake, then it stands and walks off and the bench goes by with the path.
+
+/** Milliseconds into the scene at which the agent opens its eyes. */
+export const WAKE_AWAKE_AT_MS = 700;
+/** Milliseconds into the scene at which it stands and starts walking. */
+export const WAKE_WALK_AT_MS = 1200;
+/** Length of the whole scene. The chat shows after it, or the walk carries
+ *  on if the agent is still starting. */
+export const WAKE_SCENE_MS = 2200;
+
+export type WakePhase = 'asleep' | 'awake' | 'walking';
+
+/** Where the scene is after `elapsedMs`. */
+export function wakePhase(elapsedMs: number): WakePhase {
+  if (elapsedMs < WAKE_AWAKE_AT_MS) return 'asleep';
+  if (elapsedMs < WAKE_WALK_AT_MS) return 'awake';
+  return 'walking';
+}
+
+/** How far into its loop the path starts for the wake-up, so the agent wakes
+ *  on the path's bench, centred on it, and the bench then walks off with the
+ *  path. */
+export const WAKE_PATH_OFFSET = PATH_BENCH_X + BENCH[0].length / 2 - WALK_VIEW_W / 2;
+/** The same, as a head start for the path's scroll animation. */
+export const WAKE_PATH_HEAD_START_SECONDS = WAKE_PATH_OFFSET / PATH_SPEED;

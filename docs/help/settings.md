@@ -33,13 +33,14 @@ These apply to every agent:
 ## General
 
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
-- **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, and while a conversation starts up again, where its agent walks through the grove. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when stopped. Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
+- **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, and while a conversation starts up again, where its agent walks through the grove. When you open a sleeping or stopped conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when stopped (grey) or sleeping (dim green). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
 - **Project Colors** — Customize the accent color for each project in the sidebar
 - **Always on top** — Keep the Grove Bench window above other windows
 - **Enable spell checking** — Turn spell checking in the prompt editor on or off
 - **Default Diff View** — Choose between unified or side-by-side diffs
 - **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation. **Flash the taskbar button** controls whether the taskbar button also flashes; it stops as soon as the window regains focus
 - **Auto-install dependencies in new worktrees** — Run `npm install` automatically when a worktree is created (off by default)
+- **Sleep idle conversations**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a conversation's agent is shut down to save memory and CPU. The conversation stays in the Conversations list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running. 0 turns it off. Default 30 minutes
 
 ## MCP
 
