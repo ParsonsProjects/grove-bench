@@ -98,6 +98,9 @@ const mockGroveBench = {
   onAppError: vi.fn(() => () => {}),
   reportError: vi.fn(),
   setAttentionBadge: vi.fn(),
+  onSpellcheckMenu: vi.fn(() => () => {}),
+  spellcheckReplace: vi.fn(),
+  spellcheckAddWord: vi.fn(),
   listBookmarks: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').Bookmark[])),
   addBookmark: vi.fn((b: Omit<import('../../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
     Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 } as import('../../shared/types.js').Bookmark)),

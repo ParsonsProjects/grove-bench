@@ -18,7 +18,7 @@
   import SettingsPanel from './SettingsPanel.svelte';
   import MemoryPanel from './MemoryPanel.svelte';
   import { memoryStore } from '../stores/memory.svelte.js';
-  import SessionContextMenu from './SessionContextMenu.svelte';
+  import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor, DEFAULT_SORT } from '../lib/session-sort.js';
@@ -918,7 +918,7 @@
 <MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />
 
 {#if contextMenu}
-  <SessionContextMenu
+  <ContextMenu
     x={contextMenu.x}
     y={contextMenu.y}
     items={getContextMenuItems(contextMenu.sessionId)}
