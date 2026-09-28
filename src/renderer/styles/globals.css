@@ -204,6 +204,40 @@
   animation: fidget 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Styled tooltip for every `title` attribute (see lib/tooltip.ts). */
+.grove-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  max-width: min(360px, calc(100vw - 8px));
+  padding: 3px 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--input);
+  box-shadow: 0 4px 12px oklch(0 0 0 / 0.4);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: tooltip-in 90ms ease-out;
+}
+
+.grove-tooltip[data-instant] {
+  animation: none;
+}
+
+@keyframes tooltip-in {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grove-tooltip {
+    animation: none;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
