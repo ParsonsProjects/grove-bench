@@ -1013,14 +1013,10 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
-export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | 'auto' | 'bypassPermissions';
-
 export interface GroveBenchSettings {
   // Permission & Security
-  defaultPermissionMode: SettingsPermissionMode;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
-  disableBypassMode: boolean;
   /** Skill names hidden from agent sessions. Applied when a session's query
    *  (re)starts — the SDK receives an allowlist of every known skill minus
    *  these. Empty = all skills enabled (the CLI default). */
@@ -1034,11 +1030,10 @@ export interface GroveBenchSettings {
   /** Model new conversations start on, keyed by adapter id. Missing or empty
    *  means the adapter's first model. */
   defaultModels: Record<string, string>;
-  /** Default values for each adapter's declared session controls (thinking,
-   *  speed, ...), keyed by adapter id then control id. Only ids the adapter
-   *  actually offers for the session's model are applied; anything else is
-   *  ignored, so a stale entry never breaks a session. Permission mode is
-   *  not here — see defaultPermissionMode. */
+  /** Default values for each adapter's declared session controls (permission
+   *  mode, thinking, speed, ...), keyed by adapter id then control id. Only
+   *  ids the adapter actually offers for the session's model are applied;
+   *  anything else is ignored, so a stale entry never breaks a session. */
   adapterDefaults: Record<string, Record<string, string>>;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;

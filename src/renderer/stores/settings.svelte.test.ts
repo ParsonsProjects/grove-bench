@@ -5,10 +5,8 @@ import { settingsStore } from './settings.svelte.js';
 import type { GroveBenchSettings } from '../../shared/types.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
   defaultModels: {},

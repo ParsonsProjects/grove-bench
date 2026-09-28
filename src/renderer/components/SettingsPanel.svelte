@@ -16,7 +16,7 @@
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
-  import type { SettingsPermissionMode, CavemanMode, McpConfigScope, ControlDescriptor } from '../../shared/types.js';
+  import type { CavemanMode, McpConfigScope, ControlDescriptor, ControlOption } from '../../shared/types.js';
   import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../shared/types.js';
   import Fuse from 'fuse.js';
 
@@ -213,19 +213,6 @@
     if (!visibleTabs.some((t) => t.id === tab)) tab = 'permissions';
   });
 
-  // Claude's own modes first; Grove's app-level modes sit under a divider
-  // with their own heading so they don't read as CLI options.
-  const permissionModes: { value: SettingsPermissionMode; label: string; group?: string }[] = [
-    { value: 'default', label: 'Default' },
-    { value: 'acceptEdits', label: 'Accept Edits' },
-    { value: 'plan', label: 'Plan (read-only)' },
-    { value: 'auto', label: 'Auto (Claude classifier approves actions)' },
-    { value: 'bypassPermissions', label: 'Bypass Permissions' },
-    { value: 'readSafe', label: 'Read-safe (edits + read-only commands)', group: 'Grove Bench' },
-  ];
-  const claudeModes = $derived(permissionModes.filter((m) => !m.group && (!settingsStore.draft.disableBypassMode || m.value !== 'bypassPermissions')));
-  const groveModes = $derived(permissionModes.filter((m) => m.group));
-
   const cavemanModes: { value: CavemanMode; label: string; description: string }[] = [
     { value: 'off', label: 'Off', description: 'Normal verbose output' },
     { value: 'lite', label: 'Lite', description: 'Drop filler/hedging, keep articles' },
@@ -235,7 +222,8 @@
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
-  // the session controls it declares for that model (thinking, speed, ...).
+  // the session controls it declares for that model (permission mode,
+  // thinking, speed, ...).
   // Everything comes from the adapter's own descriptors, so a new agent needs
   // no Settings changes. Models are picked from a list rather than typed, so
   // a typo can't break every new conversation.
@@ -265,7 +253,7 @@
           id: a.id,
           displayName: a.displayName,
           models,
-          controls: controls.filter((c) => c.id !== CONTROL_IDS.permissionMode),
+          controls,
           backgroundModel: a.backgroundModel,
         };
       }));
@@ -293,6 +281,20 @@
   function controlValue(adapterId: string, control: ControlDescriptor): string {
     const saved = settingsStore.adapterDefault(adapterId, control.id);
     return saved && control.options.some((o) => o.value === saved) ? saved : control.default;
+  }
+
+  /** Options from another source (e.g. Grove's own Read-safe mode) grouped
+   *  by that source, so they render under a divider with it as the heading.
+   *  Ungrouped options come first (see ControlOption.group). */
+  function optionGroups(options: ControlOption[]): { name: string; options: ControlOption[] }[] {
+    const groups: { name: string; options: ControlOption[] }[] = [];
+    for (const option of options) {
+      if (!option.group) continue;
+      const group = groups.find((g) => g.name === option.group);
+      if (group) group.options.push(option);
+      else groups.push({ name: option.group, options: [option] });
+    }
+    return groups;
   }
 
   const themes: { value: 'system' | 'dark' | 'light'; label: string }[] = [
@@ -354,36 +356,12 @@
 
       {:else if tab === 'permissions'}
         <div class="flex flex-col gap-4">
-          <!-- Default Permission Mode -->
-          <div>
-            <Label class="mb-1 block">Default Permission Mode</Label>
-            <Select.Root type="single" value={settingsStore.draft.defaultPermissionMode} onValueChange={(v) => { if (v) settingsStore.draft.defaultPermissionMode = v as SettingsPermissionMode; }}>
-              <Select.Trigger class="w-full">
-                {permissionModes.find(m => m.value === settingsStore.draft.defaultPermissionMode)?.label ?? 'Default'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each claudeModes as mode (mode.value)}
-                  <Select.Item value={mode.value} label={mode.label} />
-                {/each}
-                <Select.Separator />
-                <Select.Group>
-                  <Select.GroupHeading>{groveModes[0]?.group}</Select.GroupHeading>
-                  {#each groveModes as mode (mode.value)}
-                    <Select.Item value={mode.value} label={mode.label} />
-                  {/each}
-                </Select.Group>
-              </Select.Content>
-            </Select.Root>
-            <p class="text-xs text-muted-foreground mt-1">Controls how tools are approved in new conversations.</p>
-          </div>
-
-          <!-- Disable Bypass Mode -->
-          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <Checkbox bind:checked={settingsStore.draft.disableBypassMode} />
-            Disable bypass permissions mode
-          </label>
-
-          <Separator />
+          <!-- The default mode depends on the agent and model, so it lives
+               with each agent's other defaults. -->
+          <p class="text-xs text-muted-foreground">
+            The permission mode new conversations start in is set per agent, under
+            <button class="text-primary hover:underline" onclick={() => (tab = 'agent')}>Agent</button>.
+          </p>
 
           <!-- Tool Allow Rules -->
           <div>
@@ -526,14 +504,23 @@
                   {@const value = controlValue(agent.id, control)}
                   {@const selected = control.options.find((o) => o.value === value)}
                   <div>
-                    <Label class="mb-1 block">Default {control.label}</Label>
+                    <Label class="mb-1 block">Default {control.id === CONTROL_IDS.permissionMode ? 'Permission Mode' : control.label}</Label>
                     <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>
-                      <Select.Trigger class="w-48">
+                      <Select.Trigger class="w-48" aria-label={`${agent.displayName} default ${control.label.toLowerCase()}`}>
                         {selected?.label ?? value}
                       </Select.Trigger>
                       <Select.Content>
-                        {#each control.options as option (option.value)}
+                        {#each control.options.filter((o) => !o.group) as option (option.value)}
                           <Select.Item value={option.value} label={option.label} />
+                        {/each}
+                        {#each optionGroups(control.options) as group (group.name)}
+                          <Select.Separator />
+                          <Select.Group>
+                            <Select.GroupHeading>{group.name}</Select.GroupHeading>
+                            {#each group.options as option (option.value)}
+                              <Select.Item value={option.value} label={option.label} />
+                            {/each}
+                          </Select.Group>
                         {/each}
                       </Select.Content>
                     </Select.Root>

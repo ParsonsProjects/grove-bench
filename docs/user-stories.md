@@ -48,7 +48,7 @@
 
 ## Configuration & Settings
 
-31. **As a developer, I want to set a default permission mode** (default, plan, acceptEdits, bypassPermissions) so sessions start with my preferred safety level.
+31. **As a developer, I want to set a default permission mode per agent** (Code, Plan, Edit, Auto, Read-safe) so sessions start with my preferred safety level.
 32. **As a developer, I want to configure tool allow/deny rules** (e.g., allow `Bash(npm run *)`) so I can pre-approve common safe patterns.
 33. **As a developer, I want untracked config files (.env, .npmrc, etc.) auto-detected and copied into new worktrees** so agents have the config they need to build and run. *(Auto-detected from a default pattern list; no UI to customize per-repo.)*
 34. ~~**As a developer, I want to set task timeouts for orchestration** so I can control how long each subtask runs.~~ *(Removed — orchestration engine not present.)*

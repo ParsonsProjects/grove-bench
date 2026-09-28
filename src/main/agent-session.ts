@@ -444,15 +444,16 @@ class AgentSessionManager {
     // Apply settings defaults for values not explicitly provided
     const appSettings = settings.getSettings();
     const initialModel = opts.model ?? (appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null);
-    const requestedMode: PermissionMode = opts.permissionMode
-      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
-      || 'default';
-    // A saved default the adapter does not offer on this model (e.g. native
+    // The saved default mode is kept per agent with its other control
+    // defaults. One the adapter does not offer on this model (e.g. native
     // auto mode on Haiku) falls back to the adapter's default mode.
     const modeDescriptor = adapter.getControls(initialModel).find((d) => d.id === CONTROL_IDS.permissionMode);
-    const effectivePermissionMode: PermissionMode = modeDescriptor && !modeDescriptor.options.some((o) => o.value === requestedMode)
-      ? (modeDescriptor.default as PermissionMode)
-      : requestedMode;
+    const requestedMode = opts.permissionMode
+      || appSettings.adapterDefaults?.[adapter.id]?.[CONTROL_IDS.permissionMode]
+      || 'default';
+    const effectivePermissionMode = (modeDescriptor && !modeDescriptor.options.some((o) => o.value === requestedMode)
+      ? modeDescriptor.default
+      : requestedMode) as PermissionMode;
     // Inject project memory into the system prompt
     const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
     const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
@@ -521,6 +522,11 @@ class AgentSessionManager {
     try { fs.mkdirSync(getEventsDir(), { recursive: true }); } catch { /* already exists */ }
 
     const emit = this.createEmitter(session);
+
+    // Tell the renderer which mode the conversation starts in. It shows
+    // 'default' until a mode_sync arrives, and adapters don't report the
+    // mode a query starts in.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
     // Let sendMessage() wait for the first queryHandle instead of dropping a
     // prompt that arrives while adapter.start() is still in flight (the
