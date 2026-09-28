@@ -92,6 +92,28 @@ describe('Sidebar session rows', () => {
     }
   });
 
+  it('goes back to the landing screen when the open conversation is stopped', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Other one' },
+    ] as any;
+    const closeSession = vi.fn().mockResolvedValue(undefined);
+    (mockGroveBench as any).closeSession = closeSession;
+    try {
+      render(Sidebar);
+      const row = (await screen.findAllByText('Sidebar revamp'))
+        .map((el) => el.closest('.group\\/session'))
+        .find((el) => el?.querySelector('[title="Stop agent"]'))!;
+      await fireEvent.click(row.querySelector('[title="Stop agent"]')!);
+
+      expect(closeSession).toHaveBeenCalledWith('s1');
+      // Not the other running conversation.
+      expect(store.activeSessionId).toBeNull();
+    } finally {
+      delete (mockGroveBench as any).closeSession;
+    }
+  });
+
   it('opens the session finder from the search field', async () => {
     render(Sidebar);
     await fireEvent.click(screen.getByTitle('Search conversations (Ctrl+R)'));

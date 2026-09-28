@@ -345,10 +345,8 @@
    *  can be resumed by clicking it (auto-resume in App.svelte). */
   async function stopSession(id: string) {
     store.pushRecentlyClosed(id);
-    if (store.activeSessionId === id) {
-      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
-      store.activeSessionId = next?.id ?? null;
-    }
+    // Back to the landing screen rather than jumping into another conversation.
+    if (store.activeSessionId === id) store.activeSessionId = null;
     store.updateStatus(id, 'stopped');
     store.clearDeferredResume(id);
     terminalStore.markClosed(id);
@@ -379,11 +377,9 @@
     // Mark stopped immediately so the tab closes right away
     store.updateStatus(id, 'stopped');
 
-    // Deactivate so the auto-resume $effect doesn't bring the tab back
-    if (store.activeSessionId === id) {
-      const next = store.sessions.find((s) => s.id !== id && s.status === 'running');
-      store.activeSessionId = next?.id ?? null;
-    }
+    // Deactivate so the auto-resume $effect doesn't bring the tab back, and
+    // land on the landing screen rather than another conversation.
+    if (store.activeSessionId === id) store.activeSessionId = null;
 
     try {
       await window.groveBench.destroySession(id, deleteBranch);

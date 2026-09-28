@@ -175,12 +175,8 @@ class SessionStore {
     this.sessions = this.sessions.filter((s) => s.id !== id);
     this.clearNeedsAttention(id);
     this.clearDeferredResume(id);
-    if (this.activeSessionId === id) {
-      // Prefer a running session, fall back to any session
-      const next = this.sessions.find((s) => s.status === 'running')
-        ?? this.sessions[0];
-      this.activeSessionId = next?.id ?? null;
-    }
+    // Back to the landing screen rather than jumping into another conversation.
+    if (this.activeSessionId === id) this.activeSessionId = null;
   }
 
   updateStatus(id: string, status: SessionStatus) {

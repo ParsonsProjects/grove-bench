@@ -85,7 +85,7 @@ describe('SessionStore', () => {
       expect(store.count).toBe(2);
     });
 
-    it('removeSession removes and picks next active', () => {
+    it('removeSession removes the active one and returns to the landing screen', () => {
       const s1 = makeSession({ id: 's1', status: 'stopped' });
       const s2 = makeSession({ id: 's2', status: 'running' });
       store.addSession(s1);
@@ -95,8 +95,8 @@ describe('SessionStore', () => {
       store.removeSession('s1');
 
       expect(store.sessions).toHaveLength(1);
-      // Prefers running session
-      expect(store.activeSessionId).toBe('s2');
+      // No other conversation is opened in its place, even a running one.
+      expect(store.activeSessionId).toBeNull();
     });
 
     it('removeSession sets null when no sessions left', () => {
