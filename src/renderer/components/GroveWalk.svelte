@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AGENT_SPRITES, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SPRITE_W, SPRITE_H, agentLook, toRuns } from '../lib/agent-sprite.js';
+  import { AGENT_SPRITES, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SPRITE_W, SPRITE_H, agentColors, toRuns } from '../lib/agent-sprite.js';
   import {
     WALK_BACK, WALK_FRONT, WALK_VIEW_W, WALK_VIEW_H, WALK_GROUND_Y, WALK_FRAME_SECONDS,
     WAKE_PATH_HEAD_START_SECONDS, WAKE_AWAKE_AT_MS, WAKE_WALK_AT_MS,
@@ -10,14 +10,15 @@
   /**
    * Grove character version of "Starting agent...": the conversation's agent
    * walks through the grove until it is ready. `seed` (the conversation id)
-   * gives it the same skin tone and hair colour as in the sidebar. With
-   * `wake`, it first wakes up on a bench, then stands and walks off.
+   * gives it the same skin tone and hair colour as in the sidebar, and
+   * `projectColor` the same laptop logo. With `wake`, it first wakes up on a
+   * bench, then stands and walks off.
    */
-  let { seed, wake = null }: { seed: string; wake?: WakeScene | null } = $props();
+  let { seed, projectColor = null, wake = null }: { seed: string; projectColor?: string | null; wake?: WakeScene | null } = $props();
 
   const SCALE = 4;
   const frames = SIDE_WALK_MAPS.map((map) => toRuns(map));
-  const look: Record<string, string> = $derived(agentLook(seed));
+  const look = $derived(agentColors(seed, projectColor));
   const agentX = (WALK_VIEW_W - SIDE_WALK_W) / 2;
   const agentY = WALK_GROUND_Y - SIDE_WALK_H;
   // Seated front-on on the path's bench, feet on the ground. Columns 0 to 5
