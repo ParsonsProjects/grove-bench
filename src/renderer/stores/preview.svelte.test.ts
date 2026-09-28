@@ -72,6 +72,15 @@ describe('previewStore', () => {
       expect(previewStore.getDetected('s1')).toContain('http://localhost:3000/');
     });
 
+    it('does not save a URL cut off at the end of a chunk', () => {
+      // ConPTY can split Vite's coloured banner mid-URL.
+      previewStore.noteStream('s1', '  Local:   http://localhost:\x1b[1');
+      previewStore.noteStream('s1', 'm51');
+      expect(previewStore.getDetected('s1')).toEqual([]);
+      previewStore.noteStream('s1', '73\x1b[22m/\r\n');
+      expect(previewStore.getDetected('s1')).toEqual(['http://localhost:5173/']);
+    });
+
     it('keeps only the newest few', () => {
       for (let port = 3000; port < 3010; port++) previewStore.noteText('s1', `http://localhost:${port}/`);
       const detected = previewStore.getDetected('s1');
@@ -103,6 +112,21 @@ describe('previewStore', () => {
       expect(seen[0].key).toBe('1');
       expect(seen[0].altKey).toBe(true);
     });
+  });
+
+  it('picks up pages that were already open when Grove reloads, without overwriting newer state', async () => {
+    const fresh = new (previewStore.constructor as new () => typeof previewStore)();
+    mockGroveBench.previewGetStates.mockResolvedValueOnce({
+      s1: { user: page({ title: 'From main' }), agent: page({ title: 'Claude page' }) },
+      s2: { user: null, agent: page({ title: 'Other' }) },
+    });
+    let push!: (id: string, kind: 'user' | 'agent', state: PreviewPageState | null) => void;
+    mockGroveBench.onPreviewState.mockImplementationOnce((cb) => { push = cb; return () => {}; });
+    fresh.init();
+    push('s1', 'user', page({ title: 'Pushed' }));
+    await vi.waitFor(() => expect(fresh.getAgent('s2')?.title).toBe('Other'));
+    expect(fresh.getUser('s1')?.title).toBe('Pushed');
+    expect(fresh.getAgent('s1')?.title).toBe('Claude page');
   });
 
   it('navigates through the bridge', async () => {

@@ -100,10 +100,15 @@ function locateInPage(spec: ElementTarget & { purpose: 'click' | 'type'; clear?:
     if ((el as HTMLInputElement).disabled) return { ok: false as const, error: `${describe(el)} is disabled.` };
   }
 
-  el.scrollIntoView({ block: 'center', inline: 'center' });
+  // 'instant', not the default: pages with `scroll-behavior: smooth` would
+  // still be scrolling when the position is read.
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const r = el.getBoundingClientRect();
   const x = Math.round(r.left + r.width / 2);
   const y = Math.round(r.top + r.height / 2);
+  if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
+    return { ok: false as const, error: `${describe(el)} is outside the visible area even after scrolling (at ${x},${y}).` };
+  }
   const top = document.elementFromPoint(x, y);
   if (spec.purpose === 'click' && top && top !== el && !el.contains(top) && !top.contains(el)) {
     return { ok: false as const, error: `${describe(el)} is covered by ${describe(top)} at that point.` };

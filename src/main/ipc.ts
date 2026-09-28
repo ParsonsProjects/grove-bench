@@ -837,7 +837,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.PREVIEW_AGENT_FRAME, (_event, sessionId: string, sinceVersion: number) =>
     previewManager.agentFrame(sessionId, Number(sinceVersion) || 0));
 
-  ipcMain.handle(IPC.PREVIEW_GET_STATE, (_event, sessionId: string) => previewManager.getState(sessionId));
+  ipcMain.handle(IPC.PREVIEW_GET_STATES, () => previewManager.getStates());
 
   ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string) => {
     const session = sessionManager.getSession(sessionId);

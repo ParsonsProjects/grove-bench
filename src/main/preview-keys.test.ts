@@ -33,6 +33,13 @@ describe('previewKeyAction', () => {
     for (const n of ['1', '2', '3', '4', '5']) expect(previewKeyAction(key(n, { alt: true }))).toEqual({ kind: 'grove' });
     expect(previewKeyAction(key('b', { control: true }))).toEqual({ kind: 'grove' });
     expect(previewKeyAction(key('T', { control: true, shift: true }))).toEqual({ kind: 'grove' });
+    // Mode, thinking and effort.
+    for (const k of ['m', 't', 'e']) expect(previewKeyAction(key(k, { alt: true }))).toEqual({ kind: 'grove' });
+  });
+
+  it('keeps Ctrl+R and Ctrl+F in the page', () => {
+    expect(previewKeyAction(key('r', { control: true }))).toEqual({ kind: 'page', command: 'reload' });
+    expect(previewKeyAction(key('f', { control: true }))).toBeNull();
   });
 
   it('leaves normal typing and editing keys to the page', () => {

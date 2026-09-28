@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { checkNavigation } from './preview-policy.js';
+import { checkFileRequest, checkNavigation } from './preview-policy.js';
 
 const worktree = path.resolve('/tmp/grove/wt-abc');
 const inside = pathToFileURL(path.join(worktree, 'dist', 'index.html')).href;
@@ -57,5 +57,43 @@ describe('checkNavigation', () => {
 
   it('refuses junk', () => {
     expect(checkNavigation('not a url', 'user', worktree).ok).toBe(false);
+  });
+});
+
+describe('checkFileRequest', () => {
+  const file = (...parts: string[]) => pathToFileURL(path.join(worktree, ...parts)).href;
+  const secret = pathToFileURL(path.resolve('/home/me/.aws/credentials')).href;
+
+  it('lets both pages load web files from the worktree', () => {
+    for (const who of ['user', 'agent'] as const) {
+      for (const f of [file('index.html'), file('app.js'), file('style.css'), file('img', 'logo.PNG'), file('fonts', 'a.woff2')]) {
+        expect(checkFileRequest(f, who, worktree).ok).toBe(true);
+      }
+    }
+  });
+
+  it('blocks files outside the worktree for both pages, e.g. an iframe to ../../.aws/credentials', () => {
+    for (const who of ['user', 'agent'] as const) {
+      expect(checkFileRequest(secret, who, worktree)).toMatchObject({ ok: false, reason: expect.stringContaining('outside') });
+      expect(checkFileRequest(pathToFileURL(path.resolve('/tmp/grove/wt-abc-evil/x.js')).href, who, worktree).ok).toBe(false);
+    }
+  });
+
+  it("keeps non-web files in the worktree away from Claude's page only", () => {
+    for (const f of [file('.env'), file('config', 'service-account.json'), file('notes.txt'), file('id_rsa')]) {
+      expect(checkFileRequest(f, 'agent', worktree)).toMatchObject({ ok: false, reason: expect.stringContaining('non-web') });
+      expect(checkFileRequest(f, 'user', worktree).ok).toBe(true);
+    }
+  });
+
+  it('blocks UNC paths (file://server/share)', () => {
+    for (const who of ['user', 'agent'] as const) {
+      expect(checkFileRequest('file://evil-server/share/x.html', who, worktree).ok).toBe(false);
+    }
+  });
+
+  it('ignores non-file URLs', () => {
+    expect(checkFileRequest('http://localhost:5173/app.js', 'agent', worktree).ok).toBe(true);
+    expect(checkFileRequest('https://cdn.example.com/x.js', 'agent', worktree).ok).toBe(true);
   });
 });

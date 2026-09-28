@@ -1,6 +1,6 @@
 export type WorkspaceTab = 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview';
 
-const TAB_BY_KEY: Record<string, WorkspaceTab> = {
+export const TAB_BY_KEY: Record<string, WorkspaceTab> = {
   '1': 'activity',
   '2': 'changes',
   '3': 'checkpoints',

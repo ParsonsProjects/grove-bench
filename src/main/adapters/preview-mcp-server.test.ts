@@ -44,7 +44,9 @@ describe('previewToolHandlers', () => {
     expect(await run.click({ selector: '#a', text: 'Save' })).toMatchObject({ isError: true, content: [{ text: 'Give only one of: selector, text.' }] });
     expect(await run.click({ selector: '  ', text: 'Save' })).toMatchObject({ content: [{ text: 'Clicked <button> "save".' }] });
     expect(ops.click).toHaveBeenCalledTimes(1);
-    expect(ops.click).toHaveBeenCalledWith({ selector: '  ', text: 'Save' });
+    expect(ops.click).toHaveBeenCalledWith({ selector: '  ', text: 'Save' }, { dialogs: undefined });
+    await run.click({ text: 'Delete', dialogs: 'dismiss' });
+    expect(ops.click).toHaveBeenLastCalledWith({ selector: undefined, text: 'Delete' }, { dialogs: 'dismiss' });
   });
 
   it('needs exactly one field target for typing and passes options', async () => {
@@ -52,7 +54,7 @@ describe('previewToolHandlers', () => {
     const run = previewToolHandlers(ops);
     expect(await run.type({ text: 'x' })).toMatchObject({ isError: true });
     await run.type({ label: 'Email', text: 'a@b.c', submit: true });
-    expect(ops.type).toHaveBeenCalledWith({ selector: undefined, label: 'Email' }, 'a@b.c', { clear: undefined, submit: true });
+    expect(ops.type).toHaveBeenCalledWith({ selector: undefined, label: 'Email' }, 'a@b.c', { clear: undefined, submit: true, dialogs: undefined });
   });
 
   it('passes log options through', async () => {

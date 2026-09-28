@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseTabShortcut } from './keyboard-shortcuts.js';
+import { parseTabShortcut, TAB_BY_KEY } from './keyboard-shortcuts.js';
+import { isGroveWindowShortcut } from '../../shared/grove-shortcuts.js';
 
 describe('parseTabShortcut', () => {
   it('maps Alt+1..5 to the corresponding tab', () => {
@@ -17,5 +18,13 @@ describe('parseTabShortcut', () => {
   it('returns null for unrelated keys', () => {
     expect(parseTabShortcut({ altKey: true, key: '6' })).toBeNull();
     expect(parseTabShortcut({ altKey: true, key: 'a' })).toBeNull();
+  });
+});
+
+describe('tab shortcuts inside the Preview page', () => {
+  it('are all handed back to Grove, so a new tab key also works there', () => {
+    for (const key of Object.keys(TAB_BY_KEY)) {
+      expect(isGroveWindowShortcut({ key, ctrl: false, shift: false, alt: true })).toBe(true);
+    }
   });
 });

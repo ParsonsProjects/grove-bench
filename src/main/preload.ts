@@ -206,7 +206,7 @@ const api: GroveBenchAPI = {
   previewSnapshot: (sessionId: string) => ipcRenderer.invoke(IPC.PREVIEW_SNAPSHOT, sessionId),
   previewAgentFrame: (sessionId: string, sinceVersion: number) =>
     ipcRenderer.invoke(IPC.PREVIEW_AGENT_FRAME, sessionId, sinceVersion),
-  previewGetState: (sessionId: string) => ipcRenderer.invoke(IPC.PREVIEW_GET_STATE, sessionId),
+  previewGetStates: () => ipcRenderer.invoke(IPC.PREVIEW_GET_STATES),
   onPreviewState: (callback: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, state: import('../shared/types.js').PreviewPageState | null) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, sessionId: string, page: import('../shared/types.js').PreviewPageKind, state: import('../shared/types.js').PreviewPageState | null) =>
       callback(sessionId, page, state);

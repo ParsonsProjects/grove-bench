@@ -10,9 +10,8 @@ export type PreviewMode = PreviewPageKind;
 
 /** How many spotted URLs to keep per conversation (newest last). */
 const MAX_DETECTED = 6;
-/** Terminal output arrives in chunks; keep this much of the previous chunk
- *  so a URL split across two chunks is still found. */
-const STREAM_TAIL = 200;
+/** Longest unfinished terminal line kept while waiting for its newline. */
+const MAX_PARTIAL_LINE = 2000;
 
 class PreviewStore {
   userBySession = $state<Record<string, PreviewPageState | null>>({});
@@ -34,6 +33,14 @@ class PreviewStore {
     this.started = true;
     window.groveBench.onPreviewState((sessionId, page, state) => this.applyState(sessionId, page, state));
     window.groveBench.onPreviewKey((sessionId, key) => this.handleKey(sessionId, key));
+    // Pages outlive a reload of Grove's UI; pick up the ones already open.
+    // State pushed since subscribing is newer, so it wins.
+    window.groveBench.previewGetStates().then((all) => {
+      for (const [sessionId, { user, agent }] of Object.entries(all ?? {})) {
+        if (user && !(sessionId in this.userBySession)) this.userBySession[sessionId] = user;
+        if (agent && !(sessionId in this.agentBySession)) this.agentBySession[sessionId] = agent;
+      }
+    }).catch(() => { /* nothing to restore */ });
   }
 
   getUser(sessionId: string): PreviewPageState | null {
@@ -100,12 +107,20 @@ class PreviewStore {
     this.addDetected(sessionId, findLocalUrls(text));
   }
 
-  /** Remember local URLs in streamed terminal output. */
+  /** Remember local URLs in streamed terminal output. Only whole lines are
+   *  scanned: a chunk can end mid-URL, and scanning it would save a cut-off
+   *  address like http://localhost:51/. */
   noteStream(sessionId: string, chunk: string): void {
-    const tail = this.streamTails.get(sessionId) ?? '';
-    const text = tail + chunk;
-    this.streamTails.set(sessionId, text.slice(-STREAM_TAIL));
-    this.noteText(sessionId, text);
+    const text = (this.streamTails.get(sessionId) ?? '') + chunk;
+    const end = text.lastIndexOf('\n') + 1;
+    let partial = text.slice(end);
+    if (end > 0) this.noteText(sessionId, text.slice(0, end));
+    if (partial.length > MAX_PARTIAL_LINE) {
+      // A line this long isn't a dev server banner; don't grow forever.
+      this.noteText(sessionId, partial);
+      partial = '';
+    }
+    this.streamTails.set(sessionId, partial);
   }
 
   private addDetected(sessionId: string, urls: string[]): void {

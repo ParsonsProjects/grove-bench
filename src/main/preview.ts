@@ -23,7 +23,7 @@ import type { MenuItemConstructorOptions, NativeImage, Session, WebContents } fr
 import { IPC } from '../shared/types.js';
 import type { PreviewBounds, PreviewCommand, PreviewKeyForward, PreviewPageKind, PreviewPageState } from '../shared/types.js';
 import { isLocalHttpUrl, normalizeTypedUrl } from '../shared/preview-url.js';
-import { checkNavigation } from './preview-policy.js';
+import { checkFileRequest, checkNavigation } from './preview-policy.js';
 import { PreviewLog, consoleLevel, formatLogEntries } from './preview-log.js';
 import { previewKeyAction } from './preview-keys.js';
 import { locateScript, readScript, type LocateResult, type PageReadResult } from './preview-scripts.js';
@@ -37,6 +37,9 @@ const AGENT_MAX_SIZE = { width: 2560, height: 1600 };
 /** Offscreen paint rate for Claude's page. Enough to watch; low CPU. */
 const AGENT_FRAME_RATE = 10;
 const LOAD_TIMEOUT_MS = 20_000;
+/** Longest any one browser tool call may take, so a stuck page can't stall
+ *  the agent's turn. Longer than a load plus settling. */
+const ACTION_TIMEOUT_MS = 45_000;
 /** Pause after an action so scripts, transitions and fetches can land. */
 const SETTLE_MS = 350;
 const DEFAULT_READ_CHARS = 20_000;
@@ -58,6 +61,12 @@ interface AgentPage {
   log: PreviewLog;
   /** Bumped on every offscreen paint, so the UI only fetches changed frames. */
   frameVersion: number;
+  /** How to answer an alert or confirm the page opens. The action that may
+   *  open one sets it; otherwise dialogs get OK. */
+  dialogAnswer: 'accept' | 'dismiss';
+  /** Attach the DevTools protocol client if it isn't (it can drop when the
+   *  page's process restarts). */
+  ensureDebugger: () => void;
 }
 
 interface Entry {
@@ -88,6 +97,16 @@ export async function within(promise: Promise<unknown>, ms: number): Promise<boo
   }
 }
 
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** loadURL rejects with ERR_ABORTED when the page starts another navigation
+ *  (a script redirect) before the first one finishes. */
+function isAborted(message: string): boolean {
+  return /ERR_ABORTED|\(-3\)/.test(message);
+}
+
 function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n)));
 }
@@ -102,10 +121,22 @@ export class PreviewManager {
   private window: BrowserWindow | null = null;
   private entries = new Map<string, Entry>();
   private configuredPartitions = new Set<string>();
+  /** Agent tool calls per conversation, run one at a time in call order. */
+  private queues = new Map<string, Promise<unknown>>();
 
   /** The Grove window your pages are placed in and state is sent to. */
   setWindow(win: BrowserWindow | null): void {
     this.window = win;
+    // When Grove's UI reloads, the renderer forgets where your page goes and
+    // would never hide it again; hide every page until it asks.
+    win?.webContents.on('did-navigate', () => this.hideAll());
+  }
+
+  private hideAll(): void {
+    for (const entry of this.entries.values()) {
+      entry.viewport = null;
+      this.applyViewport(entry, null);
+    }
   }
 
   // ─── Lifecycle ───
@@ -132,6 +163,7 @@ export class PreviewManager {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     this.entries.delete(sessionId);
+    this.queues.delete(sessionId);
     if (entry.user) {
       const wc = entry.user.view.webContents;
       try { this.window?.contentView.removeChildView(entry.user.view); } catch { /* window gone */ }
@@ -163,6 +195,24 @@ export class PreviewManager {
     ses.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'clipboard-sanitized-write'));
     ses.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write');
     ses.setDevicePermissionHandler(() => false);
+
+    // Files load only from inside the worktree, and Claude's page only loads
+    // web file types: an iframe or script tag could otherwise show it any file.
+    // No URL filter: 'file:///*' would miss UNC paths (file://server/share).
+    ses.webRequest.onBeforeRequest((details, callback) => {
+      if (!details.url.startsWith('file:')) {
+        callback({});
+        return;
+      }
+      const entry = this.entries.get(sessionId);
+      const agent = this.agentPageFor(sessionId, details.webContentsId);
+      const check = checkFileRequest(details.url, agent ? 'agent' : 'user', entry?.worktreePath ?? '');
+      if (!check.ok) {
+        agent?.log.add({ kind: 'page', level: 'warning', text: check.reason });
+        logger.info(`[preview] ${sessionId}: ${check.reason}`);
+      }
+      callback({ cancel: !check.ok });
+    });
 
     // Claude reads failed requests with preview_logs. Handlers look the entry
     // up on each call: the partition outlives a closed and reopened page.
@@ -244,8 +294,11 @@ export class PreviewManager {
       state: { ...blankState(), lastAction: null, size: { ...AGENT_DEFAULT_SIZE } },
       log: new PreviewLog(),
       frameVersion: 0,
+      dialogAnswer: 'accept',
+      ensureDebugger: () => {},
     };
     entry.agent = page;
+    this.answerDialogs(page, wc);
     wc.on('paint', () => { page.frameVersion++; });
     wc.on('console-message', (_event, level, message, line, sourceId) => {
       if (isElectronNoise(message)) return;
@@ -257,6 +310,36 @@ export class PreviewManager {
     this.wirePage(entry, 'agent', wc);
     this.sendState(entry.sessionId, 'agent', page.state);
     return page;
+  }
+
+  /**
+   * Answer alert and confirm dialogs on Claude's page. Nobody can click a
+   * dialog on a hidden page, and an open one blocks it, so the action that
+   * opened it and every later one would hang. What the dialog said and the
+   * answer go in the log, so the action's result reports them. (Electron
+   * doesn't support prompt().)
+   */
+  private answerDialogs(page: AgentPage, wc: WebContents): void {
+    wc.debugger.on('message', (_event, method, params) => {
+      if (method !== 'Page.javascriptDialogOpening') return;
+      const accept = page.dialogAnswer === 'accept' || params.type === 'beforeunload';
+      if (params.type !== 'beforeunload') {
+        page.log.add({ kind: 'page', level: 'warning', text: `The page showed ${params.type}(${JSON.stringify(params.message)}) and it was answered ${accept ? 'OK' : 'Cancel'}.` });
+      }
+      wc.debugger.sendCommand('Page.handleJavaScriptDialog', { accept, promptText: params.defaultPrompt ?? '' }).catch(() => {});
+    });
+    page.ensureDebugger = () => {
+      if (wc.isDestroyed() || wc.debugger.isAttached()) return;
+      try {
+        wc.debugger.attach('1.3');
+      } catch (e) {
+        logger.warn(`[preview] could not attach to Claude's page: ${errorText(e)}`);
+        return;
+      }
+      // Resolves only after the page's first load, so it isn't awaited.
+      wc.debugger.sendCommand('Page.enable').catch(() => {});
+    };
+    page.ensureDebugger();
   }
 
   /** Navigation rules and state tracking shared by both pages. */
@@ -363,6 +446,8 @@ export class PreviewManager {
   }
 
   private updateState(entry: Entry, kind: PreviewPageKind, patch: Partial<PreviewPageState>): void {
+    // A closing page can still fire events; don't resurrect it in the UI.
+    if (this.entries.get(entry.sessionId) !== entry) return;
     const page = kind === 'user' ? entry.user : entry.agent;
     if (!page) return;
     const wc = kind === 'user' ? entry.user!.view.webContents : entry.agent!.win.webContents;
@@ -423,11 +508,8 @@ export class PreviewManager {
   /** Show your page at `bounds` (CSS pixels in the window), or hide it. */
   setViewport(sessionId: string, bounds: PreviewBounds | null): void {
     const entry = this.entries.get(sessionId);
-    if (!entry) {
-      // Nothing loaded yet; remember where to put the page when it is.
-      if (bounds) this.ensureEntry(sessionId, '').viewport = bounds;
-      return;
-    }
+    // The renderer only places a page it has seen state for.
+    if (!entry) return;
     entry.viewport = bounds;
     if (bounds) {
       // Only one conversation's page is ever on screen.
@@ -442,7 +524,16 @@ export class PreviewManager {
     const page = entry.user;
     if (!page) return;
     if (bounds && bounds.width > 0 && bounds.height > 0) {
-      page.view.setBounds({ x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) });
+      // The renderer measures in CSS pixels; views are placed in window
+      // pixels, which differ when Grove's UI is zoomed.
+      const win = this.window;
+      const zoom = win && !win.isDestroyed() ? win.webContents.getZoomFactor() : 1;
+      page.view.setBounds({
+        x: Math.round(bounds.x * zoom),
+        y: Math.round(bounds.y * zoom),
+        width: Math.round(bounds.width * zoom),
+        height: Math.round(bounds.height * zoom),
+      });
       if (!page.visible) {
         page.view.setVisible(true);
         page.visible = true;
@@ -488,18 +579,43 @@ export class PreviewManager {
     return { user: entry?.user?.state ?? null, agent: entry?.agent?.state ?? null };
   }
 
+  getStates(): Record<string, { user: PreviewPageState | null; agent: PreviewPageState | null }> {
+    const all: Record<string, { user: PreviewPageState | null; agent: PreviewPageState | null }> = {};
+    for (const id of this.entries.keys()) all[id] = this.getState(id);
+    return all;
+  }
+
   // ─── Agent tools ───
 
   /** The operations the agent's browser tools call, bound to a conversation. */
   operationsFor(sessionId: string, worktreePath: string): PreviewOperations {
+    const run = <T>(what: string, fn: () => Promise<T>) => this.serial(sessionId, what, fn);
     return {
-      open: (opts) => this.agentOpen(sessionId, worktreePath, opts),
-      screenshot: () => this.agentScreenshot(sessionId),
-      read: (opts) => this.agentRead(sessionId, opts),
-      logs: async (opts) => this.agentLogs(sessionId, opts),
-      click: (target) => this.agentClick(sessionId, target),
-      type: (target, text, opts) => this.agentType(sessionId, target, text, opts),
+      open: (opts) => run('Opening the page', () => this.agentOpen(sessionId, worktreePath, opts)),
+      screenshot: () => run('The screenshot', () => this.agentScreenshot(sessionId)),
+      read: (opts) => run('Reading the page', () => this.agentRead(sessionId, opts)),
+      logs: (opts) => run('Reading the log', async () => this.agentLogs(sessionId, opts)),
+      click: (target, opts) => run('The click', () => this.agentClick(sessionId, target, opts ?? {})),
+      type: (target, text, opts) => run('Typing', () => this.agentType(sessionId, target, text, opts)),
     };
+  }
+
+  /**
+   * Run one tool call at a time per conversation, in call order: the agent
+   * may send several at once (say an open and a screenshot), and each must
+   * see the page the previous one left. A call that takes longer than
+   * ACTION_TIMEOUT_MS fails so the agent's turn can't stall on a stuck page.
+   */
+  private serial<T>(sessionId: string, what: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(sessionId) ?? Promise.resolve();
+    const result = previous.then(async () => {
+      let value!: T;
+      const done = await within(fn().then((v) => { value = v; }), ACTION_TIMEOUT_MS);
+      if (!done) throw new Error(`${what} took longer than ${ACTION_TIMEOUT_MS / 1000}s. The page may be stuck in a long script or request.`);
+      return value;
+    });
+    this.queues.set(sessionId, result.catch(() => {}));
+    return result;
   }
 
   /** Claude's page with something loaded on a URL it's allowed to act on. */
@@ -547,15 +663,18 @@ export class PreviewManager {
       this.updateState(entry, 'agent', { size: { width, height } });
     }
 
+    page.ensureDebugger();
     const mark = page.log.lastSeq;
     const target = url ?? page.state.url;
     this.noteAction(sessionId, url ? `Opened ${url}` : 'Reloaded the page');
+    let stopWaiting: (() => void) | undefined;
     const load = url ? wc.loadURL(url) : new Promise<void>((resolve, reject) => {
       const done = () => { cleanup(); resolve(); };
       const fail = (_e: unknown, code: number, description: string, _u: string, isMainFrame: boolean) => {
         if (isMainFrame && code !== ERR_ABORTED) { cleanup(); reject(new Error(`${description} (${code})`)); }
       };
       const cleanup = () => { wc.off('did-finish-load', done); wc.off('did-fail-load', fail); };
+      stopWaiting = cleanup;
       wc.on('did-finish-load', done);
       wc.on('did-fail-load', fail);
       wc.reload();
@@ -565,10 +684,17 @@ export class PreviewManager {
     try {
       timedOut = !(await within(load, LOAD_TIMEOUT_MS));
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      const hint = /ERR_CONNECTION_REFUSED/.test(message) ? ' Nothing is listening there. Is the dev server running?' : '';
-      // A blocked redirect only shows up as ERR_FAILED; the log says why.
-      throw new Error([`Couldn't load ${target}: ${message}.${hint}`, this.newProblems(page, mark)].filter(Boolean).join('\n'));
+      const message = errorText(e);
+      if (!isAborted(message)) {
+        const hint = /ERR_CONNECTION_REFUSED/.test(message) ? ' Nothing is listening there. Is the dev server running?' : '';
+        // A blocked redirect only shows up as ERR_FAILED; the log says why.
+        throw new Error([`Couldn't load ${target}: ${message}.${hint}`, this.newProblems(page, mark)].filter(Boolean).join('\n'));
+      }
+      // The page moved on (a script redirect) before it finished loading.
+      // Wait for wherever it went; a blocked redirect leaves it where it was.
+      timedOut = !(await this.waitForStop(wc, LOAD_TIMEOUT_MS));
+    } finally {
+      stopWaiting?.();
     }
     await sleep(SETTLE_MS);
     const size = page.state.size!;
@@ -622,45 +748,49 @@ export class PreviewManager {
     return note + text;
   }
 
-  private async agentClick(sessionId: string, target: PreviewTarget): Promise<string> {
+  private async agentClick(sessionId: string, target: PreviewTarget, opts: { dialogs?: 'accept' | 'dismiss' }): Promise<string> {
     const page = this.requireAgentPage(sessionId);
     const wc = page.win.webContents;
     const mark = page.log.lastSeq;
     const found = await wc.executeJavaScript(locateScript(target, 'click')) as LocateResult;
     if (!found.ok) throw new Error(found.error);
-    await this.withDebugger(wc, async (send) => {
-      const at = { x: found.x, y: found.y };
-      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at });
-      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount: 1 });
-      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', buttons: 0, clickCount: 1 });
+    await this.withDialogAnswer(page, opts.dialogs, async () => {
+      await this.withDebugger(wc, async (send) => {
+        const at = { x: found.x, y: found.y };
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at });
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', buttons: 0, clickCount: 1 });
+      });
+      this.noteAction(sessionId, `Clicked ${found.description}`);
+      await this.settle(wc);
     });
-    this.noteAction(sessionId, `Clicked ${found.description}`);
-    await this.settle(wc);
     const which = found.matches > 1 ? ` (the first of ${found.matches} matches)` : '';
     return [`Clicked ${found.description}${which}.`, this.pageLine(page), this.newProblems(page, mark)].filter(Boolean).join('\n');
   }
 
-  private async agentType(sessionId: string, target: PreviewTarget, text: string, opts: { clear?: boolean; submit?: boolean }): Promise<string> {
+  private async agentType(sessionId: string, target: PreviewTarget, text: string, opts: { clear?: boolean; submit?: boolean; dialogs?: 'accept' | 'dismiss' }): Promise<string> {
     const page = this.requireAgentPage(sessionId);
     const wc = page.win.webContents;
     const mark = page.log.lastSeq;
     const clear = opts.clear !== false;
     const found = await wc.executeJavaScript(locateScript(target, 'type', clear, text)) as LocateResult;
     if (!found.ok) throw new Error(found.error);
-    await this.withDebugger(wc, async (send) => {
-      if (found.selected !== undefined) {
-        // A <select>: the script already picked the option.
-      } else if (text) {
-        // Replaces the selection the script made when clearing.
-        await send('Input.insertText', { text });
-      } else if (clear) {
-        await this.pressKey(send, 'Backspace', 8);
-      }
-      if (opts.submit) await this.pressKey(send, 'Enter', 13, '\r');
-    });
     const what = found.selected !== undefined ? `Chose "${found.selected}" in` : text ? `Typed ${JSON.stringify(text.length > 80 ? text.slice(0, 80) + '…' : text)} into` : 'Cleared';
-    this.noteAction(sessionId, `${what} ${found.description}${opts.submit ? ' and pressed Enter' : ''}`);
-    await this.settle(wc);
+    await this.withDialogAnswer(page, opts.dialogs, async () => {
+      await this.withDebugger(wc, async (send) => {
+        if (found.selected !== undefined) {
+          // A <select>: the script already picked the option.
+        } else if (text) {
+          // Replaces the selection the script made when clearing.
+          await send('Input.insertText', { text });
+        } else if (clear) {
+          await this.pressKey(send, 'Backspace', 8);
+        }
+        if (opts.submit) await this.pressKey(send, 'Enter', 13, '\r');
+      });
+      this.noteAction(sessionId, `${what} ${found.description}${opts.submit ? ' and pressed Enter' : ''}`);
+      await this.settle(wc);
+    });
     return [`${what} ${found.description}${opts.submit ? ' and pressed Enter' : ''}.`, this.pageLine(page), this.newProblems(page, mark)].filter(Boolean).join('\n');
   }
 
@@ -686,29 +816,49 @@ export class PreviewManager {
     }
   }
 
+  /** Answer dialogs the action opens as asked, then go back to OK. */
+  private async withDialogAnswer(page: AgentPage, answer: 'accept' | 'dismiss' | undefined, fn: () => Promise<void>): Promise<void> {
+    page.ensureDebugger();
+    page.dialogAnswer = answer ?? 'accept';
+    try {
+      await fn();
+    } finally {
+      page.dialogAnswer = 'accept';
+    }
+  }
+
   /** Wait for whatever the action started: a navigation, then a short pause. */
   private async settle(wc: WebContents): Promise<void> {
     await sleep(SETTLE_MS);
     if (wc.isDestroyed() || !wc.isLoading()) return;
+    await this.waitForStop(wc, LOAD_TIMEOUT_MS);
+    await sleep(SETTLE_MS);
+  }
+
+  /** True once the page stops loading, false if it's still loading after `ms`. */
+  private async waitForStop(wc: WebContents, ms: number): Promise<boolean> {
+    if (wc.isDestroyed() || !wc.isLoading()) return true;
     let onStop: (() => void) | undefined;
     const stopped = new Promise<void>((resolve) => { onStop = resolve; wc.once('did-stop-loading', onStop); });
-    await within(stopped, LOAD_TIMEOUT_MS);
-    if (onStop && !wc.isDestroyed()) wc.off('did-stop-loading', onStop);
-    await sleep(SETTLE_MS);
+    try {
+      return await within(stopped, ms);
+    } finally {
+      if (onStop && !wc.isDestroyed()) wc.off('did-stop-loading', onStop);
+    }
   }
 
   private pageLine(page: AgentPage): string {
     return `Page: ${page.state.url}${page.state.title ? ` ("${page.state.title}")` : ''}${page.state.loading ? ' (still loading)' : ''}`;
   }
 
-  /** Errors and blocked navigations logged since `mark`, as a short note
+  /** Errors, dialogs and blocked loads logged since `mark`, as a short note
    *  for the action's result. */
   private newProblems(page: AgentPage, mark: number): string {
     const problems = page.log.since(mark).filter((e) => e.level === 'error' || e.kind === 'page');
     if (problems.length === 0) return '';
     const shown = problems.slice(-5);
     const more = problems.length > shown.length ? ` (last ${shown.length} shown; preview_logs has the rest)` : '';
-    return `${problems.length} new problem${problems.length === 1 ? '' : 's'}${more}:\n${formatLogEntries(shown)}`;
+    return `New in the page's log${more}:\n${formatLogEntries(shown)}`;
   }
 }
 

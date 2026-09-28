@@ -114,8 +114,9 @@ export interface PreviewOperations {
   screenshot(): Promise<PreviewScreenshot>;
   read(opts: { selector?: string; maxChars?: number }): Promise<string>;
   logs(opts: { errorsOnly?: boolean; all?: boolean }): Promise<string>;
-  click(target: PreviewTarget): Promise<string>;
-  type(target: PreviewTarget, text: string, opts: { clear?: boolean; submit?: boolean }): Promise<string>;
+  /** `dialogs`: how to answer an alert or confirm the action opens (default accept). */
+  click(target: PreviewTarget, opts?: { dialogs?: 'accept' | 'dismiss' }): Promise<string>;
+  type(target: PreviewTarget, text: string, opts: { clear?: boolean; submit?: boolean; dialogs?: 'accept' | 'dismiss' }): Promise<string>;
 }
 
 // ─── Adapter Configuration ───

@@ -917,7 +917,8 @@ export interface GroveBenchAPI {
   /** Claude's page as a JPEG data URL, or null when it hasn't changed since
    *  `sinceVersion` (or doesn't exist). */
   previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
-  previewGetState(sessionId: string): Promise<{ user: PreviewPageState | null; agent: PreviewPageState | null }>;
+  /** Every conversation's open pages, for the renderer to catch up after a reload. */
+  previewGetStates(): Promise<Record<string, { user: PreviewPageState | null; agent: PreviewPageState | null }>>;
   /** A page's state changed; null means the page was closed. */
   onPreviewState(callback: (sessionId: string, page: PreviewPageKind, state: PreviewPageState | null) => void): () => void;
   onPreviewKey(callback: (sessionId: string, key: PreviewKeyForward) => void): () => void;
@@ -1469,7 +1470,7 @@ export const IPC = {
   PREVIEW_SET_VIEWPORT: 'preview:setViewport',
   PREVIEW_SNAPSHOT: 'preview:snapshot',
   PREVIEW_AGENT_FRAME: 'preview:agentFrame',
-  PREVIEW_GET_STATE: 'preview:getState',
+  PREVIEW_GET_STATES: 'preview:getStates',
   /** Main → renderer: (sessionId, page, state | null). */
   PREVIEW_STATE: 'preview:state',
   /** Main → renderer: (sessionId, PreviewKeyForward). */

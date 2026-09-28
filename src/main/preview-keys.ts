@@ -3,6 +3,7 @@
  * swallows keys, so browser keys are handled here and Grove's own shortcuts
  * are sent back to the Grove window.
  */
+import { isGroveWindowShortcut } from '../shared/grove-shortcuts.js';
 
 export interface KeyInput {
   type: string;
@@ -32,10 +33,6 @@ export function previewKeyAction(input: KeyInput): PreviewKeyAction | null {
   if (alt && !ctrl && key === 'ArrowRight') return { kind: 'page', command: 'forward' };
   if ((ctrl && !alt && !shift && lower === 'l') || (alt && !ctrl && lower === 'd')) return { kind: 'focusAddress' };
 
-  // Grove's shortcuts: Alt+1..5 switch tabs, Ctrl+B bookmarks, Ctrl+Shift+T
-  // reopens the last closed conversation.
-  if (alt && !ctrl && !shift && /^[1-5]$/.test(key)) return { kind: 'grove' };
-  if (ctrl && !alt && !shift && lower === 'b') return { kind: 'grove' };
-  if (ctrl && !alt && shift && lower === 't') return { kind: 'grove' };
+  if (isGroveWindowShortcut({ key, ctrl, shift, alt })) return { kind: 'grove' };
   return null;
 }

@@ -30,7 +30,7 @@ When a page can't load, the tab says why. For example, a refused connection usua
 | `F12` or `Ctrl+Shift+I` | Developer tools |
 | `Alt+Left` / `Alt+Right` | Back / forward |
 | `Ctrl+L` or `Alt+D` | Go to the address bar |
-| `Alt+1` to `Alt+5`, `Ctrl+B`, `Ctrl+Shift+T` | Grove Bench shortcuts, as usual |
+| `Alt+1` to `Alt+5`, `Alt+M`, `Alt+T`, `Alt+E`, `Ctrl+B`, `Ctrl+Shift+T` | Grove Bench shortcuts, as usual |
 
 `Ctrl+R` reloads the page while the page has focus. Elsewhere in Grove Bench it still opens the conversation finder.
 
@@ -40,6 +40,8 @@ The agent can open a local page, take a screenshot, read the page's text, click,
 
 - It only opens local addresses (`localhost`, `127.0.0.1`, `[::1]`) and HTML files in the conversation's worktree. Links and redirects to other sites are blocked
 - Opening, screenshots, reading and logs run without asking. Clicking and typing ask for permission like other actions, with **Always Allow** for the rest of the conversation
+- If the page shows an alert or a confirm box, it's answered OK unless the agent asked for Cancel, and the agent is told what it said
+- Files load only from the conversation's worktree, and the agent's page only loads web files (HTML, CSS, scripts, images, fonts, media)
 - A dot on the Preview tab means the agent used its browser since you last looked
 - The page is 1280×800 unless the agent picks another size, for example a phone size
 

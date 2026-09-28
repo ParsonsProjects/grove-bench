@@ -86,17 +86,17 @@ export function previewToolHandlers(ops: PreviewOperations) {
     logs: ({ errorsOnly, all }: { errorsOnly?: boolean; all?: boolean }) =>
       guarded(async () => text(await ops.logs({ errorsOnly, all }))),
 
-    click: ({ selector, text: label }: { selector?: string; text?: string }) => guarded(async () => {
+    click: ({ selector, text: label, dialogs }: { selector?: string; text?: string; dialogs?: 'accept' | 'dismiss' }) => guarded(async () => {
       const problem = pickOne({ selector, text: label });
       if (problem) throw new Error(problem);
-      return text(await ops.click({ selector, text: label }));
+      return text(await ops.click({ selector, text: label }, { dialogs }));
     }),
 
-    type: ({ selector, label, text: value, clear, submit }: { selector?: string; label?: string; text: string; clear?: boolean; submit?: boolean }) =>
+    type: ({ selector, label, text: value, clear, submit, dialogs }: { selector?: string; label?: string; text: string; clear?: boolean; submit?: boolean; dialogs?: 'accept' | 'dismiss' }) =>
       guarded(async () => {
         const problem = pickOne({ selector, label });
         if (problem) throw new Error(problem);
-        return text(await ops.type({ selector, label }, value, { clear, submit }));
+        return text(await ops.type({ selector, label }, value, { clear, submit, dialogs }));
       }),
   };
 }
@@ -168,10 +168,12 @@ export async function createPreviewMcpServer(ops: PreviewOperations) {
         'preview_click',
         'Click an element in the page open in your Preview browser with a real mouse click. Target it with a CSS selector, '
         + 'or with the visible text of a button, link or other clickable element (exact match preferred, then partial). '
-        + 'Fails if the element is hidden or covered by something else. Returns the page URL afterwards and any new errors.',
+        + 'Fails if the element is hidden or covered by something else. Returns the page URL afterwards and any new errors. '
+        + 'An alert or confirm dialog it opens is answered OK unless dialogs is "dismiss"; the result says what it showed.',
         {
           selector: z.string().optional().describe('CSS selector of the element.'),
           text: z.string().optional().describe('Visible text of the element, e.g. "Save".'),
+          dialogs: z.enum(['accept', 'dismiss']).optional().describe('How to answer an alert or confirm the click opens: accept (OK, default) or dismiss (Cancel).'),
         },
         run.click,
         { searchHint: 'click button link in browser preview', annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false } },
@@ -188,6 +190,7 @@ export async function createPreviewMcpServer(ops: PreviewOperations) {
           text: z.string().describe('Text to type, or the option to choose in a <select>. Empty clears the field.'),
           clear: z.boolean().optional().describe('Replace the current value (default true). False appends at the cursor.'),
           submit: z.boolean().optional().describe('Press Enter afterwards, e.g. to submit a form.'),
+          dialogs: z.enum(['accept', 'dismiss']).optional().describe('How to answer an alert or confirm this opens: accept (OK, default) or dismiss (Cancel).'),
         },
         run.type,
         { searchHint: 'type fill form field in browser preview', annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false } },

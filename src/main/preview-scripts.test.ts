@@ -115,6 +115,20 @@ describe('locateInPage', () => {
     expect(missing.ok || missing.error).toBe('<select> "Country" has no option "France". Options: "Pick", "United Kingdom", "United States"');
   });
 
+  it('scrolls instantly, so smooth-scrolling pages report the final position', () => {
+    document.body.innerHTML = '<button id="b">Save</button>';
+    locateInPage({ selector: '#b', purpose: 'click' });
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'center', behavior: 'instant' });
+  });
+
+  it('refuses a point outside the visible area instead of clicking blind', () => {
+    document.body.innerHTML = '<button id="far">Far</button>';
+    vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(() =>
+      ({ left: 10, top: 5000, width: 100, height: 30, right: 110, bottom: 5030, x: 10, y: 5000, toJSON() {} }) as DOMRect);
+    const res = locateInPage({ selector: '#far', purpose: 'click' });
+    expect(res.ok || res.error).toContain('outside the visible area');
+  });
+
   it('asks for a target when none is given', () => {
     expect(locateInPage({ purpose: 'click' })).toEqual({ ok: false, error: 'Give a selector, text or label.' });
   });
