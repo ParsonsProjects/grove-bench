@@ -574,7 +574,7 @@
             hasPending: getSessionHasPending(session.id),
             isRunning: messageStore.getIsRunning(session.id),
             needsAttention: !!store.needsAttention[session.id],
-          })} seed={session.id} />
+          })} seed={session.id} projectColor={repoColor} />
         {:else if isDestroying}
           <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
         {:else if session.status === 'error'}
