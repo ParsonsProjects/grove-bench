@@ -40,7 +40,10 @@ Right-click a conversation to access:
 - **Rename** — Give the conversation a custom display name
 - **Mark Completed** / **Reopen** — Hide a finished conversation, or bring it back
 - **Open Folder** — Open the worktree directory in your file explorer
+- **Stop** — Shut down a live conversation's agent but keep the conversation, so you can pick it up again later
 - **Destroy Agent** — Remove the conversation and optionally delete its branch
+
+Stopping or destroying the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
 
 ## Bottom Controls
 

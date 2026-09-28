@@ -18,6 +18,7 @@
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import SessionFinder from './components/SessionFinder.svelte';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
+  import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
@@ -458,8 +459,15 @@
                   style="width:4px;height:4px;top:{Math.round((8+(((i*37+13)*7)%84))/100*800/6)*6}px;left:{Math.round((5+(((i*53+7)*11)%90))/100*1400/6)*6}px;animation-delay:{(i*1.3)%6}s;"
                 ></span>
               {/each}
-              <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
-              <span class="ml-3 text-sm relative z-10">Starting agent...</span>
+              {#if settingsStore.current.groveCharacters}
+                <!-- Only the open conversation's walk is drawn; hidden panes skip it. -->
+                {#if store.activeSessionId === session.id}
+                  <GroveWalk seed={session.id} />
+                {/if}
+              {:else}
+                <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
+                <span class="ml-3 text-sm relative z-10">Starting agent...</span>
+              {/if}
             </div>
           {/if}
         </div>

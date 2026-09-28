@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agentSpriteState, agentLook, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SKIN_TONES, HAIR_TONES, type AgentSpriteInput } from './agent-sprite.js';
+import { agentSpriteState, agentLook, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, type AgentSpriteInput } from './agent-sprite.js';
 
 const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false };
 
@@ -22,6 +22,14 @@ describe('sprite maps', () => {
     for (const [name, map] of Object.entries(SPRITE_MAPS)) {
       expect(map, name).toHaveLength(SPRITE_H);
       for (const row of map) expect(row, `${name}: ${row}`).toHaveLength(SPRITE_W);
+    }
+  });
+
+  it('keep the side-on walk frames the same size', () => {
+    expect(SIDE_WALK_MAPS).toHaveLength(2);
+    for (const map of SIDE_WALK_MAPS) {
+      expect(map).toHaveLength(SIDE_WALK_H);
+      for (const row of map) expect(row).toHaveLength(SIDE_WALK_W);
     }
   });
 

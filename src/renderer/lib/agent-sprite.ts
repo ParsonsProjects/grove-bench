@@ -98,6 +98,17 @@ const WALK_TOP = [...HEAD, 'cccccc....', 'sccccs....', '.cccc.....'];
 const WALK_A = [...WALK_TOP, '.p..p.....', '.f..f.....'];
 const WALK_B = [...WALK_TOP, '..pp......', '..ff......'];
 
+// Walking side-on, facing right, for the grove walk. The first frame is the
+// passing pose, which also stands in for the still one. It is a pixel taller
+// than the stride, so the head bobs as the frames swap.
+const SIDE_HEAD = ['.hhhh.', 'hhhhhh', 'hhsses', '.hsss.'];
+const SIDE_PASS = [...SIDE_HEAD, '.cccc.', '.cccc.', '.cccc.', '..pp..', '..pp..', '..fff.'];
+const SIDE_STRIDE = ['......', ...SIDE_HEAD, '.cccc.', 'cccccs', '.cccc.', '.p..p.', '.f..ff'];
+
+export const SIDE_WALK_W = 6;
+export const SIDE_WALK_H = 10;
+export const SIDE_WALK_MAPS = [SIDE_PASS, SIDE_STRIDE];
+
 /** Palette overrides for one character, keyed like the pixel maps. */
 export type AgentLook = Record<'h' | 's' | 'z', string>;
 
