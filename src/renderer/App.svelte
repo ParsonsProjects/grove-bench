@@ -24,6 +24,7 @@
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import { previewStore } from './stores/preview.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
 
   let showAnalyticsConsent = $state(false);
@@ -301,6 +302,7 @@
     settingsStore.load();
     bookmarkStore.load();
     memoryStore.init();
+    previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
       console.error('Failed to load repos:', e);
     });

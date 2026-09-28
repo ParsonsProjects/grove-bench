@@ -9,6 +9,7 @@ import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
+import { previewStore } from './preview.svelte.js';
 
 // ─── Chat message types ───
 
@@ -207,7 +208,7 @@ class MessageStore {
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview'>>({});
 
   /** Activity view mode per session. Unset = the global default
    *  (settings.defaultActivityView). Not persisted across restarts. */
@@ -584,11 +585,11 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview') {
     this.activeTabBySession[sessionId] = tab;
   }
 
@@ -1141,6 +1142,8 @@ class MessageStore {
 
       case 'tool_result':
         this.onToolResult(sessionId, event);
+        // Dev servers print their URL; offer it in the Preview tab.
+        previewStore.noteText(sessionId, event.content);
         break;
 
       case 'permission_request':

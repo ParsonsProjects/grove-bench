@@ -10,6 +10,9 @@ export type {
   PermissionResponse,
   PermissionHandler,
   MemoryOperations,
+  PreviewOperations,
+  PreviewTarget,
+  PreviewScreenshot,
 } from './types.js';
 
 export { adapterRegistry } from './registry.js';

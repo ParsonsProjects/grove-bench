@@ -9,11 +9,13 @@
   import ChangesReviewPanel from './ChangesReviewPanel.svelte';
   import CheckpointsPanel from './CheckpointsPanel.svelte';
   import TerminalPanel from './TerminalPanel.svelte';
+  import PreviewPanel from './PreviewPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
   import RewindDialog from './RewindDialog.svelte';
   import { terminalStore } from '../stores/terminal.svelte.js';
-  import { parseTabShortcut } from '$lib/keyboard-shortcuts.js';
+  import { previewStore } from '../stores/preview.svelte.js';
+  import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -24,6 +26,9 @@
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let terminalRunning = $derived(terminalStore.isAlive(sessionId));
   let checkpointCount = $derived(checkpointStore.getCheckpoints(sessionId).length);
+  let previewLoading = $derived(!!previewStore.getUser(sessionId)?.loading || !!previewStore.getAgent(sessionId)?.loading);
+  let previewUnseen = $derived(previewStore.hasUnseenAgentActivity(sessionId));
+  let previewVisible = $derived(activeTab === 'preview' && store.activeSessionId === sessionId);
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
@@ -36,7 +41,14 @@
     if (activeTab === 'terminal') terminalMounted = true;
   });
 
-  function switchTab(tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
+  // The Preview panel mounts on first open too. Its pages live in the main
+  // process, so nothing is lost before then.
+  let previewMounted = $state(false);
+  $effect(() => {
+    if (activeTab === 'preview') previewMounted = true;
+  });
+
+  function switchTab(tab: WorkspaceTab) {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
     if (tab === 'changes') {
@@ -218,6 +230,22 @@
       {/if}
       <span class="text-muted-foreground/60 ml-1">Alt+4</span>
     </button>
+    <button
+      onclick={() => switchTab('preview')}
+      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
+        ? 'border-primary text-foreground'
+        : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Browse your app, and watch Claude's page when it checks its work"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><rect x="3" y="4" width="18" height="16"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="6" y1="6.5" x2="7" y2="6.5"/></svg>
+      Preview
+      {#if previewUnseen}
+        <span class="inline-block w-2 h-2 bg-primary" title="Claude used the browser"></span>
+      {:else if previewLoading}
+        <span class="inline-block w-2 h-2 bg-primary/60 animate-pulse"></span>
+      {/if}
+      <span class="text-muted-foreground/60 ml-1">Alt+5</span>
+    </button>
   </div>
 
   <!-- Tab content -->
@@ -235,11 +263,16 @@
       <TerminalPanel {sessionId} />
     {/if}
   </div>
+  <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
+    {#if previewMounted}
+      <PreviewPanel {sessionId} active={previewVisible} />
+    {/if}
+  </div>
 
   <StatusBar {sessionId} />
-  {#if activeTab === 'activity' || activeTab === 'changes'}
-    <!-- The Changes tab shares the prompt input; sending from it jumps back to
-         Activity (handled in PromptEditor) so the response is visible. -->
+  {#if activeTab === 'activity' || activeTab === 'changes' || activeTab === 'preview'}
+    <!-- The Changes and Preview tabs share the prompt input; sending from them
+         jumps back to Activity (handled in PromptEditor) so the response is visible. -->
     <PromptEditor {sessionId} />
   {:else if activeTab === 'terminal'}
     <!-- Terminal has its own input -->

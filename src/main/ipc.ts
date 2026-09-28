@@ -15,11 +15,13 @@ import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { generateCommitMessage } from './commit-message.js';
+import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
+import { previewManager } from './preview.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as skillSuggestions from './skill-suggestions.js';
@@ -376,6 +378,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_CLOSE, async (_event, id: string) => {
     logger.info(`Closing session (agent, background tasks and terminal): id=${id}`);
+    previewManager.close(id);
     await Promise.all([
       terminalManager.killAllForSession(id),
       sessionManager.closeSession(id),
@@ -390,6 +393,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
+    previewManager.close(id);
     await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
@@ -803,6 +807,37 @@ export function registerHandlers() {
     }
     await shell.openExternal(url);
   });
+
+  // ─── Preview tab ───
+
+  const PREVIEW_PAGES = new Set(['user', 'agent']);
+  const PREVIEW_COMMANDS = new Set(['back', 'forward', 'reload', 'hardReload', 'stop', 'devtools']);
+  const isPreviewPage = (page: unknown): page is PreviewPageKind => typeof page === 'string' && PREVIEW_PAGES.has(page);
+
+  ipcMain.handle(IPC.PREVIEW_NAVIGATE, (_event, sessionId: string, page: unknown, url: unknown) => {
+    if (!isPreviewPage(page) || typeof url !== 'string') throw new Error('Invalid preview request');
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error("This conversation's worktree isn't ready yet.");
+    previewManager.navigate(sessionId, worktree.path, page, url);
+  });
+
+  ipcMain.handle(IPC.PREVIEW_COMMAND, (_event, sessionId: string, page: unknown, command: unknown) => {
+    if (!isPreviewPage(page) || typeof command !== 'string' || !PREVIEW_COMMANDS.has(command)) throw new Error('Invalid preview request');
+    previewManager.command(sessionId, page, command as PreviewCommand);
+  });
+
+  ipcMain.on(IPC.PREVIEW_SET_VIEWPORT, (_event, sessionId: string, bounds: PreviewBounds | null) => {
+    const valid = bounds === null || (bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every((n) => Number.isFinite(n)));
+    if (typeof sessionId !== 'string' || !valid) return;
+    previewManager.setViewport(sessionId, bounds);
+  });
+
+  ipcMain.handle(IPC.PREVIEW_SNAPSHOT, (_event, sessionId: string) => previewManager.snapshot(sessionId));
+
+  ipcMain.handle(IPC.PREVIEW_AGENT_FRAME, (_event, sessionId: string, sinceVersion: number) =>
+    previewManager.agentFrame(sessionId, Number(sinceVersion) || 0));
+
+  ipcMain.handle(IPC.PREVIEW_GET_STATE, (_event, sessionId: string) => previewManager.getState(sessionId));
 
   ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string) => {
     const session = sessionManager.getSession(sessionId);

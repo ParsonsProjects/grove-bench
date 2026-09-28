@@ -1,10 +1,11 @@
-export type WorkspaceTab = 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal';
+export type WorkspaceTab = 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview';
 
 const TAB_BY_KEY: Record<string, WorkspaceTab> = {
   '1': 'activity',
   '2': 'changes',
   '3': 'checkpoints',
   '4': 'terminal',
+  '5': 'preview',
 };
 
 /**

@@ -686,6 +686,45 @@ export interface SessionSortState {
 
 // ─── IPC API (exposed via contextBridge) ───
 
+// ─── Preview tab ───
+
+/** The two pages behind a conversation's Preview tab: yours (an interactive
+ *  browser view) and Claude's (an offscreen page the agent's browser tools
+ *  drive). They share cookies and storage. */
+export type PreviewPageKind = 'user' | 'agent';
+
+/** Where your page sits in the window, in CSS pixels from the top-left. */
+export interface PreviewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PreviewPageState {
+  /** '' until something is loaded. */
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Last main-frame load failure; cleared by the next successful load. */
+  error: { code: number; description: string; url: string } | null;
+  /** The page's process died. Reload to recover. */
+  crashed: boolean;
+  /** Claude's page only: its last action and when it happened. */
+  lastAction?: { text: string; at: number } | null;
+  /** Claude's page only: viewport size in CSS pixels. */
+  size?: { width: number; height: number };
+}
+
+export type PreviewCommand = 'back' | 'forward' | 'reload' | 'hardReload' | 'stop' | 'devtools';
+
+/** A key pressed in your page that Grove should handle. */
+export type PreviewKeyForward =
+  | { action: 'focusAddress' }
+  | { action: 'key'; key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean };
+
 export interface GroveBenchAPI {
   // Repo operations
   addRepo(): Promise<string | null>;
@@ -865,6 +904,23 @@ export interface GroveBenchAPI {
 
   // External links
   openExternal(url: string): Promise<void>;
+
+  // Preview tab
+  /** Load a URL in one of the conversation's Preview pages. Rejects with a
+   *  readable reason when the URL isn't allowed there. */
+  previewNavigate(sessionId: string, page: PreviewPageKind, url: string): Promise<void>;
+  previewCommand(sessionId: string, page: PreviewPageKind, command: PreviewCommand): Promise<void>;
+  /** Show your page at these bounds, or hide it (null). */
+  previewSetViewport(sessionId: string, bounds: PreviewBounds | null): void;
+  /** A picture of your page (JPEG data URL), shown while an overlay covers it. */
+  previewSnapshot(sessionId: string): Promise<string | null>;
+  /** Claude's page as a JPEG data URL, or null when it hasn't changed since
+   *  `sinceVersion` (or doesn't exist). */
+  previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
+  previewGetState(sessionId: string): Promise<{ user: PreviewPageState | null; agent: PreviewPageState | null }>;
+  /** A page's state changed; null means the page was closed. */
+  onPreviewState(callback: (sessionId: string, page: PreviewPageKind, state: PreviewPageState | null) => void): () => void;
+  onPreviewKey(callback: (sessionId: string, key: PreviewKeyForward) => void): () => void;
 
   // MCP server configuration (agent CLI config, not per-session)
   mcpConfigList(cwd?: string): Promise<McpConfiguredServer[]>;
@@ -1058,6 +1114,12 @@ export interface GroveBenchSettings {
   // Worktree
   /** Automatically run npm install in new worktrees. Default false. */
   autoInstallDeps: boolean;
+
+  // Preview
+  /** Give the agent browser tools that drive its own page in the Preview tab
+   *  (local URLs only). Applies when a conversation's agent next starts.
+   *  Default true. */
+  previewAgentTools: boolean;
 
   // Sessions
   /** Auto-stop a session after this many minutes idle (not focused, not running
@@ -1401,4 +1463,15 @@ export const IPC = {
   UPDATE_DOWNLOAD: 'update:download',
   UPDATE_INSTALL: 'update:install',
   UPDATE_STATUS: 'update:status',
+  // Preview tab
+  PREVIEW_NAVIGATE: 'preview:navigate',
+  PREVIEW_COMMAND: 'preview:command',
+  PREVIEW_SET_VIEWPORT: 'preview:setViewport',
+  PREVIEW_SNAPSHOT: 'preview:snapshot',
+  PREVIEW_AGENT_FRAME: 'preview:agentFrame',
+  PREVIEW_GET_STATE: 'preview:getState',
+  /** Main → renderer: (sessionId, page, state | null). */
+  PREVIEW_STATE: 'preview:state',
+  /** Main → renderer: (sessionId, PreviewKeyForward). */
+  PREVIEW_KEY: 'preview:key',
 } as const;

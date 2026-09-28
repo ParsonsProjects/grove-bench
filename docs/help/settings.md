@@ -40,6 +40,7 @@ These apply to every agent:
 - **Default Diff View** — Choose between unified or side-by-side diffs
 - **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation. **Flash the taskbar button** controls whether the taskbar button also flashes; it stops as soon as the window regains focus
 - **Auto-install dependencies in new worktrees** — Run `npm install` automatically when a worktree is created (off by default)
+- **Let the agent use the Preview browser** — Give the agent its own page in the [Preview tab](preview-tab.md#the-agents-browser) to open local pages, take screenshots, read, click and type in. Applies to agents started after the change (on by default)
 
 ## MCP
 

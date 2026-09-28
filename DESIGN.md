@@ -195,6 +195,24 @@ interface GroveBenchAPI {
 
 **Note on IPC cleanup:** The `onTermData` return value (a cleanup function) works because the closure is created inside the preload script, which runs in the renderer's JS context. `contextBridge.exposeInMainWorld` correctly proxies returned functions. However, as a safety net, `offTermData` provides an explicit cleanup path that doesn't rely on return value proxying. The `TerminalPane` component should call `offTermData` in its `onDestroy` lifecycle.
 
+#### PreviewManager (Preview tab)
+
+`src/main/preview.ts` gives each conversation a browser with two pages that share one in-memory storage partition (`grove-preview-<sessionId>`, cleared when the conversation closes):
+
+- **Your page** is a `WebContentsView` added to the Grove window. The renderer's `PreviewPanel` checks its content box every frame and reports changes (`preview:setViewport`); main places the view there, or hides it (`null`) when the tab, conversation or page mode changes. Native views draw above the HTML, so the panel samples a grid of points with `elementFromPoint`; when anything else is on top (a dropdown, dialog, the finder) it asks for a snapshot (`preview:snapshot`), shows it as an `<img>`, then hides the view until the overlay goes.
+- **Claude's page** is a hidden `BrowserWindow` with `offscreen: true`, created on the agent's first browser tool call. A hidden or never-shown `WebContentsView` stops painting: `capturePage()` fails with "Current display surface not available for capture", ignores resizes and loses its surface on cross-site navigation. Offscreen rendering keeps painting (10 fps), so screenshots, clicks and typing work whatever tab the user is on. The renderer shows it read-only by polling `preview:agentFrame`, which only returns a frame when a paint happened since the last one.
+
+The agent's tools are an in-process SDK MCP server (`src/main/adapters/preview-mcp-server.ts`, server `grove-preview`) over the adapter-neutral `PreviewOperations`: `preview_open`, `preview_screenshot`, `preview_read`, `preview_logs`, `preview_click`, `preview_type`. The first four are added to the session's always-allowed tools; click and type go through the normal permission prompt. Clicks and typing are real input events sent over the DevTools protocol (`webContents.debugger`, attached only for the action); the scripts that find, scroll to and focus the element (`src/main/preview-scripts.ts`) take the agent's selector or text as JSON, never as code. `settings.previewAgentTools` turns the server off for agents started afterwards.
+
+Rules (`src/main/preview-policy.ts`, `src/main/preview.ts`):
+
+- Your page opens any http(s) URL; Claude's page only local ones (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`). Both open `about:blank` and `file://` URLs inside the conversation's worktree; Claude's page only `.html`/`.htm` ones, so `preview_read` can't read files the user's read rules keep from the agent. Top-level navigations are checked on load, `will-navigate` and `will-redirect`; pop-ups load in the same page
+- Both pages run with `sandbox`, `contextIsolation`, no Node and no preload. Permission requests are denied except `clipboard-sanitized-write`; device access is denied; downloads from Claude's page are cancelled
+- Certificate errors are accepted for local hosts only, for dev servers with self-signed certificates
+- Console messages, uncaught errors, failed loads, blocked navigations and 4xx/5xx or failed requests from Claude's page go to a 300-entry log (`src/main/preview-log.ts`) that `preview_logs` reads
+
+Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove shortcuts (`Alt+1..5`, `Ctrl+B`, `Ctrl+Shift+T`, `Ctrl+L`) are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes (Claude's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app).
+
 ### 4.3 Renderer / UI
 
 Svelte 5 app with a simple layout:

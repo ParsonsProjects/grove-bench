@@ -6,6 +6,7 @@
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
+  import { openLink } from '$lib/preview-links.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -53,8 +54,8 @@
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
 
-    const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      window.groveBench.openExternal(uri);
+    const webLinksAddon = new WebLinksAddon((event, uri) => {
+      openLink(uri, event);
     });
     terminal.loadAddon(webLinksAddon);
 
