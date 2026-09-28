@@ -21,10 +21,8 @@ const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
 
 const SETTINGS = {
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
   defaultModels: {},

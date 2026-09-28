@@ -1,10 +1,8 @@
 import type { GroveBenchSettings, ToolRule } from '../../shared/types.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
   defaultModels: {},

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import type { AgentEvent } from '../shared/types.js';
+import { IPC, type AgentEvent } from '../shared/types.js';
 import * as fs from 'node:fs';
 
 // ─── Mock infrastructure ───
@@ -49,7 +49,6 @@ const processTree = vi.hoisted(() => ({
 vi.mock('./process-tree.js', () => processTree);
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
-    defaultPermissionMode: 'default',
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
     toolDenyRules: [],
@@ -450,8 +449,7 @@ describe('AgentSessionManager caveman mode', () => {
 
   it('includes caveman prompt when mode is full', async () => {
     settingsMock.getSettings.mockReturnValue({
-      defaultPermissionMode: 'default',
-      defaultSystemPromptAppend: null,
+        defaultSystemPromptAppend: null,
       toolAllowRules: [],
       toolDenyRules: [],
       cavemanMode: 'full',
@@ -475,8 +473,7 @@ describe('AgentSessionManager caveman mode', () => {
 
   it('places caveman prompt after path rules', async () => {
     settingsMock.getSettings.mockReturnValue({
-      defaultPermissionMode: 'default',
-      defaultSystemPromptAppend: null,
+        defaultSystemPromptAppend: null,
       toolAllowRules: [],
       toolDenyRules: [],
       cavemanMode: 'lite',
@@ -945,6 +942,8 @@ describe('AgentSessionManager.stopQuery()', () => {
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     }).then((r) => { permResolved = r; });
     await new Promise((r) => setTimeout(r, 50));
+    const modeSyncCount = () => sessionManager.getEventHistory('test-stop').filter((e) => e.type === 'mode_sync').length;
+    const beforeStop = modeSyncCount();
 
     await sessionManager.stopQuery('test-stop');
     await new Promise((r) => setTimeout(r, 50));
@@ -952,9 +951,7 @@ describe('AgentSessionManager.stopQuery()', () => {
     expect(permResolved).toMatchObject({ behavior: 'deny' });
 
     // Should have emitted mode_sync after stop
-    const history = sessionManager.getEventHistory('test-stop');
-    const modeSyncEvents = history.filter((e) => e.type === 'mode_sync');
-    expect(modeSyncEvents.length).toBeGreaterThanOrEqual(1);
+    expect(modeSyncCount()).toBeGreaterThan(beforeStop);
 
     await sessionManager.destroySession('test-stop');
   });
@@ -1047,6 +1044,8 @@ describe('AgentSessionManager.interruptQuery()', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
     expect(mockAdapter.startCallCount).toBe(1);
     const handle = sessionManager.getSession('test-interrupt')?.queryHandle;
+    const modeSyncCount = () => sessionManager.getEventHistory('test-interrupt').filter((e) => e.type === 'mode_sync').length;
+    const beforeInterrupt = modeSyncCount();
 
     await sessionManager.interruptQuery('test-interrupt');
     await new Promise((r) => setTimeout(r, 50));
@@ -1057,8 +1056,7 @@ describe('AgentSessionManager.interruptQuery()', () => {
     expect(sessionManager.getSession('test-interrupt')?.queryHandle).toBe(handle);
 
     // mode_sync emitted for parity with stopQuery (clears renderer guard).
-    const history = sessionManager.getEventHistory('test-interrupt');
-    expect(history.some((e) => e.type === 'mode_sync')).toBe(true);
+    expect(modeSyncCount()).toBeGreaterThan(beforeInterrupt);
 
     await sessionManager.destroySession('test-interrupt');
   });
@@ -2091,7 +2089,7 @@ describe('AgentSessionManager model handling', () => {
     await sessionManager.destroySession('test-model-default');
   });
 
-  const BASE_SETTINGS = { defaultPermissionMode: 'default', defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
+  const BASE_SETTINGS = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
 
   it('records which agent the conversation runs', async () => {
     await sessionManager.createSession({ id: 'test-agent-recorded', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
@@ -2316,7 +2314,6 @@ describe('AgentSessionManager wake-from-sleep', () => {
 
 describe('AgentSessionManager session controls', () => {
   const SETTINGS = {
-    defaultPermissionMode: 'default',
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
     toolDenyRules: [],
@@ -2353,6 +2350,57 @@ describe('AgentSessionManager session controls', () => {
     expect(sessionManager.getControls('ctl-unknown-default').values.thinking).toBe('high');
 
     await sessionManager.destroySession('ctl-unknown-default');
+  });
+
+  it('starts in the agent\'s saved default mode, passes it to the adapter, and tells the renderer', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { permissionMode: 'acceptEdits' }, other: { permissionMode: 'plan' } } });
+    const win = makeMockWindow();
+
+    await sessionManager.createSession({ id: 'ctl-mode-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+
+    expect(sessionManager.getSession('ctl-mode-default')?.permissionMode).toBe('acceptEdits');
+    // Kept out of the other control values: the mode has its own field.
+    expect(sessionManager.getControls('ctl-mode-default').values).not.toHaveProperty('permissionMode');
+    const sync = { type: 'mode_sync', mode: 'acceptEdits', source: 'session' };
+    expect(sessionManager.getEventHistory('ctl-mode-default')).toContainEqual(sync);
+    expect(win.webContents.send).toHaveBeenCalledWith(`${IPC.AGENT_EVENT}:ctl-mode-default`, sync);
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.permissionMode).toBe('acceptEdits');
+
+    await sessionManager.destroySession('ctl-mode-default');
+  });
+
+  it('starts in the default mode when none is saved, and tells the renderer', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: {} });
+
+    await sessionManager.createSession({ id: 'ctl-mode-unset', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+
+    expect(sessionManager.getSession('ctl-mode-unset')?.permissionMode).toBe('default');
+    expect(sessionManager.getEventHistory('ctl-mode-unset')).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'session' });
+
+    await sessionManager.destroySession('ctl-mode-unset');
+  });
+
+  it('falls a saved mode the model does not offer back to the adapter default', async () => {
+    // mock-lite has no native auto mode (like Claude's Haiku).
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { permissionMode: 'auto' } } });
+
+    await sessionManager.createSession({ id: 'ctl-mode-fallback', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock', model: 'mock-lite' });
+
+    expect(sessionManager.getSession('ctl-mode-fallback')?.permissionMode).toBe('default');
+    expect(sessionManager.getEventHistory('ctl-mode-fallback')).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'session' });
+
+    await sessionManager.destroySession('ctl-mode-fallback');
+  });
+
+  it('ignores a saved mode no adapter offers, such as the removed Bypass Permissions', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { permissionMode: 'bypassPermissions' } } });
+
+    await sessionManager.createSession({ id: 'ctl-mode-bypass', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+
+    expect(sessionManager.getSession('ctl-mode-bypass')?.permissionMode).toBe('default');
+
+    await sessionManager.destroySession('ctl-mode-bypass');
   });
 
   it('emits controls_sync once the query reports system_init', async () => {

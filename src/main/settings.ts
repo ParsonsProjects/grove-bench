@@ -7,10 +7,8 @@ import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-stat
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Permission & Security
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
 
@@ -65,7 +63,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 6;
+export const SETTINGS_SCHEMA_VERSION = 7;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -155,6 +153,28 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
       : existing;
     return rest;
   },
+  // 6 → 7: `defaultPermissionMode` was one mode for every agent, but which
+  // modes exist depends on the agent and model. It became the
+  // `permissionMode` entry in `adapterDefaults`, set per agent like the other
+  // controls. Claude Code was the only agent before this, so a saved mode
+  // moves under it. 'default' is the adapter's own default and is not stored.
+  // Bypass Permissions was removed: new conversations never started in it,
+  // so a saved 'bypassPermissions' is dropped, along with the setting that
+  // hid it (`disableBypassMode`).
+  (raw) => {
+    const { defaultPermissionMode, disableBypassMode: _disableBypassMode, ...rest } = raw;
+    const existing = (typeof rest.adapterDefaults === 'object' && rest.adapterDefaults !== null)
+      ? (rest.adapterDefaults as Record<string, Record<string, string>>)
+      : {};
+    if (typeof defaultPermissionMode === 'string' && defaultPermissionMode
+      && defaultPermissionMode !== 'default' && defaultPermissionMode !== 'bypassPermissions') {
+      rest.adapterDefaults = {
+        ...existing,
+        'claude-code': { ...(existing['claude-code'] ?? {}), permissionMode: defaultPermissionMode },
+      };
+    }
+    return rest;
+  },
 ];
 
 // ─── Validation ───
@@ -165,10 +185,8 @@ const hexColor = z.string();
 /** Field-level validation: an invalid value falls back to its default rather
  *  than rejecting the whole file (`.catch`). Unknown keys are dropped. */
 const settingsSchema = z.object({
-  defaultPermissionMode: z.enum(['default', 'plan', 'acceptEdits', 'readSafe', 'auto', 'bypassPermissions']).catch(DEFAULT_SETTINGS.defaultPermissionMode),
   toolAllowRules: z.array(toolRuleSchema).catch(DEFAULT_SETTINGS.toolAllowRules),
   toolDenyRules: z.array(toolRuleSchema).catch(DEFAULT_SETTINGS.toolDenyRules),
-  disableBypassMode: z.boolean().catch(DEFAULT_SETTINGS.disableBypassMode),
   disabledSkills: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledSkills),
   autoSkillSuggestions: z.boolean().catch(DEFAULT_SETTINGS.autoSkillSuggestions),
 
