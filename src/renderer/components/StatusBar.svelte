@@ -603,8 +603,9 @@
 </script>
 
 {#if settingsStore.current.groveCharacters}
-  <!-- Stands on the bar's top border, so the border is the grove's ground. -->
-  <ContextGrove seed={sessionId} percent={usedPercent} />
+  <!-- Stands on the bar's top border, so the border is the grove's ground.
+       Only the open conversation's grove plays out its growth. -->
+  <ContextGrove seed={sessionId} percent={usedPercent} animate={store.activeSessionId === sessionId} />
 {/if}
 <div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />

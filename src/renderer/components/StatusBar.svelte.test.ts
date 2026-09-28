@@ -57,9 +57,12 @@ describe('StatusBar keyboard shortcuts', () => {
 
 describe('StatusBar context grove', () => {
   afterEach(() => {
+    vi.useRealTimers();
     settingsStore.current = { ...settingsStore.current, groveCharacters: true };
-    delete messageStore.usageBySession[ACTIVE];
-    delete messageStore.contextWindowBySession[ACTIVE];
+    for (const id of [ACTIVE, HIDDEN]) {
+      delete messageStore.usageBySession[id];
+      delete messageStore.contextWindowBySession[id];
+    }
   });
 
   function useContext(tokens: number) {
@@ -72,9 +75,19 @@ describe('StatusBar context grove', () => {
     expect(getByTestId('context-grove').querySelectorAll('path')).toHaveLength(0);
   });
 
-  it('grows as the context fills', () => {
+  it('grows as the context fills', async () => {
+    vi.useFakeTimers();
     useContext(100_000);
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    // The open conversation's grove grows in, so give it time to.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
+  });
+
+  it('shows a hidden conversation\'s grove at once', () => {
+    messageStore.contextWindowBySession[HIDDEN] = 200_000;
+    messageStore.usageBySession[HIDDEN] = { inputTokens: 100_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    const { getByTestId } = render(StatusBar, { props: { sessionId: HIDDEN } });
     expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
   });
 

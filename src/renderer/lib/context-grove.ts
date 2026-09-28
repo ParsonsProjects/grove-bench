@@ -6,6 +6,9 @@
  * Where each plant stands, what it grows into and when it sprouts are random,
  * seeded by the conversation id. So each conversation keeps its own grove, and
  * plants grow where they stand rather than jumping about as the context fills.
+ *
+ * In the open conversation the grove plays out each change (see GroveGrowth):
+ * plants sprout one after another and each rises out of the ground.
  */
 import { hashString } from './agent-sprite.js';
 
@@ -16,6 +19,10 @@ export const GROVE_H = 8;
 export const GROVE_SCALE = 2;
 /** Percent of the context window between one growth stage and the next. */
 export const GROVE_STAGE_GAP = 12;
+/** Milliseconds between animation frames: whole-pixel steps, a few a second. */
+export const GROVE_STEP_MS = 80;
+/** Milliseconds a plant takes to rise out of the ground. */
+export const GROVE_GROW_MS = 480;
 
 // The logo tree's colours, lightest at the top.
 const PALETTE: Record<string, string> = {
@@ -116,21 +123,24 @@ export function plantStage(plant: GrovePlant, percent: number): number {
  * The grove with this much context used, as one-pixel-high runs. Plants are
  * painted onto a pixel grid, far ones first, so nearer plants cover them and
  * each pixel ends up a single colour.
+ *
+ * `growth` holds how far each growing plant (by index) has risen, from 0 to 1.
+ * A growing plant comes up out of the ground in front of its stage before.
  */
-export function groveRuns(plants: GrovePlant[], percent: number): GroveRun[] {
+export function groveRuns(plants: GrovePlant[], percent: number, growth: ReadonlyMap<number, number> = new Map()): GroveRun[] {
   const fills: (string | null)[] = new Array(GROVE_W * GROVE_H).fill(null);
   const far: boolean[] = new Array(GROVE_W * GROVE_H).fill(false);
-  const painted = [...plants.filter((p) => p.far), ...plants.filter((p) => !p.far)];
 
-  for (const plant of painted) {
-    const stage = plantStage(plant, percent);
-    if (stage < 0) continue;
+  function paint(plant: GrovePlant, stage: number, risen: number) {
     const map = plant.bloom ? FLOWER : STAGES[plant.kind][stage];
+    // Only the top rows show while it rises; the rest is still underground.
+    const rows = risen >= 1 ? map.length : Math.max(1, Math.ceil(risen * map.length));
     // Centred on the plant's column and standing on the bottom row, so each
     // stage grows out of the last.
     const left = plant.x - Math.floor(map[0].length / 2);
-    const top = GROVE_H - map.length;
-    map.forEach((row, dy) => {
+    const top = GROVE_H - rows;
+    for (let dy = 0; dy < rows; dy++) {
+      const row = map[dy];
       for (let dx = 0; dx < row.length; dx++) {
         const x = left + dx;
         const fill = row[dx] === 'f' ? plant.bloom : PALETTE[row[dx]];
@@ -139,7 +149,18 @@ export function groveRuns(plants: GrovePlant[], percent: number): GroveRun[] {
         fills[i] = fill;
         far[i] = plant.far;
       }
-    });
+    }
+  }
+
+  const indexes = plants.map((_, i) => i);
+  const painted = [...indexes.filter((i) => plants[i].far), ...indexes.filter((i) => !plants[i].far)];
+  for (const i of painted) {
+    const plant = plants[i];
+    const stage = plantStage(plant, percent);
+    if (stage < 0) continue;
+    const risen = growth.get(i) ?? 1;
+    if (risen < 1 && stage > 0) paint(plant, stage - 1, 1);
+    paint(plant, stage, risen);
   }
 
   const runs: GroveRun[] = [];
@@ -177,4 +198,78 @@ export function grovePaths(runs: GroveRun[]): GrovePath[] {
     path.d += `M${r.x} ${r.y}h${r.w}v1h-${r.w}z`;
   }
   return [...byKey.values()];
+}
+
+/** How long the grove takes to sweep across this many percent. */
+export function groveSweepMs(delta: number): number {
+  return delta > 0 ? Math.min(2400, 300 + delta * 80) : 0;
+}
+
+export interface GroveFrame {
+  /** The percent to draw the grove at. */
+  percent: number;
+  /** How far each growing plant has risen (see groveRuns). */
+  growth: ReadonlyMap<number, number>;
+  /** Nothing left to play until the next retarget. */
+  done: boolean;
+}
+
+/**
+ * Plays the grove from one amount of context to another. The drawn percent
+ * sweeps across, so plants sprout one after another, and each plant that
+ * sprouts or moves up a stage rises out of the ground over GROVE_GROW_MS.
+ * Plants that go (after a compact or clear) just go, one after another.
+ */
+export class GroveGrowth {
+  private from = 0;
+  private to = 0;
+  private start = 0;
+  private duration = 0;
+  /** Each plant's stage as last drawn. */
+  private stages: number[] = [];
+  /** When each growing plant reached its stage. */
+  private sproutedAt = new Map<number, number>();
+
+  constructor(
+    readonly plants: GrovePlant[],
+    percent: number,
+  ) {
+    this.settle(percent);
+  }
+
+  /** Jumps straight to `percent`, with nothing growing. */
+  settle(percent: number): void {
+    this.from = this.to = percent;
+    this.duration = 0;
+    this.stages = this.plants.map((p) => plantStage(p, percent));
+    this.sproutedAt.clear();
+  }
+
+  /** Sweeps towards `percent`, carrying on from wherever the grove is at `now`. */
+  retarget(percent: number, now: number): void {
+    const from = this.frame(now).percent;
+    this.from = from;
+    this.to = percent;
+    this.start = now;
+    this.duration = groveSweepMs(Math.abs(percent - from));
+  }
+
+  /** The grove at `now`. Frames must be asked for in time order. */
+  frame(now: number): GroveFrame {
+    const t = this.duration > 0 ? Math.min(1, (now - this.start) / this.duration) : 1;
+    const percent = this.from + (this.to - this.from) * t;
+    this.plants.forEach((plant, i) => {
+      const stage = plantStage(plant, percent);
+      if (stage > this.stages[i]) this.sproutedAt.set(i, now);
+      else if (stage < this.stages[i]) this.sproutedAt.delete(i);
+      this.stages[i] = stage;
+    });
+    const growth = new Map<number, number>();
+    for (const [i, at] of this.sproutedAt) {
+      const risen = (now - at) / GROVE_GROW_MS;
+      if (risen >= 1) this.sproutedAt.delete(i);
+      else growth.set(i, risen);
+    }
+    return { percent, growth, done: t === 1 && growth.size === 0 };
+  }
 }

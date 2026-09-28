@@ -95,7 +95,7 @@ A colored bar shows how much of the agent's context window has been used:
 
 A blue segment within the bar represents cached/reusable context.
 
-With **Show grove characters** on (Settings > General), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places.
+With **Show grove characters** on (Settings > General), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 
 ## Rate Limiting
 

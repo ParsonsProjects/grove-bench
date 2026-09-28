@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { GROVE_W, GROVE_H, GROVE_STAGE_GAP, groveLayout, groveRuns, grovePaths, plantStage, type GroveRun } from './context-grove.js';
+import {
+  GROVE_W, GROVE_H, GROVE_STAGE_GAP, GROVE_GROW_MS, GroveGrowth, groveLayout, groveRuns, grovePaths, groveSweepMs, plantStage,
+  type GrovePlant, type GroveRun,
+} from './context-grove.js';
 
 const pixels = (runs: GroveRun[]) => runs.reduce((n, r) => n + r.w, 0);
 
@@ -76,5 +79,87 @@ describe('context grove drawing', () => {
     const paths = grovePaths(runs);
     expect(paths.length).toBe(new Set(runs.map((r) => `${r.far} ${r.fill}`)).size);
     expect(paths.length).toBeLessThan(20);
+  });
+});
+
+describe('context grove growing', () => {
+  const tree: GrovePlant = { x: 10, kind: 'tree', at: 10, far: false, bloom: null };
+  const top = (runs: GroveRun[]) => Math.min(...runs.map((r) => r.y));
+
+  it('rises out of the ground, top first', () => {
+    // A sapling is 3 rows: its tip, then its leaves, then its trunk.
+    const rising = (risen: number) => groveRuns([tree], tree.at, new Map([[0, risen]]));
+    expect(rising(0)).toEqual([{ x: 10, y: GROVE_H - 1, w: 1, fill: '#5ab868', far: false }]);
+    expect(top(rising(0.5))).toBe(GROVE_H - 2);
+    expect(rising(0.99)).toEqual(groveRuns([tree], tree.at));
+    for (const risen of [0, 0.3, 0.6, 0.99]) {
+      expect(Math.max(...rising(risen).map((r) => r.y))).toBe(GROVE_H - 1);
+    }
+  });
+
+  it('keeps the stage before standing while the next one rises', () => {
+    const young = tree.at + GROVE_STAGE_GAP;
+    const sapling = groveRuns([tree], tree.at);
+    const rising = groveRuns([tree], young, new Map([[0, 0]]));
+    expect(top(rising)).toBe(top(sapling));
+    expect(pixels(rising)).toBeGreaterThanOrEqual(pixels(sapling));
+  });
+});
+
+describe('GroveGrowth', () => {
+  const plants = groveLayout('conv-1');
+
+  it('starts settled', () => {
+    expect(new GroveGrowth(plants, 40).frame(0)).toEqual({ percent: 40, growth: new Map(), done: true });
+  });
+
+  it('sweeps to the new percent, so plants sprout one after another', () => {
+    const grove = new GroveGrowth(plants, 40);
+    grove.retarget(60, 1000);
+    const end = 1000 + groveSweepMs(20);
+    expect(grove.frame(1000).percent).toBe(40);
+    const mid = grove.frame((1000 + end) / 2);
+    expect(mid.percent).toBeCloseTo(50);
+    expect(mid.growth.size).toBeGreaterThan(0);
+    expect(mid.done).toBe(false);
+    expect(grove.frame(end).percent).toBe(60);
+  });
+
+  it('rises each new plant over GROVE_GROW_MS, then is done', () => {
+    const grove = new GroveGrowth(plants, 40);
+    grove.retarget(60, 0);
+    const end = groveSweepMs(20);
+    const last = grove.frame(end);
+    expect(last.done).toBe(false);
+    for (const risen of last.growth.values()) {
+      expect(risen).toBeGreaterThanOrEqual(0);
+      expect(risen).toBeLessThan(1);
+    }
+    expect(grove.frame(end + GROVE_GROW_MS)).toEqual({ percent: 60, growth: new Map(), done: true });
+  });
+
+  it('carries on from where it is when the target changes mid-sweep', () => {
+    const grove = new GroveGrowth(plants, 40);
+    grove.retarget(60, 0);
+    const mid = groveSweepMs(20) / 2;
+    const before = grove.frame(mid).percent;
+    grove.retarget(30, mid);
+    expect(grove.frame(mid).percent).toBeCloseTo(before);
+    expect(grove.frame(mid + groveSweepMs(before - 30) + GROVE_GROW_MS).percent).toBe(30);
+  });
+
+  it('lets plants go without growing anything', () => {
+    const grove = new GroveGrowth(plants, 80);
+    grove.retarget(10, 0);
+    expect(grove.frame(groveSweepMs(70) / 2).growth.size).toBe(0);
+    expect(grove.frame(groveSweepMs(70))).toEqual({ percent: 10, growth: new Map(), done: true });
+  });
+
+  it('jumps straight there when settled', () => {
+    const grove = new GroveGrowth(plants, 40);
+    grove.retarget(60, 0);
+    grove.frame(100);
+    grove.settle(70);
+    expect(grove.frame(200)).toEqual({ percent: 70, growth: new Map(), done: true });
   });
 });
