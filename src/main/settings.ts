@@ -32,7 +32,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   previewAgentTools: true,
 
   // Sessions
-  idleAutoStopMinutes: 30,
+  idleSleepMinutes: 30,
 
   // General
   defaultBaseBranch: '', // empty = auto-detect the repo's default branch
@@ -66,7 +66,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 /** Bump when a saved field changes meaning or shape, and add a migration
  *  below. Adding a new field with a default needs no bump — validation fills
  *  it in. */
-export const SETTINGS_SCHEMA_VERSION = 7;
+export const SETTINGS_SCHEMA_VERSION = 8;
 
 /** `SETTINGS_MIGRATIONS[n]` upgrades a version-n settings object to n+1. */
 export const SETTINGS_MIGRATIONS: readonly Migration[] = [
@@ -178,6 +178,17 @@ export const SETTINGS_MIGRATIONS: readonly Migration[] = [
     }
     return rest;
   },
+  // 7 → 8: idle conversations now go to sleep (agent process shut down, the
+  // conversation stays open) instead of being stopped and closed, so
+  // `idleAutoStopMinutes` became `idleSleepMinutes`. The saved number of
+  // minutes, including 0 for off, carries over.
+  (raw) => {
+    const { idleAutoStopMinutes, ...rest } = raw;
+    if (idleAutoStopMinutes !== undefined && rest.idleSleepMinutes === undefined) {
+      rest.idleSleepMinutes = idleAutoStopMinutes;
+    }
+    return rest;
+  },
 ];
 
 // ─── Validation ───
@@ -208,7 +219,7 @@ const settingsSchema = z.object({
 
   previewAgentTools: z.boolean().catch(DEFAULT_SETTINGS.previewAgentTools),
 
-  idleAutoStopMinutes: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.idleAutoStopMinutes),
+  idleSleepMinutes: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.idleSleepMinutes),
 
   defaultBaseBranch: z.string().catch(DEFAULT_SETTINGS.defaultBaseBranch),
   theme: z.enum(['system', 'dark', 'light']).catch(DEFAULT_SETTINGS.theme),

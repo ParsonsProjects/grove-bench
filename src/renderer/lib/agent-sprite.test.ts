@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agentSpriteState, agentLook, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, type AgentSpriteInput } from './agent-sprite.js';
+import { agentSpriteState, agentLook, agentColors, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, type AgentSpriteInput } from './agent-sprite.js';
 
 const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false };
 
@@ -13,6 +13,8 @@ describe('agentSpriteState', () => {
     expect(agentSpriteState({ ...base, isRunning: true, needsAttention: true })).toBe('working');
     expect(agentSpriteState({ ...base, status: 'stopped', needsAttention: true })).toBe('unread');
     expect(agentSpriteState({ ...base, status: 'stopped' })).toBe('stopped');
+    expect(agentSpriteState({ ...base, status: 'sleeping' })).toBe('sleeping');
+    expect(agentSpriteState({ ...base, status: 'sleeping', needsAttention: true })).toBe('unread');
     expect(agentSpriteState(base)).toBe('ready');
   });
 });
@@ -30,6 +32,13 @@ describe('sprite maps', () => {
     for (const map of SIDE_WALK_MAPS) {
       expect(map).toHaveLength(SIDE_WALK_H);
       for (const row of map) expect(row).toHaveLength(SIDE_WALK_W);
+    }
+  });
+
+  it('put the project logo on every laptop, open or closed', () => {
+    for (const [name, map] of Object.entries(SPRITE_MAPS)) {
+      const hasLaptop = !name.startsWith('WALK');
+      expect(map.some((row) => row.includes('o')), name).toBe(hasLaptop);
     }
   });
 
@@ -57,6 +66,17 @@ describe('toRuns', () => {
     expect(runs[2].fill).toBe('currentColor');
     // Runs keep their map key so a look can recolour them.
     expect(runs.map((r) => r.key)).toEqual(['h', 's', 'c', 'c']);
+  });
+});
+
+describe('agentColors', () => {
+  it('adds the project colour to the look as the logo', () => {
+    expect(agentColors('3f9a1c07', '#61afef')).toEqual({ ...agentLook('3f9a1c07'), o: '#61afef' });
+  });
+
+  it('leaves the logo to the fallback without a project colour', () => {
+    expect(agentColors('3f9a1c07', null)).toEqual(agentLook('3f9a1c07'));
+    expect(agentColors(undefined)).toEqual({});
   });
 });
 

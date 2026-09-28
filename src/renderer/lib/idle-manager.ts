@@ -1,73 +1,69 @@
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
-import { terminalStore } from '../stores/terminal.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 
 /** Minimal per-session snapshot the idle policy needs. Kept plain (no store
  *  coupling) so the policy is unit-testable. */
 export interface IdleSnapshotSession {
   id: string;
   status: string;
-  /** Currently focused session — never auto-stopped. */
+  /** Currently focused session: never put to sleep. */
   isActive: boolean;
   /** Executing a turn right now. */
   isRunning: boolean;
   /** Awaiting a permission decision. */
   hasPending: boolean;
+  /** Has a background task running (e.g. a dev server the agent started),
+   *  which would die with the agent process. */
+  hasRunningTasks: boolean;
 }
 
 /**
- * Pure idle policy. A live (`running`) session becomes a stop candidate when it
- * is not focused, not executing a turn, and not awaiting a permission. The first
- * tick it's eligible we record `idleSince`; once it's been eligible for at least
- * `thresholdMs` it's returned in `toStop`. `nextIdleSince` carries forward the
- * timestamps for sessions still counting down (sessions that became ineligible
- * are dropped, so their clock resets next time).
+ * Pure idle policy. A live (`running`) session becomes a sleep candidate when
+ * it is not focused, not executing a turn or background task, and not awaiting
+ * a permission. The first tick it's eligible we record `idleSince`; once it's
+ * been eligible for at least `thresholdMs` it's returned in `toSleep`.
+ * `nextIdleSince` carries forward the timestamps for sessions still counting
+ * down (sessions that became ineligible are dropped, so their clock resets
+ * next time).
  *
- * `thresholdMs <= 0` disables auto-stop entirely.
+ * `thresholdMs <= 0` disables idle sleep entirely.
  */
-export function computeIdleStops(
+export function computeIdleSleeps(
   sessions: IdleSnapshotSession[],
   idleSince: Map<string, number>,
   now: number,
   thresholdMs: number,
-): { toStop: string[]; nextIdleSince: Map<string, number> } {
+): { toSleep: string[]; nextIdleSince: Map<string, number> } {
   const nextIdleSince = new Map<string, number>();
-  const toStop: string[] = [];
-  if (thresholdMs <= 0) return { toStop, nextIdleSince };
+  const toSleep: string[] = [];
+  if (thresholdMs <= 0) return { toSleep, nextIdleSince };
 
   for (const s of sessions) {
-    const eligible = s.status === 'running' && !s.isActive && !s.isRunning && !s.hasPending;
+    const eligible = s.status === 'running' && !s.isActive && !s.isRunning && !s.hasPending && !s.hasRunningTasks;
     if (!eligible) continue;
     const since = idleSince.get(s.id) ?? now;
     if (now - since >= thresholdMs) {
-      toStop.push(s.id);
+      toSleep.push(s.id);
     } else {
       nextIdleSince.set(s.id, since);
     }
   }
-  return { toStop, nextIdleSince };
-}
-
-/** Non-destructively stop a session (same path as the sidebar's Stop). An idle
- *  candidate is never the active session, so no active-session reassignment is
- *  needed here. */
-function stopSession(id: string) {
-  store.pushRecentlyClosed(id);
-  store.updateStatus(id, 'stopped');
-  terminalStore.markClosed(id);
-  window.groveBench.closeSession(id).catch(() => { /* may already be dead */ });
+  return { toSleep, nextIdleSince };
 }
 
 /**
- * Start the idle auto-stop loop. Polls every `intervalMs` and stops sessions
- * that have been idle past the configured threshold. Returns a cleanup function.
+ * Start the idle sleep loop. Polls every `intervalMs` and puts sessions that
+ * have been idle past the configured threshold to sleep: main shuts down
+ * their agent process and reports them 'sleeping'. They stay open, and wake
+ * when focused (App.svelte) or sent a message. Returns a cleanup function.
  */
 export function startIdleManager(intervalMs = 60_000): () => void {
   let idleSince = new Map<string, number>();
 
   const tick = () => {
-    const thresholdMs = (settingsStore.current.idleAutoStopMinutes ?? 0) * 60_000;
+    const thresholdMs = (settingsStore.current.idleSleepMinutes ?? 0) * 60_000;
     const now = Date.now();
     const snapshot: IdleSnapshotSession[] = store.sessions.map((s) => ({
       id: s.id,
@@ -75,10 +71,13 @@ export function startIdleManager(intervalMs = 60_000): () => void {
       isActive: store.activeSessionId === s.id,
       isRunning: messageStore.getIsRunning(s.id),
       hasPending: messageStore.hasPendingPermission(s.id),
+      hasRunningTasks: backgroundTaskStore.get(s.id).some((t) => t.status === 'running'),
     }));
-    const { toStop, nextIdleSince } = computeIdleStops(snapshot, idleSince, now, thresholdMs);
+    const { toSleep, nextIdleSince } = computeIdleSleeps(snapshot, idleSince, now, thresholdMs);
     idleSince = nextIdleSince;
-    for (const id of toStop) stopSession(id);
+    for (const id of toSleep) {
+      window.groveBench.sleepSession(id).catch(() => { /* stays awake; retried once idle again */ });
+    }
   };
 
   const timer = setInterval(tick, intervalMs);

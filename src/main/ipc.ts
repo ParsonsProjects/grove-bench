@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC } from '../shared/types.js';
-import type { BranchSwitchResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -31,6 +31,7 @@ import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -386,6 +387,19 @@ export function registerHandlers() {
     logger.info(`Session closed: id=${id}`);
   });
 
+  // Idle sleep: only the agent process goes. The terminal and anything
+  // running in it are left alone, so a dev server there keeps serving.
+  ipcMain.handle(IPC.SESSION_SLEEP, async (_event, id: string) => {
+    const slept = await sessionManager.sleepSession(id);
+    if (slept) logger.info(`Session asleep: id=${id}`);
+    return slept;
+  });
+
+  ipcMain.handle(IPC.SESSION_WAKE, async (_event, id: string) => {
+    logger.info(`Waking session: id=${id}`);
+    sessionManager.wakeSession(id);
+  });
+
   ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
     logger.info(`Stopping background task: session=${id} task=${taskId}`);
     await sessionManager.stopTask(id, taskId);
@@ -472,6 +486,15 @@ export function registerHandlers() {
       for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     } else {
       logger.warn(`Branch switch failed for session ${sessionId}: ${result.error}`);
+    }
+    return result;
+  });
+
+  ipcMain.handle(IPC.BRANCH_SYNC, async (_event, sessionId: string): Promise<BranchSyncResult | null> => {
+    const result = await worktreeManager.syncBranch(sessionId);
+    if (result) {
+      logger.info(`Session ${sessionId} checkout is now on branch ${result.branch}`);
+      for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     }
     return result;
   });
@@ -1545,6 +1568,16 @@ export function registerHandlers() {
     if (!win || win.isDestroyed()) return;
     const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
+  });
+
+  // ─── Spell check ───
+
+  ipcMain.on(IPC.SPELLCHECK_REPLACE, (event, suggestion: unknown) => {
+    replaceMisspelling(event.sender, suggestion);
+  });
+
+  ipcMain.on(IPC.SPELLCHECK_ADD_WORD, (event) => {
+    addWordToDictionary(event.sender);
   });
 
   // ─── Window controls ───

@@ -1,4 +1,5 @@
 import type { DiffScope, GitStatusResult } from '../../shared/types.js';
+import { store as sessionStore } from './sessions.svelte.js';
 
 export interface ScopeState { scope: DiffScope; base?: string }
 
@@ -58,6 +59,8 @@ class GitStatusStore {
 
     this.lastFetch.set(sessionId, now);
     this.loadingBySession = { ...this.loadingBySession, [sessionId]: true };
+    // Whatever changed the files may have switched branches too.
+    void sessionStore.syncBranch(sessionId);
 
     try {
       const { scope, base } = this.getScope(sessionId);

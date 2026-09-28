@@ -3,9 +3,10 @@
  * `groveCharacters` setting).
  *
  * Each state gets its own pose, so the status reads from shape as well as
- * colour. The hoodie, laptop glow and symbol take the same Tailwind colour as
- * the status dot they replace, via `currentColor`. Skin and hair vary per
- * conversation (see `agentLook`).
+ * colour. The hoodie and symbol take the same Tailwind colour as the status
+ * dot they replace, via `currentColor`. The logo on the back of the laptop lid
+ * takes the project colour. Skin and hair vary per conversation (see
+ * `agentLook`).
  */
 
 export type AgentSpriteState =
@@ -17,6 +18,7 @@ export type AgentSpriteState =
   | 'working'
   | 'unread'
   | 'stopped'
+  | 'sleeping'
   | 'ready'
   // Permission prompts once answered.
   | 'allowed'
@@ -43,38 +45,44 @@ export function agentSpriteState(s: AgentSpriteInput): AgentSpriteState {
   if (s.isRunning) return 'working';
   if (s.needsAttention) return 'unread';
   if (s.status === 'stopped') return 'stopped';
+  if (s.status === 'sleeping') return 'sleeping';
   return 'ready';
 }
 
 export const SPRITE_W = 10;
 export const SPRITE_H = 9;
 
-// Map legend. `c` cells use currentColor (the state colour). Hair and skin
-// here are the fallback look, for a character not tied to a conversation.
+// Map legend. `c` cells use currentColor (the state colour). Hair, skin and
+// logo here are the fallback look, for a character not tied to a conversation
+// or a project without a colour.
 const PALETTE: Record<string, string> = {
   h: '#4a3426', // hair
   s: '#e8b48a', // skin
   z: '#b9825d', // closed eyes, a shade darker than the skin
   e: '#1c1917', // eyes
-  l: '#a8a29e', // laptop lid
   L: '#57534e', // laptop edge
+  o: '#a8a29e', // logo on the back of the lid, in the project colour
   p: '#3f3f46', // trousers
   f: '#18181b', // shoes
   c: 'currentColor',
 };
 
-// Sitting on a bench with a laptop on the lap. Columns 6 to 9 hold symbols.
+// Sitting on a bench with a laptop on the lap, lid open towards the agent, so
+// we see its back and logo. Columns 6 to 9 hold symbols.
 const HEAD = ['.hhhh.....', 'hhhhhh....', 'hesseh....', '.ssss.....'];
 const HEAD_ASLEEP = ['.hhhh.....', 'hhhhhh....', 'hzsszh....', '.ssss.....'];
 const HOODIE = ['cccccc....', 'cccccc....'];
+// The open lid covers the hoodie's lower middle. Dark all round, so the logo
+// still stands out when the project and state colours match.
+const HOODIE_BEHIND_LID = ['cccccc....', 'cLLLLc....'];
 const LEGS_SIT = ['.pppp.....', '.f..f.....'];
 
-const SIT = [...HEAD, ...HOODIE, 'sLllLs....', ...LEGS_SIT];
+const SIT = [...HEAD, ...HOODIE_BEHIND_LID, 'sLooLs....', ...LEGS_SIT];
 // Typing: one hand on the keys, then the other.
-const TYPE_A = [...HEAD, ...HOODIE, 'sLllL.....', ...LEGS_SIT];
-const TYPE_B = [...HEAD, ...HOODIE, '.LllLs....', ...LEGS_SIT];
-// Asleep over a closed laptop.
-const ASLEEP = [...HEAD_ASLEEP, ...HOODIE, 'sLLLLs....', ...LEGS_SIT];
+const TYPE_A = [...HEAD, ...HOODIE_BEHIND_LID, 'sLooL.....', ...LEGS_SIT];
+const TYPE_B = [...HEAD, ...HOODIE_BEHIND_LID, '.LooLs....', ...LEGS_SIT];
+// Asleep over a closed laptop, lying flat with the logo on top.
+const ASLEEP = [...HEAD_ASLEEP, ...HOODIE, 'sLooLs....', ...LEGS_SIT];
 
 /** Overlays a symbol drawn in columns 6 to 9 onto a pose. */
 function withSymbol(pose: string[], symbol: string[]): string[] {
@@ -89,7 +97,7 @@ const CROSS = ['', '.c.c', '..c.', '.c.c'];
 const BUBBLE = ['', 'cccc', 'cccc', 'c...'];
 
 // Waving: the right arm is raised and the hand rocks side to side.
-const WAVE_POSE = [...HEAD, ...HOODIE, 'sLllL.....', ...LEGS_SIT];
+const WAVE_POSE = [...HEAD, ...HOODIE_BEHIND_LID, 'sLooL.....', ...LEGS_SIT];
 const WAVE_A = withSymbol(WAVE_POSE, ['', 's', 'c', 'c', 'c']);
 const WAVE_B = withSymbol(WAVE_POSE, ['', '.s', 'c', 'c', 'c']);
 
@@ -111,6 +119,14 @@ export const SIDE_WALK_MAPS = [SIDE_PASS, SIDE_STRIDE];
 
 /** Palette overrides for one character, keyed like the pixel maps. */
 export type AgentLook = Record<'h' | 's' | 'z', string>;
+
+/**
+ * Palette overrides for one character: its look, plus the project colour on
+ * the laptop logo when there is one.
+ */
+export function agentColors(seed: string | undefined, projectColor?: string | null): Record<string, string> {
+  return { ...(seed ? agentLook(seed) : {}), ...(projectColor ? { o: projectColor } : {}) };
+}
 
 // Each skin tone comes with the darker shade its closed eyes use.
 export const SKIN_TONES: Omit<AgentLook, 'h'>[] = [
@@ -212,6 +228,8 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
   ready: sprite('Ready', 'text-green-500', [SIT]),
   stopped: sprite('Stopped', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
+  // Still open, agent shut down until it is opened: a dimmed Ready.
+  sleeping: sprite('Sleeping', 'text-green-500/50', [withSymbol(ASLEEP, ZZZ)]),
   error: sprite('Error', 'text-red-500', [withSymbol(SIT, BANG)]),
   starting: sprite('Starting', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
   installing: sprite('Installing dependencies', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),

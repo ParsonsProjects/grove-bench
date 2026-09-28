@@ -50,6 +50,7 @@ const mockGroveBench = {
   getDefaultBranch: vi.fn(() => Promise.resolve('main')),
   listBranches: vi.fn((_repoPath: string, _opts?: { fetch?: boolean }) => Promise.resolve([] as string[])),
   switchBranch: vi.fn(() => Promise.resolve({ success: false, error: 'not mocked' } as import('../../shared/types.js').BranchSwitchResult)),
+  syncBranch: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').BranchSyncResult | null)),
   getPrs: vi.fn((_sessionId: string) => Promise.resolve([] as import('../../shared/types.js').PrInfo[])),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),
   getPrReviewComments: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').PrReviewComment[])),
@@ -98,6 +99,9 @@ const mockGroveBench = {
   onAppError: vi.fn(() => () => {}),
   reportError: vi.fn(),
   setAttentionBadge: vi.fn(),
+  onSpellcheckMenu: vi.fn(() => () => {}),
+  spellcheckReplace: vi.fn(),
+  spellcheckAddWord: vi.fn(),
   listBookmarks: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').Bookmark[])),
   addBookmark: vi.fn((b: Omit<import('../../shared/types.js').Bookmark, 'id' | 'createdAt'>) =>
     Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 } as import('../../shared/types.js').Bookmark)),

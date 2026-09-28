@@ -17,6 +17,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_STOP, id),
   closeSession: (id: string) =>
     ipcRenderer.invoke(IPC.SESSION_CLOSE, id),
+  sleepSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_SLEEP, id),
+  wakeSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_WAKE, id),
   stopBackgroundTask: (sessionId: string, taskId: string) =>
     ipcRenderer.invoke(IPC.SESSION_STOP_TASK, sessionId, taskId),
   destroySession: (id: string, deleteBranch?: boolean) =>
@@ -40,6 +44,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.BRANCH_RENAME, sessionId, newBranchName),
   switchBranch: (sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }) =>
     ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
+  syncBranch: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_SYNC, sessionId),
 
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
@@ -417,6 +423,18 @@ const api: GroveBenchAPI = {
   winMaximize: () => ipcRenderer.send(IPC.WIN_MAXIMIZE),
   winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
   winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
+
+  // Spell check
+  onSpellcheckMenu: (callback: (req: import('../shared/types.js').SpellcheckMenuRequest) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, req: import('../shared/types.js').SpellcheckMenuRequest) =>
+      callback(req);
+    ipcRenderer.on(IPC.SPELLCHECK_MENU, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SPELLCHECK_MENU, handler);
+    };
+  },
+  spellcheckReplace: (suggestion: string) => ipcRenderer.send(IPC.SPELLCHECK_REPLACE, suggestion),
+  spellcheckAddWord: () => ipcRenderer.send(IPC.SPELLCHECK_ADD_WORD),
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),

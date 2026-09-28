@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   backgroundModels: {},
   autoInstallDeps: false,
   previewAgentTools: true,
-  idleAutoStopMinutes: 30,
+  idleSleepMinutes: 30,
   defaultBaseBranch: 'main',
   theme: 'system',
   alwaysOnTop: false,

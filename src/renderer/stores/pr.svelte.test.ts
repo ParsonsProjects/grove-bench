@@ -50,6 +50,13 @@ describe('PR alert gating by session status', () => {
     );
   });
 
+  it('alerts a sleeping session: it is still open and a message wakes it', async () => {
+    setStatus('sleeping');
+    await refreshWith(pr({ commentSignature: ['c1'] }));
+    await refreshWith(pr({ commentSignature: ['c1', 'c2'] }));
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'new_comments', count: 1 }]);
+  });
+
   it('never alerts or notifies for a stopped session', async () => {
     setStatus('stopped');
     await refreshWith(pr({ commentSignature: ['c1'] }));

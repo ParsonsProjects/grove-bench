@@ -2,6 +2,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
+  import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { agentSpriteState, toRuns, BENCH, LAMP, SCENERY_PALETTE } from '../lib/agent-sprite.js';
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
 
@@ -81,7 +82,7 @@
               {/each}
             </svg>
             <span class="relative -mb-1.5 ml-3">
-              <AgentSprite state={stateFor(s)} seed={s.id} scale={3} />
+              <AgentSprite state={stateFor(s)} seed={s.id} projectColor={sessionRepoColor(s.id)} scale={3} />
             </span>
           </span>
           <span class="text-xs text-muted-foreground truncate max-w-full">{name}</span>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItem, powerMonitor } from 'electron';
+import { app, BrowserWindow, powerMonitor } from 'electron';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
@@ -13,6 +13,7 @@ import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
+import { installSpellcheckMenu } from './spellcheck.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -76,27 +77,8 @@ function createWindow() {
     nativeTheme.themeSource = appSettings.theme;
   } catch { /* nativeTheme may not be available */ }
 
-  // Spell checker setup
-  mainWindow.webContents.session.setSpellCheckerLanguages(['en-US']);
-  mainWindow.webContents.on('context-menu', (_event, params) => {
-    if (!params.misspelledWord) return;
-    const menu = new Menu();
-    for (const suggestion of params.dictionarySuggestions) {
-      menu.append(new MenuItem({
-        label: suggestion,
-        click: () => mainWindow?.webContents.replaceMisspelling(suggestion),
-      }));
-    }
-    if (params.dictionarySuggestions.length === 0) {
-      menu.append(new MenuItem({ label: 'No suggestions', enabled: false }));
-    }
-    menu.append(new MenuItem({ type: 'separator' }));
-    menu.append(new MenuItem({
-      label: 'Add to Dictionary',
-      click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
-    }));
-    menu.popup();
-  });
+  // Spell checker setup (the renderer draws the suggestion menu)
+  installSpellcheckMenu(mainWindow.webContents);
 
   if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);

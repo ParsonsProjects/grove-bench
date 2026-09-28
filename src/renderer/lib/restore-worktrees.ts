@@ -13,7 +13,10 @@ import { store } from '../stores/sessions.svelte.js';
  */
 export async function restoreWorktrees() {
   const runningSessions = await window.groveBench.listSessions();
-  const runningMap = new Map(runningSessions.filter((s) => s.status === 'running').map((s) => [s.id, s]));
+  // Sessions main still holds: running, or asleep (open, agent shut down).
+  const runningMap = new Map(runningSessions
+    .filter((s) => s.status === 'running' || s.status === 'sleeping')
+    .map((s) => [s.id, s]));
 
   await Promise.all([...store.repos].map(async (repo) => {
     try {
@@ -32,7 +35,7 @@ export async function restoreWorktrees() {
           id: wt.id,
           branch: wt.branch,
           repoPath: repo,
-          status: isRunning ? 'running' : 'stopped',
+          status: runningSession?.status === 'sleeping' ? 'sleeping' : isRunning ? 'running' : 'stopped',
           direct: wt.direct,
           // The manifest records each conversation's agent, so stopped ones
           // show the right agent too.

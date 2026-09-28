@@ -52,7 +52,11 @@ export interface CreateSessionOpts {
   adapterType?: string;
 }
 
-export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
+/** 'sleeping': an open conversation whose agent process was shut down after
+ *  it sat idle. It keeps its place in the Conversations list and its live
+ *  state (mode, controls, always-allowed tools) and wakes when opened or sent
+ *  a message. The terminal is left running. */
+export type SessionStatus = 'starting' | 'installing' | 'running' | 'sleeping' | 'stopped' | 'error';
 
 export interface SessionInfo {
   id: string;
@@ -425,6 +429,13 @@ export type BranchSwitchResult =
   | { success: true; branch: string; sessionIds: string[] }
   | { success: false; error: string };
 
+/** The recorded branch moved to follow the checkout (the agent or a terminal
+ *  ran `git checkout`). `sessionIds` are every conversation sharing it. */
+export interface BranchSyncResult {
+  branch: string;
+  sessionIds: string[];
+}
+
 // ─── Thinking Level ───
 
 /** Provider-agnostic thinking/reasoning effort level. Each adapter maps these
@@ -641,6 +652,18 @@ export interface OsNotificationRequest {
   body: string;
 }
 
+// ─── Spell check ───
+
+/** Main → renderer: the user right-clicked a misspelled word. The renderer
+ *  draws the suggestion menu in the app's own style. */
+export interface SpellcheckMenuRequest {
+  /** Where the click landed, in window coordinates (fallback position). */
+  x: number;
+  y: number;
+  misspelledWord: string;
+  suggestions: string[];
+}
+
 // ─── Image Attachment ───
 
 export interface ImageAttachment {
@@ -739,6 +762,11 @@ export interface GroveBenchAPI {
   /** Close a conversation: shut down its agent, background tasks and
    *  terminal (and the ports they hold), keeping it resumable. */
   closeSession(id: string): Promise<void>;
+  /** Put an idle conversation to sleep: shut down its agent process but keep
+   *  it open. Resolves false when it is busy or not live, and stays awake. */
+  sleepSession(id: string): Promise<boolean>;
+  /** Wake a sleeping conversation (restart its agent on the same transcript). */
+  wakeSession(id: string): Promise<void>;
   /** Stop one running background task (Agent tool sub-task) without
    *  interrupting the session's current turn. */
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
@@ -767,6 +795,9 @@ export interface GroveBenchAPI {
    *  `create` a new one at HEAD. `busySessionIds` are conversations mid-turn;
    *  the switch is refused if any of them shares the checkout. */
   switchBranch(sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }): Promise<BranchSwitchResult>;
+  /** Record the branch the conversation's checkout is on now, if it moved
+   *  outside the app. Null when nothing changed. */
+  syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -1016,6 +1047,14 @@ export interface GroveBenchAPI {
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
 
+  // Spell check
+  /** Fired when the user right-clicks a misspelled word. */
+  onSpellcheckMenu(callback: (req: SpellcheckMenuRequest) => void): () => void;
+  /** Replace the misspelled word with one of the offered suggestions. */
+  spellcheckReplace(suggestion: string): void;
+  /** Add the misspelled word to the user's dictionary. */
+  spellcheckAddWord(): void;
+
   // Agent adapters
   /** Registered agents, in registration order. `isDefault` marks the one new
    *  conversations use unless another is picked. */
@@ -1123,9 +1162,11 @@ export interface GroveBenchSettings {
   previewAgentTools: boolean;
 
   // Sessions
-  /** Auto-stop a session after this many minutes idle (not focused, not running
-   *  a turn, no pending permission) to reclaim its processes. 0 disables. Default 30. */
-  idleAutoStopMinutes: number;
+  /** Put a conversation to sleep after this many minutes idle (not focused,
+   *  not running a turn or background task, no pending permission) to free
+   *  its agent process. It stays open and wakes when opened. 0 disables.
+   *  Default 30. */
+  idleSleepMinutes: number;
 
   // General
   /** Base branch for new worktrees and PRs. Empty = auto-detect the
@@ -1315,6 +1356,8 @@ export const IPC = {
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
   SESSION_CLOSE: 'session:close',
+  SESSION_SLEEP: 'session:sleep',
+  SESSION_WAKE: 'session:wake',
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
@@ -1327,6 +1370,7 @@ export const IPC = {
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
+  BRANCH_SYNC: 'branch:sync',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
@@ -1416,6 +1460,12 @@ export const IPC = {
   /** Renderer → main: an uncaught renderer error, for the file log. */
   APP_REPORT_ERROR: 'app:reportError',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
+  /** Main → renderer: show the spell check menu for a misspelled word. */
+  SPELLCHECK_MENU: 'spellcheck:menu',
+  /** Renderer → main: replace the misspelled word with a suggestion. */
+  SPELLCHECK_REPLACE: 'spellcheck:replace',
+  /** Renderer → main: add the misspelled word to the dictionary. */
+  SPELLCHECK_ADD_WORD: 'spellcheck:addWord',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARK_ADD: 'bookmarks:add',
