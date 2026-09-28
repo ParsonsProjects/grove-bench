@@ -182,9 +182,10 @@ export async function abortMerge(cwd: string): Promise<void> {
 
 // ─── Branch operations (rebase / cherry-pick / squash) ───
 
-/** True when there are no staged, unstaged, or untracked changes. */
-export async function isWorkingTreeClean(cwd: string): Promise<boolean> {
-  const status = await git(['status', '--porcelain'], cwd);
+/** True when there are no staged, unstaged, or (unless `ignoreUntracked`)
+ *  untracked changes. */
+export async function isWorkingTreeClean(cwd: string, opts: { ignoreUntracked?: boolean } = {}): Promise<boolean> {
+  const status = await git(['status', '--porcelain', ...(opts.ignoreUntracked ? ['--untracked-files=no'] : [])], cwd);
   return status.trim() === '';
 }
 
