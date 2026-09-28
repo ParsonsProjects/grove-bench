@@ -612,7 +612,13 @@ export interface McpConfiguredServer {
   /** Transport when the CLI reports one (e.g. HTTP, SSE). */
   transport?: string;
   status: McpServerInfo['status'];
+  /** Set when the server isn't in the CLI's MCP config, so it can't be removed
+   *  from there: a plugin's server or a claude.ai connector. */
+  managedBy?: McpServerManager;
 }
+
+/** Who owns an MCP server that `mcp remove` can't touch. */
+export type McpServerManager = { kind: 'plugin'; plugin: string } | { kind: 'claude-ai' };
 
 export type McpConfigScope = 'local' | 'user' | 'project';
 

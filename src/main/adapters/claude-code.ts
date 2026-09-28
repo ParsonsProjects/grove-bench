@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpServerManager, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
@@ -941,6 +941,18 @@ export function mapClaudeUsage(res: ClaudeUsageResponse | null | undefined, now 
 
 // ─── MCP config CLI helpers ───
 
+/**
+ * Spot servers that `claude mcp list` shows but `claude mcp remove` can't
+ * remove, by the names the CLI gives them: `plugin:<plugin>:<server>` for a
+ * plugin's servers and `claude.ai <Name>` for claude.ai connectors.
+ */
+export function mcpServerManager(name: string): McpServerManager | undefined {
+  const plugin = name.match(/^plugin:([^:]+):./)?.[1];
+  if (plugin) return { kind: 'plugin', plugin };
+  if (name.startsWith('claude.ai ')) return { kind: 'claude-ai' };
+  return undefined;
+}
+
 /** Names the CLI accepts and that are safe to pass through a shell. */
 export function validateMcpName(name: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) {
@@ -995,7 +1007,8 @@ export function parseMcpListOutput(stdout: string): McpConfiguredServer[] {
         : statusText.includes('disabled') ? 'disabled'
         : 'failed';
 
-    servers.push({ name, target, ...(transport ? { transport } : {}), status });
+    const managedBy = mcpServerManager(name);
+    servers.push({ name, target, ...(transport ? { transport } : {}), status, ...(managedBy ? { managedBy } : {}) });
   }
   return servers;
 }
@@ -1623,6 +1636,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async removeConfiguredMcpServer(name: string, scope?: McpConfigScope, cwd?: string): Promise<void> {
+    const managedBy = mcpServerManager(name);
+    if (managedBy?.kind === 'plugin') {
+      throw new Error(`${name} comes from the ${managedBy.plugin} plugin. Disable or uninstall the plugin to remove it.`);
+    }
+    if (managedBy?.kind === 'claude-ai') {
+      throw new Error(`${name} is a claude.ai connector. Manage it from your connector settings on claude.ai.`);
+    }
     validateMcpName(name);
     const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
     await execFileAsync('claude', args, {

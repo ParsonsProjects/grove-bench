@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -258,11 +258,22 @@ describe('parseMcpListOutput()', () => {
     ]);
   });
 
-  it('handles names containing colons', () => {
+  it('handles names containing colons and tags plugin servers', () => {
     const out = 'plugin:figma:figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected\n';
     expect(parseMcpListOutput(out)).toEqual([
-      { name: 'plugin:figma:figma', target: 'https://mcp.figma.com/mcp', transport: 'HTTP', status: 'connected' },
+      {
+        name: 'plugin:figma:figma',
+        target: 'https://mcp.figma.com/mcp',
+        transport: 'HTTP',
+        status: 'connected',
+        managedBy: { kind: 'plugin', plugin: 'figma' },
+      },
     ]);
+  });
+
+  it('tags claude.ai connectors', () => {
+    const out = 'claude.ai Gmail: https://mcp.example.com/gmail - ✔ Connected\n';
+    expect(parseMcpListOutput(out)[0]).toMatchObject({ name: 'claude.ai Gmail', managedBy: { kind: 'claude-ai' } });
   });
 
   it('maps auth, pending, and failure statuses', () => {
@@ -283,6 +294,30 @@ describe('parseMcpListOutput()', () => {
 
   it('skips banner and blank lines', () => {
     expect(parseMcpListOutput('Checking MCP server health…\n\n')).toEqual([]);
+  });
+});
+
+describe('mcpServerManager()', () => {
+  it('leaves servers from the MCP config untagged', () => {
+    expect(mcpServerManager('my-server')).toBeUndefined();
+    expect(mcpServerManager('plugin')).toBeUndefined();
+    expect(mcpServerManager('plugin:figma')).toBeUndefined();
+  });
+
+  it('keeps colons in the server part of a plugin server name', () => {
+    expect(mcpServerManager('plugin:tools:a:b')).toEqual({ kind: 'plugin', plugin: 'tools' });
+  });
+});
+
+describe('removeConfiguredMcpServer()', () => {
+  it('points plugin servers at the plugin instead of failing name validation', async () => {
+    await expect(new ClaudeCodeAdapter().removeConfiguredMcpServer('plugin:figma:figma'))
+      .rejects.toThrow('comes from the figma plugin');
+  });
+
+  it('points claude.ai connectors at claude.ai', async () => {
+    await expect(new ClaudeCodeAdapter().removeConfiguredMcpServer('claude.ai Gmail'))
+      .rejects.toThrow('claude.ai connector');
   });
 });
 

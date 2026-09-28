@@ -890,16 +890,30 @@
                   <div class="text-[10px] text-muted-foreground/60 truncate" title={server.target}>
                     {server.target}{server.transport ? ` · ${server.transport}` : ''} · {server.status}
                   </div>
+                  {#if server.managedBy}
+                    <div class="text-[10px] text-muted-foreground/60">
+                      {server.managedBy.kind === 'plugin'
+                        ? 'To turn it off, disable or uninstall the plugin in the Plugins tab.'
+                        : 'To turn it off, manage your connectors on claude.ai.'}
+                    </div>
+                  {/if}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="text-destructive hover:bg-destructive/10 text-xs shrink-0"
-                  disabled={mcpConfigStore.actionInProgress !== null}
-                  onclick={() => mcpConfigStore.remove(server.name)}
-                >
-                  {mcpConfigStore.actionInProgress === server.name ? 'Removing...' : 'Remove'}
-                </Button>
+                {#if server.managedBy}
+                  <!-- `claude mcp remove` only covers servers in the MCP config -->
+                  <span class="text-[10px] text-muted-foreground border border-border/50 px-1.5 py-0.5 shrink-0">
+                    {server.managedBy.kind === 'plugin' ? `${server.managedBy.plugin} plugin` : 'claude.ai'}
+                  </span>
+                {:else}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="text-destructive hover:bg-destructive/10 text-xs shrink-0"
+                    disabled={mcpConfigStore.actionInProgress !== null}
+                    onclick={() => mcpConfigStore.remove(server.name)}
+                  >
+                    {mcpConfigStore.actionInProgress === server.name ? 'Removing...' : 'Remove'}
+                  </Button>
+                {/if}
               </div>
             {/each}
           </div>
