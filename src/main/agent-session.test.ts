@@ -44,9 +44,7 @@ vi.mock('./worktree-manager.js', () => ({
   },
 }));
 const processTree = vi.hoisted(() => ({
-  snapshotTree: vi.fn(async (pid: number) => [{ pid, ppid: 1 }]),
-  waitForExit: vi.fn(async () => true),
-  killSurvivors: vi.fn(async () => [] as number[]),
+  killTree: vi.fn(async (_pid: number) => {}),
 }));
 vi.mock('./process-tree.js', () => processTree);
 vi.mock('./settings.js', () => ({
@@ -1308,22 +1306,34 @@ describe('AgentSessionManager.closeSession()', () => {
     expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
     expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-close', 'stopped');
     // No process to clean up when the handle reports none
-    expect(processTree.snapshotTree).not.toHaveBeenCalled();
+    expect(processTree.killTree).not.toHaveBeenCalled();
   });
 
-  it('snapshots the agent process tree before closing and kills what is left', async () => {
+  it('kills the agent process tree before closing its query', async () => {
     mockAdapter.pid = 4242;
     const { session } = await startSession('test-close-tree');
     const handle = session.queryHandle!;
-    processTree.killSurvivors.mockResolvedValueOnce([4243]);
 
     await sessionManager.closeSession('test-close-tree');
 
-    expect(processTree.snapshotTree).toHaveBeenCalledWith(4242);
-    expect(processTree.snapshotTree.mock.invocationCallOrder[0])
+    expect(processTree.killTree).toHaveBeenCalledWith(4242);
+    expect(processTree.killTree.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
-    expect(processTree.waitForExit).toHaveBeenCalledWith(4242, expect.any(Number));
-    expect(processTree.killSurvivors).toHaveBeenCalledWith([{ pid: 4242, ppid: 1 }]);
+  });
+
+  it('does not report the killed agent process as an error', async () => {
+    mockAdapter.pid = 4343;
+    const { win } = await startSession('test-close-quiet');
+    processTree.killTree.mockImplementationOnce(async () => {
+      mockAdapter.control!.error(new Error('Claude Code process exited with code 1'));
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    await sessionManager.closeSession('test-close-quiet');
+
+    await new Promise((r) => setTimeout(r, 20));
+    const errors = win._send.mock.calls.filter(([, event]: [string, AgentEvent | undefined]) => event?.type === 'error');
+    expect(errors).toEqual([]);
   });
 
   it('resolves pending permissions as denied', async () => {
@@ -1343,7 +1353,7 @@ describe('AgentSessionManager.closeSession()', () => {
     mockAdapter.pid = 5150;
     await startSession('test-reopen');
     let releaseExit!: () => void;
-    processTree.waitForExit.mockImplementationOnce(() => new Promise((r) => { releaseExit = () => r(true); }));
+    processTree.killTree.mockImplementationOnce(() => new Promise((r) => { releaseExit = () => r(); }));
 
     const closing = sessionManager.closeSession('test-reopen');
     expect(sessionManager.getSession('test-reopen')).toBeUndefined();

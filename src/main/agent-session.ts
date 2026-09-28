@@ -22,7 +22,7 @@ import { findRewindForkPoint } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
-import { snapshotTree, waitForExit, killSurvivors } from './process-tree.js';
+import { killTree } from './process-tree.js';
 
 /**
  * Sandbox settings for Read-safe-mode queries: OS-level enforcement layered
@@ -88,11 +88,6 @@ const HISTORY_CACHE_MAX = 12;
  *  byte each for ASCII text), so the session finder's search doesn't re-parse
  *  every log and re-extract every event per keystroke. */
 const SEARCH_INDEX_BUDGET = 128 * 1024 * 1024;
-
-/** How long the agent process gets to exit on its own once its query is
- *  closed (stopping its background tasks, finishing its transcript) before
- *  whatever is left of its process tree is killed. */
-const AGENT_EXIT_GRACE_MS = 3000;
 
 interface PendingPermission {
   requestId: string;
@@ -905,7 +900,9 @@ class AgentSessionManager {
       // Abort errors are expected when the user stops a query — don't surface them.
       // interrupting covers an in-place interrupt that tears down the event loop
       // (the SDK throws "Request was aborted" rather than yielding a result).
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting) {
+      // destroying covers a close or delete, which kills the agent process
+      // before closing its query.
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying) {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else {
@@ -1584,24 +1581,27 @@ class AgentSessionManager {
   }
 
   /**
-   * Stop a session's agent for good: close its query, deny pending
-   * permissions, and make sure the agent process and everything under it
-   * (background tasks, dev servers, MCP servers) is gone. The agent gets
-   * AGENT_EXIT_GRACE_MS to exit on its own; what it leaves behind is killed.
+   * Stop a session's agent for good: kill the agent process and everything
+   * under it (background tasks, dev servers, MCP servers), close its query
+   * and deny pending permissions.
    */
   private async shutDown(session: ManagedSession, reason: string): Promise<void> {
     const { id } = session;
 
-    // Must be set before close(): closing ends runQuery's event loop, whose
-    // tail would otherwise treat this as a normal query end (see runQuery).
+    // Must be set before the agent is killed or its query closed: either ends
+    // runQuery's event loop, whose tail would otherwise treat this as a normal
+    // query end (see runQuery).
     session.destroying = true;
 
-    // Note the agent's process tree while it is intact: once the agent exits,
-    // the children it left running can no longer be traced back to it.
+    // Kill the agent's process tree while the agent is still running. Once it
+    // exits, whatever it left running can no longer be traced back to it.
     const pid = session.queryHandle?.processId?.();
-    const tree = pid ? await snapshotTree(pid) : [];
+    if (pid) {
+      await killTree(pid);
+      logger.info(`Killed agent process tree for ${id}: pid=${pid}`);
+    }
 
-    // Close the query and input stream before aborting to allow graceful cleanup
+    // Close the query and input stream before aborting so the SDK tidies up its side
     try {
       session.queryHandle?.close();
     } catch { /* may already be closed */ }
@@ -1618,14 +1618,6 @@ class AgentSessionManager {
         toolUseId: pending.toolUseId,
         decision: 'deny',
       });
-    }
-
-    if (pid) {
-      await waitForExit(pid, AGENT_EXIT_GRACE_MS);
-      const killed = await killSurvivors(tree);
-      if (killed.length > 0) {
-        logger.info(`Killed ${killed.length} leftover agent process(es) for ${id}: ${killed.join(', ')}`);
-      }
     }
 
     // Clean up completion callback and event listeners

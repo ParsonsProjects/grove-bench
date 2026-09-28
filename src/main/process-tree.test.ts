@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 
 const mockExeca = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({ execa: mockExeca }));
-vi.mock('./logger.js', () => ({
-  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
-}));
+const mockFork = vi.hoisted(() => vi.fn());
+vi.mock('node:child_process', () => ({ fork: mockFork }));
+const logger = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }));
+vi.mock('./logger.js', () => ({ logger }));
 
 import {
-  parseProcessList, treeOf, listProcesses, snapshotTree, killSurvivors, killDescendants, waitForExit,
+  parseProcessList, treeOf, listProcesses, killTree, killDescendants,
   type ProcessEntry,
 } from './process-tree.js';
 
@@ -16,8 +18,8 @@ function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
 }
 
-/** Make process.kill act on a fake process table: signal 0 probes it and
- *  SIGKILL removes from it. Returns the PIDs sent SIGKILL, in order. */
+/** Make process.kill act on a fake process table: SIGKILL removes from it.
+ *  Returns the PIDs sent SIGKILL, in order. */
 function fakeKill(running: Set<number>): number[] {
   const killed: number[] = [];
   vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: string | number) => {
@@ -32,12 +34,28 @@ function fakeKill(running: Set<number>): number[] {
 }
 
 function psOutput(entries: ProcessEntry[]): { stdout: string } {
-  return { stdout: entries.map((p) => `${p.pid} ${p.ppid}${p.startedAt ? ` ${p.startedAt}` : ''}`).join('\n') };
+  return { stdout: entries.map((p) => `${p.pid} ${p.ppid}`).join('\n') };
+}
+
+/** The next fork() returns a console-list helper that replies with `list`
+ *  (or fails without replying), then closes. */
+function fakeHelper(list: number[] | null, pid = 9000) {
+  const helper = Object.assign(new EventEmitter(), { pid, kill: vi.fn() });
+  mockFork.mockImplementationOnce(() => {
+    setTimeout(() => {
+      if (list) helper.emit('message', { consoleProcessList: list });
+      helper.emit('close', list ? 0 : 1);
+    });
+    return helper;
+  });
+  return helper;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  mockExeca.mockReset();
+  mockFork.mockReset();
   setPlatform('linux');
 });
 
@@ -50,13 +68,6 @@ describe('parseProcessList', () => {
     expect(parseProcessList('    1     0\n  812     1\n')).toEqual([
       { pid: 1, ppid: 0 },
       { pid: 812, ppid: 1 },
-    ]);
-  });
-
-  it('reads the Windows form with start times and CRLF line endings', () => {
-    expect(parseProcessList('4 0 0\r\n9120 700 13370000000000\r\n')).toEqual([
-      { pid: 4, ppid: 0 },
-      { pid: 9120, ppid: 700, startedAt: 13370000000000 },
     ]);
   });
 
@@ -82,38 +93,16 @@ describe('treeOf', () => {
     expect(treeOf([{ pid: 1, ppid: 0 }], 99)).toEqual([]);
   });
 
-  it('ignores an orphan whose dead parent had the same PID (Windows PID reuse)', () => {
-    const table = [
-      { pid: 500, ppid: 1, startedAt: 2_000 },
-      { pid: 501, ppid: 500, startedAt: 1_000 }, // started before 500 existed
-      { pid: 502, ppid: 500, startedAt: 3_000 },
-    ];
-    expect(treeOf(table, 500).map((p) => p.pid)).toEqual([500, 502]);
-  });
-
   it('does not loop on a process listed as its own parent', () => {
     expect(treeOf([{ pid: 0, ppid: 0 }, { pid: 4, ppid: 0 }], 0).map((p) => p.pid)).toEqual([0, 4]);
   });
 });
 
 describe('listProcesses', () => {
-  it('uses ps on POSIX', async () => {
+  it('uses ps', async () => {
     mockExeca.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }]));
     expect(await listProcesses()).toEqual([{ pid: 1, ppid: 0 }]);
     expect(mockExeca).toHaveBeenCalledWith('ps', ['-A', '-o', 'pid=,ppid='], expect.any(Object));
-  });
-
-  it('uses an encoded PowerShell CIM query on Windows', async () => {
-    setPlatform('win32');
-    mockExeca.mockResolvedValue({ stdout: '4 0 0\r\n' });
-    await listProcesses();
-
-    const [command, args, opts] = mockExeca.mock.calls[0];
-    expect(command).toBe('powershell.exe');
-    expect(opts).toMatchObject({ windowsHide: true });
-    const encoded = args[args.indexOf('-EncodedCommand') + 1];
-    const script = Buffer.from(encoded, 'base64').toString('utf16le');
-    expect(script).toContain('Get-CimInstance -ClassName Win32_Process');
   });
 
   it('returns an empty table when the query fails', async () => {
@@ -129,14 +118,64 @@ describe('listProcesses', () => {
   });
 });
 
-describe('snapshotTree', () => {
-  it('falls back to the root alone when processes cannot be listed', async () => {
+describe('killTree on POSIX', () => {
+  it('kills the root and everything under it, parents first', async () => {
+    const running = new Set([1, 200, 201, 202, 300]);
+    const killed = fakeKill(running);
+    mockExeca.mockResolvedValue(psOutput([
+      { pid: 1, ppid: 0 }, { pid: 200, ppid: 1 }, { pid: 201, ppid: 200 }, { pid: 202, ppid: 201 }, { pid: 300, ppid: 1 },
+    ]));
+
+    await killTree(200);
+    expect(killed).toEqual([200, 201, 202]);
+  });
+
+  it('still kills the root when processes cannot be listed', async () => {
+    const killed = fakeKill(new Set([400]));
     mockExeca.mockRejectedValue(new Error('boom'));
-    expect(await snapshotTree(77)).toEqual([{ pid: 77, ppid: 0 }]);
+
+    await killTree(400);
+    expect(killed).toEqual([400]);
+  });
+
+  it('never signals PID 0 or its own process', async () => {
+    const killed = fakeKill(new Set([0, process.pid]));
+    await killTree(0);
+    await killTree(process.pid);
+    expect(killed).toEqual([]);
+    expect(mockExeca).not.toHaveBeenCalled();
   });
 });
 
-describe('killDescendants', () => {
+describe('killTree on Windows', () => {
+  beforeEach(() => setPlatform('win32'));
+
+  it('kills the tree with System32 taskkill, never PowerShell', async () => {
+    mockExeca.mockResolvedValue({ failed: false, exitCode: 0 });
+
+    await killTree(4242);
+
+    expect(mockExeca).toHaveBeenCalledOnce();
+    const [command, args, opts] = mockExeca.mock.calls[0];
+    expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
+    expect(args).toEqual(['/PID', '4242', '/T', '/F']);
+    expect(opts).toMatchObject({ windowsHide: true, reject: false });
+  });
+
+  it('treats a process that already exited as done', async () => {
+    mockExeca.mockResolvedValue({ failed: true, exitCode: 128, stderr: 'ERROR: The process "4242" not found.' });
+    await killTree(4242);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('logs any other taskkill failure', async () => {
+    mockExeca.mockResolvedValue({ failed: true, exitCode: 1, stderr: 'ERROR: Access is denied.' });
+    await killTree(4242);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('4242'), 'ERROR: Access is denied.');
+  });
+});
+
+describe('killDescendants on POSIX', () => {
   it('kills everything under the root but not the root', async () => {
     const running = new Set([1, 100, 101, 102]);
     const killed = fakeKill(running);
@@ -150,63 +189,33 @@ describe('killDescendants', () => {
   });
 });
 
-describe('killSurvivors', () => {
-  it('does nothing, without listing processes, when everything already exited', async () => {
-    fakeKill(new Set());
-    expect(await killSurvivors([{ pid: 200, ppid: 1 }, { pid: 201, ppid: 200 }])).toEqual([]);
+describe('killDescendants on Windows', () => {
+  beforeEach(() => setPlatform('win32'));
+
+  it("kills the tree of everything on the shell's console, leaving the shell", async () => {
+    // Console: the helper itself (9000), a dev server (700) and the shell (500).
+    fakeHelper([9000, 700, 500]);
+    mockExeca.mockResolvedValue({ failed: false, exitCode: 0 });
+
+    expect(await killDescendants(500)).toEqual([700]);
+
+    const [agent, agentArgs] = mockFork.mock.calls[0];
+    expect(agent).toMatch(/node-pty[\\/]lib[\\/]conpty_console_list_agent\.js$/);
+    expect(agentArgs).toEqual(['500']);
+    const [command, args] = mockExeca.mock.calls[0];
+    expect(command).toMatch(/\\System32\\taskkill\.exe$/i);
+    expect(args).toEqual(['/PID', '700', '/T', '/F']);
+  });
+
+  it('runs nothing when only the shell is on the console', async () => {
+    fakeHelper([9000, 500]);
+    expect(await killDescendants(500)).toEqual([]);
     expect(mockExeca).not.toHaveBeenCalled();
   });
 
-  it('kills leftovers and anything they started since, parents first', async () => {
-    // 200 (the agent) exited; its dev server 201 kept running and has since
-    // started 203. Once orphaned, 201 is re-parented to init.
-    const running = new Set([1, 201, 203]);
-    const killed = fakeKill(running);
-    mockExeca.mockResolvedValue(psOutput([{ pid: 1, ppid: 0 }, { pid: 201, ppid: 1 }, { pid: 203, ppid: 201 }]));
-
-    const snapshot = [{ pid: 200, ppid: 1 }, { pid: 201, ppid: 200 }, { pid: 202, ppid: 201 }];
-    expect(await killSurvivors(snapshot)).toEqual([201, 203]);
-    expect(killed).toEqual([201, 203]);
-  });
-
-  it('leaves a PID alone once it belongs to a different process', async () => {
-    const running = new Set([300]);
-    const killed = fakeKill(running);
-    mockExeca.mockResolvedValue(psOutput([{ pid: 300, ppid: 4, startedAt: 9_000 }]));
-
-    expect(await killSurvivors([{ pid: 300, ppid: 250, startedAt: 5_000 }])).toEqual([]);
-    expect(killed).toEqual([]);
-  });
-
-  it('still kills the known survivors when processes cannot be listed', async () => {
-    const running = new Set([400]);
-    const killed = fakeKill(running);
-    mockExeca.mockRejectedValue(new Error('boom'));
-
-    expect(await killSurvivors([{ pid: 400, ppid: 1 }, { pid: 401, ppid: 400 }])).toEqual([400]);
-    expect(killed).toEqual([400]);
-  });
-
-  it('never signals PID 0 or its own process', async () => {
-    const running = new Set([0, process.pid]);
-    const killed = fakeKill(running);
-    mockExeca.mockRejectedValue(new Error('boom'));
-
-    await killSurvivors([{ pid: 0, ppid: 0 }, { pid: process.pid, ppid: 0 }]);
-    expect(killed).toEqual([]);
-  });
-});
-
-describe('waitForExit', () => {
-  it('resolves true once the process is gone', async () => {
-    const running = new Set([500]);
-    fakeKill(running);
-    setTimeout(() => running.delete(500), 30);
-    expect(await waitForExit(500, 1_000, 10)).toBe(true);
-  });
-
-  it('resolves false when the process outlives the timeout', async () => {
-    fakeKill(new Set([501]));
-    expect(await waitForExit(501, 30, 10)).toBe(false);
+  it('kills nothing when the console cannot be read', async () => {
+    fakeHelper(null);
+    expect(await killDescendants(500)).toEqual([]);
+    expect(mockExeca).not.toHaveBeenCalled();
   });
 });
