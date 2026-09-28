@@ -1,6 +1,6 @@
 # Sidebar & Projects
 
-The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, or waiting on you, across all projects. **Projects** lists each project (a git repository) with all of its conversations, where stopped conversations can be resumed, destroyed, or cleaned up.
+The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a git repository) with all of its conversations, where stopped conversations can be resumed, destroyed, or cleaned up.
 
 ## Projects
 

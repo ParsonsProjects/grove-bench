@@ -152,6 +152,16 @@ describe('schema versioning', () => {
     expect(modeOf({ schemaVersion: 2, defaultPermissionMode: 'plan' })).toBe('plan');
   });
 
+  it('carries the idle auto-stop minutes over to idle sleep (7 → 8)', () => {
+    const { settings } = upgradeSettings({ schemaVersion: 7, idleAutoStopMinutes: 45 });
+    expect(settings.idleSleepMinutes).toBe(45);
+    expect(settings).not.toHaveProperty('idleAutoStopMinutes');
+    // 0 (off) stays off.
+    expect(upgradeSettings({ schemaVersion: 7, idleAutoStopMinutes: 0 }).settings.idleSleepMinutes).toBe(0);
+    // Never set: the default applies.
+    expect(upgradeSettings({ schemaVersion: 7 }).settings.idleSleepMinutes).toBe(30);
+  });
+
   it('moves the default permission mode under the Claude agent and drops Bypass Permissions (6 → 7)', () => {
     const { settings } = upgradeSettings({
       schemaVersion: 6,
@@ -234,7 +244,7 @@ describe('validateSettings', () => {
     const s = validateSettings({
       theme: 'neon',
       adapterDefaults: 'ultra',
-      idleAutoStopMinutes: 'soon',
+      idleSleepMinutes: 'soon',
       toolAllowRules: [{ pattern: 'Bash(*)' }],
       toolDenyRules: 'nope',
       repoColors: { '/repo': '#fff' },
@@ -244,7 +254,7 @@ describe('validateSettings', () => {
     expect(s.theme).toBe('system');
     expect(s.defaultActivityView).toBe('summary');
     expect(s.adapterDefaults).toEqual({});
-    expect(s.idleAutoStopMinutes).toBe(30);
+    expect(s.idleSleepMinutes).toBe(30);
     expect(s.toolAllowRules).toEqual([{ pattern: 'Bash(*)' }]);
     expect(s.toolDenyRules).toEqual([]);
     expect(s.repoColors).toEqual({ '/repo': '#fff' });

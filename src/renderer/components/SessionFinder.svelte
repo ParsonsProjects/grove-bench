@@ -225,6 +225,8 @@
                   <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
                 {:else if entry.status === 'stopped'}
                   <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
+                {:else if entry.status === 'sleeping'}
+                  <span class="w-2 h-2 bg-green-500/40 shrink-0"></span>
                 {:else}
                   <span class="w-2 h-2 bg-green-500 shrink-0"></span>
                 {/if}

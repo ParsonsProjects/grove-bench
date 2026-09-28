@@ -35,7 +35,7 @@ const SETTINGS = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
-  idleAutoStopMinutes: 30,
+  idleSleepMinutes: 30,
   defaultBaseBranch: '',
   theme: 'dark',
   alwaysOnTop: false,

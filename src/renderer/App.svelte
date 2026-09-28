@@ -65,10 +65,10 @@
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     const openSet = new Set(persistedOpenTabs);
 
-    // Close sessions that the main process still considers running but
-    // that were closed before reload.
+    // Close sessions that the main process still considers live (running or
+    // asleep) but that were closed before reload.
     for (const session of store.sessions) {
-      if (session.status === 'running' && !openSet.has(session.id)) {
+      if ((session.status === 'running' || session.status === 'sleeping') && !openSet.has(session.id)) {
         store.updateStatus(session.id, 'stopped');
         window.groveBench.closeSession(session.id).catch(() => {});
       }
@@ -289,6 +289,12 @@
     }
 
     resumeStoppedSession(session);
+    // A sleeping conversation wakes when opened. Main reports it 'running'
+    // straight away and restarts its agent in the background; a prompt sent
+    // meanwhile waits for it.
+    if (session?.status === 'sleeping') {
+      window.groveBench.wakeSession(session.id).catch(() => { /* a send wakes it too */ });
+    }
   });
 
   onMount(() => {
@@ -313,7 +319,11 @@
       store.sessions.filter((s) => store.isOpenTab(s)).map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
+      const wasSleeping = store.sessions.find((s) => s.id === sessionId)?.status === 'sleeping';
       store.updateStatus(sessionId, status);
+      // Waking keeps the conversation's turn state: the message that woke it
+      // may already be running.
+      if (status === 'running' && wasSleeping) return;
       if (status === 'running') {
         // SESSION_STATUS 'running' fires when system_init arrives on the main side.
         // Ensure the input unlocks even if system_init was missed due to a
@@ -362,7 +372,7 @@
       }
     });
 
-    // Auto-close idle sessions to reclaim their PTY + agent processes.
+    // Put idle conversations to sleep to free their agent processes.
     const stopIdleManager = startIdleManager();
 
     return () => {
@@ -442,7 +452,7 @@
       <!-- Active session — keep all live panes mounted, show only the active one -->
       {#each store.sessions as session (session.id)}
         <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-          {#if session.status === 'running' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
+          {#if session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
             <!-- A render/effect error in one session's pane must not take the
                  whole window down; show a reload affordance for that pane only. -->
             <svelte:boundary onerror={paneError(session.id)}>

@@ -52,7 +52,11 @@ export interface CreateSessionOpts {
   adapterType?: string;
 }
 
-export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
+/** 'sleeping': an open conversation whose agent process was shut down after
+ *  it sat idle. It keeps its place in the Conversations list and its live
+ *  state (mode, controls, always-allowed tools) and wakes when opened or sent
+ *  a message. The terminal is left running. */
+export type SessionStatus = 'starting' | 'installing' | 'running' | 'sleeping' | 'stopped' | 'error';
 
 export interface SessionInfo {
   id: string;
@@ -700,6 +704,11 @@ export interface GroveBenchAPI {
   /** Close a conversation: shut down its agent, background tasks and
    *  terminal (and the ports they hold), keeping it resumable. */
   closeSession(id: string): Promise<void>;
+  /** Put an idle conversation to sleep: shut down its agent process but keep
+   *  it open. Resolves false when it is busy or not live, and stays awake. */
+  sleepSession(id: string): Promise<boolean>;
+  /** Wake a sleeping conversation (restart its agent on the same transcript). */
+  wakeSession(id: string): Promise<void>;
   /** Stop one running background task (Agent tool sub-task) without
    *  interrupting the session's current turn. */
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
@@ -1060,9 +1069,11 @@ export interface GroveBenchSettings {
   autoInstallDeps: boolean;
 
   // Sessions
-  /** Auto-stop a session after this many minutes idle (not focused, not running
-   *  a turn, no pending permission) to reclaim its processes. 0 disables. Default 30. */
-  idleAutoStopMinutes: number;
+  /** Put a conversation to sleep after this many minutes idle (not focused,
+   *  not running a turn or background task, no pending permission) to free
+   *  its agent process. It stays open and wakes when opened. 0 disables.
+   *  Default 30. */
+  idleSleepMinutes: number;
 
   // General
   /** Base branch for new worktrees and PRs. Empty = auto-detect the
@@ -1252,6 +1263,8 @@ export const IPC = {
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
   SESSION_CLOSE: 'session:close',
+  SESSION_SLEEP: 'session:sleep',
+  SESSION_WAKE: 'session:wake',
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
