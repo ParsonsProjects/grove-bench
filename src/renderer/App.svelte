@@ -10,6 +10,7 @@
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { wakeScene } from './stores/wakeScene.svelte.js';
+  import { installTooltips } from './lib/tooltip.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -24,6 +25,7 @@
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
+  import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
 
@@ -323,6 +325,7 @@
 
   onMount(() => {
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
+    const uninstallTooltips = installTooltips();
     const unsubAppError = window.groveBench.onAppError(handleErrorReport);
 
     // Git and agent checks run in the background and never block the app.
@@ -406,6 +409,7 @@
       unsubFocus();
       unsubAppError();
       uninstallErrors();
+      uninstallTooltips();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
       window.removeEventListener('keydown', skipWakeScene, true);
@@ -535,3 +539,5 @@
 <MarkdownPreviewPanel />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />
+
+<SpellcheckMenu />

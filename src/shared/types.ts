@@ -645,6 +645,18 @@ export interface OsNotificationRequest {
   body: string;
 }
 
+// ─── Spell check ───
+
+/** Main → renderer: the user right-clicked a misspelled word. The renderer
+ *  draws the suggestion menu in the app's own style. */
+export interface SpellcheckMenuRequest {
+  /** Where the click landed, in window coordinates (fallback position). */
+  x: number;
+  y: number;
+  misspelledWord: string;
+  suggestions: string[];
+}
+
 // ─── Image Attachment ───
 
 export interface ImageAttachment {
@@ -967,6 +979,14 @@ export interface GroveBenchAPI {
   winMaximize(): void;
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
+
+  // Spell check
+  /** Fired when the user right-clicks a misspelled word. */
+  onSpellcheckMenu(callback: (req: SpellcheckMenuRequest) => void): () => void;
+  /** Replace the misspelled word with one of the offered suggestions. */
+  spellcheckReplace(suggestion: string): void;
+  /** Add the misspelled word to the user's dictionary. */
+  spellcheckAddWord(): void;
 
   // Agent adapters
   /** Registered agents, in registration order. `isDefault` marks the one new
@@ -1366,6 +1386,12 @@ export const IPC = {
   /** Renderer → main: an uncaught renderer error, for the file log. */
   APP_REPORT_ERROR: 'app:reportError',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
+  /** Main → renderer: show the spell check menu for a misspelled word. */
+  SPELLCHECK_MENU: 'spellcheck:menu',
+  /** Renderer → main: replace the misspelled word with a suggestion. */
+  SPELLCHECK_REPLACE: 'spellcheck:replace',
+  /** Renderer → main: add the misspelled word to the dictionary. */
+  SPELLCHECK_ADD_WORD: 'spellcheck:addWord',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARK_ADD: 'bookmarks:add',

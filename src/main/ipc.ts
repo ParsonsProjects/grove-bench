@@ -29,6 +29,7 @@ import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -1523,6 +1524,16 @@ export function registerHandlers() {
     if (!win || win.isDestroyed()) return;
     const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
+  });
+
+  // ─── Spell check ───
+
+  ipcMain.on(IPC.SPELLCHECK_REPLACE, (event, suggestion: unknown) => {
+    replaceMisspelling(event.sender, suggestion);
+  });
+
+  ipcMain.on(IPC.SPELLCHECK_ADD_WORD, (event) => {
+    addWordToDictionary(event.sender);
   });
 
   // ─── Window controls ───
