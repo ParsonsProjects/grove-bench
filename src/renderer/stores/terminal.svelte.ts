@@ -62,6 +62,12 @@ class TerminalStore {
     this.exitHandlers.delete(sessionId);
   }
 
+  /** The main process killed this session's PTY on close without an exit
+   *  event; mark it dead so reopening sizes the fresh shell it spawns. */
+  markClosed(sessionId: string) {
+    this.aliveBySession[sessionId] = false;
+  }
+
   /** Tear down all state for a permanently destroyed session. */
   destroySession(sessionId: string) {
     this.unsubscribe(sessionId);

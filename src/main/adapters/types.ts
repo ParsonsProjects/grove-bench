@@ -148,6 +148,9 @@ export interface AgentQueryHandle {
   getSessionId(): string | null;
   /** Signal no more messages — for single-shot sessions */
   closeInput?(): void;
+  /** PID of the local agent process, once spawned. Closing the conversation
+   *  kills this process tree so background tasks don't keep ports open. */
+  processId?(): number | undefined;
 
   // ─── Optional runtime controls — check adapter capabilities first ───
 

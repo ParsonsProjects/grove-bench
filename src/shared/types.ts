@@ -695,7 +695,11 @@ export interface GroveBenchAPI {
   // Session operations
   createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
+  /** Stop the current turn; the agent process stays up for the next message. */
   stopSession(id: string): Promise<void>;
+  /** Close a conversation: shut down its agent, background tasks and
+   *  terminal (and the ports they hold), keeping it resumable. */
+  closeSession(id: string): Promise<void>;
   /** Stop one running background task (Agent tool sub-task) without
    *  interrupting the session's current turn. */
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
@@ -1251,6 +1255,7 @@ export const IPC = {
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
+  SESSION_CLOSE: 'session:close',
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',

@@ -28,4 +28,4 @@ When a conversation is running, the dot may change to reflect what the agent is 
 - **Pulsing blue** — The agent is working. Wait for it to finish or check the Activity tab for details.
 - **Pulsing amber** — Action required! Switch to this conversation and review the permission request in the Activity tab.
 - **Red dot** — Something went wrong. Check the Activity tab for error details. You may need to restart the conversation.
-- **Gray dot** — The conversation is stopped. You can send a new message to restart it.
+- **Gray dot** — The conversation is stopped. Its agent, background commands and terminal have been shut down, including any dev servers they started. You can send a new message to restart it.

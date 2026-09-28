@@ -15,6 +15,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_RESUME, id, repoPath),
   stopSession: (id: string) =>
     ipcRenderer.invoke(IPC.SESSION_STOP, id),
+  closeSession: (id: string) =>
+    ipcRenderer.invoke(IPC.SESSION_CLOSE, id),
   stopBackgroundTask: (sessionId: string, taskId: string) =>
     ipcRenderer.invoke(IPC.SESSION_STOP_TASK, sessionId, taskId),
   destroySession: (id: string, deleteBranch?: boolean) =>

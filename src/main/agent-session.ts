@@ -22,6 +22,7 @@ import { findRewindForkPoint } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
+import { snapshotTree, waitForExit, killSurvivors } from './process-tree.js';
 
 /**
  * Sandbox settings for Read-safe-mode queries: OS-level enforcement layered
@@ -88,6 +89,11 @@ const HISTORY_CACHE_MAX = 12;
  *  every log and re-extract every event per keystroke. */
 const SEARCH_INDEX_BUDGET = 128 * 1024 * 1024;
 
+/** How long the agent process gets to exit on its own once its query is
+ *  closed (stopping its background tasks, finishing its transcript) before
+ *  whatever is left of its process tree is killed. */
+const AGENT_EXIT_GRACE_MS = 3000;
+
 interface PendingPermission {
   requestId: string;
   toolName: string;
@@ -129,9 +135,10 @@ interface ManagedSession {
   logBuffer: string[];
   logBufferBytes: number;
   logFlushTimer: ReturnType<typeof setTimeout> | null;
-  /** Set by destroySession before the query is closed so the event loop's
-   *  tail (status update, completion callback, memory auto-save) is skipped —
-   *  the worktree is about to be removed, so nothing may spawn inside it. */
+  /** Set by closeSession/destroySession before the query is closed so the
+   *  event loop's tail (status update, completion callback, memory auto-save)
+   *  is skipped. The session is going away, and on destroy its worktree is
+   *  about to be removed, so nothing may spawn inside it. */
   destroying: boolean;
   /** Last result data for completion callback */
   lastResult: { isError: boolean; totalCostUsd?: number; durationMs?: number } | null;
@@ -238,6 +245,9 @@ class AgentSessionManager {
    *  the pane and its input the moment it has an id, so sendMessage() waits
    *  on these instead of bouncing a prompt typed before the session exists. */
   private pendingSetups = new Map<string, Promise<void>>();
+  /** Sessions closeSession() is still shutting down, keyed by id. They are
+   *  already out of `sessions`; reopening or destroying one waits on this. */
+  private closing = new Map<string, Promise<void>>();
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
   /** Union of skill names each repo's sessions have reported via system_init.
@@ -419,6 +429,10 @@ class AgentSessionManager {
     model?: string | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
+
+    // Reopened while still closing: let the old agent process finish shutting
+    // down before a new one resumes the same transcript.
+    await this.closing.get(id);
 
     // Look up the adapter (fall back to the registry default)
     const adapterType = opts.adapterType ?? adapterRegistry.getDefault().id;
@@ -746,6 +760,17 @@ class AgentSessionManager {
     if (session.restartRequested) {
       try { handle.close(); } catch { /* may already be closed */ }
       this.relaunchQuery(session);
+      return;
+    }
+
+    // Closed or destroyed while start() was in flight: nothing will read this
+    // handle, so shut its process down now rather than leave it running.
+    if (session.destroying) {
+      try { handle.close(); } catch { /* may already be closed */ }
+      session.isStartingQuery = false;
+      session.resolveQueryReady?.();
+      session.resolveQueryReady = null;
+      session.queryReady = null;
       return;
     }
 
@@ -1486,17 +1511,95 @@ class AgentSessionManager {
     });
   }
 
-  async destroySession(id: string): Promise<void> {
+  /**
+   * Close a conversation without deleting it: stop the agent process and
+   * everything it started (background tasks, dev servers and the ports they
+   * hold), and drop the live session. Opening the conversation again resumes
+   * it from the provider's transcript, as after an app restart. Checkpoint
+   * refs and the worktree are kept.
+   */
+  closeSession(id: string): Promise<void> {
+    const inFlight = this.closing.get(id);
+    if (inFlight) return inFlight;
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session) return Promise.resolve();
+
+    // Out of the map at once so a reopen can't reattach to the dying agent;
+    // createSession() waits on `closing` instead.
+    this.sessions.delete(id);
+    const closed = (async () => {
+      try {
+        await this.shutDown(session, 'Conversation closed');
+      } catch (err) {
+        logger.warn(`Closing session ${id} failed:`, err);
+      } finally {
+        this.flushEventLog(session);
+        this.historyCache.delete(id);
+        this.searchIndexes.delete(id);
+        session.status = 'stopped';
+        if (!session.window.isDestroyed()) {
+          session.window.webContents.send(IPC.SESSION_STATUS, id, 'stopped');
+        }
+        this.closing.delete(id);
+      }
+    })();
+    this.closing.set(id, closed);
+    return closed;
+  }
+
+  async destroySession(id: string): Promise<void> {
+    // A close still shutting the agent down finishes first.
+    await this.closing.get(id);
+    const session = this.sessions.get(id);
+    if (!session) {
+      // A closed conversation has no live session, but its checkpoint refs
+      // are still in the repository.
+      const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
+      if (worktree) {
+        await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+          logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
+        });
+      }
+      return;
+    }
 
     // Cancel any pending auto-save debounce and save heuristic metadata
     memoryAutosave.cancelAutoSave(id);
     memoryAutosave.saveSessionMetadata(session.repoPath, id, session.eventHistory, session.branch);
 
+    await this.shutDown(session, 'Session destroyed');
+
+    // Clean up checkpoint refs
+    await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {
+      logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
+    });
+
+    // Wait for Windows file handles to release
+    await new Promise((r) => setTimeout(r, 500));
+
+    this.flushEventLog(session);
+    this.historyCache.delete(id);
+    this.searchIndexes.delete(id);
+    this.sessions.delete(id);
+  }
+
+  /**
+   * Stop a session's agent for good: close its query, deny pending
+   * permissions, and make sure the agent process and everything under it
+   * (background tasks, dev servers, MCP servers) is gone. The agent gets
+   * AGENT_EXIT_GRACE_MS to exit on its own; what it leaves behind is killed.
+   */
+  private async shutDown(session: ManagedSession, reason: string): Promise<void> {
+    const { id } = session;
+
     // Must be set before close(): closing ends runQuery's event loop, whose
     // tail would otherwise treat this as a normal query end (see runQuery).
     session.destroying = true;
+
+    // Note the agent's process tree while it is intact: once the agent exits,
+    // the children it left running can no longer be traced back to it.
+    const pid = session.queryHandle?.processId?.();
+    const tree = pid ? await snapshotTree(pid) : [];
 
     // Close the query and input stream before aborting to allow graceful cleanup
     try {
@@ -1508,7 +1611,7 @@ class AgentSessionManager {
 
     // Resolve any pending permissions as denied
     for (const [, pending] of session.pendingPermissions) {
-      pending.resolve({ behavior: 'deny', message: 'Session destroyed' });
+      pending.resolve({ behavior: 'deny', message: reason });
       session.emit?.({
         type: 'permission_resolved',
         requestId: pending.requestId,
@@ -1517,27 +1620,27 @@ class AgentSessionManager {
       });
     }
 
-    // Clean up checkpoint refs
-    await session.checkpoints.cleanup(id, session.worktreePath).catch(err => {
-      logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
-    });
+    if (pid) {
+      await waitForExit(pid, AGENT_EXIT_GRACE_MS);
+      const killed = await killSurvivors(tree);
+      if (killed.length > 0) {
+        logger.info(`Killed ${killed.length} leftover agent process(es) for ${id}: ${killed.join(', ')}`);
+      }
+    }
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
     this.eventListeners.delete(id);
-
-    // Wait for Windows file handles to release
-    await new Promise((r) => setTimeout(r, 500));
-
-    this.flushEventLog(session);
-    this.historyCache.delete(id);
-    this.searchIndexes.delete(id);
-    this.sessions.delete(id);
   }
 
   async destroyAll(): Promise<void> {
     const ids = [...this.sessions.keys()];
-    await Promise.all(ids.map((id) => this.destroySession(id)));
+    await Promise.all([...ids.map((id) => this.destroySession(id)), this.waitForCloses()]);
+  }
+
+  /** Resolves once every conversation being closed has finished shutting down. */
+  async waitForCloses(): Promise<void> {
+    await Promise.all(this.closing.values());
   }
 
   listSessions(): SessionInfo[] {
@@ -1971,6 +2074,11 @@ class AgentSessionManager {
 
   get count(): number {
     return this.sessions.size;
+  }
+
+  /** Conversations still shutting down after closeSession(). */
+  get closingCount(): number {
+    return this.closing.size;
   }
 }
 

@@ -374,6 +374,15 @@ export function registerHandlers() {
     logger.info(`Session query interrupted, ready for follow-up: id=${id}`);
   });
 
+  ipcMain.handle(IPC.SESSION_CLOSE, async (_event, id: string) => {
+    logger.info(`Closing session (agent, background tasks and terminal): id=${id}`);
+    await Promise.all([
+      terminalManager.killAllForSession(id),
+      sessionManager.closeSession(id),
+    ]);
+    logger.info(`Session closed: id=${id}`);
+  });
+
   ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
     logger.info(`Stopping background task: session=${id} task=${taskId}`);
     await sessionManager.stopTask(id, taskId);
@@ -1254,7 +1263,7 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.PTY_KILL, (_event, sessionId: string) => {
-    terminalManager.killPty(sessionId);
+    return terminalManager.killPty(sessionId);
   });
 
   ipcMain.handle(IPC.PTY_IS_ALIVE, (_event, sessionId: string) => {
