@@ -258,7 +258,7 @@ function makeMockWindow() {
 // ─── Tests ───
 
 // Import the module under test AFTER mocks are set up
-const { sessionManager } = await import('./agent-session.js');
+const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
@@ -2764,5 +2764,58 @@ describe('AgentSessionManager skill suggestions', () => {
 
     expect(result).toEqual([{ id: 'cached' }]);
     expect(analyzeRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe('MCP elicitation', () => {
+  async function startSession(id: string) {
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.onElicitation).toBeDefined());
+    return mockAdapter.lastConfig!.onElicitation!;
+  }
+  const request = { serverName: 'deploy', message: 'Which env?', mode: 'form' as const, requestedSchema: { type: 'object' } };
+
+  it('asks the renderer and answers with the cleaned response', async () => {
+    const onElicitation = await startSession('elicit-answer');
+    const answer = onElicitation(request, new AbortController().signal);
+
+    const asked = sessionManager.getEventHistory('elicit-answer').find((e) => e.type === 'elicitation_request');
+    expect(asked).toMatchObject({ type: 'elicitation_request', request });
+    const requestId = (asked as Extract<AgentEvent, { type: 'elicitation_request' }>).requestId;
+
+    expect(sessionManager.respondToElicitation('elicit-answer', requestId, {
+      action: 'accept',
+      content: { env: 'prod', bad: { nested: true } as never },
+    })).toBe(true);
+    await expect(answer).resolves.toEqual({ action: 'accept', content: { env: 'prod' } });
+    expect(sessionManager.getEventHistory('elicit-answer')).toContainEqual({ type: 'elicitation_resolved', requestId, action: 'accept' });
+    // Already answered
+    expect(sessionManager.respondToElicitation('elicit-answer', requestId, { action: 'decline' })).toBe(false);
+
+    await sessionManager.destroySession('elicit-answer');
+  });
+
+  it('cancels when the agent stops waiting', async () => {
+    const onElicitation = await startSession('elicit-abort');
+    const abort = new AbortController();
+    const answer = onElicitation(request, abort.signal);
+    abort.abort();
+    await expect(answer).resolves.toEqual({ action: 'cancel' });
+    expect(sessionManager.getSession('elicit-abort')!.pendingElicitations.size).toBe(0);
+    await sessionManager.destroySession('elicit-abort');
+  });
+
+  it('cancels pending requests when the conversation closes', async () => {
+    const onElicitation = await startSession('elicit-destroy');
+    const answer = onElicitation(request, new AbortController().signal);
+    await sessionManager.destroySession('elicit-destroy');
+    await expect(answer).resolves.toEqual({ action: 'cancel' });
+  });
+
+  it('rejects unknown actions', () => {
+    expect(sanitizeElicitationResponse({ action: 'maybe' })).toBeNull();
+    expect(sanitizeElicitationResponse(null)).toBeNull();
+    expect(sanitizeElicitationResponse({ action: 'decline', content: { a: 'x' } })).toEqual({ action: 'decline' });
+    expect(sanitizeElicitationResponse({ action: 'accept', content: { n: Infinity, l: ['a', 1], ok: ['a'] } })).toEqual({ action: 'accept', content: { ok: ['a'] } });
   });
 });

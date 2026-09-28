@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, ImageAttachment, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { displayTextFromSent } from '../../shared/prompt-text.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -115,6 +115,17 @@ export interface ChatQuestionMessage {
   selectedLabels?: string[];
 }
 
+/** An MCP server asking the user for input (a form or a page to open). */
+export interface ChatElicitationMessage {
+  kind: 'elicitation';
+  id: string;
+  requestId: string;
+  request: McpElicitationRequest;
+  resolved: boolean;
+  /** How it ended, once resolved. */
+  action?: McpElicitationResponse['action'];
+}
+
 export type ChatMessage =
   | ChatTextMessage
   | ChatToolCallMessage
@@ -124,7 +135,8 @@ export type ChatMessage =
   | ChatResultMessage
   | ChatPermissionMessage
   | ChatThinkingMessage
-  | ChatQuestionMessage;
+  | ChatQuestionMessage
+  | ChatElicitationMessage;
 
 // ─── Store ───
 
@@ -464,10 +476,10 @@ class MessageStore {
     );
   }
 
-  /** Whether the agent is blocked on an unanswered question */
+  /** Whether the agent is blocked on an unanswered question or MCP elicitation */
   hasPendingQuestion(sessionId: string): boolean {
     return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => m.kind === 'question' && !(m as { resolved?: boolean }).resolved,
+      (m) => (m.kind === 'question' || m.kind === 'elicitation') && !(m as { resolved?: boolean }).resolved,
     );
   }
 
@@ -1053,6 +1065,10 @@ class MessageStore {
         changed = true;
         return { ...m, resolved: true, decision: 'deny' as const };
       }
+      if (m.kind === 'elicitation' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true, action: 'cancel' as const };
+      }
       return m;
     });
     if (changed) {
@@ -1339,6 +1355,14 @@ class MessageStore {
         }
         break;
 
+      case 'elicitation_request':
+        this.onElicitationRequest(sessionId, event);
+        break;
+
+      case 'elicitation_resolved':
+        this.markElicitationResolved(sessionId, event.requestId, event.action);
+        break;
+
       case 'elicitation_complete':
         // Informational — log to system messages
         this.pushMessage(sessionId, {
@@ -1529,6 +1553,42 @@ class MessageStore {
         planText: event.planText,
       });
     }
+  }
+
+  private onElicitationRequest(sessionId: string, event: Extract<AgentEvent, { type: 'elicitation_request' }>) {
+    if (this.stoppingSession[sessionId]) return;
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, `${event.request.serverName} needs your input`);
+    }
+    this.flushStreamingText(sessionId);
+    this.pushMessage(sessionId, {
+      kind: 'elicitation',
+      id: nextId(),
+      requestId: event.requestId,
+      request: event.request,
+      resolved: false,
+    });
+  }
+
+  private markElicitationResolved(sessionId: string, requestId: string, action: McpElicitationResponse['action']) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    const idx = msgs.findIndex((m) => m.kind === 'elicitation' && m.requestId === requestId && !m.resolved);
+    if (idx < 0) return;
+    this.setMessagesForMutation(sessionId, [
+      ...msgs.slice(0, idx),
+      { ...(msgs[idx] as ChatElicitationMessage), resolved: true, action },
+      ...msgs.slice(idx + 1),
+    ]);
+  }
+
+  /** Answer an MCP elicitation. Main confirms with elicitation_resolved; when
+   *  it already ended (stopped or timed out) the block is closed here. */
+  async respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse) {
+    let accepted = false;
+    try {
+      accepted = await window.groveBench.respondToElicitation(sessionId, requestId, response);
+    } catch { /* treated as already resolved */ }
+    if (!accepted) this.markElicitationResolved(sessionId, requestId, 'cancel');
   }
 
   private onPermissionResolved(sessionId: string, event: Extract<AgentEvent, { type: 'permission_resolved' }>) {
@@ -2043,6 +2103,10 @@ class MessageStore {
       if (m.kind === 'question' && !m.resolved) {
         changed = true;
         return { ...m, resolved: true as const };
+      }
+      if (m.kind === 'elicitation' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, action: 'cancel' as const };
       }
       if (m.kind === 'tool_call' && m.awaitingPermission) {
         changed = true;

@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, ProviderUsage, SessionControls } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { logger } from './logger.js';
@@ -97,6 +97,30 @@ interface PendingPermission {
   resolve: (result: PermissionResponse) => void;
 }
 
+/** Keep only what an MCP elicitation result may carry: a known action and,
+ *  when accepting, string, number, boolean or string-list values. Null when
+ *  the action is unknown. */
+export function sanitizeElicitationResponse(response: unknown): McpElicitationResponse | null {
+  const r = response as Partial<McpElicitationResponse> | null;
+  if (!r || (r.action !== 'accept' && r.action !== 'decline' && r.action !== 'cancel')) return null;
+  if (r.action !== 'accept' || !r.content || typeof r.content !== 'object') return { action: r.action };
+  const content: NonNullable<McpElicitationResponse['content']> = {};
+  for (const [key, value] of Object.entries(r.content)) {
+    const ok = typeof value === 'string' || typeof value === 'boolean'
+      || (typeof value === 'number' && Number.isFinite(value))
+      || (Array.isArray(value) && value.every((v) => typeof v === 'string'));
+    if (ok) content[key] = value;
+  }
+  return { action: 'accept', content };
+}
+
+/** An MCP elicitation waiting on the user. `resolve` answers the server,
+ *  emits elicitation_resolved and drops the entry. */
+interface PendingElicitation {
+  requestId: string;
+  resolve: (response: McpElicitationResponse) => void;
+}
+
 interface ManagedSession {
   id: string;
   branch: string;
@@ -109,6 +133,7 @@ interface ManagedSession {
   queryHandle: AgentQueryHandle | null;
   abortController: AbortController;
   pendingPermissions: Map<string, PendingPermission>;
+  pendingElicitations: Map<string, PendingElicitation>;
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
   providerSessionId: string | null;
@@ -488,6 +513,7 @@ class AgentSessionManager {
       queryHandle: null,
       abortController,
       pendingPermissions: new Map(),
+      pendingElicitations: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
       pendingResumeAt: null,
@@ -683,6 +709,7 @@ class AgentSessionManager {
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
+      onElicitation: (request, signal) => this.awaitElicitation(session, request, signal),
       onPermissionRequest: async (request) => {
         // Read-safe mode: read-only tool calls scoped to the worktree (file
         // reads, git reads) run without prompting. Mutating, out-of-worktree,
@@ -1160,6 +1187,52 @@ class AgentSessionManager {
     return true;
   }
 
+  /** Hold an MCP elicitation until the user answers it in the conversation,
+   *  the agent stops waiting (`signal`), or it times out. */
+  private awaitElicitation(
+    session: ManagedSession,
+    request: McpElicitationRequest,
+    signal: AbortSignal,
+  ): Promise<McpElicitationResponse> {
+    const ELICITATION_TIMEOUT_MS = 30 * 60 * 1000;
+    const requestId = `elicit_${session.id}_${++session.permRequestCounter}`;
+    return new Promise<McpElicitationResponse>((resolve) => {
+      const onAbort = () => finish({ action: 'cancel' });
+      const timer = setTimeout(onAbort, ELICITATION_TIMEOUT_MS);
+      function finish(response: McpElicitationResponse) {
+        if (!session.pendingElicitations.delete(requestId)) return;
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        session.emit?.({ type: 'elicitation_resolved', requestId, action: response.action });
+        resolve(response);
+      }
+      session.pendingElicitations.set(requestId, { requestId, resolve: finish });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      session.emit?.({ type: 'elicitation_request', requestId, request });
+    });
+  }
+
+  /** Answer a pending MCP elicitation. Returns false when it already
+   *  resolved (answered, cancelled or timed out). */
+  respondToElicitation(id: string, requestId: string, response: McpElicitationResponse): boolean {
+    const pending = this.sessions.get(id)?.pendingElicitations.get(requestId);
+    const clean = sanitizeElicitationResponse(response);
+    if (!pending || !clean) return false;
+    pending.resolve(clean);
+    return true;
+  }
+
+  /** Cancel every elicitation waiting on the user, e.g. when the turn stops. */
+  private cancelElicitations(session: ManagedSession): void {
+    for (const pending of [...session.pendingElicitations.values()]) {
+      pending.resolve({ action: 'cancel' });
+    }
+  }
+
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
@@ -1347,6 +1420,17 @@ class AgentSessionManager {
     }
   }
 
+  async getMcpContextCost(id: string): Promise<McpServerContextCost[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.getMcpContextCost) return [];
+    try {
+      return await session.queryHandle.getMcpContextCost();
+    } catch (e) {
+      logger.warn(`Failed to read MCP context cost for session ${id}:`, e);
+      return [];
+    }
+  }
+
   async reconnectMcpServer(id: string, serverName: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.reconnectMcpServer) {
@@ -1436,6 +1520,7 @@ class AgentSessionManager {
       });
     }
     session.pendingPermissions.clear();
+    this.cancelElicitations(session);
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
@@ -1515,6 +1600,7 @@ class AgentSessionManager {
       });
     }
     session.pendingPermissions.clear();
+    this.cancelElicitations(session);
 
     // Re-sync the renderer with the current permission mode so the status bar
     // reflects the correct state after a stop/restart cycle.
@@ -1542,14 +1628,14 @@ class AgentSessionManager {
    * so the conversation keeps its place, mode, controls and always-allowed
    * tools. The terminal is left alone. It wakes (see wake()) when opened or
    * sent a message. Returns false, leaving it awake, unless the agent is up
-   * and not waiting on a permission.
+   * and not waiting on a permission or an MCP elicitation.
    */
   async sleepSession(id: string): Promise<boolean> {
     const session = this.sessions.get(id);
     if (!session || session.destroying) return false;
     if (session.status !== 'running' && session.status !== 'starting') return false;
     const handle = session.queryHandle;
-    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0) return false;
+    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
 
     session.statusBeforeSleep = session.status;
     session.status = 'sleeping';
@@ -1731,6 +1817,7 @@ class AgentSessionManager {
         decision: 'deny',
       });
     }
+    this.cancelElicitations(session);
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);

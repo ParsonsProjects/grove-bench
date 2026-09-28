@@ -50,6 +50,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
+  respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
+    ipcRenderer.invoke(IPC.AGENT_ELICITATION, sessionId, requestId, response),
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
@@ -106,6 +108,8 @@ const api: GroveBenchAPI = {
   // MCP server control
   listMcpServers: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_MCP_LIST, sessionId),
+  getMcpContextCost: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_MCP_CONTEXT_COST, sessionId),
   reconnectMcpServer: (sessionId: string, serverName: string) =>
     ipcRenderer.invoke(IPC.AGENT_MCP_RECONNECT, sessionId, serverName),
   setMcpServerEnabled: (sessionId: string, serverName: string, enabled: boolean) =>
@@ -206,6 +210,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.MCP_CONFIG_ADD, opts),
   mcpConfigRemove: (name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string) =>
     ipcRenderer.invoke(IPC.MCP_CONFIG_REMOVE, name, scope, cwd),
+  mcpConfigApprove: (name: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_APPROVE, name, repoPath),
 
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),

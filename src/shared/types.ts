@@ -171,6 +171,9 @@ export type AgentEvent =
   | { type: 'prompt_suggestion'; suggestion: string }
   // Hook execution
   | { type: 'hook_event'; subtype: 'started' | 'progress' | 'response'; hookId: string; hookName: string; hookEvent: string; output?: string; outcome?: string; exitCode?: number }
+  // MCP elicitation: a server asks the user for input mid-tool-call
+  | { type: 'elicitation_request'; requestId: string; request: McpElicitationRequest }
+  | { type: 'elicitation_resolved'; requestId: string; action: McpElicitationResponse['action'] }
   // MCP elicitation complete
   | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
   // Files persisted to disk
@@ -589,8 +592,51 @@ export interface McpServerInfo {
   error?: string;
   /** Config scope (e.g. project, user, local) when the provider reports one. */
   scope?: string;
+  /** Where the definition came from (e.g. sdk, plugin, user, project,
+   *  claudeai) when the provider reports it. Trust this over the name. */
+  source?: string;
   /** Number of tools the server exposes, when connected. */
   toolCount?: number;
+  /** The server's tools, when connected. */
+  tools?: McpToolInfo[];
+}
+
+export interface McpToolInfo {
+  name: string;
+  description?: string;
+  /** Server-declared hints (MCP tool annotations). */
+  readOnly?: boolean;
+  destructive?: boolean;
+}
+
+/** An MCP server asking the user for input during a tool call (MCP
+ *  elicitation). Form mode asks for fields; URL mode asks the user to open a
+ *  page, e.g. to sign in. */
+export interface McpElicitationRequest {
+  serverName: string;
+  message: string;
+  mode: 'form' | 'url';
+  /** Page to open (URL mode). */
+  url?: string;
+  /** JSON Schema of the requested fields (form mode). The MCP spec limits it
+   *  to a flat object of string, number, integer, boolean and enum fields. */
+  requestedSchema?: Record<string, unknown>;
+  /** Heading the server supplied, if any. */
+  title?: string;
+}
+
+export interface McpElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: Record<string, string | number | boolean | string[]>;
+}
+
+/** How much of the context window one MCP server's tool definitions use. */
+export interface McpServerContextCost {
+  serverName: string;
+  /** Tokens of tool definitions loaded into the context window. */
+  tokens: number;
+  /** Tokens of tool definitions held back until the agent searches for them. */
+  deferredTokens: number;
 }
 
 /** Result of kicking off an OAuth sign-in for an MCP server. */
@@ -611,7 +657,9 @@ export interface McpConfiguredServer {
   target: string;
   /** Transport when the CLI reports one (e.g. HTTP, SSE). */
   transport?: string;
-  status: McpServerInfo['status'];
+  /** `needs-approval` and `rejected` are project (.mcp.json) servers the user
+   *  hasn't approved, or has turned down. Neither is connected. */
+  status: McpServerInfo['status'] | 'needs-approval' | 'rejected';
   /** Set when the server isn't in the CLI's MCP config, so it can't be removed
    *  from there: a plugin's server or a claude.ai connector. */
   managedBy?: McpServerManager;
@@ -759,6 +807,8 @@ export interface GroveBenchAPI {
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
+  /** Answer an MCP elicitation. False when it already resolved or timed out. */
+  respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -821,6 +871,9 @@ export interface GroveBenchAPI {
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
+  /** Context-window cost of each MCP server's tools. Empty when the
+   *  conversation has no live query or the agent can't report it. */
+  getMcpContextCost(sessionId: string): Promise<McpServerContextCost[]>;
   /** Skills visible to a session (project + user `.claude/skills` scan).
    *  Resolves the session's worktree when it is running; `fallbackPath`
    *  (typically the repo path) covers stopped sessions. */
@@ -897,6 +950,9 @@ export interface GroveBenchAPI {
   mcpConfigList(cwd?: string): Promise<McpConfiguredServer[]>;
   mcpConfigAdd(opts: McpAddServerOpts): Promise<void>;
   mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
+  /** Approve a project (.mcp.json) server for the project at `repoPath` and
+   *  its conversations' worktrees. */
+  mcpConfigApprove(name: string, repoPath: string): Promise<void>;
 
   // Plugins
   pluginList(): Promise<PluginListResult>;
@@ -1361,9 +1417,12 @@ export const IPC = {
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
+  AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
+  AGENT_ELICITATION: 'agent:elicitation',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',
+  MCP_CONFIG_APPROVE: 'mcpConfig:approve',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',

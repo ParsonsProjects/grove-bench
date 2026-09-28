@@ -605,6 +605,10 @@ export function registerHandlers() {
     return sessionManager.listMcpServers(sessionId);
   });
 
+  ipcMain.handle(IPC.AGENT_MCP_CONTEXT_COST, (_event, sessionId: string) => {
+    return sessionManager.getMcpContextCost(sessionId);
+  });
+
   ipcMain.handle(IPC.AGENT_MCP_RECONNECT, (_event, sessionId: string, serverName: string) => {
     return sessionManager.reconnectMcpServer(sessionId, serverName);
   });
@@ -655,6 +659,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_PERMISSION, (_event, sessionId: string, decision: PermissionDecision) => {
     return sessionManager.respondToPermission(sessionId, decision);
+  });
+
+  ipcMain.handle(IPC.AGENT_ELICITATION, (_event, sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) => {
+    return sessionManager.respondToElicitation(sessionId, requestId, response);
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
@@ -1216,6 +1224,16 @@ export function registerHandlers() {
     const adapter = resolveAdapter(adapterType);
     if (!adapter.removeConfiguredMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP configuration`);
     await adapter.removeConfiguredMcpServer(name, scope, cwd);
+  });
+
+  ipcMain.handle(IPC.MCP_CONFIG_APPROVE, async (_event, name: string, repoPath: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.approveProjectMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP server approval`);
+    if (!(await worktreeManager.validateRepo(repoPath))) {
+      throw new Error(`${repoPath} is not a git repository`);
+    }
+    const worktrees = await worktreeManager.list(repoPath);
+    await adapter.approveProjectMcpServer(name, [repoPath, ...worktrees.map((w) => w.path)]);
   });
 
   ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {

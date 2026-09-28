@@ -29,7 +29,7 @@ export function formatMcpActionError(err: unknown, action: McpAction, serverName
 
   if (status === 'needs-auth') return mcpNeedsAuthHint(serverName);
   if (status === 'disabled') {
-    return `${serverName} is disabled for this session. Use Connect to enable it.`;
+    return `${serverName} is disabled in this project. Use Connect to turn it back on.`;
   }
   if (status === 'pending') return `${serverName} is still connecting. Try again in a moment.`;
   if (status) return `${serverName} could not be ${pastTense(action)} (status: ${status}).`;

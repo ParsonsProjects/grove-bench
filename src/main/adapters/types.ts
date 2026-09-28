@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -70,6 +70,10 @@ export type PermissionResponse =
 
 export type PermissionHandler = (request: PermissionRequest) => Promise<PermissionResponse>;
 
+/** Ask the user to answer an MCP elicitation. `signal` aborts when the agent
+ *  stops waiting (the server gave up or the query ended). */
+export type ElicitationHandler = (request: McpElicitationRequest, signal: AbortSignal) => Promise<McpElicitationResponse>;
+
 // ─── User Message ───
 
 export interface UserMessage {
@@ -119,6 +123,8 @@ export interface AdapterConfig {
    *  Only meaningful together with resumeSessionId. */
   resumeAtUuid?: string | null;
   onPermissionRequest: PermissionHandler;
+  /** Answers MCP elicitations. Without it the adapter declines them. */
+  onElicitation?: ElicitationHandler;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
   alwaysAllowedTools: Set<string>;
@@ -171,6 +177,8 @@ export interface AgentQueryHandle {
 
   /** Current status of the agent's MCP server connections. */
   listMcpServers?(): Promise<McpServerInfo[]>;
+  /** Context-window cost of each server's tool definitions. */
+  getMcpContextCost?(): Promise<McpServerContextCost[]>;
   /** Reconnect a (failed or disconnected) MCP server by name. */
   reconnectMcpServer?(serverName: string): Promise<void>;
   /** Enable (connect) or disable (disconnect) an MCP server by name. */
@@ -304,6 +312,11 @@ export interface AgentAdapter {
   // ─── Optional worktree configuration ───
 
   /** Generate agent-specific settings files inside a worktree directory.
-   *  E.g. Claude Code creates `.claude/settings.local.json`. */
-  generateWorktreeSettings?(wtPath: string): Promise<void>;
+   *  E.g. Claude Code creates `.claude/settings.local.json`. `repoPath` is the
+   *  project the worktree belongs to, for settings carried over from it. */
+  generateWorktreeSettings?(wtPath: string, repoPath?: string): Promise<void>;
+
+  /** Approve a project-scope MCP server (e.g. from `.mcp.json`) in each of
+   *  `dirs`: the project root and its conversations' worktrees. */
+  approveProjectMcpServer?(name: string, dirs: string[]): Promise<void>;
 }

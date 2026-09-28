@@ -180,7 +180,7 @@ export class WorktreeManager {
     }
 
     // Generate agent-specific settings (e.g. .claude/settings.local.json)
-    await this.generateAdapterSettings(wtPath, config.adapterType);
+    await this.generateAdapterSettings(wtPath, repoPath, config.adapterType);
 
     // Propagate the repo's git identity into the worktree so commits
     // are attributed to the user rather than the agent's default identity.
@@ -1137,10 +1137,10 @@ export class WorktreeManager {
     return null;
   }
 
-  private async generateAdapterSettings(wtPath: string, adapterType?: string): Promise<void> {
+  private async generateAdapterSettings(wtPath: string, repoPath: string, adapterType?: string): Promise<void> {
     const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
     if (adapter.generateWorktreeSettings) {
-      await adapter.generateWorktreeSettings(wtPath);
+      await adapter.generateWorktreeSettings(wtPath, repoPath);
     } else {
       logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
     }
