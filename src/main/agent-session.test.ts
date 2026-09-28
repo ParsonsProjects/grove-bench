@@ -40,8 +40,15 @@ vi.mock('./worktree-manager.js', () => ({
     getModel: vi.fn().mockResolvedValue(undefined),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
+    getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
   },
 }));
+const processTree = vi.hoisted(() => ({
+  snapshotTree: vi.fn(async (pid: number) => [{ pid, ppid: 1 }]),
+  waitForExit: vi.fn(async () => true),
+  killSurvivors: vi.fn(async () => [] as number[]),
+}));
+vi.mock('./process-tree.js', () => processTree);
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultPermissionMode: 'default',
@@ -70,6 +77,8 @@ vi.mock('./git.js', () => ({
 
 vi.mock('./checkpoints.js', () => {
   class MockCheckpointManager {
+    static instances: MockCheckpointManager[] = [];
+    constructor() { MockCheckpointManager.instances.push(this); }
     capture = vi.fn().mockResolvedValue(true);
     captureBaseline = vi.fn().mockResolvedValue(true);
     restore = vi.fn().mockResolvedValue(undefined);
@@ -133,6 +142,10 @@ class MockAdapter implements AgentAdapter {
   /** One-shot gate: when set, the next start() blocks on it (used to simulate
    *  a stop arriving while a query is still starting up). */
   startGate: Promise<void> | null = null;
+  /** PID the query handle reports for its agent process. */
+  pid: number | undefined = undefined;
+  /** The handle the last start() returned. */
+  lastHandle: AgentQueryHandle | null = null;
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
   /** Two universal controls plus one ('speed') that only the full model offers,
@@ -204,7 +217,7 @@ class MockAdapter implements AgentAdapter {
     let sessionId = 'mock-session-id';
     const abortController = new AbortController();
 
-    return {
+    const handle: AgentQueryHandle = {
       events: eventGenerator(),
       sendMessage: vi.fn(),
       abort: vi.fn(() => {
@@ -222,12 +235,15 @@ class MockAdapter implements AgentAdapter {
         resolveIter?.();
       }),
       getSessionId: () => sessionId,
+      processId: () => this.pid,
       closeInput: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
       setControl: vi.fn(),
       getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
+    this.lastHandle = handle;
+    return handle;
   }
 }
 
@@ -1268,6 +1284,111 @@ describe('AgentSessionManager.destroySession()', () => {
     await sessionManager.destroySession('test-destroy-perm');
 
     expect(permResolved).toMatchObject({ behavior: 'deny', message: 'Session destroyed' });
+  });
+});
+
+describe('AgentSessionManager.closeSession()', () => {
+  async function startSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    return { win, session: sessionManager.getSession(id)! };
+  }
+
+  it('drops the live session, keeps its checkpoints and reports it stopped', async () => {
+    const { win, session } = await startSession('test-close');
+    const handle = session.queryHandle!;
+
+    await sessionManager.closeSession('test-close');
+
+    expect(handle.close).toHaveBeenCalled();
+    expect(sessionManager.getSession('test-close')).toBeUndefined();
+    expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
+    expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-close', 'stopped');
+    // No process to clean up when the handle reports none
+    expect(processTree.snapshotTree).not.toHaveBeenCalled();
+  });
+
+  it('snapshots the agent process tree before closing and kills what is left', async () => {
+    mockAdapter.pid = 4242;
+    const { session } = await startSession('test-close-tree');
+    const handle = session.queryHandle!;
+    processTree.killSurvivors.mockResolvedValueOnce([4243]);
+
+    await sessionManager.closeSession('test-close-tree');
+
+    expect(processTree.snapshotTree).toHaveBeenCalledWith(4242);
+    expect(processTree.snapshotTree.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
+    expect(processTree.waitForExit).toHaveBeenCalledWith(4242, expect.any(Number));
+    expect(processTree.killSurvivors).toHaveBeenCalledWith([{ pid: 4242, ppid: 1 }]);
+  });
+
+  it('resolves pending permissions as denied', async () => {
+    await startSession('test-close-perm');
+    let permResolved: PermissionResponse | null = null;
+    mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    }).then((r) => { permResolved = r; });
+    await new Promise((r) => setTimeout(r, 50));
+
+    await sessionManager.closeSession('test-close-perm');
+
+    expect(permResolved).toMatchObject({ behavior: 'deny', message: 'Conversation closed' });
+  });
+
+  it('makes a reopen wait until the old agent has shut down', async () => {
+    mockAdapter.pid = 5150;
+    await startSession('test-reopen');
+    let releaseExit!: () => void;
+    processTree.waitForExit.mockImplementationOnce(() => new Promise((r) => { releaseExit = () => r(true); }));
+
+    const closing = sessionManager.closeSession('test-reopen');
+    expect(sessionManager.getSession('test-reopen')).toBeUndefined();
+    const reopening = sessionManager.createSession({
+      id: 'test-reopen', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(releaseExit).toBeDefined());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockAdapter.startCallCount).toBe(1);
+
+    releaseExit();
+    await closing;
+    await reopening;
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+
+    await sessionManager.destroySession('test-reopen');
+  });
+
+  it('shuts down an agent whose start() finishes after the close', async () => {
+    let openGate!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+    await sessionManager.createSession({
+      id: 'test-close-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+    await sessionManager.closeSession('test-close-starting');
+    openGate();
+
+    await vi.waitFor(() => expect(mockAdapter.lastHandle?.close).toHaveBeenCalled());
+  });
+
+  it('destroying a closed conversation still removes its checkpoint refs', async () => {
+    await startSession('test-close-destroy');
+    await sessionManager.closeSession('test-close-destroy');
+    const { worktreeManager } = await import('./worktree-manager.js');
+    vi.mocked(worktreeManager.getWorktreeOrManifest).mockResolvedValueOnce({
+      id: 'test-close-destroy', path: '/wt/test-close-destroy', branch: 'main', repoPath: '/repo', createdAt: 0,
+    });
+
+    await sessionManager.destroySession('test-close-destroy');
+
+    const { CheckpointManager } = await import('./checkpoints.js');
+    const instances = (CheckpointManager as unknown as { instances: { cleanup: ReturnType<typeof vi.fn> }[] }).instances;
+    expect(instances.at(-1)!.cleanup).toHaveBeenCalledWith('test-close-destroy', '/wt/test-close-destroy');
   });
 });
 

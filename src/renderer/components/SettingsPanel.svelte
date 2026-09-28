@@ -849,7 +849,7 @@
               />
               <span class="text-sm text-muted-foreground">minutes</span>
             </div>
-            <p class="text-xs text-muted-foreground mt-1">Disconnect a conversation after it's been idle this long (it auto-resumes when you click it). Set to 0 to disable. Default 30.</p>
+            <p class="text-xs text-muted-foreground mt-1">Stop a conversation after it's been idle this long, closing its terminal and anything it started (it auto-resumes when you click it). Set to 0 to disable. Default 30.</p>
           </div>
 
           <Separator />

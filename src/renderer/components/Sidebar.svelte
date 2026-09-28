@@ -340,8 +340,9 @@
     store.clearNeedsAttention(id);
   }
 
-  /** Stop a session non-destructively: tears down the connection but keeps the
-   *  worktree so it can be resumed by clicking it (auto-resume in App.svelte). */
+  /** Stop a session non-destructively: shuts down its agent, background tasks
+   *  and terminal (freeing any ports they held) but keeps the worktree so it
+   *  can be resumed by clicking it (auto-resume in App.svelte). */
   async function stopSession(id: string) {
     store.pushRecentlyClosed(id);
     if (store.activeSessionId === id) {
@@ -350,11 +351,12 @@
     }
     store.updateStatus(id, 'stopped');
     store.clearDeferredResume(id);
+    terminalStore.markClosed(id);
     // Refetch this session's preview next time it's needed — the cached one
     // (if any) predates the conversation that just ended.
     sessionPreviewStore.invalidate(id);
     try {
-      await window.groveBench.stopSession(id);
+      await window.groveBench.closeSession(id);
     } catch { /* session may already be dead */ }
   }
 

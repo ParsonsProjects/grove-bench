@@ -3,6 +3,7 @@ import type { WebContents } from 'electron';
 
 // Track per-PTY callbacks so tests can trigger them on specific instances
 interface MockPty {
+  pid: number;
   onData: ReturnType<typeof vi.fn>;
   onExit: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
@@ -17,6 +18,7 @@ const spawnedPtys: MockPty[] = [];
 
 function makeMockPty(): MockPty {
   const p: MockPty = {
+    pid: 1000 + spawnedPtys.length,
     _onDataCb: null,
     _onExitCb: null,
     onData: vi.fn((cb: (data: string) => void) => { p._onDataCb = cb; }),
@@ -36,6 +38,9 @@ vi.mock('node-pty', () => ({
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
+
+const killDescendants = vi.hoisted(() => vi.fn(async (_pid: number) => [] as number[]));
+vi.mock('./process-tree.js', () => ({ killDescendants }));
 
 import { TerminalManager } from './terminal.js';
 import * as pty from 'node-pty';
@@ -80,15 +85,25 @@ describe('TerminalManager', () => {
       expect(tm.isAlive('s1')).toBe(false);
     });
 
-    it('kill removes session from map', () => {
+    it('kill removes session from map', async () => {
       tm.spawnPty('s1', '/tmp', sender);
-      tm.killPty('s1');
+      const killing = tm.killPty('s1');
       expect(tm.isAlive('s1')).toBe(false);
+      await killing;
       expect(ptyAt(0).kill).toHaveBeenCalledOnce();
     });
 
-    it('kill on non-existent session is a no-op', () => {
-      tm.killPty('nope');
+    it('kill takes down processes started from the shell before the shell itself', async () => {
+      tm.spawnPty('s1', '/tmp', sender);
+      await tm.killPty('s1');
+      expect(killDescendants).toHaveBeenCalledWith(ptyAt(0).pid);
+      expect(killDescendants.mock.invocationCallOrder[0])
+        .toBeLessThan(ptyAt(0).kill.mock.invocationCallOrder[0]);
+    });
+
+    it('kill on non-existent session is a no-op', async () => {
+      await tm.killPty('nope');
+      expect(killDescendants).not.toHaveBeenCalled();
       // No PTY was spawned, nothing to call kill on
       expect(spawnedPtys).toHaveLength(0);
     });
@@ -160,7 +175,7 @@ describe('TerminalManager', () => {
   });
 
   describe('stale PTY guards (restart scenario)', () => {
-    it('killPty removes session before calling kill so sync onExit is guarded', () => {
+    it('killPty removes session before calling kill so sync onExit is guarded', async () => {
       tm.spawnPty('s1', '/tmp', sender);
       const p = ptyAt(0);
 
@@ -170,7 +185,7 @@ describe('TerminalManager', () => {
       });
 
       const sendBefore = (sender.send as ReturnType<typeof vi.fn>).mock.calls.length;
-      tm.killPty('s1');
+      await tm.killPty('s1');
 
       // The exit event should NOT have been sent (session was removed before kill)
       const exitCalls = (sender.send as ReturnType<typeof vi.fn>).mock.calls
@@ -244,15 +259,17 @@ describe('TerminalManager', () => {
   });
 
   describe('spawnPty kills existing PTY for same session', () => {
-    it('auto-kills existing session before spawning new one', () => {
+    it('auto-kills existing session before spawning new one', async () => {
       tm.spawnPty('s1', '/tmp', sender);
       expect(tm.isAlive('s1')).toBe(true);
 
       // Spawn again with same sessionId
       tm.spawnPty('s1', '/other', sender);
       expect(tm.isAlive('s1')).toBe(true);
-      expect(ptyAt(0).kill).toHaveBeenCalledOnce();
       expect(spawnedPtys).toHaveLength(2);
+      await vi.waitFor(() => expect(ptyAt(0).kill).toHaveBeenCalledOnce());
+      expect(killDescendants).toHaveBeenCalledWith(ptyAt(0).pid);
+      expect(ptyAt(1).kill).not.toHaveBeenCalled();
     });
   });
 });

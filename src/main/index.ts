@@ -192,6 +192,16 @@ app.on('before-quit', (event) => {
         app.quit();
       }
     })();
+  } else if (sessionManager.closingCount > 0 || terminalManager.count > 0) {
+    // No live sessions, but a conversation closed just before quitting or a
+    // terminal is still open: finish killing the processes they started so
+    // none outlive the app.
+    event.preventDefault();
+    isQuitting = true;
+    Promise.all([terminalManager.killAll(), sessionManager.waitForCloses()]).finally(() => {
+      logger.close();
+      app.quit();
+    });
   } else {
     logger.close();
   }

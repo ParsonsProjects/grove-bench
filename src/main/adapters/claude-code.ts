@@ -65,7 +65,7 @@ export function capToolResult(content: string): string {
 function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
-): SpawnedProcess {
+): SpawnedProcess & { readonly pid?: number } {
   const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
   const command = isNode ? process.execPath : opts.command;
   const env = isNode
@@ -81,7 +81,7 @@ function spawnClaudeCodeProcess(
   if (onStderr) {
     child.stderr?.on('data', (d: Buffer) => onStderr(d.toString()));
   }
-  return child as unknown as SpawnedProcess;
+  return child as unknown as SpawnedProcess & { readonly pid?: number };
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as
@@ -1276,6 +1276,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     const abortController = new AbortController();
     let sessionId: string | null = null;
+    let processId: number | undefined;
 
     // Build the canUseTool callback from the adapter config.
     const canUseTool = async (
@@ -1398,8 +1399,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
           : {}),
         canUseTool: canUseTool as any,
-        spawnClaudeCodeProcess: (o: SpawnOptions) =>
-          spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`)),
+        spawnClaudeCodeProcess: (o: SpawnOptions) => {
+          const child = spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`));
+          processId = child.pid;
+          return child;
+        },
         env: {
           ...cleanEnv(),
           CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
@@ -1491,6 +1495,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       getSessionId() {
         return sessionId;
+      },
+
+      processId() {
+        return processId;
       },
 
       closeInput() {

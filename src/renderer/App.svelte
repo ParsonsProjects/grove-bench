@@ -64,12 +64,12 @@
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     const openSet = new Set(persistedOpenTabs);
 
-    // Stop sessions that the main process still considers running but
-    // that were closed before reload (stopQuery keeps them alive).
+    // Close sessions that the main process still considers running but
+    // that were closed before reload.
     for (const session of store.sessions) {
       if (session.status === 'running' && !openSet.has(session.id)) {
         store.updateStatus(session.id, 'stopped');
-        window.groveBench.stopSession(session.id).catch(() => {});
+        window.groveBench.closeSession(session.id).catch(() => {});
       }
     }
 

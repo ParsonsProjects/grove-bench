@@ -1,6 +1,7 @@
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { terminalStore } from '../stores/terminal.svelte.js';
 
 /** Minimal per-session snapshot the idle policy needs. Kept plain (no store
  *  coupling) so the policy is unit-testable. */
@@ -54,7 +55,8 @@ export function computeIdleStops(
 function stopSession(id: string) {
   store.pushRecentlyClosed(id);
   store.updateStatus(id, 'stopped');
-  window.groveBench.stopSession(id).catch(() => { /* may already be dead */ });
+  terminalStore.markClosed(id);
+  window.groveBench.closeSession(id).catch(() => { /* may already be dead */ });
 }
 
 /**
