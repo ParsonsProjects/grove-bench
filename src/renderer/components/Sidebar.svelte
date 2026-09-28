@@ -602,8 +602,9 @@
         {#if session.completedAt}
           <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed" title="Completed"><path d="M20 6 9 17l-5-5"/></svg>
         {/if}
+        <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
         <span class="text-sm truncate min-w-0 {greyedOut ? 'opacity-40' : ''} {session.completedAt ? 'text-muted-foreground' : ''}">
-          {#if showRepoPrefix}{#if repoColor}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
+          {#if showRepoPrefix}{#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
         </span>
       </div>
       <div class="flex items-center gap-1 shrink-0">
