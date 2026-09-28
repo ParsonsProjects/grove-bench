@@ -1,7 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { displayTextFromSent, parseSentPrompt, stripFileContext } from './prompt-text.js';
+import { buildContentBlock, displayTextFromSent, parseSentPrompt, stripFileContext } from './prompt-text.js';
 
 describe('parseSentPrompt', () => {
+  it('reads past a closing tag inside the file content, using its length', () => {
+    const xml = '<root>\n</file>\n<secret>REST OF FILE</secret>\n</root>';
+    const sent = `${buildContentBlock('file', 'docs/manifest.xml', xml)}\n${buildContentBlock('folder', 'src/', 'a.ts')}\n\nplease fix @docs/manifest.xml`;
+    expect(parseSentPrompt(sent)).toEqual({ paths: ['docs/manifest.xml', 'src/'], typed: 'please fix @docs/manifest.xml' });
+  });
+
+  it('falls back to the first closing tag when the length does not line up', () => {
+    const sent = '<file path="a.ts" length="999">\nx\n</file>\n\ntyped';
+    expect(parseSentPrompt(sent)).toEqual({ paths: ['a.ts'], typed: 'typed' });
+  });
+
   it('splits leading file and folder blocks from the typed text', () => {
     const sent = '<file path="a.ts">\nconst a = 1;\n\n</file>\n<folder path="src/">\n(could not read)\n</folder>\n\nfix the parser';
     expect(parseSentPrompt(sent)).toEqual({ paths: ['a.ts', 'src/'], typed: 'fix the parser' });
