@@ -19,7 +19,7 @@ export function stripIpcErrorPrefix(message: string): string {
 
 /** Human-readable instruction for a server stuck in `needs-auth`. */
 export function mcpNeedsAuthHint(serverName: string): string {
-  return `${serverName} needs authentication. Click Sign in to authorize it in your browser (or run /mcp in a Claude Code terminal).`;
+  return `${serverName} needs authentication. Click Sign in to authorize it in your browser.`;
 }
 
 export function formatMcpActionError(err: unknown, action: McpAction, serverName: string): string {
@@ -29,7 +29,7 @@ export function formatMcpActionError(err: unknown, action: McpAction, serverName
 
   if (status === 'needs-auth') return mcpNeedsAuthHint(serverName);
   if (status === 'disabled') {
-    return `${serverName} is disabled in this project. Use Connect to turn it back on.`;
+    return `${serverName} is disconnected. Use Connect to turn it back on.`;
   }
   if (status === 'pending') return `${serverName} is still connecting. Try again in a moment.`;
   if (status) return `${serverName} could not be ${pastTense(action)} (status: ${status}).`;

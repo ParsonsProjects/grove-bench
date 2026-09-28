@@ -22,10 +22,18 @@ class McpConfigStore {
   /** Project the list was loaded for. Project and local servers only show
    *  for one project; undefined lists user-level servers only. */
   cwd = $state<string | undefined>(undefined);
+  /** Agent whose configuration this is; undefined means the default agent. */
+  adapterType = $state<string | undefined>(undefined);
 
   /** List the servers for `cwd`; undefined lists user servers only. */
   async showProject(cwd: string | undefined) {
     this.cwd = cwd;
+    await this.refresh();
+  }
+
+  /** List another agent's servers, for the same project. */
+  async showAgent(adapterType: string | undefined) {
+    this.adapterType = adapterType;
     await this.refresh();
   }
 
@@ -38,7 +46,7 @@ class McpConfigStore {
     this.loading = true;
     this.error = null;
     try {
-      this.servers = await window.groveBench.mcpConfigList(this.cwd);
+      this.servers = await window.groveBench.mcpConfigList(this.cwd, this.adapterType);
       this.loaded = true;
     } catch (e: any) {
       this.error = e.message || String(e);
@@ -56,7 +64,7 @@ class McpConfigStore {
     this.actionKind = 'add';
     this.error = null;
     try {
-      await window.groveBench.mcpConfigAdd(opts);
+      await window.groveBench.mcpConfigAdd(opts, this.adapterType);
       await this.showAdded(opts);
       return true;
     } catch (e: any) {
@@ -77,7 +85,7 @@ class McpConfigStore {
     this.actionKind = 'remove';
     this.error = null;
     try {
-      await window.groveBench.mcpConfigRemove(name, scope, this.cwd);
+      await window.groveBench.mcpConfigRemove(name, scope, this.cwd, this.adapterType);
       await this.refresh();
     } catch (e: any) {
       this.error = e.message || String(e);
@@ -87,7 +95,7 @@ class McpConfigStore {
     }
   }
 
-  /** Add several servers, refreshing once at the end (`claude mcp list` is
+  /** Add several servers, refreshing once at the end (listing health-checks every server, so it is
    *  slow). Stops at the first failure. Returns the names that were added. */
   async addMany(list: McpAddServerOpts[]): Promise<string[]> {
     if (!bridgeHas('mcpConfigAdd')) {
@@ -101,7 +109,7 @@ class McpConfigStore {
       for (const opts of list) {
         this.actionInProgress = opts.name;
         this.actionKind = 'add';
-        await window.groveBench.mcpConfigAdd(opts);
+        await window.groveBench.mcpConfigAdd(opts, this.adapterType);
         added.push(opts.name);
       }
     } catch (e: any) {
@@ -134,7 +142,7 @@ class McpConfigStore {
     this.actionKind = 'approve';
     this.error = null;
     try {
-      await window.groveBench.mcpConfigApprove(name, this.cwd);
+      await window.groveBench.mcpConfigApprove(name, this.cwd, this.adapterType);
       await this.refresh();
     } catch (e: any) {
       this.error = e.message || String(e);

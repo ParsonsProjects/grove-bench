@@ -19,7 +19,7 @@
   import { formatMcpActionError, mcpNeedsAuthHint } from '../lib/mcp-errors.js';
   import type { McpServerContextCost, McpServerInfo, SkillInfo, SkillSuggestion } from '../../shared/types.js';
   import CopyButton from './CopyButton.svelte';
-  import { mcpSourceLabel } from '../lib/mcp-display.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
   import { CONTROL_IDS } from '../../shared/types.js';
   import SessionControlsPopover from './SessionControlsPopover.svelte';
   import BranchPicker from './BranchPicker.svelte';
@@ -310,6 +310,15 @@
   /** Servers whose tool list is expanded in the popover. */
   let mcpToolsOpen = $state<Record<string, boolean>>({});
   let mcpKnown = $derived(systemInfo.mcpServers);
+  /** What this conversation's agent supports for MCP. Until the agent list
+   *  loads every control is offered, as before; once it has, an agent with no
+   *  MCP support shows none. */
+  let mcpSupport = $derived(agentsStore.loaded ? agentsStore.get(sessionAgentType ?? agentsStore.defaultId)?.mcp : undefined);
+  let mcpControls = $derived(
+    agentsStore.loaded
+      ? mcpSupport?.controls ?? { list: false, reconnect: false, toggle: false, signIn: false, contextCost: false }
+      : { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
+  );
   /** Rows for the popover: live status when fetched, else what system_init
    *  reported, normalized to the same shape. */
   let mcpRows = $derived<McpServerInfo[]>(
@@ -326,7 +335,8 @@
   );
 
   async function refreshMcpServers() {
-    if (mcpExpanded) refreshMcpCost();
+    if (mcpExpanded && mcpControls.contextCost) refreshMcpCost();
+    if (!mcpControls.list) return;
     try {
       const servers = await window.groveBench.listMcpServers(sessionId);
       if (servers.length > 0) {
@@ -355,7 +365,16 @@
     const running = isRunning;
     const turnEnded = mcpWasRunning && !running;
     mcpWasRunning = running;
-    if (turnEnded) untrack(() => { if (mcpKnown.length > 0) refreshMcpServers(); });
+    if (turnEnded) untrack(() => { if (mcpRows.length > 0 || mcpControls.list) refreshMcpServers(); });
+  });
+
+  // Not every agent reports its servers when it starts. One that can list
+  // them gets asked once it is running, so the badge appears either way.
+  let mcpListedOnStart = false;
+  $effect(() => {
+    if (sessionStatus !== 'running' || !mcpControls.list || mcpListedOnStart) return;
+    mcpListedOnStart = true;
+    untrack(() => { if (mcpKnown.length === 0) refreshMcpServers(); });
   });
 
   function toggleMcpPopover() {
@@ -612,6 +631,8 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('click', handleClickOutside);
+    // The MCP controls depend on what the agent supports (loaded once).
+    agentsStore.load();
     // Populate the Skills item up front — the collapsed count and suggestion
     // badge shouldn't wait for the popover to be opened.
     refreshSkills();
@@ -835,9 +856,9 @@
 
   <!-- Capabilities stack: MCP servers over skills. Both popovers anchor to the
        stack so they open above the pair rather than over each other. -->
-  {#if mcpKnown.length > 0 || allSkills.length > 0}
+  {#if mcpRows.length > 0 || allSkills.length > 0}
   <div class="relative flex flex-col gap-px leading-snug">
-  {#if mcpKnown.length > 0}
+  {#if mcpRows.length > 0}
     <div bind:this={mcpRef}>
       <button
         onclick={toggleMcpPopover}
@@ -851,20 +872,22 @@
           {mcpHealth === 'down' ? 'bg-red-500'
             : mcpHealth === 'partial' ? 'bg-orange-400'
             : 'bg-green-500'}"></span>
-        MCP {mcpKnown.length}
+        MCP {mcpRows.length}
       </button>
 
       {#if mcpExpanded}
         <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
           <div class="flex items-center justify-between mb-2">
             <span class="font-medium text-foreground">MCP Servers</span>
-            <button
-              onclick={refreshMcpServers}
-              class="text-muted-foreground/60 hover:text-foreground transition-colors"
-              title="Refresh status"
-            >
-              Refresh
-            </button>
+            {#if mcpControls.list}
+              <button
+                onclick={refreshMcpServers}
+                class="text-muted-foreground/60 hover:text-foreground transition-colors"
+                title="Refresh status"
+              >
+                Refresh
+              </button>
+            {/if}
           </div>
 
           {#if mcpError}
@@ -876,7 +899,7 @@
           <div class="space-y-2 max-h-80 overflow-y-auto">
             {#each mcpRows as server (server.name)}
               {@const status = server.status}
-              {@const source = mcpSourceLabel(server)}
+              {@const source = server.origin}
               {@const cost = mcpCost[server.name]}
               {@const tools = server.tools ?? []}
               <div class="group">
@@ -918,19 +941,23 @@
                       {/if}
                     </div>
                   </div>
+                  <!-- Only the controls this agent supports (see McpSupport). -->
                   {#if status === 'disabled'}
-                    <button
-                      onclick={() => mcpAction(server.name, 'enable')}
-                      disabled={mcpBusy[server.name]}
-                      class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0 disabled:opacity-50"
-                      title="Connect this server again in this project"
-                    >
-                      Connect
-                    </button>
+                    {#if mcpControls.toggle}
+                      <button
+                        onclick={() => mcpAction(server.name, 'enable')}
+                        disabled={mcpBusy[server.name]}
+                        class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0 disabled:opacity-50"
+                        title="Connect this server again"
+                      >
+                        Connect
+                      </button>
+                    {/if}
                   {:else}
                     {#if status === 'needs-auth'}
-                      <!-- Reconnect can't complete OAuth (the CLI rejects it with
-                           "Server status: needs-auth"), so offer the sign-in instead. -->
+                      <!-- Reconnect can't complete a sign-in (Claude Code rejects it
+                           with "Server status: needs-auth"), so offer the sign-in instead. -->
+                      {#if mcpControls.signIn}
                       <button
                         onclick={() => mcpSignIn(server.name)}
                         disabled={mcpBusy[server.name] || mcpSigningIn[server.name]}
@@ -939,7 +966,8 @@
                       >
                         {mcpSigningIn[server.name] ? 'Waiting...' : 'Sign in'}
                       </button>
-                    {:else}
+                      {/if}
+                    {:else if mcpControls.reconnect}
                       <button
                         onclick={() => mcpAction(server.name, 'reconnect')}
                         disabled={mcpBusy[server.name]}
@@ -949,15 +977,17 @@
                         Reconnect
                       </button>
                     {/if}
-                    <!-- The agent saves this per project, not per conversation. -->
-                    <button
-                      onclick={() => mcpAction(server.name, 'disable')}
-                      disabled={mcpBusy[server.name]}
-                      class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
-                      title="Disconnect this server in this project. New conversations here also start without it until you connect it again."
-                    >
-                      Disconnect
-                    </button>
+                    {#if mcpControls.toggle}
+                      <!-- How long a disconnect lasts is the agent's to say. -->
+                      <button
+                        onclick={() => mcpAction(server.name, 'disable')}
+                        disabled={mcpBusy[server.name]}
+                        class="px-1.5 py-0.5 border border-border text-destructive hover:bg-destructive/10 transition-colors shrink-0 disabled:opacity-50"
+                        title={mcpSupport?.disconnectHint ?? 'Disconnect this server'}
+                      >
+                        Disconnect
+                      </button>
+                    {/if}
                   {/if}
                 </div>
 

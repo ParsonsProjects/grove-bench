@@ -207,13 +207,13 @@ const api: GroveBenchAPI = {
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
   // MCP server configuration
-  mcpConfigList: (cwd?: string) => ipcRenderer.invoke(IPC.MCP_CONFIG_LIST, cwd),
-  mcpConfigAdd: (opts: import('../shared/types.js').McpAddServerOpts) =>
-    ipcRenderer.invoke(IPC.MCP_CONFIG_ADD, opts),
-  mcpConfigRemove: (name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string) =>
-    ipcRenderer.invoke(IPC.MCP_CONFIG_REMOVE, name, scope, cwd),
-  mcpConfigApprove: (name: string, repoPath: string) =>
-    ipcRenderer.invoke(IPC.MCP_CONFIG_APPROVE, name, repoPath),
+  mcpConfigList: (cwd?: string, adapterType?: string) => ipcRenderer.invoke(IPC.MCP_CONFIG_LIST, cwd, adapterType),
+  mcpConfigAdd: (opts: import('../shared/types.js').McpAddServerOpts, adapterType?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_ADD, opts, adapterType),
+  mcpConfigRemove: (name: string, scope?: import('../shared/types.js').McpConfigScope, cwd?: string, adapterType?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_REMOVE, name, scope, cwd, adapterType),
+  mcpConfigApprove: (name: string, repoPath: string, adapterType?: string) =>
+    ipcRenderer.invoke(IPC.MCP_CONFIG_APPROVE, name, repoPath, adapterType),
 
   // Plugins
   pluginList: () => ipcRenderer.invoke(IPC.PLUGIN_LIST),

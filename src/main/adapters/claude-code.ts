@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
@@ -942,6 +942,28 @@ export function mapClaudeUsage(res: ClaudeUsageResponse | null | undefined, now 
 
 // ─── MCP config CLI helpers ───
 
+/** Server names `claude mcp add` accepts (it is stricter than Grove's own
+ *  shell-safety check, validateMcpName). */
+const CLAUDE_MCP_NAME_PATTERN = '^[A-Za-z0-9_-]+$';
+
+/** What Grove can offer for Claude Code's MCP servers, and how to word it. */
+export const CLAUDE_MCP_SUPPORT: McpSupport = {
+  controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
+  // The CLI saves a disconnect to disabledMcpServers for the project (keyed by
+  // the main repo root, so every worktree shares it), not just this conversation.
+  disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+  config: {
+    scopes: [
+      { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
+      { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the project repository' },
+      { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
+    ],
+    namePattern: CLAUDE_MCP_NAME_PATTERN,
+    nameRule: 'Server names can only contain letters, numbers, hyphens and underscores',
+    approvalHint: "From this project's .mcp.json. Conversations won't connect it until you approve it. Only approve servers you trust: they run on your machine.",
+  },
+};
+
 /**
  * Spot servers that `claude mcp list` shows but `claude mcp remove` can't
  * remove, by the names the CLI gives them: `plugin:<plugin>:<server>` for a
@@ -949,9 +971,24 @@ export function mapClaudeUsage(res: ClaudeUsageResponse | null | undefined, now 
  */
 export function mcpServerManager(name: string): McpServerManager | undefined {
   const plugin = name.match(/^plugin:([^:]+):./)?.[1];
-  if (plugin) return { kind: 'plugin', plugin };
-  if (name.startsWith('claude.ai ')) return { kind: 'claude-ai' };
+  if (plugin) {
+    return { label: `${plugin} plugin`, hint: 'To turn it off, disable or uninstall the plugin in the Plugins tab.' };
+  }
+  if (name.startsWith('claude.ai ')) {
+    return { label: 'claude.ai', hint: 'To turn it off, manage your connectors on claude.ai.' };
+  }
   return undefined;
+}
+
+/** A short label for where a live server comes from. The CLI's `source` is
+ *  trusted over the name: sdk (a server Grove registers, e.g. its memory
+ *  tools), plugin, or a config scope such as user, project or claudeai. */
+export function claudeMcpOrigin(s: { source?: string; scope?: string }): string | undefined {
+  const origin = s.source ?? s.scope;
+  if (!origin) return undefined;
+  if (origin === 'sdk') return 'Grove Bench';
+  if (origin === 'claudeai') return 'claude.ai';
+  return origin;
 }
 
 /**
@@ -1191,13 +1228,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     label: 'Anthropic API key',
     helpUrl: 'https://platform.claude.com/',
   };
+  readonly mcp = CLAUDE_MCP_SUPPORT;
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
     resume: true,
     modelSwitching: true,
     thinking: true,
-    mcpControl: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1682,7 +1719,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           status: s.status,
           ...(s.error ? { error: s.error } : {}),
           ...(s.scope ? { scope: s.scope } : {}),
-          ...(s.source ? { source: s.source } : {}),
+          ...(claudeMcpOrigin(s) ? { origin: claudeMcpOrigin(s) } : {}),
           ...(s.tools ? {
             toolCount: s.tools.length,
             tools: s.tools.map((t) => ({
@@ -1767,11 +1804,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async removeConfiguredMcpServer(name: string, scope?: McpConfigScope, cwd?: string): Promise<void> {
     const managedBy = mcpServerManager(name);
-    if (managedBy?.kind === 'plugin') {
-      throw new Error(`${name} comes from the ${managedBy.plugin} plugin. Disable or uninstall the plugin to remove it.`);
-    }
-    if (managedBy?.kind === 'claude-ai') {
-      throw new Error(`${name} is a claude.ai connector. Manage it from your connector settings on claude.ai.`);
+    if (managedBy) {
+      throw new Error(`${name} can't be removed from Grove Bench (${managedBy.label}). ${managedBy.hint}`);
     }
     validateMcpName(name);
     const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];

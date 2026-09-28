@@ -7,8 +7,13 @@ export type McpJsonParseResult =
   | { ok: true; servers: ParsedMcpServer[] }
   | { ok: false; error: string; /** A single config with no name: ask for one. */ needsName?: boolean };
 
-/** The CLI's own rule for server names (`claude mcp add` rejects the rest). */
-const NAME_RE = /^[A-Za-z0-9_-]+$/;
+/** An agent's rule for server names (see McpSupport.config). */
+export interface McpNameRule {
+  /** RegExp source a name must match. */
+  pattern: string;
+  /** The rule in words, for the error. */
+  rule: string;
+}
 
 /**
  * Parse an MCP server config pasted from a README or another client. Accepts
@@ -18,9 +23,10 @@ const NAME_RE = /^[A-Za-z0-9_-]+$/;
  *   { "name": { ... } }
  *   { "command": ... } or { "url": ... }    (named by `fallbackName`)
  * Each server becomes the same options the add form produces, so it goes
- * through `claude mcp add` like any other.
+ * through the agent's own add command like any other. Names are checked
+ * against `nameRule` when given, so a bad one is caught before adding.
  */
-export function parseMcpJson(text: string, fallbackName = ''): McpJsonParseResult {
+export function parseMcpJson(text: string, fallbackName = '', nameRule?: McpNameRule): McpJsonParseResult {
   if (!text.trim()) return { ok: false, error: 'Paste a JSON server config' };
   let data: unknown;
   try {
@@ -43,8 +49,10 @@ export function parseMcpJson(text: string, fallbackName = ''): McpJsonParseResul
   }
   if (entries.length === 0) return { ok: false, error: 'No servers found in the JSON' };
 
+  const nameRe = nameRule ? new RegExp(nameRule.pattern) : null;
   const servers: ParsedMcpServer[] = [];
   for (const [name, config] of entries) {
+    if (nameRe && !nameRe.test(name)) return { ok: false, error: `"${name}": ${nameRule!.rule.charAt(0).toLowerCase()}${nameRule!.rule.slice(1)}` };
     const parsed = toServer(name, config);
     if ('error' in parsed) return { ok: false, error: parsed.error };
     servers.push(parsed);
@@ -53,9 +61,6 @@ export function parseMcpJson(text: string, fallbackName = ''): McpJsonParseResul
 }
 
 function toServer(name: string, config: unknown): ParsedMcpServer | { error: string } {
-  if (!NAME_RE.test(name)) {
-    return { error: `"${name}": server names can only contain letters, numbers, hyphens and underscores` };
-  }
   if (!isObject(config)) return { error: `"${name}": expected an object with "command" or "url"` };
 
   const type = typeof config.type === 'string' ? config.type.toLowerCase() : undefined;

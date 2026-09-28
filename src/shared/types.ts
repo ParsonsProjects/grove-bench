@@ -80,6 +80,8 @@ export interface AgentSummary {
   isDefault?: boolean;
   /** The adapter's own model for background tasks, if it declares one. */
   backgroundModel?: string;
+  /** How the agent handles MCP servers. Absent: no MCP support Grove can drive. */
+  mcp?: McpSupport;
 }
 
 /** One agent's install and sign-in state. */
@@ -599,9 +601,9 @@ export interface McpServerInfo {
   error?: string;
   /** Config scope (e.g. project, user, local) when the provider reports one. */
   scope?: string;
-  /** Where the definition came from (e.g. sdk, plugin, user, project,
-   *  claudeai) when the provider reports it. Trust this over the name. */
-  source?: string;
+  /** Where the server comes from, as a short label for display (e.g. user,
+   *  project, a plugin). Worked out by the adapter. */
+  origin?: string;
   /** Number of tools the server exposes, when connected. */
   toolCount?: number;
   /** The server's tools, when connected. */
@@ -667,13 +669,52 @@ export interface McpConfiguredServer {
   /** `needs-approval` and `rejected` are project (.mcp.json) servers the user
    *  hasn't approved, or has turned down. Neither is connected. */
   status: McpServerInfo['status'] | 'needs-approval' | 'rejected';
-  /** Set when the server isn't in the CLI's MCP config, so it can't be removed
-   *  from there: a plugin's server or a claude.ai connector. */
+  /** Set when something else owns the server (e.g. a plugin), so it can't be
+   *  removed from Grove. */
   managedBy?: McpServerManager;
 }
 
-/** Who owns an MCP server that `mcp remove` can't touch. */
-export type McpServerManager = { kind: 'plugin'; plugin: string } | { kind: 'claude-ai' };
+/** The owner of an MCP server Grove can't remove, as the adapter describes it. */
+export interface McpServerManager {
+  /** Short tag shown in place of Remove, e.g. "figma plugin". */
+  label: string;
+  /** How to turn the server off instead. */
+  hint: string;
+}
+
+/**
+ * How an agent handles MCP servers, and the wording and rules the UI uses
+ * for them. Each adapter describes its own, so nothing in the UI assumes
+ * one agent's behaviour.
+ */
+export interface McpSupport {
+  /** Controls on a running conversation. Each needs the matching optional
+   *  AgentQueryHandle method. */
+  controls: {
+    /** Live server status (listMcpServers). */
+    list: boolean;
+    reconnect: boolean;
+    /** Connect / Disconnect (setMcpServerEnabled). */
+    toggle: boolean;
+    /** Browser sign-in for a server that needs it (authenticateMcpServer). */
+    signIn: boolean;
+    /** Context-window cost per server (getMcpContextCost). */
+    contextCost: boolean;
+  };
+  /** Tooltip for Disconnect: how long it lasts and what it affects. */
+  disconnectHint: string;
+  /** Editing configured servers (Settings > MCP). Absent: not supported. */
+  config?: {
+    /** Scopes a server can be added to. */
+    scopes: { value: McpConfigScope; label: string; description: string }[];
+    /** Server names the agent accepts, as a RegExp source, and the rule in words. */
+    namePattern: string;
+    nameRule: string;
+    /** Set when project servers must be approved before they connect: the
+     *  explanation shown next to Approve. */
+    approvalHint?: string;
+  };
+}
 
 export type McpConfigScope = 'local' | 'user' | 'project';
 
@@ -956,13 +997,14 @@ export interface GroveBenchAPI {
   // External links
   openExternal(url: string): Promise<void>;
 
-  // MCP server configuration (agent CLI config, not per-session)
-  mcpConfigList(cwd?: string): Promise<McpConfiguredServer[]>;
-  mcpConfigAdd(opts: McpAddServerOpts): Promise<void>;
-  mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
-  /** Approve a project (.mcp.json) server for the project at `repoPath` and
-   *  its conversations' worktrees. */
-  mcpConfigApprove(name: string, repoPath: string): Promise<void>;
+  // MCP server configuration (agent CLI config, not per-session). `adapterType`
+  // picks the agent; the default agent when omitted.
+  mcpConfigList(cwd?: string, adapterType?: string): Promise<McpConfiguredServer[]>;
+  mcpConfigAdd(opts: McpAddServerOpts, adapterType?: string): Promise<void>;
+  mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string, adapterType?: string): Promise<void>;
+  /** Approve a project server that must be approved before it connects, for
+   *  the project at `repoPath` and its conversations' worktrees. */
+  mcpConfigApprove(name: string, repoPath: string, adapterType?: string): Promise<void>;
 
   // Plugins
   pluginList(): Promise<PluginListResult>;

@@ -71,13 +71,15 @@
 
   // ─── MCP servers tab ───
 
-  // `claude mcp list` health-checks every server (slow), so load lazily on
+  // Listing health-checks every server (slow, e.g. `claude mcp list`), so load lazily on
   // first visit to the MCP tab rather than on every settings open.
   $effect(() => {
     if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
-      // Project and local servers only list for one project: start with the
-      // open conversation's.
-      mcpConfigStore.showProject(mcpConfigStore.cwd ?? store.activeSession?.repoPath ?? store.repos[0]);
+      // Start with the open conversation's agent (if it can edit MCP config)
+      // and project: project and local servers only list for one project.
+      const active = store.activeSession;
+      mcpConfigStore.adapterType ??= mcpAgents.find((a) => a.id === active?.agentType)?.id;
+      mcpConfigStore.showProject(mcpConfigStore.cwd ?? active?.repoPath ?? store.repos[0]);
     }
     // Once per open. Keying this on `mcpRepos.length === 0` looped when there
     // were no projects: each empty result is a new array, which re-ran the
@@ -103,7 +105,18 @@
   /** Add form mode: fill in fields, or paste a JSON config. */
   let mcpAddMode = $state<'form' | 'json'>('form');
   let mcpJson = $state('');
-  let mcpJsonParsed = $derived(mcpAddMode === 'json' && mcpJson.trim() ? parseMcpJson(mcpJson, mcpName) : null);
+  /** Agents whose MCP config Grove can edit, and the one the tab shows
+   *  (undefined in the store: the default agent). */
+  let mcpAgents = $derived(agentsStore.supporting('mcpConfig'));
+  let mcpAgent = $derived(agentsStore.get(mcpConfigStore.adapterType ?? agentsStore.defaultId));
+  /** The agent's own scopes, wording and name rule for configured servers. */
+  let mcpRules = $derived(mcpAgent?.mcp?.config);
+  let mcpScopes = $derived(mcpRules?.scopes ?? DEFAULT_MCP_SCOPES);
+  let mcpJsonParsed = $derived(
+    mcpAddMode === 'json' && mcpJson.trim()
+      ? parseMcpJson(mcpJson, mcpName, mcpRules ? { pattern: mcpRules.namePattern, rule: mcpRules.nameRule } : undefined)
+      : null,
+  );
   /** Projects to list servers for: those with conversations plus any opened this run. */
   let mcpProjectOptions = $derived([...new Set([...mcpRepos, ...store.repos])]);
   const MCP_NO_PROJECT = '__none__';
@@ -112,6 +125,10 @@
   $effect(() => {
     if (mcpScope !== 'user' && !mcpRepo && mcpConfigStore.cwd) mcpRepo = mcpConfigStore.cwd;
   });
+  // Another agent may not offer the scope that was picked.
+  $effect(() => {
+    if (!mcpScopes.some((s) => s.value === mcpScope)) mcpScope = mcpScopes[0]?.value ?? 'user';
+  });
 
   const mcpTransports: { value: 'stdio' | 'http' | 'sse'; label: string }[] = [
     { value: 'stdio', label: 'stdio (local command)' },
@@ -119,9 +136,10 @@
     { value: 'sse', label: 'SSE' },
   ];
 
-  const mcpScopes: { value: McpConfigScope; label: string; description: string }[] = [
+  /** Scopes for an agent that doesn't describe its own. */
+  const DEFAULT_MCP_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [
     { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
-    { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the project repository' },
+    { value: 'project', label: 'Project', description: 'Shared with the team in the project repository' },
     { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
   ];
 
@@ -237,13 +255,14 @@
     { id: 'plugins', label: 'Plugins' },
   ];
 
-  // The MCP and Plugins tabs configure the default agent (their IPC calls
-  // don't name an agent), so they only show when that agent supports them.
-  // Until the agent list loads, they stay visible as before.
+  // The Plugins tab configures the default agent (its IPC calls don't name
+  // an agent), so it only shows when that agent supports it. The MCP tab
+  // picks its agent, so it shows when any agent can edit MCP config. Until
+  // the agent list loads, both stay visible as before.
   const defaultAgent = $derived(agentsStore.get(agentsStore.defaultId));
   const visibleTabs = $derived(tabs.filter((t) => {
     if (!defaultAgent) return true;
-    if (t.id === 'mcp') return defaultAgent.capabilities.mcpConfig ?? true;
+    if (t.id === 'mcp') return agentsStore.supporting('mcpConfig').length > 0;
     if (t.id === 'plugins') return defaultAgent.capabilities.plugins ?? true;
     return true;
   }));
@@ -896,15 +915,32 @@
         </div>
 
       {:else if tab === 'mcp'}
-        {#if featureAgentNote}
-          <p class="text-xs text-muted-foreground mb-3">{featureAgentNote}</p>
+        <!-- Each agent keeps its own MCP configuration. -->
+        {#if mcpAgents.length > 1}
+          <div class="flex items-center gap-2 mb-3">
+            <Label class="text-xs shrink-0">Agent</Label>
+            <Select.Root
+              type="single"
+              value={mcpAgent?.id ?? ''}
+              onValueChange={(v) => { if (v) mcpConfigStore.showAgent(v); }}
+            >
+              <Select.Trigger class="w-full" disabled={mcpConfigStore.loading}>
+                <span class="truncate">{mcpAgent?.displayName ?? 'Select an agent...'}</span>
+              </Select.Trigger>
+              <Select.Content>
+                {#each mcpAgents as agent (agent.id)}
+                  <Select.Item value={agent.id} label={agent.displayName} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
         {/if}
         <!-- Configured servers -->
         <div class="flex items-start justify-between mb-3">
           <div>
             <div class="text-sm font-medium text-foreground">MCP Servers</div>
             <p class="text-xs text-muted-foreground mt-0.5">
-              Servers from your Claude Code configuration. New and restarted conversations pick them up automatically.
+              Servers from {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted conversations pick them up automatically.
             </p>
           </div>
           <Button variant="ghost" size="sm" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading} class="text-xs shrink-0">
@@ -953,14 +989,10 @@
                     {server.target}{server.transport ? ` · ${server.transport}` : ''} · {mcpStatusLabel(server.status)}
                   </div>
                   {#if server.managedBy}
-                    <div class="text-[10px] text-muted-foreground/60">
-                      {server.managedBy.kind === 'plugin'
-                        ? 'To turn it off, disable or uninstall the plugin in the Plugins tab.'
-                        : 'To turn it off, manage your connectors on claude.ai.'}
-                    </div>
+                    <div class="text-[10px] text-muted-foreground/60">{server.managedBy.hint}</div>
                   {:else if server.status === 'needs-approval'}
                     <div class="text-[10px] text-muted-foreground/60">
-                      From this project's .mcp.json. Conversations won't connect it until you approve it. Only approve servers you trust: they run on your machine.
+                      {mcpRules?.approvalHint ?? "Conversations won't connect it until it is approved."}
                     </div>
                   {:else if server.status === 'rejected'}
                     <div class="text-[10px] text-muted-foreground/60">
@@ -969,12 +1001,12 @@
                   {/if}
                 </div>
                 {#if server.managedBy}
-                  <!-- `claude mcp remove` only covers servers in the MCP config -->
+                  <!-- Owned by something else (e.g. a plugin): the agent can't remove it -->
                   <span class="text-[10px] text-muted-foreground border border-border/50 px-1.5 py-0.5 shrink-0">
-                    {server.managedBy.kind === 'plugin' ? `${server.managedBy.plugin} plugin` : 'claude.ai'}
+                    {server.managedBy.label}
                   </span>
                 {:else}
-                  {#if unapproved && mcpConfigStore.cwd}
+                  {#if unapproved && mcpConfigStore.cwd && mcpRules?.approvalHint}
                     <Button
                       variant="outline"
                       size="sm"

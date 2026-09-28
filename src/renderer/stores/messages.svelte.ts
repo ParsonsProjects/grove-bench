@@ -576,8 +576,8 @@ class MessageStore {
 
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
   updateMcpServers(sessionId: string, servers: McpServerInfo[]) {
-    const info = this.systemInfoBySession[sessionId];
-    if (!info) return;
+    // An agent that doesn't report its servers at startup has no entry yet.
+    const info = this.getSystemInfo(sessionId);
     this.systemInfoBySession[sessionId] = {
       ...info,
       mcpServers: servers.map((s) => ({ name: s.name, status: s.status })),

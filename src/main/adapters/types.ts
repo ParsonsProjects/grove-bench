@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -19,8 +19,6 @@ export interface AgentCapabilities {
   modelSwitching: boolean;
   /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
-  /** Supports runtime MCP server control (list status, disconnect/reconnect) */
-  mcpControl?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports packaged skill instructions (discovery via listSkills, authoring
@@ -173,7 +171,7 @@ export interface AgentQueryHandle {
    *  the provider has no such data. Check capabilities.usage first. */
   getUsage?(): Promise<ProviderUsage | null>;
 
-  // ─── Optional MCP server control — check capabilities.mcpControl first ───
+  // ─── Optional MCP server control — declare each in AgentAdapter.mcp.controls ───
 
   /** Current status of the agent's MCP server connections. */
   listMcpServers?(): Promise<McpServerInfo[]>;
@@ -221,6 +219,10 @@ export interface AgentAdapter {
   readonly displayName: string;
   /** What this adapter supports */
   readonly capabilities: AgentCapabilities;
+  /** How the agent handles MCP servers: which controls the UI may offer, and
+   *  the wording and rules it uses. Omit when the agent has no MCP support
+   *  Grove can drive; the UI then shows none. */
+  readonly mcp?: McpSupport;
 
   /** Available models for this provider, default first. May change at run
    *  time when the provider reports its current list (see onModelsChanged). */
@@ -261,8 +263,8 @@ export interface AgentAdapter {
 
   // ─── Optional MCP server configuration (CLI config, not per-session) ───
 
-  /** List MCP servers from the provider's configuration. Only implement if
-   *  capabilities.mcpControl is true. `cwd` scopes local/project servers. */
+  /** List MCP servers from the provider's configuration (Settings > MCP;
+   *  describe it in mcp.config). `cwd` scopes local/project servers. */
   listConfiguredMcpServers?(cwd?: string): Promise<McpConfiguredServer[]>;
   /** Register a new MCP server in the provider's configuration. */
   addConfiguredMcpServer?(opts: McpAddServerOpts): Promise<void>;

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { parseMcpJson } from './mcp-json.js';
 
+/** Claude Code's rule, as its adapter describes it. */
+const CLAUDE_NAMES = { pattern: '^[A-Za-z0-9_-]+$', rule: 'Server names can only contain letters, numbers, hyphens and underscores' };
+
 describe('parseMcpJson()', () => {
   it('reads the mcpServers wrapper used by Claude Desktop and .mcp.json', () => {
     const text = JSON.stringify({
@@ -40,7 +43,9 @@ describe('parseMcpJson()', () => {
 
   it('rejects what the CLI would reject', () => {
     expect(parseMcpJson('not json')).toMatchObject({ ok: false, error: expect.stringMatching(/Not valid JSON/) });
-    expect(parseMcpJson('{"mcpServers":{"my.server":{"command":"x"}}}')).toMatchObject({ ok: false, error: expect.stringMatching(/letters, numbers/) });
+    expect(parseMcpJson('{"mcpServers":{"my.server":{"command":"x"}}}', '', CLAUDE_NAMES)).toMatchObject({ ok: false, error: expect.stringMatching(/letters, numbers/) });
+    // Another agent's rule, or none, decides instead
+    expect(parseMcpJson('{"mcpServers":{"my.server":{"command":"x"}}}')).toMatchObject({ ok: true });
     expect(parseMcpJson('{"mcpServers":{"w":{"type":"ws","url":"wss://w"}}}')).toMatchObject({ ok: false, error: expect.stringMatching(/not supported/) });
     expect(parseMcpJson('{"mcpServers":{"e":{"command":"x","env":{"N":1}}}}')).toMatchObject({ ok: false, error: expect.stringMatching(/env/) });
     expect(parseMcpJson('{"mcpServers":{}}')).toMatchObject({ ok: false, error: expect.stringMatching(/No servers/) });

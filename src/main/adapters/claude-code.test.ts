@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -266,14 +266,14 @@ describe('parseMcpListOutput()', () => {
         target: 'https://mcp.figma.com/mcp',
         transport: 'HTTP',
         status: 'connected',
-        managedBy: { kind: 'plugin', plugin: 'figma' },
+        managedBy: { label: 'figma plugin', hint: expect.stringMatching(/Plugins tab/) },
       },
     ]);
   });
 
   it('tags claude.ai connectors', () => {
     const out = 'claude.ai Gmail: https://mcp.example.com/gmail - ✔ Connected\n';
-    expect(parseMcpListOutput(out)[0]).toMatchObject({ name: 'claude.ai Gmail', managedBy: { kind: 'claude-ai' } });
+    expect(parseMcpListOutput(out)[0]).toMatchObject({ name: 'claude.ai Gmail', managedBy: { label: 'claude.ai' } });
   });
 
   it('maps auth, approval, and failure statuses', () => {
@@ -405,19 +405,19 @@ describe('mcpServerManager()', () => {
   });
 
   it('keeps colons in the server part of a plugin server name', () => {
-    expect(mcpServerManager('plugin:tools:a:b')).toEqual({ kind: 'plugin', plugin: 'tools' });
+    expect(mcpServerManager('plugin:tools:a:b')).toMatchObject({ label: 'tools plugin' });
   });
 });
 
 describe('removeConfiguredMcpServer()', () => {
   it('points plugin servers at the plugin instead of failing name validation', async () => {
     await expect(new ClaudeCodeAdapter().removeConfiguredMcpServer('plugin:figma:figma'))
-      .rejects.toThrow('comes from the figma plugin');
+      .rejects.toThrow(/figma plugin.*disable or uninstall the plugin/);
   });
 
   it('points claude.ai connectors at claude.ai', async () => {
     await expect(new ClaudeCodeAdapter().removeConfiguredMcpServer('claude.ai Gmail'))
-      .rejects.toThrow('claude.ai connector');
+      .rejects.toThrow(/claude\.ai.*connectors on claude\.ai/);
   });
 });
 
@@ -471,9 +471,23 @@ describe('quoteArg()', () => {
   });
 });
 
-describe('capabilities', () => {
-  it('advertises runtime MCP server control', () => {
-    expect(new ClaudeCodeAdapter().capabilities.mcpControl).toBe(true);
+describe('MCP support', () => {
+  it('offers every live control and describes its own rules', () => {
+    const { mcp } = new ClaudeCodeAdapter();
+    expect(mcp.controls).toEqual({ list: true, reconnect: true, toggle: true, signIn: true, contextCost: true });
+    expect(mcp.disconnectHint).toMatch(/this project/);
+    expect(mcp.config?.approvalHint).toMatch(/\.mcp\.json/);
+    // The name rule is the CLI's own, which rejects dots
+    const name = new RegExp(mcp.config!.namePattern);
+    expect(name.test('my-server_1')).toBe(true);
+    expect(name.test('my.server')).toBe(false);
+  });
+
+  it('labels where a live server comes from, trusting source over scope', () => {
+    expect(claudeMcpOrigin({ source: 'sdk' })).toBe('Grove Bench');
+    expect(claudeMcpOrigin({ source: 'claudeai', scope: 'user' })).toBe('claude.ai');
+    expect(claudeMcpOrigin({ scope: 'project' })).toBe('project');
+    expect(claudeMcpOrigin({})).toBeUndefined();
   });
 });
 

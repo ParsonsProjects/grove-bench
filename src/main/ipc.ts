@@ -1339,6 +1339,7 @@ export function registerHandlers() {
       capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
       isDefault: a.id === defaultId,
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
+      ...(a.mcp ? { mcp: a.mcp } : {}),
     }));
   });
 
