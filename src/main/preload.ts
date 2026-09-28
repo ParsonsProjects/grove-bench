@@ -390,6 +390,18 @@ const api: GroveBenchAPI = {
   winClose: () => ipcRenderer.send(IPC.WIN_CLOSE),
   winIsMaximized: () => ipcRenderer.invoke(IPC.WIN_IS_MAXIMIZED),
 
+  // Spell check
+  onSpellcheckMenu: (callback: (req: import('../shared/types.js').SpellcheckMenuRequest) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, req: import('../shared/types.js').SpellcheckMenuRequest) =>
+      callback(req);
+    ipcRenderer.on(IPC.SPELLCHECK_MENU, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SPELLCHECK_MENU, handler);
+    };
+  },
+  spellcheckReplace: (suggestion: string) => ipcRenderer.send(IPC.SPELLCHECK_REPLACE, suggestion),
+  spellcheckAddWord: () => ipcRenderer.send(IPC.SPELLCHECK_ADD_WORD),
+
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
   getAdapterControls: (adapterType?: string, model?: string | null) =>

@@ -23,6 +23,7 @@
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
   import BookmarksDrawer from './components/BookmarksDrawer.svelte';
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
+  import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
 
@@ -488,3 +489,5 @@
 <MarkdownPreviewPanel />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />
+
+<SpellcheckMenu />
