@@ -274,6 +274,11 @@ const api: Record<string, unknown> = {
   listRepos: async () => [],
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
+  // Main reports a woken conversation 'running' straight away.
+  wakeSession: async (id: string) => {
+    const { store } = await import('./stores/sessions.svelte.js');
+    store.updateStatus(id, 'running');
+  },
   listWorktrees: async () => [],
   listFiles: async () => [],
   // getActiveTab is restoreApp's last IPC call — seed only after it, so the

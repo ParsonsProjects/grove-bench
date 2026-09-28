@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { store } from './stores/sessions.svelte.js';
   import { messageStore } from './stores/messages.svelte.js';
   import { settingsStore } from './stores/settings.svelte.js';
@@ -9,6 +9,7 @@
   import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
+  import { wakeScene } from './stores/wakeScene.svelte.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -230,6 +231,13 @@
     store.activeSessionId = id;
   }
 
+  /** Any key skips the wake-up scene, and still does its usual job. Runs in
+   *  the capture phase: the chat under the scene may have focus and keep
+   *  keys to itself. */
+  function skipWakeScene() {
+    if (wakeScene.current) wakeScene.end();
+  }
+
   function handleGlobalKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
@@ -252,6 +260,9 @@
   // tab's auto-resume permanently; instead we clear it when the user navigates
   // (back) to the tab, so a transient failure retries on explicit re-selection.
   let failedResumeIds = new Set<string>();
+  // Sleeping sessions with a wake in flight, so the effect below wakes each
+  // once while its status catches up.
+  let wakingIds = new Set<string>();
   let prevActiveResumeId: string | null = null;
 
   /** Resume a stopped session, deduped against in-flight and recently-failed
@@ -262,6 +273,8 @@
     if (resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
     const sessionId = session.id;
     resumingIds.add(sessionId);
+    // Its agent is shown asleep, so the walk opens with it waking up.
+    if (sessionId === store.activeSessionId) untrack(() => wakeScene.start(sessionId, 'stopped'));
     window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       store.clearDeferredResume(sessionId);
@@ -281,6 +294,12 @@
     const session = store.activeSession;
     const activeId = session?.id ?? null;
 
+    // The wake-up scene belongs to the open conversation. Untracked: the
+    // scene starting below must not re-run this effect.
+    untrack(() => {
+      if (wakeScene.current && wakeScene.current.sessionId !== activeId) wakeScene.end();
+    });
+
     // Treat navigating to a (different) session as explicit retry intent:
     // drop any prior failure so the resume below can be attempted again.
     if (activeId !== prevActiveResumeId) {
@@ -292,8 +311,13 @@
     // A sleeping conversation wakes when opened. Main reports it 'running'
     // straight away and restarts its agent in the background; a prompt sent
     // meanwhile waits for it.
-    if (session?.status === 'sleeping') {
-      window.groveBench.wakeSession(session.id).catch(() => { /* a send wakes it too */ });
+    if (session?.status === 'sleeping' && !wakingIds.has(session.id)) {
+      const sessionId = session.id;
+      wakingIds.add(sessionId);
+      untrack(() => wakeScene.start(sessionId, 'sleeping'));
+      window.groveBench.wakeSession(sessionId)
+        .catch(() => { /* a send wakes it too */ })
+        .finally(() => wakingIds.delete(sessionId));
     }
   });
 
@@ -311,6 +335,7 @@
       console.error('Failed to load repos:', e);
     });
     window.addEventListener('keydown', handleGlobalKeydown);
+    window.addEventListener('keydown', skipWakeScene, true);
 
     // Watch every open session's PR (checks, reviews) — not just the focused
     // tab. Stopped sessions are excluded: their alerts have no agent to act,
@@ -383,6 +408,7 @@
       uninstallErrors();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('keydown', skipWakeScene, true);
     };
   });
 
@@ -451,8 +477,10 @@
     {:else}
       <!-- Active session — keep all live panes mounted, show only the active one -->
       {#each store.sessions as session (session.id)}
-        <div class="flex-1 min-h-0" class:hidden={store.activeSessionId !== session.id}>
-          {#if session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
+        {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
+        {@const scene = wakeScene.for(session.id)}
+        <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
+          {#if live}
             <!-- A render/effect error in one session's pane must not take the
                  whole window down; show a reload affordance for that pane only. -->
             <svelte:boundary onerror={paneError(session.id)}>
@@ -461,7 +489,12 @@
                 {@render crashed('This conversation view', error, reset)}
               {/snippet}
             </svelte:boundary>
-          {:else}
+          {/if}
+          <!-- The walk: while a stopped conversation reconnects, and over the
+               chat (kept mounted underneath) while the wake-up scene plays. -->
+          {#if !live || scene}
+            <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
+            <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
               {#each Array(20) as _, i}
                 <span
@@ -472,12 +505,16 @@
               {#if settingsStore.current.groveCharacters}
                 <!-- Only the open conversation's walk is drawn; hidden panes skip it. -->
                 {#if store.activeSessionId === session.id}
-                  <GroveWalk seed={session.id} />
+                  <GroveWalk seed={session.id} wake={scene} />
+                {/if}
+                {#if scene}
+                  <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>
                 {/if}
               {:else}
                 <div class="w-4 h-4 bg-primary animate-pulse relative z-10"></div>
                 <span class="ml-3 text-sm relative z-10">Starting agent...</span>
               {/if}
+            </div>
             </div>
           {/if}
         </div>
