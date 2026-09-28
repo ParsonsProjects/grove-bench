@@ -41,4 +41,4 @@ See [CLAUDE.md](./CLAUDE.md) for full project structure and commands.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](./LICENSE).
+By contributing, you agree to license your contributions under the [MIT License](https://opensource.org/license/mit). This lets them ship as part of Grove Bench under its current [license](./LICENSE) (FSL-1.1-MIT).
