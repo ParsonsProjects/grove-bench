@@ -62,7 +62,7 @@
 
 `scripts/acp-spike/probe-offline.mjs` runs `opencode acp` 1.18.33 against a
 local fake of OpenRouter's chat completions API, so each check runs without
-a network or a key. It passes 33 of 33 checks; the trimmed recordings are in
+a network or a key. It passes 40 of 40 checks; the trimmed recordings are in
 `scripts/acp-spike/fixtures/`. Run on Linux; Windows is Phase 0b.
 
 | Question | Answer | Effect on the design |
@@ -74,8 +74,10 @@ a network or a key. It passes 33 of 33 checks; the trimmed recordings are in
 | Permission prompts? | `permission: { edit: "ask", bash: "ask" }` makes write, edit and every command ask. Options are `once` / `always` / `reject`. A write's request carries a full diff (`oldText: ""`). "Always" holds for the rest of the session. | Permission UI can show real diffs. |
 | What does rejecting do? | The tool call fails and **the turn ends**; the model isn't called again. | "Deny with a message" can't steer an ACP agent the way it steers Claude. |
 | Plan mode? | `mode: plan` alone still lets edits through (they just ask). With `agent.plan.permission.edit: "deny"` the edit and write tools are removed from what the model sees. | The profile's config must set the plan-agent deny. |
-| Stop during a prompt? | `session/cancel` plus answering the pending request `cancelled` gives `stopReason: "cancelled"`. | Maps to Grove's stop. |
-| Provider error? | A 401 fails `session/prompt` with `-32603` and the provider's message (`"Internal error: User not found."`). No retry, no hang. | Show it as an error; map 401 to "OpenRouter key rejected". |
+| Stop during a prompt? | `session/cancel` plus answering the pending request `cancelled` gives `stopReason: "cancelled"`, and OpenCode closes the request to the provider. During a retry wait (below) it reports `end_turn` instead. | Maps to Grove's stop. Treat any stop result after a cancel as stopped. |
+| Wrong key / out of credit? | A 401 or 402 fails `session/prompt` at once with `-32603` and OpenRouter's message (`"User not found."`, `"Insufficient credits. Add more using https://openrouter.ai/settings/credits"`). No retry. | Map 401 to "OpenRouter key rejected" and 402 to "OpenRouter credits used up", with the link. |
+| Rate limit (429)? | Retried on its own, honouring `retry-after`: one 429 then success took 1.5 s. A 429 on every attempt gives up after 6 requests (5.5 s with `retry-after: 1`) with `"Rate limit exceeded"`. | Show the error; nothing to retry in Grove. |
+| Error mid-stream? | OpenRouter reports a provider failure after the 200 as a final chunk with `finish_reason: "error"` [16]. OpenCode retries with a doubling wait (+1, +4, +8, +18, +35, +65 s) and fails with the provider's error after about **65 s**. Each retry re-sends the partial text under the **same `messageId`**, and **nothing tells the client it is retrying**. | The mapper replaces a message when its `messageId` starts streaming again, rather than appending. Grove shows "waiting for the provider" when a turn has been silent for a while, since Stop is the only way out sooner. |
 | Tool call shape? | `tool_call` arrives with an empty `rawInput`; the input comes in the first `in_progress` update. Completed updates don't repeat `kind`. Edits finish with a `diff` (the changed snippet). | The mapper keeps per-call state and emits `assistant_tool_use` once the input is known. |
 | To-do lists? | OpenCode sends **no** ACP `plan` update. To-dos are a `todowrite` tool call (`kind: "other"`, `rawInput.todos`). | The OpenCode profile maps `todowrite` to `todo_list`. |
 | Usage? | `usage_update` gives tokens used, context size (1,048,576) and the session's running cost in USD. The prompt result also has token counts. | Grove can show cost, which it can't for Claude today. |
@@ -370,7 +372,9 @@ results in [Spike findings](#spike-findings-phase-0a).
 
 **Phase 0b: Windows run with a real key.** `scripts/acp-spike/probe-real.mjs`
 runs one small task on DeepSeek V4.1 Flash in a temp folder (well under
-$0.01) and records it to `fixtures/real-win32.jsonl`. Answers:
+$0.01), presses Stop during a second task, and records it to
+`fixtures/real-win32.jsonl`. It snapshots the user's own OpenCode folders
+before and after, and fails if anything in them changed. Answers:
 - Does the real model use the tools well: to-do list, edits, running a test?
 - Which shell runs commands on Windows, and what do paths look like in
   `locations` and diffs?
@@ -378,6 +382,7 @@ $0.01) and records it to `fixtures/real-win32.jsonl`. Answers:
   setup on Windows?
 - Does resolving `opencode.exe` beside the npm shim work?
 - Time to first update, turn time and cost per turn.
+- Does Stop end a real turn, and does the same session work afterwards?
 - What a wrong key looks like against the real OpenRouter.
 
 **Phase 1: multi-adapter fixes (independent value).** Fix the three bugs
@@ -424,6 +429,8 @@ Codex CLI through `codex-acp` needs a Responses-compatible provider [6].
   it off in ACP mode.
 - **Disk use.** OpenCode keeps a snapshot git repo per project in its data
   folder. Grove should clean up with the project, or at least document it.
+- **Silent retries.** When the provider fails mid-stream, a turn can sit for
+  about a minute with no signal before it errors (see Spike findings).
 - **Model quality.** A cheap model inside a harness is a different product
   from Claude Code. We should say that plainly in the UI and not promise
   feature parity.
@@ -456,3 +463,4 @@ Codex CLI through `codex-acp` needs a Responses-compatible provider [6].
 13. [anomalyco/opencode #31750: ACP per-session model selection](https://github.com/anomalyco/opencode/issues/31750); [#14098: ACP session config options](https://github.com/anomalyco/opencode/issues/14098).
 14. [anomalyco/opencode #47918: Expose per-session automatic approval through ACP](https://github.com/anomalyco/opencode/issues/47918).
 15. [Node.js April 2024 security releases (CVE-2024-27980)](https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2).
+16. [OpenRouter docs: API credit and rate limits (402 and 429)](https://openrouter.ai/docs/api_reference/limits).

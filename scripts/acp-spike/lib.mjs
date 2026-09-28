@@ -168,6 +168,50 @@ export function reporter() {
   };
 }
 
+/** Where a normal OpenCode install could keep its files, taken from the real
+ *  environment (not the isolated one). Generous on purpose: the point is to
+ *  prove the isolated agent never touches any of them. */
+export function userOpencodeDirs(env = process.env) {
+  const home = os.homedir();
+  const dirs = [
+    path.join(home, '.local', 'share', 'opencode'),
+    path.join(home, '.config', 'opencode'),
+    path.join(home, '.cache', 'opencode'),
+    path.join(home, '.local', 'state', 'opencode'),
+    path.join(home, '.opencode'),
+  ];
+  for (const k of ['XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME']) if (env[k]) dirs.push(path.join(env[k], 'opencode'));
+  for (const k of ['APPDATA', 'LOCALAPPDATA']) if (env[k]) dirs.push(path.join(env[k], 'opencode'));
+  return [...new Set(dirs.map((d) => path.resolve(d)))];
+}
+
+/** Path -> "size:mtime" for every file under `dirs` (plus a marker per
+ *  existing dir), capped so a huge snapshot folder can't stall the run. */
+export function snapshotDirs(dirs, cap = 50000) {
+  const out = new Map();
+  let capped = false;
+  const walk = (d) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    out.set(d + path.sep, 'dir');
+    for (const e of entries) {
+      if (out.size >= cap) { capped = true; return; }
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else { try { const st = fs.statSync(p); out.set(p, `${st.size}:${st.mtimeMs}`); } catch {} }
+    }
+  };
+  for (const d of dirs) walk(d);
+  return { files: out, capped };
+}
+
+export function diffSnapshots(before, after) {
+  const changes = [];
+  for (const [p, v] of after.files) if (before.files.get(p) !== v) changes.push(`${before.files.has(p) ? 'changed' : 'added'} ${p}`);
+  for (const p of before.files.keys()) if (!after.files.has(p)) changes.push(`removed ${p}`);
+  return changes;
+}
+
 /** Shrink a recording for the repo: trim the 300+ entry model list and
  *  replace temp paths. */
 export function trimRecording(src, dest, root) {

@@ -1,7 +1,8 @@
 /**
  * Real ACP spike: runs one small coding task on DeepSeek V4.1 Flash through
- * OpenRouter with your own key, in a throwaway folder, then checks a wrong
- * key and the local server lock. Answers the Phase 0 questions the offline
+ * OpenRouter with your own key, in a throwaway folder, presses Stop during a
+ * second task, then checks a wrong key, the local server lock, and that your
+ * own OpenCode folders were not touched. Answers the Phase 0 questions the offline
  * probe can't: real model behaviour, the Windows shell, Windows paths, the
  * npm shim, time and cost.
  *
@@ -20,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { makeHome, isolatedEnv, groveConfig, startAgent, handshake, withTimeout, attempt, reporter, freePort, trimRecording, resolveOpencode } from './lib.mjs';
+import { makeHome, isolatedEnv, groveConfig, startAgent, handshake, withTimeout, attempt, reporter, freePort, trimRecording, resolveOpencode, userOpencodeDirs, snapshotDirs, diffSnapshots } from './lib.mjs';
 import { startFake } from './fake-openrouter.mjs';
 
 const MODEL = process.env.SPIKE_MODEL ?? 'deepseek/deepseek-v4.1-flash';
@@ -38,10 +39,18 @@ const fake = FAKE ? await startFake({ logFile: path.join(rec, 'backend.jsonl'), 
 const baseURL = fake?.url;
 
 report.note('platform', `${process.platform} ${os.release()} node ${process.version}`);
+
+// Your own OpenCode folders, recorded before anything runs. Every OpenCode
+// process below (even --version) gets an isolated home, so these must not change.
+const realDirs = userOpencodeDirs();
+const realBefore = snapshotDirs(realDirs);
+report.note('your OpenCode folders watched', realDirs.map((d) => `${d}${fs.existsSync(d) ? '' : ' (absent)'}`).join('; '));
+
 const bin = resolveOpencode();
 report.note('opencode binary', bin);
 report.check('binary is not a .cmd/.bat shim', !/\.(cmd|bat)$/i.test(bin));
-report.note('opencode version', execFileSync(bin, ['--version'], { encoding: 'utf8' }).trim());
+const versionHome = makeHome('version');
+report.note('opencode version', execFileSync(bin, ['--version'], { encoding: 'utf8', env: isolatedEnv(versionHome) }).trim());
 
 // ─── A throwaway git repo with a tiny task ───
 const home = makeHome('real');
@@ -79,6 +88,7 @@ const agent = startAgent({
   },
 });
 
+const STOP_TASK = 'Write a detailed NOTES.md in this folder (at least 40 lines) explaining how math.js works, with an example for each function.';
 const TASK = 'Add an add(a, b) function to math.js and export it. Then create math.test.js that checks add(2, 3) === 5 and sub(5, 3) === 2 using node:assert, and run it with `node math.test.js`. Keep a short todo list while you work.';
 try {
   const t0 = Date.now();
@@ -117,7 +127,7 @@ try {
   report.check('math.test.js exists and passes when we run it', testsPass);
   const files = fs.readdirSync(work).filter((f) => f !== '.git');
   report.note('files in work folder', files.join(', '));
-  report.check('nothing written outside the work folder', fs.readdirSync(home.root).every((d) => ['home', 'config', 'data', 'cache', 'state', 'work'].includes(d)));
+  report.check('OpenCode wrote only inside its isolated home', fs.readdirSync(home.root).every((d) => ['home', 'config', 'data', 'cache', 'state', 'work'].includes(d)));
   report.note('text reply', updates.filter((u) => u.sessionUpdate === 'agent_message_chunk').map((u) => u.content?.text ?? '').join('').slice(0, 300).replace(/\s+/g, ' '));
 
   // The local server must be locked by the password.
@@ -131,6 +141,26 @@ try {
   const own = walk(home.root).map((f) => path.relative(home.root, f)).filter((f) => !f.startsWith('work'));
   report.note('OpenCode files in isolated home', own.filter((f) => !f.includes(`snapshot${path.sep}`)).join(', '));
   report.note('OpenCode snapshot repo (its own undo history)', own.some((f) => f.includes(`snapshot${path.sep}`)) ? 'yes, under data/opencode/snapshot' : 'no');
+
+  // ─── Stop during a real turn, then carry on in the same session ───
+  const mark = updates.length;
+  const stopPrompt = agent.conn.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: STOP_TASK }] });
+  const working = await attempt(() => withTimeout((async () => {
+    while (!updates.slice(mark).some((u) => ['agent_message_chunk', 'agent_thought_chunk', 'tool_call'].includes(u.sessionUpdate))) await new Promise((r) => setTimeout(r, 50));
+  })(), 120000, 'first output'));
+  const tStop = Date.now();
+  await agent.conn.cancel({ sessionId: session.sessionId });
+  const stopped = await attempt(() => withTimeout(stopPrompt, 30000, 'stop'));
+  const tStopped = Date.now();
+  report.check('Stop during a real turn -> stopReason cancelled', working.ok && stopped.ok && stopped.value.stopReason === 'cancelled',
+    stopped.ok ? `${stopped.value.stopReason}, ${tStopped - tStop} ms after Stop` : stopped.error?.message);
+  await new Promise((r) => setTimeout(r, 2000));
+  const late = updates.slice(mark).filter((u) => u.t > tStopped && ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update'].includes(u.sessionUpdate));
+  report.check('no output after Stop', late.length === 0, late.length ? `${late.length} updates` : '');
+  const mark2 = updates.length;
+  const again = await attempt(() => withTimeout(agent.conn.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Reply with just the word: ok' }] }), 120000, 'after stop'));
+  const reply = updates.slice(mark2).filter((u) => u.sessionUpdate === 'agent_message_chunk').map((u) => u.content?.text ?? '').join('');
+  report.check('same session works after Stop', again.ok && again.value.stopReason === 'end_turn' && /ok/i.test(reply), JSON.stringify(reply.slice(0, 60)));
 } finally {
   await agent.close();
 }
@@ -157,6 +187,12 @@ try {
   await bad.close();
 }
 
+// ─── Your own OpenCode folders must be exactly as they were ───
+const realAfter = snapshotDirs(realDirs);
+const changed = diffSnapshots(realBefore, realAfter);
+report.check('your own OpenCode folders were not touched', changed.length === 0, changed.slice(0, 5).join('; '));
+if (realBefore.capped || realAfter.capped) report.note('folder snapshot', 'capped at 50,000 files, so the check above is partial');
+
 const out = path.join(import.meta.dirname, 'fixtures', `real-${process.platform}.jsonl`);
 trimRecording(path.join(rec, 'real.jsonl'), out, path.dirname(home.root));
 console.log(`\nSaved the recorded session (keys never appear in it) to ${out}`);
@@ -167,6 +203,9 @@ process.exitCode = report.summary() ? 1 : 0;
 // ─── Dry-run helpers (--fake) ───
 function fakeScript(body) {
   if (!body.tools?.length) return { text: 'Spike title' };
+  const lastText = JSON.stringify(body.messages.findLast((m) => m.role === 'user')?.content ?? '');
+  if (lastText.includes('NOTES.md')) return { text: 'Notes line.\n'.repeat(200), delayMs: 50 };
+  if (lastText.includes('Reply with just')) return { text: 'ok' };
   const lastUser = body.messages.findLastIndex((m) => m.role === 'user');
   const done = body.messages.slice(lastUser).filter((m) => m.role === 'tool').length;
   const steps = [

@@ -29,7 +29,7 @@ const fake = await startFake({
   logFile: path.join(rec, 'backend.jsonl'),
   script: (body) => {
     if (!body.tools?.length) return { text: 'Spike title' };
-    if (failWith) return failWith;
+    if (typeof failWith === 'function') { const r = failWith(body); if (r) return r; } else if (failWith) return failWith;
     const lastUser = body.messages.findLastIndex((m) => m.role === 'user');
     const done = body.messages.slice(lastUser).filter((m) => m.role === 'tool').length;
     return steps[Math.min(done, steps.length - 1)];
@@ -247,6 +247,81 @@ try {
     report.check('MCP call returns content with the bearer token', authed > 0 && done?.content?.[0]?.content?.text === 'contents of repo/overview.md');
     report.check('MCP tools do not ask permission', I.perms.length === 0);
   } finally { await I.close(); mcp.close(); }
+
+  // ─── J. Out of credit, rate limits, errors mid-stream ───
+  const J = boot('limits');
+  try {
+    const { session } = await handshake(J.conn, J.home.work);
+    const sid = session.sessionId;
+    const toolReqs = () => fake.requests.filter((q) => q.body.tools?.length).length;
+    await prompt(J, sid, 'warm up'); // title request out of the way
+
+    // 402: credits used up (https://openrouter.ai/docs/api_reference/limits)
+    let before = toolReqs();
+    failWith = { status: 402, error: { code: 402, message: 'Insufficient credits. Add more using https://openrouter.ai/settings/credits' } };
+    const e402 = await attempt(() => prompt(J, sid, 'hi'));
+    report.check('out of credit (402) fails the prompt with the message, no retry',
+      !e402.ok && /Insufficient credits/.test(e402.error?.message) && toolReqs() - before === 1, `${e402.error?.code} ${e402.error?.message?.slice(0, 60)}; requests ${toolReqs() - before}`);
+
+    // 429 once, then fine: does it retry on its own?
+    before = toolReqs();
+    let n429 = 0;
+    failWith = () => (n429++ === 0 ? { status: 429, headers: { 'retry-after': '1' }, error: { code: 429, message: 'Rate limit exceeded', metadata: { error_type: 'rate_limit_exceeded' } } } : null);
+    steps = [{ text: 'after the rate limit' }];
+    J.updates.length = 0;
+    const t429 = Date.now();
+    const once = await attempt(() => prompt(J, sid, 'hi again'));
+    report.check('one 429 is retried and the turn succeeds', once.ok && once.value.stopReason === 'end_turn', `${toolReqs() - before} requests, ${Date.now() - t429} ms`);
+    report.note('what the client sees during a retry', J.updates.map((u) => u.sessionUpdate).filter((k) => k !== 'agent_message_chunk').join(', ') || 'nothing but the reply');
+
+    // 429 every time: does it give up, and does Stop work meanwhile?
+    before = toolReqs();
+    failWith = { status: 429, headers: { 'retry-after': '1' }, error: { code: 429, message: 'Rate limit exceeded' } };
+    const tAlways = Date.now();
+    const pending = J.conn.prompt({ sessionId: sid, prompt: [{ type: 'text', text: 'and again' }] });
+    const always = await attempt(() => withTimeout(pending, 45000, '429 loop'));
+    if (always.ok || !String(always.error?.message).startsWith('timeout')) {
+      report.note('429 every time', `gave up after ${Date.now() - tAlways} ms and ${toolReqs() - before} requests: ${always.ok ? always.value.stopReason : always.error?.message}`);
+    } else {
+      report.note('429 every time', `still retrying after 45 s (${toolReqs() - before} requests)`);
+      const tStop = Date.now();
+      await J.conn.cancel({ sessionId: sid });
+      const stopped = await attempt(() => withTimeout(pending, 15000, 'stop in 429 loop'));
+      report.check('Stop works while it is retrying', stopped.ok && stopped.value.stopReason === 'cancelled', `${Date.now() - tStop} ms`);
+    }
+    failWith = null;
+
+    // Error chunk after a 200 (upstream provider failed mid-stream): OpenCode
+    // retries with a doubling backoff, re-streaming the partial text under the
+    // same messageId, and tells the client nothing about the retry.
+    steps = [{ text: 'partial answer', streamError: { code: 502, message: 'Provider disconnected' } }];
+    J.updates.length = 0;
+    let mark = fake.requests.length;
+    const tMid = Date.now();
+    const midP = J.conn.prompt({ sessionId: sid, prompt: [{ type: 'text', text: 'mid-stream' }] });
+    const midReqs = () => fake.requests.slice(mark).filter((q) => q.body.tools?.length);
+    await withTimeout((async () => { while (midReqs().length < 3) await new Promise((r) => setTimeout(r, 100)); })(), 30000, 'mid-stream retries');
+    const gaps = midReqs().map((q, i, a) => (i ? q.at - a[i - 1].at : 0)).slice(1);
+    report.check('error chunk mid-stream is retried with a growing delay', gaps.length >= 2 && gaps[1] > gaps[0], `gaps ${gaps.join(', ')} ms`);
+    const chunks = J.updates.filter((u) => u.sessionUpdate === 'agent_message_chunk');
+    report.check('each retry re-sends the partial text under the same messageId', chunks.length >= 2 && new Set(chunks.map((c) => c.messageId)).size === 1, `${chunks.length} chunks`);
+    report.check('no update tells the client it is retrying', J.updates.every((u) => ['agent_message_chunk', 'usage_update'].includes(u.sessionUpdate)), J.updates.map((u) => u.sessionUpdate).join(','));
+    await J.conn.cancel({ sessionId: sid });
+    const midEnd = await attempt(() => withTimeout(midP, 15000, 'stop during backoff'));
+    report.check('Stop during the retry backoff ends the turn', midEnd.ok, midEnd.ok ? `stopReason ${midEnd.value.stopReason}, ${Date.now() - tMid} ms` : midEnd.error?.message);
+
+    // Stop aborts the HTTP request to the provider
+    steps = [{ text: 'slow '.repeat(400), delayMs: 40 }];
+    mark = fake.requests.length;
+    const slow = J.conn.prompt({ sessionId: sid, prompt: [{ type: 'text', text: 'slow one' }] });
+    await withTimeout((async () => { while (!fake.requests.slice(mark).some((q) => q.body.tools?.length)) await new Promise((r) => setTimeout(r, 50)); })(), 30000, 'slow start');
+    await new Promise((r) => setTimeout(r, 300));
+    await J.conn.cancel({ sessionId: sid });
+    const slowEnd = await withTimeout(slow, 15000, 'slow stop');
+    await new Promise((r) => setTimeout(r, 300));
+    const slowReq = fake.requests.slice(mark).find((q) => q.body.tools?.length);
+    report.check('Stop closes the request to the provider', slowEnd.stopReason === 'cancelled' && !!slowReq?.aborted);
+  } finally { await J.close(); }
 
   if (SAVE) {
     const out = path.join(import.meta.dirname, 'fixtures');
