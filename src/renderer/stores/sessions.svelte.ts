@@ -197,6 +197,22 @@ class SessionStore {
     );
   }
 
+  /** Pick up a branch switch made outside the app: the agent (or a terminal)
+   *  ran `git checkout` in the checkout. The main process records the branch
+   *  the checkout is on now, and every conversation sharing it follows. */
+  async syncBranch(sessionId: string): Promise<void> {
+    try {
+      const result = await window.groveBench.syncBranch(sessionId);
+      if (!result) return;
+      for (const id of result.sessionIds) {
+        const s = this.sessions.find((x) => x.id === id);
+        if (s && s.branch !== result.branch) this.updateBranch(id, result.branch);
+      }
+    } catch (e) {
+      console.error('Failed to sync branch:', e);
+    }
+  }
+
   updateLastActive(id: string) {
     const now = Date.now();
     this.sessions = this.sessions.map((s) =>

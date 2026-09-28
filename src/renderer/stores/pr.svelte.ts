@@ -124,6 +124,10 @@ class PrStore {
     if (!force && now - last < THROTTLE_MS) return;
     this.lastFetch.set(sessionId, now);
 
+    // The poll also catches a branch switch made outside the app while no
+    // agent turn was running (e.g. in a terminal).
+    void sessionStore.syncBranch(sessionId);
+
     // The two fetches are independent: a gh failure (offline, auth, timeout)
     // must not discard a fresh local sync count, and vice versa. Whatever
     // succeeded is stored; a failure keeps the previous snapshot and flags
