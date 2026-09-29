@@ -8,6 +8,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { prStore } from '../stores/pr.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 
@@ -136,6 +137,37 @@ describe('Sidebar session rows', () => {
       expect(store.activeSessionId).toBeNull();
     } finally {
       delete (mockGroveBench as any).closeSession;
+    }
+  });
+
+  it('colours the branch icon by the PR health shown in the status bar', async () => {
+    const icon = () => screen.getByRole('img', { name: /^Worktree/ });
+    render(Sidebar);
+    expect(icon()).toHaveAttribute('data-pr-health', 'none');
+    expect(icon()).toHaveClass('text-muted-foreground');
+
+    prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
+    try {
+      await waitFor(() => expect(icon()).toHaveAttribute('data-pr-health', 'failing'));
+      expect(icon()).toHaveClass('text-red-500');
+      expect(icon()).toHaveAccessibleName('Worktree, PR #12: CI failing');
+    } finally {
+      prStore.clear('s1');
+    }
+  });
+
+  it('keeps the branch icon neutral for stopped conversations, whose PR data is not polled', async () => {
+    store.sessions = [
+      { id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' },
+    ] as any;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    prStore.prsBySession = { s2: [{ number: 3, url: 'u', state: 'MERGED' }] };
+    try {
+      render(Sidebar);
+      const icon = await screen.findByRole('img', { name: 'Worktree' });
+      expect(icon).toHaveAttribute('data-pr-health', 'none');
+    } finally {
+      prStore.clear('s2');
     }
   });
 

@@ -9,6 +9,7 @@
   import type { PrAlert } from '../stores/pr.svelte.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
+  import { prHealth } from '../lib/pr-state.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import CreatePrDialog from './CreatePrDialog.svelte';
   import AddSkillDialog from './AddSkillDialog.svelte';
@@ -69,17 +70,9 @@
   let commentsAlert = $derived(prAlerts.find((a) => a.kind === 'new_comments') as Extract<PrAlert, { kind: 'new_comments' }> | undefined);
   let humanAlert = $derived(prAlerts.find((a) => a.kind === 'needs_human') as Extract<PrAlert, { kind: 'needs_human' }> | undefined);
 
-  /** Worst-condition dot color for the collapsed PR badge. */
-  let prHealthDot = $derived.by(() => {
-    if (!prInfo) return 'bg-muted-foreground/40';
-    if (prInfo.state === 'MERGED') return 'bg-purple-400';
-    if (prInfo.state === 'CLOSED') return 'bg-red-500';
-    if ((prInfo.checks?.failed ?? 0) > 0) return 'bg-red-500';
-    if (prInfo.reviewDecision === 'CHANGES_REQUESTED') return 'bg-orange-400';
-    if ((prInfo.checks?.pending ?? 0) > 0) return 'bg-yellow-400';
-    if (prInfo.reviewDecision === 'APPROVED' || prInfo.checks) return 'bg-green-500';
-    return 'bg-muted-foreground/40';
-  });
+  /** Worst-condition dot color for the collapsed PR badge. Shared with the
+   *  sidebar's branch icon so the two always agree. */
+  let prHealthDot = $derived(prHealth(prInfo).bgClass);
 
   function fixCi() {
     fixCiNotice = null;
