@@ -323,6 +323,14 @@
     }
   });
 
+  // PR status polls at the full rate for the conversation on screen and ones
+  // seen recently; the rest slow down (see prStore.setViewing). Untracked: the
+  // refresh it may start reads store state that must not re-run this effect.
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    untrack(() => prStore.setViewing(activeId));
+  });
+
   onMount(() => {
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
     const uninstallTooltips = installTooltips();
