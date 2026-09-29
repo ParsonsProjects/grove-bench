@@ -583,7 +583,6 @@ describe('create — pulling the base branch', () => {
     mockFsUtils.pathExists.mockResolvedValue(false);
     vi.mocked(branchExists).mockResolvedValue(false);
     vi.mocked(branchHasRemote).mockResolvedValue(true);
-    vi.mocked(getGitIdentity).mockResolvedValue({ name: 'u', email: 'u@x' });
   });
 
   it('skips the network entirely when the base branch has no remote', async () => {
@@ -688,6 +687,32 @@ describe('create — pulling the base branch', () => {
     expect((savedManifest['a1'] as { createdBranches?: string[] }).createdBranches).toEqual(['feat']);
     await manager.create({ repoPath: '/repo', branchName: 'old', useExisting: true, id: 'a2' });
     expect(savedManifest['a2']).not.toHaveProperty('createdBranches');
+  });
+});
+
+describe('create: git identity', () => {
+  beforeEach(() => {
+    mockFsUtils.pathExists.mockResolvedValue(false);
+    vi.mocked(branchExists).mockResolvedValue(false);
+    vi.mocked(branchHasRemote).mockResolvedValue(false);
+    // An identity is available, so nothing stops create() from copying it.
+    vi.mocked(getGitIdentity).mockResolvedValue({ name: 'u', email: 'u@x' });
+    mockGit.mockResolvedValue('');
+  });
+
+  // `git config` inside a linked worktree writes the repo's shared .git/config,
+  // which would pin whatever identity was in effect into the user's repo.
+  // Agent commits get the identity from GIT_AUTHOR_*/GIT_COMMITTER_* env vars.
+  it.each([
+    ['a new branch', { baseBranch: 'main' }],
+    ['an existing branch', { useExisting: true }],
+  ])('does not write user.name or user.email when creating a worktree on %s', async (_label, opts) => {
+    await manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1', ...opts });
+    expect(mockGit).toHaveBeenCalledWith(expect.arrayContaining(['worktree', 'add']), '/repo');
+    const identityCalls = mockGit.mock.calls.filter(([args]) =>
+      args.some((a) => a === 'user.name' || a === 'user.email'),
+    );
+    expect(identityCalls).toEqual([]);
   });
 });
 

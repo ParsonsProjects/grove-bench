@@ -63,6 +63,15 @@ describe('OutputPanel — rewind from a user message', () => {
   });
 });
 
+describe('OutputPanel: git identity notice', () => {
+  it('shows the notice with its commands in the conversation', () => {
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = { [SID]: [{ kind: 'git_identity_missing', id: 'g1' }] };
+    const { getByRole } = render(OutputPanel, { sessionId: SID });
+    expect(getByRole('note')).toHaveTextContent('git config --global user.email');
+  });
+});
+
 describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
   it('opens search when this pane is the active session', async () => {
     store.activeSessionId = SID;

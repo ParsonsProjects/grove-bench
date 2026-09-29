@@ -85,6 +85,8 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible(tool({ id: '1', toolName: 'Edit' }), 'focus')).toBe(false);
     expect(isMessageVisible(tool({ id: '2', toolName: 'Bash' }), 'focus')).toBe(false);
     expect(isMessageVisible({ kind: 'system', id: '3', text: 'hi' }, 'focus')).toBe(false);
+    // Unlike other system notes, the missing git identity notice needs action.
+    expect(isMessageVisible({ kind: 'git_identity_missing', id: '4' }, 'focus')).toBe(true);
   });
 
   it('in focus mode shows only unresolved permissions', () => {

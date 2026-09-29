@@ -11,6 +11,7 @@
   import ElicitationBlock from './ElicitationBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
+  import GitIdentityNotice from './GitIdentityNotice.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
@@ -412,6 +413,9 @@
 
       {:else if msg.kind === 'error'}
         <SystemBlock text={msg.text} variant="error" />
+
+      {:else if msg.kind === 'git_identity_missing'}
+        <GitIdentityNotice />
 
       {:else if msg.kind === 'result'}
         <div class="py-1 border-t border-border mt-1">
