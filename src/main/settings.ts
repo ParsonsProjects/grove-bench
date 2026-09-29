@@ -28,6 +28,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Worktree
   autoInstallDeps: false,
 
+  // Preview
+  previewAgentTools: true,
+
   // Sessions
   idleSleepMinutes: 30,
 
@@ -214,6 +217,8 @@ const settingsSchema = z.object({
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
+
+  previewAgentTools: z.boolean().catch(DEFAULT_SETTINGS.previewAgentTools),
 
   idleSleepMinutes: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.idleSleepMinutes),
 

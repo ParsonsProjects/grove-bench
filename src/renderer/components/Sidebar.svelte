@@ -5,6 +5,7 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { previewStore } from '../stores/preview.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
@@ -388,6 +389,7 @@
       messageStore.destroySession(id);
       checkpointStore.clear(id);
       terminalStore.destroySession(id);
+      previewStore.forget(id);
       bookmarkStore.dropSessionLocal(id);
       sessionPreviewStore.invalidate(id);
       return true;

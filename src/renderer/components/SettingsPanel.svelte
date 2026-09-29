@@ -858,6 +858,15 @@
 
           <Separator />
 
+          <!-- Agent browser tools (Preview tab) -->
+          <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <Checkbox bind:checked={settingsStore.draft.previewAgentTools} />
+            Let the agent use the Preview browser
+          </label>
+          <p class="text-xs text-muted-foreground -mt-2 ml-6">Gives the agent its own page in the Preview tab to open, screenshot, read, click and type in. Local addresses only. Applies to agents started after the change. On by default.</p>
+
+          <Separator />
+
           <!-- Project Memory -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.memoryAutoSave} />

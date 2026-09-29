@@ -23,6 +23,7 @@ import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import { killTree } from './process-tree.js';
+import { previewManager } from './preview.js';
 
 /**
  * Sandbox settings for Read-safe-mode queries: OS-level enforcement layered
@@ -727,6 +728,9 @@ class AgentSessionManager {
         write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
+      previewOperations: currentSettings.previewAgentTools
+        ? previewManager.operationsFor(id, session.worktreePath)
+        : null,
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,
       resumeSessionId: session.providerSessionId,

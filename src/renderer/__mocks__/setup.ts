@@ -128,6 +128,15 @@ const mockGroveBench = {
   } as import('../../shared/types.js').MemoryStatsResult)),
   memoryBackupPreview: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryBackupFile[])),
   memoryReadBackupFile: vi.fn(() => Promise.resolve(null as string | null)),
+  openExternal: vi.fn(() => Promise.resolve()),
+  previewNavigate: vi.fn(() => Promise.resolve()),
+  previewCommand: vi.fn(() => Promise.resolve()),
+  previewSetViewport: vi.fn(),
+  previewSnapshot: vi.fn(() => Promise.resolve(null as string | null)),
+  previewAgentFrame: vi.fn(() => Promise.resolve(null as { version: number; dataUrl: string } | null)),
+  previewGetStates: vi.fn(() => Promise.resolve({} as Record<string, { user: import('../../shared/types.js').PreviewPageState | null; agent: import('../../shared/types.js').PreviewPageState | null }>)),
+  onPreviewState: vi.fn((_cb: (sessionId: string, page: import('../../shared/types.js').PreviewPageKind, state: import('../../shared/types.js').PreviewPageState | null) => void) => () => {}),
+  onPreviewKey: vi.fn((_cb: (sessionId: string, key: import('../../shared/types.js').PreviewKeyForward) => void) => () => {}),
 };
 // Attach the IPC bridge onto the existing (jsdom) window rather than replacing
 // it — replacing window wipes addEventListener/dispatchEvent and breaks any

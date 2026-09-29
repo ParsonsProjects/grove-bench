@@ -2,6 +2,7 @@
   import { Marked } from 'marked';
   import DOMPurify from 'dompurify';
   import hljs from '../lib/hljs.js';
+  import { openLink } from '$lib/preview-links.js';
 
   // Allow data-code attribute through DOMPurify for copy button support
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
@@ -66,14 +67,15 @@
     const _html = html; // track re-renders
     if (!container) return;
 
-    // Intercept link clicks to open externally (especially localhost URLs)
+    // Intercept link clicks: localhost opens in the Preview tab, the rest in
+    // the system browser.
     const linkHandler = (e: MouseEvent) => {
       const anchor = (e.target as HTMLElement).closest('a');
       if (!anchor) return;
       const href = anchor.getAttribute('href');
       if (href && /^https?:\/\//i.test(href)) {
         e.preventDefault();
-        window.groveBench.openExternal(href);
+        openLink(href, e);
       }
     };
     container.addEventListener('click', linkHandler);

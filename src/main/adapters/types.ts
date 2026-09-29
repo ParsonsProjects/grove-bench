@@ -90,6 +90,37 @@ export interface MemoryOperations {
   delete(path: string): boolean;
 }
 
+// ─── Preview (browser) Operations ───
+
+/** Where to click or type: a CSS selector, the visible text of a clickable
+ *  element, or the label/placeholder/name of a form field. */
+export interface PreviewTarget {
+  selector?: string;
+  text?: string;
+  label?: string;
+}
+
+export interface PreviewScreenshot {
+  data: Buffer;
+  mimeType: 'image/png' | 'image/jpeg';
+  width: number;
+  height: number;
+  url: string;
+}
+
+/** Adapter-agnostic browser operations on the conversation's Preview page for
+ *  the agent (Claude's page, separate from the one the user drives). Text
+ *  results are ready to show the agent. Failures throw with a readable message. */
+export interface PreviewOperations {
+  open(opts: { url?: string; width?: number; height?: number }): Promise<string>;
+  screenshot(): Promise<PreviewScreenshot>;
+  read(opts: { selector?: string; maxChars?: number }): Promise<string>;
+  logs(opts: { errorsOnly?: boolean; all?: boolean }): Promise<string>;
+  /** `dialogs`: how to answer an alert or confirm the action opens (default accept). */
+  click(target: PreviewTarget, opts?: { dialogs?: 'accept' | 'dismiss' }): Promise<string>;
+  type(target: PreviewTarget, text: string, opts: { clear?: boolean; submit?: boolean; dialogs?: 'accept' | 'dismiss' }): Promise<string>;
+}
+
 // ─── Adapter Configuration ───
 
 export interface AdapterConfig {
@@ -114,6 +145,9 @@ export interface AdapterConfig {
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
+  /** Browser operations on the conversation's Preview page. Unset when the
+   *  user turned the agent's browser tools off. */
+  previewOperations?: PreviewOperations | null;
   resumeSessionId?: string | null;
   /** Resume the conversation only up to and including this provider chain-entry
    *  UUID, forking to a new provider session id (used by rewind so the agent

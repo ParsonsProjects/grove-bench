@@ -8,6 +8,7 @@ import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
+import { previewManager } from './preview.js';
 import { IPC } from '../shared/types.js';
 import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
@@ -66,6 +67,7 @@ function createWindow() {
   }
 
   trackWindowState(mainWindow);
+  previewManager.setWindow(mainWindow);
 
   // Apply persisted settings on startup
   const appSettings = settings.loadSettings();
@@ -97,6 +99,9 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // Claude's Preview pages are hidden windows; close them so the app quits.
+    previewManager.setWindow(null);
+    previewManager.closeAll();
   });
 
   logger.info('Grove Bench started');

@@ -35,6 +35,7 @@ const SETTINGS = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
+  previewAgentTools: true,
   idleSleepMinutes: 30,
   defaultBaseBranch: '',
   branchNamingRule: '',

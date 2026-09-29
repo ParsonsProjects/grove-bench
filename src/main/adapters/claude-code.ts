@@ -19,6 +19,7 @@ import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
 import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
+import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
 import { logger } from '../logger.js';
 import { execFile, spawn } from 'node:child_process';
@@ -1416,6 +1417,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       mcpServers = { 'grove-memory': memoryServer };
       // Auto-allow memory tools so they don't trigger permission prompts
       for (const t of GROVE_MEMORY_TOOL_NAMES) {
+        config.alwaysAllowedTools.add(t);
+      }
+    }
+
+    // Browser tools for the conversation's Preview tab. Looking runs without
+    // a prompt; clicking and typing ask like other action tools.
+    if (config.previewOperations) {
+      const previewServer = await createPreviewMcpServer(config.previewOperations);
+      mcpServers = { ...(mcpServers ?? {}), 'grove-preview': previewServer };
+      for (const t of GROVE_PREVIEW_READ_TOOL_NAMES) {
         config.alwaysAllowedTools.add(t);
       }
     }

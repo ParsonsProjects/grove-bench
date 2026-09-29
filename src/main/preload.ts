@@ -209,6 +209,34 @@ const api: GroveBenchAPI = {
   // External links
   openExternal: (url: string) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
+  // Preview tab
+  previewNavigate: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, url: string) =>
+    ipcRenderer.invoke(IPC.PREVIEW_NAVIGATE, sessionId, page, url),
+  previewCommand: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, command: import('../shared/types.js').PreviewCommand) =>
+    ipcRenderer.invoke(IPC.PREVIEW_COMMAND, sessionId, page, command),
+  previewSetViewport: (sessionId: string, bounds: import('../shared/types.js').PreviewBounds | null) =>
+    ipcRenderer.send(IPC.PREVIEW_SET_VIEWPORT, sessionId, bounds),
+  previewSnapshot: (sessionId: string) => ipcRenderer.invoke(IPC.PREVIEW_SNAPSHOT, sessionId),
+  previewAgentFrame: (sessionId: string, sinceVersion: number) =>
+    ipcRenderer.invoke(IPC.PREVIEW_AGENT_FRAME, sessionId, sinceVersion),
+  previewGetStates: () => ipcRenderer.invoke(IPC.PREVIEW_GET_STATES),
+  onPreviewState: (callback: (sessionId: string, page: import('../shared/types.js').PreviewPageKind, state: import('../shared/types.js').PreviewPageState | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, page: import('../shared/types.js').PreviewPageKind, state: import('../shared/types.js').PreviewPageState | null) =>
+      callback(sessionId, page, state);
+    ipcRenderer.on(IPC.PREVIEW_STATE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.PREVIEW_STATE, handler);
+    };
+  },
+  onPreviewKey: (callback: (sessionId: string, key: import('../shared/types.js').PreviewKeyForward) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, key: import('../shared/types.js').PreviewKeyForward) =>
+      callback(sessionId, key);
+    ipcRenderer.on(IPC.PREVIEW_KEY, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.PREVIEW_KEY, handler);
+    };
+  },
+
   // MCP server configuration
   mcpConfigList: (cwd?: string, adapterType?: string) => ipcRenderer.invoke(IPC.MCP_CONFIG_LIST, cwd, adapterType),
   mcpConfigAdd: (opts: import('../shared/types.js').McpAddServerOpts, adapterType?: string) =>
