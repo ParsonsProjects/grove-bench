@@ -121,9 +121,35 @@ export function wakePhase(elapsedMs: number): WakePhase {
   return 'walking';
 }
 
-/** How far into its loop the path starts for the wake-up, so the agent wakes
- *  on the path's bench, centred on it, and the bench then walks off with the
- *  path. */
-export const WAKE_PATH_OFFSET = PATH_BENCH_X + BENCH[0].length / 2 - WALK_VIEW_W / 2;
+/** How far into its loop the path is when its bench is centred in the view,
+ *  under the agent. The wake-up starts here, so the agent wakes on the bench
+ *  and the bench then walks off with the path; the arrival ends here. */
+export const BENCH_PATH_OFFSET = PATH_BENCH_X + BENCH[0].length / 2 - WALK_VIEW_W / 2;
 /** The same, as a head start for the path's scroll animation. */
-export const WAKE_PATH_HEAD_START_SECONDS = WAKE_PATH_OFFSET / PATH_SPEED;
+export const WAKE_PATH_HEAD_START_SECONDS = BENCH_PATH_OFFSET / PATH_SPEED;
+
+// ─── Arrival ───
+// The wake-up in reverse, for a new conversation's first turn: the agent
+// walks up the path to the bench, sits down with its laptop and, once its
+// agent is working, starts typing. It stays there until the first reply.
+
+/** Milliseconds of walking before the agent reaches the bench and sits. */
+export const ARRIVE_SIT_AT_MS = 3000;
+/** Milliseconds into the scene before it starts typing, at the earliest, so
+ *  sitting down reads as a moment of its own. */
+export const ARRIVE_TYPE_AT_MS = 3600;
+
+export type ArrivePhase = 'walking' | 'seated' | 'typing';
+
+/** Where the arrival is after `elapsedMs`. It types from 'typing' on only
+ *  while its agent is working; until then it sits with the laptop open. */
+export function arrivePhase(elapsedMs: number): ArrivePhase {
+  if (elapsedMs < ARRIVE_SIT_AT_MS) return 'walking';
+  if (elapsedMs < ARRIVE_TYPE_AT_MS) return 'seated';
+  return 'typing';
+}
+
+/** How far into its loop the path starts for the arrival: as far short of
+ *  the bench as the walk covers, so the bench reaches the centre just as the
+ *  walk ends. The bench is in view, ahead, from the start. */
+export const ARRIVE_PATH_FROM = BENCH_PATH_OFFSET - (ARRIVE_SIT_AT_MS / 1000) * PATH_SPEED;

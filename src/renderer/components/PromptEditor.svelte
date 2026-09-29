@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
@@ -367,6 +368,8 @@
 
   function handleStop() {
     messageStore.markSessionStopped(sessionId);
+    // A stopped turn may report no result, so nothing else would end it.
+    arrivalScene.end(sessionId);
     window.groveBench.stopSession(sessionId);
   }
 

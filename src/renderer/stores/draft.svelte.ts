@@ -3,6 +3,7 @@ import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { messageStore } from './messages.svelte.js';
+import { arrivalScene } from './arrivalScene.svelte.js';
 import { agentsStore } from './agents.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { resolveBaseBranch } from '../lib/base-branch.js';
@@ -292,6 +293,8 @@ class DraftStore {
       });
       // Main holds a prompt sent during setup until the agent is ready.
       if (text) {
+        // The chat shows the agent walking to its bench until the first reply.
+        arrivalScene.begin(result.id);
         messageStore.addUserMessage(result.id, text);
         window.groveBench.sendMessage(result.id, text);
         sessionStore.updateLastActive(result.id);

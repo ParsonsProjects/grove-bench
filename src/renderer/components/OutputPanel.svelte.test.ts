@@ -13,6 +13,8 @@ vi.mock('dompurify', () => ({
 import OutputPanel from './OutputPanel.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
+import { arrivalScene } from '../stores/arrivalScene.svelte.js';
 
 const SID = 'panel-session';
 
@@ -145,5 +147,90 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
     el.dispatchEvent(new Event('scroll'));
     await tick();
     expect(getByTitle('Scroll to bottom')).toBeInTheDocument();
+  });
+});
+
+describe('OutputPanel: the first turn', () => {
+  const session = (status: string) => ({ id: SID, branch: 'b', repoPath: '/repo', status, agentType: 'claude-code', createdAt: 0 }) as (typeof store.sessions)[number];
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.isRunning = { [SID]: true };
+    messageStore.streamingText = {};
+    settingsStore.current.groveCharacters = true;
+  });
+
+  afterEach(() => {
+    arrivalScene.end(SID);
+    messageStore.isRunning = {};
+    messageStore.activityBySession = {};
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it('shows the agent walking to its bench instead of an empty chat and the working row', () => {
+    // As just after Start: the message only shows once the agent is ready.
+    store.sessions = [session('starting')];
+    arrivalScene.begin(SID);
+    const { container, queryByText, getByText } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('svg.walk')).not.toBeNull();
+    expect(getByText('Starting agent...')).toBeInTheDocument();
+    expect(queryByText('Waiting for input...')).toBeNull();
+    expect(queryByText('Working...')).toBeNull();
+  });
+
+  it('captions it with what the agent is doing once it runs', () => {
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    messageStore.activityBySession = { [SID]: { activity: 'thinking' } };
+    arrivalScene.begin(SID);
+    const { container, getByText } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('svg.walk')).not.toBeNull();
+    expect(getByText('Fix it')).toBeInTheDocument();
+    expect(getByText('Thinking...')).toBeInTheDocument();
+  });
+
+  it('gives way to the first reply, and is over', async () => {
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    const { container, getByText } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('svg.walk')).not.toBeNull();
+
+    messageStore.messagesBySession = { [SID]: [
+      { kind: 'user', id: 'u1', text: 'Fix it' },
+      { kind: 'text', id: 't1', text: 'On it' },
+    ] };
+    await tick();
+    expect(container.querySelector('svg.walk')).toBeNull();
+    expect(getByText('Working...')).toBeInTheDocument();
+    expect(arrivalScene.for(SID)).toBeNull();
+  });
+
+  it('begins for a first message sent after starting without one', async () => {
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    expect(arrivalScene.for(SID)).not.toBeNull();
+    expect(container.querySelector('svg.walk')).not.toBeNull();
+  });
+
+  it('ends when the agent stops without a reply', async () => {
+    store.sessions = [session('running')];
+    arrivalScene.begin(SID);
+    render(OutputPanel, { sessionId: SID });
+    store.sessions = [session('stopped')];
+    await tick();
+    expect(arrivalScene.for(SID)).toBeNull();
+  });
+
+  it('keeps the working row with grove characters off', () => {
+    settingsStore.current.groveCharacters = false;
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    const { container, getByText } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('svg.walk')).toBeNull();
+    expect(getByText('Working...')).toBeInTheDocument();
   });
 });

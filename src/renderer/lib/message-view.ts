@@ -76,3 +76,12 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
 export function filterVisibleMessages(messages: ChatMessage[], mode: MessageViewMode): ChatMessage[] {
   return messages.filter((m) => isMessageVisible(m, mode));
 }
+
+/**
+ * Whether a chat, as filtered for its view mode, shows anything from the
+ * agent yet: a message other than the user's own and the app's notes. The end
+ * of a turn (result, error) counts, so a turn that ends without a reply does.
+ */
+export function hasAgentReply(visible: ChatMessage[]): boolean {
+  return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing');
+}
