@@ -132,6 +132,9 @@ export function matchToolRule(pattern: string, toolName: string, toolCall: strin
 /** Operators that need a command on their right-hand side. */
 const BINARY_SHELL_OPERATORS = new Set(['&&', '||', '|', '|&']);
 
+/** The text before each separator, and the separator (null for the last). */
+type ShellPart = { text: string; op: string | null };
+
 /**
  * Split a shell command into the commands it chains, on the separators
  * Claude Code's own permission rules split on: `&&`, `||`, `;`, `|`, `|&`,
@@ -151,7 +154,7 @@ export function splitShellCommand(command: string): string[] | null {
   // be harmless: simpler to fail closed than to track where they are live.
   if (/`|\$[({[]/.test(command)) return null;
 
-  const parts: { text: string; op: string | null }[] = [];
+  const parts: ShellPart[] = [];
   let current = '';
   let quote: "'" | '"' | "$'" | null = null;
   const endPart = (op: string | null) => {
@@ -232,7 +235,119 @@ export function splitShellCommand(command: string): string[] | null {
   }
   if (quote) return null;
   endPart(null);
+  return commandsFromParts(parts);
+}
 
+/** Dashes PowerShell reads as `-`, which starts a parameter such as `-Path`. */
+const POWERSHELL_DASHES = new Set(['-', '\u2013', '\u2014', '\u2015']);
+
+/**
+ * Split a PowerShell command into the commands it chains, on the separators
+ * Claude Code's own PowerShell rules split on: `;`, `|`, `&&`, `||` and
+ * newlines. Quotes are respected, so `git commit -m "a; b"` is one command.
+ * Unlike bash, a backslash is a plain character here, so `echo a\; b` is two
+ * commands, and `2>&1` is the only redirect with a `&` in it.
+ *
+ * Returns null when the command can't be split with confidence: backticks
+ * (PowerShell's escape character), `$(...)`, `${...}`, `(...)`, `@(...)`,
+ * script blocks and hashtables (`{` or `}` outside quotes), here-strings,
+ * a lone `&` (the call operator, or a background job), comments, the `--%`
+ * stop-parsing token, typographic quotes, a quote in the middle of a word
+ * that has a dash in it (`--format="%h"`), unbalanced quotes, or an operator
+ * with nothing around it. Callers must treat null as "no allow rule
+ * matches".
+ */
+export function splitPowerShellCommand(command: string): string[] | null {
+  // Backticks, subexpressions, braced variables, here-strings and --% (which
+  // PowerShell also accepts with typographic dashes). PowerShell reads the
+  // typographic quotes U+2018 to U+201E as ' and ", so they could close a
+  // string we think is still open. All rejected even inside single quotes,
+  // where most would be harmless: simpler to fail closed.
+  if (/[`\u2018-\u201e]|\$[({]|@['"]|[-\u2013-\u2015]{2}%/.test(command)) return null;
+
+  const parts: ShellPart[] = [];
+  let current = '';
+  let quote: "'" | '"' | null = null;
+  // Whether the word so far has a dash outside quotes. A word that starts
+  // with one is a parameter, which PowerShell scans by its own rules (it
+  // doesn't expand $ there, for one), so we can't be sure a quote after the
+  // dash opens a string.
+  let dashInWord = false;
+  const endPart = (op: string | null) => {
+    parts.push({ text: current, op });
+    current = '';
+    dashInWord = false;
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    const next = command[i + 1];
+
+    if (quote) {
+      current += c;
+      // Backticks are rejected above, so the only escape left is a doubled
+      // quote ('' or ""), which reads as a close and reopen: same split.
+      if (c === quote) quote = null;
+      continue;
+    }
+
+    if (c === "'" || c === '"') {
+      if (dashInWord) return null;
+      quote = c;
+      current += c;
+      continue;
+    }
+    // PowerShell also ends a word at Unicode spaces. Not doing so here only
+    // means more words count as having a dash.
+    if (c === ' ' || c === '\t' || c === '\v' || c === '\f') {
+      dashInWord = false;
+      current += c;
+      continue;
+    }
+    if (POWERSHELL_DASHES.has(c)) dashInWord = true;
+    // Grouping, subexpressions, script blocks and hashtables all run code.
+    if (c === '(' || c === ')' || c === '{' || c === '}') return null;
+    // A comment could hide a quote PowerShell ignores but we'd count.
+    if (c === '#') return null;
+    if (c === '>' && next === '&') {
+      // 2>&1 and *>&1 merge a stream into the output; no other >& exists.
+      if (command[i + 2] !== '1') return null;
+      current += '>&1';
+      i += 2;
+      continue;
+    }
+    if (c === '&') {
+      if (next !== '&') return null; // & $cmd, or a trailing & (a job)
+      endPart('&&');
+      i++;
+      continue;
+    }
+    if (c === '|') {
+      if (next === '|') { endPart('||'); i++; }
+      else endPart('|');
+      continue;
+    }
+    if (c === ';') {
+      endPart(';');
+      continue;
+    }
+    if (c === '\r' || c === '\n') {
+      if (c === '\r' && next === '\n') i++;
+      endPart('\n');
+      continue;
+    }
+    current += c;
+  }
+  if (quote) return null;
+  endPart(null);
+  return commandsFromParts(parts);
+}
+
+/**
+ * The commands in a split shell command, or null when an operator has
+ * nothing on one side. Newline separators must be passed as '\n'.
+ */
+function commandsFromParts(parts: readonly ShellPart[]): string[] | null {
   const commands: string[] = [];
   let needsCommand = false;
   for (const { text, op } of parts) {
@@ -250,16 +365,20 @@ export function splitShellCommand(command: string): string[] | null {
   return commands.length > 0 ? commands : null;
 }
 
+/** The shell language a shell tool's command is written in. */
+export type ShellSyntax = 'bash' | 'powershell';
+
 /**
  * Check a tool call against the settings' allow and deny rules. Deny wins.
  *
  * Shell commands follow Claude Code's own permission rules: a chain such as
  * `npm run build && rm -rf ~` is split first, a deny rule applies when it
  * matches the whole command or any command in it, and allow rules approve
- * only when every command in it matches one of them. When the command can't
- * be split safely (see splitShellCommand), only a rule covering every shell
- * call (`shell` or `shell(*)`) approves it, and only when no deny rule has a
- * glob for shell, because we can't see which commands a deny rule might hit.
+ * only when every command in it matches one of them. `shellSyntax` picks
+ * how to split (see splitShellCommand and splitPowerShellCommand). When the
+ * command can't be split safely, only a rule covering every shell call
+ * (`shell` or `shell(*)`) approves it, and only when no deny rule has a glob
+ * for shell, because we can't see which commands a deny rule might hit.
  *
  * Returns null when no rule decides, so the call falls through to the normal
  * permission prompt.
@@ -270,6 +389,7 @@ export function checkToolRules(
   toolName: string,
   specifier: string,
   category?: ToolCategory,
+  shellSyntax: ShellSyntax = 'bash',
 ): { behavior: 'deny'; pattern: string } | { behavior: 'allow' } | null {
   const matches = (rule: ToolRule, subject: string) =>
     matchToolRule(rule.pattern, toolName, subject ? `${toolName}(${subject})` : toolName, category);
@@ -280,7 +400,7 @@ export function checkToolRules(
     return allowRules.some((rule) => matches(rule, specifier)) ? { behavior: 'allow' } : null;
   }
 
-  const commands = splitShellCommand(specifier);
+  const commands = shellSyntax === 'powershell' ? splitPowerShellCommand(specifier) : splitShellCommand(specifier);
   const denied = denyRules.find(
     (rule) => matches(rule, specifier) || (commands?.some((cmd) => matches(rule, cmd)) ?? false),
   );
