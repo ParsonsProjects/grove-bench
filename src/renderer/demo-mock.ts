@@ -269,7 +269,10 @@ const api: Record<string, unknown> = {
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
     gh: { available: true, version: '2.65.0', authenticated: true },
-    agents: { 'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' } },
+    agents: {
+      'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+      codex: { available: true, authenticated: true },
+    },
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
@@ -355,6 +358,8 @@ const api: Record<string, unknown> = {
     '+    <SessionSearch />',
   ].join('\n'),
   listMcpServers: async () => [],
+  // A second agent so screenshots can show agent choice. Only Claude Code is
+  // registered in the app itself.
   listAdapters: async () => [{
     id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true, permissionModes: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
     // The MCP popover only offers controls the agent declares.
@@ -362,9 +367,21 @@ const api: Record<string, unknown> = {
       controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
       disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
     },
+  }, {
+    id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
   }],
-  getAdapterControls: async () => [
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
+  getAdapterControls: async (adapterType?: string) => adapterType === 'codex' ? [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+      { value: 'default', label: 'Ask', tone: 'info' }, { value: 'acceptEdits', label: 'Auto edit', tone: 'accent' },
+    ] },
+  ] : [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+      { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+      { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+      { value: 'auto', label: 'Auto', tone: 'highlight' },
+      { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+    ] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [
       { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
       { value: 'medium', label: 'Medium', description: 'Balanced speed and depth' },
@@ -373,7 +390,9 @@ const api: Record<string, unknown> = {
       { value: 'max', label: 'Max', description: 'Uncapped reasoning; slow and token-hungry, for the hardest tasks' },
     ] },
   ],
-  getModels: async () => [
+  getModels: async (adapterType?: string) => adapterType === 'codex' ? [
+    { id: 'codex-default', label: 'Default model', contextWindow: 400_000 },
+  ] : [
     { id: 'claude-opus-5-5', label: 'Opus 5.5', contextWindow: 1_000_000 },
     { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
     { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },

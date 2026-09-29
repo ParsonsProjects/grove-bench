@@ -4,7 +4,7 @@ The status bar sits at the top of the workspace area and displays real-time info
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Code` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. The agent itself is fixed when a conversation is created, so other agents are listed but not selectable.
+The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Code` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. A conversation keeps the agent it started with, because its history is that agent's own session. Picking another agent starts a new conversation with it in the same project, as a draft, and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.
 
 ### Usage
 

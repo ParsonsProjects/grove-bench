@@ -12,8 +12,11 @@
    * - `pick`: conversations exist but none is open. Each agent in the
    *   sidebar's Conversations list sits on its bench showing its status;
    *   clicking one opens that conversation.
+   * - `draft`: a new conversation that hasn't started. The empty bench, with
+   *   the caller's text underneath.
    */
-  let { variant }: { variant: 'empty' | 'pick' } = $props();
+  import type { Snippet } from 'svelte';
+  let { variant, children }: { variant: 'empty' | 'pick' | 'draft'; children?: Snippet } = $props();
 
   const bench = toRuns(BENCH, SCENERY_PALETTE);
   const lamp = toRuns(LAMP, SCENERY_PALETTE);
@@ -38,7 +41,7 @@
   }
 </script>
 
-{#if variant === 'empty'}
+{#if variant === 'empty' || variant === 'draft'}
   <div class="relative z-10 flex flex-col items-center text-center">
     <!-- 56x30 art pixels at 4x: the logo tree, an empty bench and an unlit lamp. -->
     <svg width="224" height="120" viewBox="0 0 56 30" shape-rendering="crispEdges" aria-hidden="true">
@@ -59,10 +62,14 @@
       </g>
       <rect x="0" y="29" width="56" height="1" fill="#3a9a48" opacity="0.45" />
     </svg>
-    <p class="text-sm mt-5 mb-2 text-foreground/80">No conversations yet</p>
-    <p class="text-xs text-muted-foreground">
-      Add a project, then press <span class="text-foreground">+ Conversation</span>. An agent will take the bench.
-    </p>
+    {#if variant === 'draft'}
+      {@render children?.()}
+    {:else}
+      <p class="text-sm mt-5 mb-2 text-foreground/80">No conversations yet</p>
+      <p class="text-xs text-muted-foreground">
+        Add a project, then press <span class="text-foreground">+ Conversation</span>. An agent will take the bench.
+      </p>
+    {/if}
   </div>
 {:else}
   <div class="relative z-10 flex flex-col items-center text-center px-6 py-6 max-h-full overflow-y-auto">

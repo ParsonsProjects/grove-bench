@@ -35,16 +35,6 @@ class SessionStore {
    *  global shortcut in App and the sidebar's search field. */
   finderOpen = $state(false);
 
-  /** The New Conversation dialog, when open: the project to preselect ('' for
-   *  none). Opened from the sidebar and by Ctrl+N in App. */
-  newConversation = $state<{ repo: string } | null>(null);
-
-  /** Open the New Conversation dialog, if a project exists to start one in. */
-  openNewConversation(repo = '') {
-    if (!this.canCreate) return;
-    this.newConversation = { repo };
-  }
-
   /** Sessions that completed a turn while not focused — drives the "needs you"
    *  flash on their sidebar row until the user focuses them. */
   needsAttention = $state<Record<string, boolean>>({});

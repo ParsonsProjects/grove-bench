@@ -30,6 +30,8 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
+  import { draftStore } from './stores/draft.svelte.js';
+  import DraftPane from './components/DraftPane.svelte';
 
   let showAnalyticsConsent = $state(false);
 
@@ -269,8 +271,8 @@
     }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
-      // Preselect the project of the conversation being looked at.
-      if (!store.newConversation) store.openNewConversation(store.activeSession?.repoPath ?? '');
+      // A draft in the project of the conversation being looked at.
+      draftStore.open(store.activeSession?.repoPath ?? '');
     }
   }
 
@@ -464,7 +466,14 @@
   </svelte:boundary>
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if store.sessions.length === 0}
+    {#if draftStore.visible}
+      <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
+        <DraftPane />
+        {#snippet failed(error, reset)}
+          {@render crashed('The new conversation', error, reset)}
+        {/snippet}
+      </svelte:boundary>
+    {:else if store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span

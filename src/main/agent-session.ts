@@ -458,6 +458,10 @@ class AgentSessionManager {
     adapterType?: string;
     /** Model to run this session with. Falls back to the default when omitted. */
     model?: string | null;
+    /** Starting control values (effort, thinking, …) chosen for this
+     *  conversation. Laid over the saved defaults; a value the model doesn't
+     *  offer is ignored. */
+    controls?: Record<string, string> | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -540,7 +544,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id]),
+      controls: initialControls(adapter, initialModel, { ...appSettings.adapterDefaults?.[adapter.id], ...opts.controls }),
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,

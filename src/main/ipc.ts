@@ -63,6 +63,17 @@ function isPermissionMode(value: unknown): value is PermissionMode {
   return typeof value === 'string' && PERMISSION_MODES.has(value);
 }
 
+/** Control values the renderer chose for a new conversation: string values
+ *  only, and never the mode, which travels as permissionMode. */
+function sanitizeControls(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string' && k !== 'permissionMode') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Automatic branch renames per session this run: in flight, or how many
  *  attempts have been made. Bounded so a failing agent isn't asked again on
  *  every turn. */
@@ -191,6 +202,8 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
     const permissionMode = isPermissionMode(opts.permissionMode) ? opts.permissionMode : undefined;
+    const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
+    const controls = sanitizeControls(opts.controls);
 
     if (opts.direct || opts.attachToSessionId) {
       // Direct mode — run in-place on an existing checkout, no worktree created.
@@ -218,6 +231,8 @@ export function registerHandlers() {
         window: win,
         adapterType: opts.adapterType,
         permissionMode,
+        model,
+        controls,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
@@ -321,6 +336,8 @@ export function registerHandlers() {
           window: win,
           adapterType: opts.adapterType,
           permissionMode,
+          model,
+          controls,
         });
 
         logger.info(`Session created: id=${worktree.id}`);

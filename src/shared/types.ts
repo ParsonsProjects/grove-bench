@@ -53,6 +53,11 @@ export interface CreateSessionOpts {
   /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
    *  a review). Falls back to the default when the agent doesn't offer it. */
   permissionMode?: PermissionMode;
+  /** Model to start on instead of the agent's default model. */
+  model?: string;
+  /** Starting values for the agent's other controls (effort, thinking, …),
+   *  keyed by control id. Values the model doesn't offer are ignored. */
+  controls?: Record<string, string>;
 }
 
 /** 'sleeping': an open conversation whose agent process was shut down after
