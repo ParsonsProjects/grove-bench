@@ -7,6 +7,8 @@ Open Settings from the gear icon in the sidebar bottom controls. Settings are or
 Control how the agent handles actions that need approval. The mode new conversations start in is set per agent, under [Agent](#agent).
 
 - **Tool Allow Rules** / **Tool Deny Rules** — Rules the app applies before the agent asks. Deny rules win. A rule is `<tool>` or `<tool>(<glob>)`, where `<tool>` is a neutral keyword that works for every agent: `shell` (the glob matches the command), `edit` and `read` (the file path), `web` (the URL), `agent` (the sub-agent prompt), `question`, or `mcp` (the tool name after `mcp__`). A provider's own tool name also works, e.g. `Bash(git push *)`. `*` matches anything. Examples: `shell(npm run *)`, `edit(src/**)`, `read(**/.env*)`, `web(*github.com*)`, `mcp(github__*)`
+  - **Chained commands**: a shell command joined with `&&`, `||`, `;`, `|`, `|&`, `&` or a line break is checked one part at a time. Allow rules must match every part, so `shell(npm run *)` approves `npm run lint && npm run test` but not `npm run build && rm -rf ~`. A deny rule applies if it matches any part
+  - **Commands that can't be split safely**, such as ones using `$(...)`, backticks, `${...}`, `(...)` outside quotes, here-docs or `#` comments, are only approved by a rule for every shell command (`shell` or `shell(*)`), and only when you have no deny rule for shell commands. Otherwise the agent asks you
 
 ## Agent
 

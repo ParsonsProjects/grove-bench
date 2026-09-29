@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
+import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
@@ -155,6 +155,128 @@ describe('matchToolRule() neutral keywords', () => {
     expect(parseToolRule('Bash(unclosed')).toBeNull();
     expect(parseToolRule(' shell ')).toEqual({ tool: 'shell', specifier: null });
     expect(parseToolRule('edit(src/**)')).toEqual({ tool: 'edit', specifier: 'src/**' });
+  });
+});
+
+describe('splitShellCommand()', () => {
+  it('splits on every separator Claude Code recognizes', () => {
+    expect(splitShellCommand('a && b || c; d | e |& f & g\nh')).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+
+  it('keeps quoted and escaped operators inside their command', () => {
+    expect(splitShellCommand(`git commit -m "fix: a; b && c" && echo 'x|y'`))
+      .toEqual(['git commit -m "fix: a; b && c"', "echo 'x|y'"]);
+    expect(splitShellCommand('git commit -m "feat(parser): x"')).toEqual(['git commit -m "feat(parser): x"']);
+    expect(splitShellCommand('echo a \\; b')).toEqual(['echo a \\; b']);
+    expect(splitShellCommand("echo $'it\\'s; fine' && ls")).toEqual(["echo $'it\\'s; fine'", 'ls']);
+  });
+
+  it('does not treat redirects as separators', () => {
+    expect(splitShellCommand('npm test 2>&1 | tee out.txt')).toEqual(['npm test 2>&1', 'tee out.txt']);
+    expect(splitShellCommand('npm test &> log.txt')).toEqual(['npm test &> log.txt']);
+    expect(splitShellCommand('echo a >| f && echo b >&2')).toEqual(['echo a >| f', 'echo b >&2']);
+    expect(splitShellCommand("grep x <<< 'y'")).toEqual(["grep x <<< 'y'"]);
+  });
+
+  it('accepts a trailing ; or & and a line break after &&', () => {
+    expect(splitShellCommand('npm test;')).toEqual(['npm test']);
+    expect(splitShellCommand('npm run dev &')).toEqual(['npm run dev']);
+    expect(splitShellCommand('npm test &&\nnpm run lint')).toEqual(['npm test', 'npm run lint']);
+  });
+
+  it('returns null for anything it cannot split safely', () => {
+    for (const command of [
+      'npm run $(echo build)',
+      'echo "$(rm -rf ~)"',
+      'echo `rm -rf ~`',
+      'echo ${HOME}',
+      '(cd /tmp && rm -rf x)',
+      'diff <(ls a) <(ls b)',
+      'echo $((1 + 1))',
+      'cat <<EOF\nrm -rf ~\nEOF',
+      'npm test # comment',
+      'echo "unbalanced',
+      "echo 'unbalanced",
+      'npm test &&',
+      'npm test ||',
+      'npm test |',
+      '&& ls',
+      '; ls',
+      'npm test && && ls',
+      '',
+      '   ',
+    ]) {
+      expect(splitShellCommand(command), command).toBeNull();
+    }
+  });
+
+  it('reads $$ as one token, like bash, so a following quote is a plain one', () => {
+    // bash runs `rm x` here: the ' after $$ is a plain quote closed by the
+    // second ', so the newline is a real separator and the last ' is unbalanced.
+    expect(splitShellCommand("echo $$'\\'\nrm x\necho '")).toBeNull();
+  });
+});
+
+describe('checkToolRules()', () => {
+  const rules = (...patterns: string[]) => patterns.map((pattern) => ({ pattern }));
+  const shell = (allow: string[], deny: string[], command: string) =>
+    checkToolRules(rules(...allow), rules(...deny), 'Bash', command, 'bash');
+
+  it('allows a plain command that matches an allow rule', () => {
+    expect(shell(['shell(npm run *)'], [], 'npm run build')).toEqual({ behavior: 'allow' });
+    expect(shell(['Bash(npm run *)'], [], 'npm run build')).toEqual({ behavior: 'allow' });
+  });
+
+  it('does not allow a chain when a later command matches no allow rule', () => {
+    expect(shell(['shell(npm run *)'], [], 'npm run build && rm -rf ~')).toBeNull();
+    expect(shell(['Bash(npm run *)'], [], 'npm run build; rm -rf ~')).toBeNull();
+    expect(shell(['shell(npm run *)'], [], 'npm run build | sh')).toBeNull();
+    expect(shell(['shell(npm run *)'], [], 'npm run build\nrm -rf ~')).toBeNull();
+  });
+
+  it('allows a chain when every command matches some allow rule', () => {
+    expect(shell(['shell(npm run *)'], [], 'npm run lint && npm run test')).toEqual({ behavior: 'allow' });
+    expect(shell(['shell(npm run *)', 'shell(git status)'], [], 'git status && npm run build'))
+      .toEqual({ behavior: 'allow' });
+  });
+
+  it('denies when a deny rule matches any command in the chain', () => {
+    expect(shell(['shell(npm run *)'], ['shell(rm *)'], 'npm run build && rm -rf ~'))
+      .toEqual({ behavior: 'deny', pattern: 'shell(rm *)' });
+    expect(shell(['shell'], ['shell(git push *)'], 'git add . && git commit -m x && git push origin main'))
+      .toEqual({ behavior: 'deny', pattern: 'shell(git push *)' });
+  });
+
+  it('does not allow command substitution and other unsplittable commands', () => {
+    expect(shell(['shell(npm run *)'], [], 'npm run $(echo build)')).toBeNull();
+    expect(shell(['shell(echo *)'], [], 'echo "$(rm -rf ~)"')).toBeNull();
+    expect(shell(['shell(echo *)'], [], 'echo `rm -rf ~`')).toBeNull();
+    expect(shell(['shell(npm *)'], [], 'npm test &&')).toBeNull();
+  });
+
+  it('still denies an unsplittable command that a deny rule matches as a whole', () => {
+    expect(shell(['shell'], ['shell(rm *)'], 'rm -rf $(pwd)')).toEqual({ behavior: 'deny', pattern: 'shell(rm *)' });
+  });
+
+  it('lets a rule for every shell command approve an unsplittable one, unless a deny rule could apply', () => {
+    const commit = 'git commit -m "$(cat msg.txt)"';
+    expect(shell(['shell'], [], commit)).toEqual({ behavior: 'allow' });
+    expect(shell(['shell(*)'], [], commit)).toEqual({ behavior: 'allow' });
+    // We can't see which commands run, so a deny rule might apply: prompt.
+    expect(shell(['shell'], ['shell(rm *)'], 'echo $(rm -rf ~)')).toBeNull();
+    // A deny rule for another tool doesn't count.
+    expect(shell(['shell'], ['edit(.env)'], commit)).toEqual({ behavior: 'allow' });
+  });
+
+  it('leaves non-shell rules matching the whole specifier', () => {
+    expect(checkToolRules(rules('edit(src/**)'), [], 'Write', 'src/a && b.ts', 'edit')).toEqual({ behavior: 'allow' });
+    expect(checkToolRules(rules('web(*github.com*)'), [], 'WebFetch', 'https://github.com/a;b', 'web_fetch'))
+      .toEqual({ behavior: 'allow' });
+    expect(checkToolRules(rules('mcp(github__*)'), [], 'mcp__github__create_issue', '', 'other'))
+      .toEqual({ behavior: 'allow' });
+    expect(checkToolRules(rules('edit'), rules('edit(**/.env)'), 'Write', 'app/.env', 'edit'))
+      .toEqual({ behavior: 'deny', pattern: 'edit(**/.env)' });
+    expect(checkToolRules(rules('edit(src/**)'), [], 'Write', 'docs/a.md', 'edit')).toBeNull();
   });
 });
 
