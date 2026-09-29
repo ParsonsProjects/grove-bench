@@ -32,11 +32,10 @@ A request nobody answers within 30 minutes is denied, so the agent isn't left wa
 
 ### Plan Approval
 
-In **Plan** mode the agent explores and writes a plan instead of changing files. When it is ready, a **plan ready** block shows the plan (**Focus** reads it full-width) and these choices, each explained when you hover it:
+In **Plan** mode the agent explores and writes a plan instead of changing files. When it is ready, a **plan ready** block shows the plan (**Focus** reads it full-width) and three choices, each explained when you hover it:
 
-- **Approve**: the agent starts making the changes.
-- **Approve, auto-accept edits** (or similar): shown when the agent suggests a mode to build in. The label names the mode it switches to.
-- **Approve in a fresh conversation**: clears this conversation's messages and starts again with only the plan, so the agent has its whole context for the work. Your files are not changed.
+- **Approve**: the agent starts making the changes. The conversation switches to **Edit** mode, so the plan's file edits don't each ask; commands still do.
+- **Approve and start fresh…**: clears this conversation's messages and sends the plan as a new first message, so the agent starts with a clean context. It asks you to confirm first. Your files are not changed.
 - **Keep planning**: don't start yet. To say what to change, type in the box under the buttons and press **Send**.
 
 ### MCP Input Requests

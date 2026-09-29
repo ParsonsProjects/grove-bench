@@ -8,7 +8,6 @@
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { alwaysAllowLabel } from '../lib/always-allow.js';
-  import { suggestedApproval, PLAN_CHOICES } from '../lib/plan-approval.js';
   import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
   let {
@@ -20,7 +19,6 @@
     decision,
     timedOut = false,
     decisionReason,
-    suggestions,
     isPlanExecution = false,
     toolCategory,
     planText: planTextProp,
@@ -34,7 +32,6 @@
     /** Denied because nobody answered in time. */
     timedOut?: boolean;
     decisionReason?: string;
-    suggestions?: unknown[];
     isPlanExecution?: boolean;
     toolCategory?: import('../../shared/types.js').ToolCategory;
     planText?: string;
@@ -58,7 +55,8 @@
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
-  let suggested = $derived(suggestedApproval(suggestions));
+  /** "Approve and start fresh…" clears the conversation, so it asks first. */
+  let confirmFresh = $state(false);
 
   async function approve() {
     if (submitting) return;
@@ -81,23 +79,6 @@
       await messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
     } catch (e) {
       console.error('[PermissionBlock] approveAlways failed:', e);
-      submitting = false;
-      pendingDecision = null;
-    }
-  }
-
-  /** Approve with the agent's suggested permission changes (usually a mode
-   *  switch out of plan mode). The label comes from suggestedApproval(). */
-  async function approveAndClear() {
-    if (submitting) return;
-    submitting = true;
-    pendingDecision = 'allow';
-    try {
-      await messageStore.resolvePermission(sessionId, requestId, 'allow', {
-        updatedPermissions: suggestions,
-      });
-    } catch (e) {
-      console.error('[PermissionBlock] approveAndClear failed:', e);
       submitting = false;
       pendingDecision = null;
     }
@@ -310,22 +291,30 @@
   {:else}
     {#if isExitPlanMode}
       <div class="flex gap-2 mt-2 flex-wrap">
-        {#if suggested}
-          <Button variant="outline" size="sm" onclick={approveAndClear} disabled={submitting} title={suggested.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
-            {suggested.label}
+        {#if confirmFresh}
+          <p class="basis-full text-xs text-foreground" role="alert">
+            Clear this conversation's messages and start again with only the plan? Your files stay as they are.
+          </p>
+          <Button variant="outline" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+            Clear and start
+          </Button>
+        {:else}
+          <!-- Approving always switches to Edit mode (messageStore.resolvePermission). -->
+          <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The conversation switches to Edit mode so the plan's file edits don't each ask; commands still ask." class="text-green-400 border-green-600 hover:bg-green-900/30">
+            Approve
+          </Button>
+          {#if planText}
+            <Button variant="outline" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this conversation's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+              Approve and start fresh…
+            </Button>
+          {/if}
+          <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} title="Don't start yet. Type below to say what to change in the plan." class="text-destructive border-destructive hover:bg-destructive/10">
+            Keep planning
           </Button>
         {/if}
-        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title={PLAN_CHOICES.approve.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
-          {PLAN_CHOICES.approve.label}
-        </Button>
-        {#if planText}
-          <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} title={PLAN_CHOICES.fresh.title} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
-            {PLAN_CHOICES.fresh.label}
-          </Button>
-        {/if}
-        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} title={PLAN_CHOICES.keepPlanning.title} class="text-destructive border-destructive hover:bg-destructive/10">
-          {PLAN_CHOICES.keepPlanning.label}
-        </Button>
       </div>
       <div class="flex gap-2 mt-2 items-center">
         <input

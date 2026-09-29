@@ -1,9 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent } from '@testing-library/svelte';
 
 import PermissionBlock from './PermissionBlock.svelte';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { messageStore } from '../stores/messages.svelte.js';
 
 const props = { sessionId: 's1', requestId: 'r1', toolName: 'Bash', toolInput: { command: 'npm install zod' } };
 
@@ -40,18 +41,32 @@ describe('PermissionBlock plan approval', () => {
     isPlanExecution: true, planText: '1. Do it', resolved: false,
   };
 
-  it('offers plainly named choices, each saying what it does', () => {
-    render(PermissionBlock, { ...plan, suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] });
-    for (const name of ['Approve, auto-accept edits', 'Approve', 'Approve in a fresh conversation', 'Keep planning']) {
+  it('offers three plainly named choices, each saying what it does', () => {
+    render(PermissionBlock, plan);
+    for (const name of ['Approve', 'Approve and start fresh…', 'Keep planning']) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('title');
     }
+    expect(screen.getByRole('button', { name: 'Approve' })).toHaveAttribute('title', expect.stringContaining('Edit mode'));
     expect(screen.queryByRole('button', { name: /Execute/ })).toBeNull();
   });
 
-  it('leaves out the suggested choice when there are no suggestions', () => {
+  it('asks before clearing the conversation to start fresh', async () => {
+    const clearAndSend = vi.spyOn(messageStore, 'clearAndSend').mockImplementation(() => {});
+    const resolve = vi.spyOn(messageStore, 'resolvePermission').mockResolvedValue(true);
     render(PermissionBlock, plan);
-    expect(screen.queryByRole('button', { name: /^Approve, / })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve and start fresh…' }));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Your files stay as they are');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve and start fresh…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear and start' }));
+    await vi.waitFor(() => expect(clearAndSend).toHaveBeenCalledWith('s1', expect.stringContaining('1. Do it')));
+    clearAndSend.mockRestore();
+    resolve.mockRestore();
   });
 });
 
