@@ -50,9 +50,21 @@ export interface CreateSessionOpts {
   attachToSessionId?: string;
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
+  /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
+   *  a review). Falls back to the default when the agent doesn't offer it. */
+  permissionMode?: PermissionMode;
+  /** Model to start on instead of the agent's default model. */
+  model?: string;
+  /** Starting values for the agent's other controls (effort, thinking, …),
+   *  keyed by control id. Values the model doesn't offer are ignored. */
+  controls?: Record<string, string>;
 }
 
-export type SessionStatus = 'starting' | 'installing' | 'running' | 'stopped' | 'error';
+/** 'sleeping': an open conversation whose agent process was shut down after
+ *  it sat idle. It keeps its place in the Conversations list and its live
+ *  state (mode, controls, always-allowed tools) and wakes when opened or sent
+ *  a message. The terminal is left running. */
+export type SessionStatus = 'starting' | 'installing' | 'running' | 'sleeping' | 'stopped' | 'error';
 
 export interface SessionInfo {
   id: string;
@@ -76,6 +88,8 @@ export interface AgentSummary {
   isDefault?: boolean;
   /** The adapter's own model for background tasks, if it declares one. */
   backgroundModel?: string;
+  /** How the agent handles MCP servers. Absent: no MCP support Grove can drive. */
+  mcp?: McpSupport;
 }
 
 /** One agent's install and sign-in state. */
@@ -167,6 +181,9 @@ export type AgentEvent =
   | { type: 'prompt_suggestion'; suggestion: string }
   // Hook execution
   | { type: 'hook_event'; subtype: 'started' | 'progress' | 'response'; hookId: string; hookName: string; hookEvent: string; output?: string; outcome?: string; exitCode?: number }
+  // MCP elicitation: a server asks the user for input mid-tool-call
+  | { type: 'elicitation_request'; requestId: string; request: McpElicitationRequest }
+  | { type: 'elicitation_resolved'; requestId: string; action: McpElicitationResponse['action'] }
   // MCP elicitation complete
   | { type: 'elicitation_complete'; serverName: string; elicitationId: string }
   // Files persisted to disk
@@ -190,7 +207,10 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
-  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean };
+  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean }
+  // Git has no user.name/user.email for this conversation's checkout, so the
+  // agent's commits will likely fail. Emitted at most once per conversation.
+  | { type: 'git_identity_missing' };
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
@@ -348,6 +368,20 @@ export interface PrChecksSummary {
   pending: number;
 }
 
+/** An open pull request, as listed for picking one to review. */
+export interface OpenPrSummary {
+  number: number;
+  title: string;
+  /** The PR's head branch. */
+  headRefName: string;
+  /** Login of the PR's author; empty when gh didn't report one. */
+  author: string;
+  isDraft: boolean;
+  /** Head branch lives in a fork, so it isn't a branch of this repo. */
+  isCrossRepository: boolean;
+  url: string;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -424,6 +458,13 @@ export interface GitOpResult {
 export type BranchSwitchResult =
   | { success: true; branch: string; sessionIds: string[] }
   | { success: false; error: string };
+
+/** The recorded branch moved to follow the checkout (the agent or a terminal
+ *  ran `git checkout`). `sessionIds` are every conversation sharing it. */
+export interface BranchSyncResult {
+  branch: string;
+  sessionIds: string[];
+}
 
 // ─── Thinking Level ───
 
@@ -585,8 +626,51 @@ export interface McpServerInfo {
   error?: string;
   /** Config scope (e.g. project, user, local) when the provider reports one. */
   scope?: string;
+  /** Where the server comes from, as a short label for display (e.g. user,
+   *  project, a plugin). Worked out by the adapter. */
+  origin?: string;
   /** Number of tools the server exposes, when connected. */
   toolCount?: number;
+  /** The server's tools, when connected. */
+  tools?: McpToolInfo[];
+}
+
+export interface McpToolInfo {
+  name: string;
+  description?: string;
+  /** Server-declared hints (MCP tool annotations). */
+  readOnly?: boolean;
+  destructive?: boolean;
+}
+
+/** An MCP server asking the user for input during a tool call (MCP
+ *  elicitation). Form mode asks for fields; URL mode asks the user to open a
+ *  page, e.g. to sign in. */
+export interface McpElicitationRequest {
+  serverName: string;
+  message: string;
+  mode: 'form' | 'url';
+  /** Page to open (URL mode). */
+  url?: string;
+  /** JSON Schema of the requested fields (form mode). The MCP spec limits it
+   *  to a flat object of string, number, integer, boolean and enum fields. */
+  requestedSchema?: Record<string, unknown>;
+  /** Heading the server supplied, if any. */
+  title?: string;
+}
+
+export interface McpElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: Record<string, string | number | boolean | string[]>;
+}
+
+/** How much of the context window one MCP server's tool definitions use. */
+export interface McpServerContextCost {
+  serverName: string;
+  /** Tokens of tool definitions loaded into the context window. */
+  tokens: number;
+  /** Tokens of tool definitions held back until the agent searches for them. */
+  deferredTokens: number;
 }
 
 /** Result of kicking off an OAuth sign-in for an MCP server. */
@@ -607,7 +691,54 @@ export interface McpConfiguredServer {
   target: string;
   /** Transport when the CLI reports one (e.g. HTTP, SSE). */
   transport?: string;
-  status: McpServerInfo['status'];
+  /** `needs-approval` and `rejected` are project (.mcp.json) servers the user
+   *  hasn't approved, or has turned down. Neither is connected. */
+  status: McpServerInfo['status'] | 'needs-approval' | 'rejected';
+  /** Set when something else owns the server (e.g. a plugin), so it can't be
+   *  removed from Grove. */
+  managedBy?: McpServerManager;
+}
+
+/** The owner of an MCP server Grove can't remove, as the adapter describes it. */
+export interface McpServerManager {
+  /** Short tag shown in place of Remove, e.g. "figma plugin". */
+  label: string;
+  /** How to turn the server off instead. */
+  hint: string;
+}
+
+/**
+ * How an agent handles MCP servers, and the wording and rules the UI uses
+ * for them. Each adapter describes its own, so nothing in the UI assumes
+ * one agent's behaviour.
+ */
+export interface McpSupport {
+  /** Controls on a running conversation. Each needs the matching optional
+   *  AgentQueryHandle method. */
+  controls: {
+    /** Live server status (listMcpServers). */
+    list: boolean;
+    reconnect: boolean;
+    /** Connect / Disconnect (setMcpServerEnabled). */
+    toggle: boolean;
+    /** Browser sign-in for a server that needs it (authenticateMcpServer). */
+    signIn: boolean;
+    /** Context-window cost per server (getMcpContextCost). */
+    contextCost: boolean;
+  };
+  /** Tooltip for Disconnect: how long it lasts and what it affects. */
+  disconnectHint: string;
+  /** Editing configured servers (Settings > MCP). Absent: not supported. */
+  config?: {
+    /** Scopes a server can be added to. */
+    scopes: { value: McpConfigScope; label: string; description: string }[];
+    /** Server names the agent accepts, as a RegExp source, and the rule in words. */
+    namePattern: string;
+    nameRule: string;
+    /** Set when project servers must be approved before they connect: the
+     *  explanation shown next to Approve. */
+    approvalHint?: string;
+  };
 }
 
 export type McpConfigScope = 'local' | 'user' | 'project';
@@ -639,6 +770,18 @@ export interface OsNotificationRequest {
   sessionId: string;
   title: string;
   body: string;
+}
+
+// ─── Spell check ───
+
+/** Main → renderer: the user right-clicked a misspelled word. The renderer
+ *  draws the suggestion menu in the app's own style. */
+export interface SpellcheckMenuRequest {
+  /** Where the click landed, in window coordinates (fallback position). */
+  x: number;
+  y: number;
+  misspelledWord: string;
+  suggestions: string[];
 }
 
 // ─── Image Attachment ───
@@ -686,6 +829,45 @@ export interface SessionSortState {
 
 // ─── IPC API (exposed via contextBridge) ───
 
+// ─── Preview tab ───
+
+/** The two pages behind a conversation's Preview tab: yours (an interactive
+ *  browser view) and Claude's (an offscreen page the agent's browser tools
+ *  drive). They share cookies and storage. */
+export type PreviewPageKind = 'user' | 'agent';
+
+/** Where your page sits in the window, in CSS pixels from the top-left. */
+export interface PreviewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PreviewPageState {
+  /** '' until something is loaded. */
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Last main-frame load failure; cleared by the next successful load. */
+  error: { code: number; description: string; url: string } | null;
+  /** The page's process died. Reload to recover. */
+  crashed: boolean;
+  /** Claude's page only: its last action and when it happened. */
+  lastAction?: { text: string; at: number } | null;
+  /** Claude's page only: viewport size in CSS pixels. */
+  size?: { width: number; height: number };
+}
+
+export type PreviewCommand = 'back' | 'forward' | 'reload' | 'hardReload' | 'stop' | 'devtools';
+
+/** A key pressed in your page that Grove should handle. */
+export type PreviewKeyForward =
+  | { action: 'focusAddress' }
+  | { action: 'key'; key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean };
+
 export interface GroveBenchAPI {
   // Repo operations
   addRepo(): Promise<string | null>;
@@ -700,6 +882,11 @@ export interface GroveBenchAPI {
   /** Close a conversation: shut down its agent, background tasks and
    *  terminal (and the ports they hold), keeping it resumable. */
   closeSession(id: string): Promise<void>;
+  /** Put an idle conversation to sleep: shut down its agent process but keep
+   *  it open. Resolves false when it is busy or not live, and stays awake. */
+  sleepSession(id: string): Promise<boolean>;
+  /** Wake a sleeping conversation (restart its agent on the same transcript). */
+  wakeSession(id: string): Promise<void>;
   /** Stop one running background task (Agent tool sub-task) without
    *  interrupting the session's current turn. */
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
@@ -709,6 +896,10 @@ export interface GroveBenchAPI {
    *  from the first prompt). Resolves to the new name, or null when it is
    *  unchanged or was set by the user. */
   autoNameSession(sessionId: string): Promise<string | null>;
+  /** Rename a conversation's placeholder branch (see tempBranchName) to one
+   *  generated from its task. Returns the new name, or null when nothing
+   *  changed (already named, pushed, no prompt yet, or generation failed). */
+  autoNameBranch(sessionId: string): Promise<string | null>;
   /** Persist the completed flag (see WorktreeInfo.completedAt). */
   setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
@@ -728,10 +919,15 @@ export interface GroveBenchAPI {
    *  `create` a new one at HEAD. `busySessionIds` are conversations mid-turn;
    *  the switch is refused if any of them shares the checkout. */
   switchBranch(sessionId: string, branch: string, opts: { create: boolean; busySessionIds: string[] }): Promise<BranchSwitchResult>;
+  /** Record the branch the conversation's checkout is on now, if it moved
+   *  outside the app. Null when nothing changed. */
+  syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
+  /** Answer an MCP elicitation. False when it already resolved or timed out. */
+  respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -794,6 +990,9 @@ export interface GroveBenchAPI {
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
+  /** Context-window cost of each MCP server's tools. Empty when the
+   *  conversation has no live query or the agent can't report it. */
+  getMcpContextCost(sessionId: string): Promise<McpServerContextCost[]>;
   /** Skills visible to a session (project + user `.claude/skills` scan).
    *  Resolves the session's worktree when it is running; `fallbackPath`
    *  (typically the repo path) covers stopped sessions. */
@@ -860,16 +1059,40 @@ export interface GroveBenchAPI {
    *  it since it started — ordered primary first (open before closed/merged,
    *  newest first within each). Empty when none exist. */
   getPrs(sessionId: string): Promise<PrInfo[]>;
+  /** Open PRs in a project, newest first. Throws when gh can't list them. */
+  listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
 
   // External links
   openExternal(url: string): Promise<void>;
 
-  // MCP server configuration (agent CLI config, not per-session)
-  mcpConfigList(cwd?: string): Promise<McpConfiguredServer[]>;
-  mcpConfigAdd(opts: McpAddServerOpts): Promise<void>;
-  mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string): Promise<void>;
+  // Preview tab
+  /** Load a URL in one of the conversation's Preview pages. Rejects with a
+   *  readable reason when the URL isn't allowed there. */
+  previewNavigate(sessionId: string, page: PreviewPageKind, url: string): Promise<void>;
+  previewCommand(sessionId: string, page: PreviewPageKind, command: PreviewCommand): Promise<void>;
+  /** Show your page at these bounds, or hide it (null). */
+  previewSetViewport(sessionId: string, bounds: PreviewBounds | null): void;
+  /** A picture of your page (JPEG data URL), shown while an overlay covers it. */
+  previewSnapshot(sessionId: string): Promise<string | null>;
+  /** Claude's page as a JPEG data URL, or null when it hasn't changed since
+   *  `sinceVersion` (or doesn't exist). */
+  previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
+  /** Every conversation's open pages, for the renderer to catch up after a reload. */
+  previewGetStates(): Promise<Record<string, { user: PreviewPageState | null; agent: PreviewPageState | null }>>;
+  /** A page's state changed; null means the page was closed. */
+  onPreviewState(callback: (sessionId: string, page: PreviewPageKind, state: PreviewPageState | null) => void): () => void;
+  onPreviewKey(callback: (sessionId: string, key: PreviewKeyForward) => void): () => void;
+
+  // MCP server configuration (agent CLI config, not per-session). `adapterType`
+  // picks the agent; the default agent when omitted.
+  mcpConfigList(cwd?: string, adapterType?: string): Promise<McpConfiguredServer[]>;
+  mcpConfigAdd(opts: McpAddServerOpts, adapterType?: string): Promise<void>;
+  mcpConfigRemove(name: string, scope?: McpConfigScope, cwd?: string, adapterType?: string): Promise<void>;
+  /** Approve a project server that must be approved before it connects, for
+   *  the project at `repoPath` and its conversations' worktrees. */
+  mcpConfigApprove(name: string, repoPath: string, adapterType?: string): Promise<void>;
 
   // Plugins
   pluginList(): Promise<PluginListResult>;
@@ -915,8 +1138,6 @@ export interface GroveBenchAPI {
   saveSettings(settings: GroveBenchSettings): Promise<void>;
 
   // App state persistence
-  getActiveTab(): Promise<string | null>;
-  setActiveTab(id: string | null): void;
   getOpenTabs(): Promise<string[]>;
   setOpenTabs(ids: string[]): void;
   getCollapsedRepos(): Promise<Record<string, boolean>>;
@@ -958,6 +1179,14 @@ export interface GroveBenchAPI {
   winMaximize(): void;
   winClose(): void;
   winIsMaximized(): Promise<boolean>;
+
+  // Spell check
+  /** Fired when the user right-clicks a misspelled word. */
+  onSpellcheckMenu(callback: (req: SpellcheckMenuRequest) => void): () => void;
+  /** Replace the misspelled word with one of the offered suggestions. */
+  spellcheckReplace(suggestion: string): void;
+  /** Add the misspelled word to the user's dictionary. */
+  spellcheckAddWord(): void;
 
   // Agent adapters
   /** Registered agents, in registration order. `isDefault` marks the one new
@@ -1013,14 +1242,10 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
-export type SettingsPermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | 'auto' | 'bypassPermissions';
-
 export interface GroveBenchSettings {
   // Permission & Security
-  defaultPermissionMode: SettingsPermissionMode;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
-  disableBypassMode: boolean;
   /** Skill names hidden from agent sessions. Applied when a session's query
    *  (re)starts — the SDK receives an allowlist of every known skill minus
    *  these. Empty = all skills enabled (the CLI default). */
@@ -1034,11 +1259,10 @@ export interface GroveBenchSettings {
   /** Model new conversations start on, keyed by adapter id. Missing or empty
    *  means the adapter's first model. */
   defaultModels: Record<string, string>;
-  /** Default values for each adapter's declared session controls (thinking,
-   *  speed, ...), keyed by adapter id then control id. Only ids the adapter
-   *  actually offers for the session's model are applied; anything else is
-   *  ignored, so a stale entry never breaks a session. Permission mode is
-   *  not here — see defaultPermissionMode. */
+  /** Default values for each adapter's declared session controls (permission
+   *  mode, thinking, speed, ...), keyed by adapter id then control id. Only
+   *  ids the adapter actually offers for the session's model are applied;
+   *  anything else is ignored, so a stale entry never breaks a session. */
   adapterDefaults: Record<string, Record<string, string>>;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
@@ -1064,15 +1288,27 @@ export interface GroveBenchSettings {
   /** Automatically run npm install in new worktrees. Default false. */
   autoInstallDeps: boolean;
 
+  // Preview
+  /** Give the agent browser tools that drive its own page in the Preview tab
+   *  (local URLs only). Applies when a conversation's agent next starts.
+   *  Default true. */
+  previewAgentTools: boolean;
+
   // Sessions
-  /** Auto-stop a session after this many minutes idle (not focused, not running
-   *  a turn, no pending permission) to reclaim its processes. 0 disables. Default 30. */
-  idleAutoStopMinutes: number;
+  /** Put a conversation to sleep after this many minutes idle (not focused,
+   *  not running a turn or background task, no pending permission) to free
+   *  its agent process. It stays open and wakes when opened. 0 disables.
+   *  Default 30. */
+  idleSleepMinutes: number;
 
   // General
   /** Base branch for new worktrees and PRs. Empty = auto-detect the
    *  repository's default branch (origin/HEAD, falling back to main/master). */
   defaultBaseBranch: string;
+  /** How to name branches that are named automatically, in the user's own
+   *  words (e.g. "<type>/<ticket>-<short-description>"). Empty = copy the
+   *  pattern of the repo's recent branch names. */
+  branchNamingRule: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
 
@@ -1246,7 +1482,8 @@ export type UpdateStatus =
  *  'auto' is the provider's native auto mode (Claude Code's model classifier
  *  approves or blocks each action instead of prompting). It is passed
  *  through to the adapter untouched. */
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | 'auto';
+export const PERMISSION_MODES = ['default', 'plan', 'acceptEdits', 'readSafe', 'auto'] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',
@@ -1257,6 +1494,8 @@ export const IPC = {
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
   SESSION_CLOSE: 'session:close',
+  SESSION_SLEEP: 'session:sleep',
+  SESSION_WAKE: 'session:wake',
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
@@ -1269,6 +1508,8 @@ export const IPC = {
   BRANCH_DEFAULT: 'branch:default',
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
+  BRANCH_SYNC: 'branch:sync',
+  BRANCH_AUTO_NAME: 'branch:autoName',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
@@ -1312,6 +1553,7 @@ export const IPC = {
   GIT_SQUASH: 'git:squash',
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_LIST: 'pr:list',
+  PR_LIST_OPEN: 'pr:listOpen',
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   AGENT_SET_MODEL: 'agent:setModel',
@@ -1327,9 +1569,12 @@ export const IPC = {
   AGENT_MCP_RECONNECT: 'agent:mcpReconnect',
   AGENT_MCP_TOGGLE: 'agent:mcpToggle',
   AGENT_MCP_AUTHENTICATE: 'agent:mcpAuthenticate',
+  AGENT_MCP_CONTEXT_COST: 'agent:mcpContextCost',
+  AGENT_ELICITATION: 'agent:elicitation',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',
+  MCP_CONFIG_APPROVE: 'mcpConfig:approve',
   PLUGIN_LIST: 'plugin:list',
   PLUGIN_INSTALL: 'plugin:install',
   PLUGIN_UNINSTALL: 'plugin:uninstall',
@@ -1341,8 +1586,6 @@ export const IPC = {
   WIN_IS_MAXIMIZED: 'win:isMaximized',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
-  APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
-  APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
   APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',
   APP_STATE_GET_COLLAPSED_REPOS: 'appState:getCollapsedRepos',
@@ -1358,6 +1601,12 @@ export const IPC = {
   /** Renderer → main: an uncaught renderer error, for the file log. */
   APP_REPORT_ERROR: 'app:reportError',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
+  /** Main → renderer: show the spell check menu for a misspelled word. */
+  SPELLCHECK_MENU: 'spellcheck:menu',
+  /** Renderer → main: replace the misspelled word with a suggestion. */
+  SPELLCHECK_REPLACE: 'spellcheck:replace',
+  /** Renderer → main: add the misspelled word to the dictionary. */
+  SPELLCHECK_ADD_WORD: 'spellcheck:addWord',
   OPEN_SESSION_FOLDER: 'session:openFolder',
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARK_ADD: 'bookmarks:add',
@@ -1406,4 +1655,15 @@ export const IPC = {
   UPDATE_DOWNLOAD: 'update:download',
   UPDATE_INSTALL: 'update:install',
   UPDATE_STATUS: 'update:status',
+  // Preview tab
+  PREVIEW_NAVIGATE: 'preview:navigate',
+  PREVIEW_COMMAND: 'preview:command',
+  PREVIEW_SET_VIEWPORT: 'preview:setViewport',
+  PREVIEW_SNAPSHOT: 'preview:snapshot',
+  PREVIEW_AGENT_FRAME: 'preview:agentFrame',
+  PREVIEW_GET_STATES: 'preview:getStates',
+  /** Main → renderer: (sessionId, page, state | null). */
+  PREVIEW_STATE: 'preview:state',
+  /** Main → renderer: (sessionId, PreviewKeyForward). */
+  PREVIEW_KEY: 'preview:key',
 } as const;

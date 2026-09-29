@@ -29,6 +29,8 @@ describe('SessionStore', () => {
     store.creating = false;
     store.repos = [];
     store.deferredResume = {};
+    store.showCompleted = false;
+    store.sessionSort = { key: 'name', dir: 'asc' };
     localStorageMock.clear();
   });
 
@@ -161,6 +163,34 @@ describe('SessionStore', () => {
     });
   });
 
+  describe('openConversations', () => {
+    it('lists open tabs only, in the sidebar sort order', () => {
+      store.sessions = [
+        { ...makeSession({ id: 'b', branch: 'bravo', status: 'running' }), lastActiveAt: 1 },
+        { ...makeSession({ id: 'gone', branch: 'alpha', status: 'stopped' }), lastActiveAt: 9 },
+        { ...makeSession({ id: 'c', branch: 'charlie', status: 'stopped' }), lastActiveAt: 3 },
+        { ...makeSession({ id: 'a', branch: 'able', status: 'sleeping' }), lastActiveAt: 2 },
+      ];
+      store.deferResume('c');
+
+      expect(store.openConversations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+      store.sessionSort = { key: 'age', dir: 'desc' };
+      expect(store.openConversations.map((s) => s.id)).toEqual(['c', 'a', 'b']);
+    });
+
+    it('includes completed open tabs only while "Show completed" is on, and remembers the toggle', () => {
+      store.sessions = [
+        makeSession({ id: 'a' }),
+        { ...makeSession({ id: 'done' }), completedAt: 5 },
+      ];
+      expect(store.openConversations.map((s) => s.id)).toEqual(['a']);
+
+      store.toggleShowCompleted();
+      expect(store.openConversations.map((s) => s.id).sort()).toEqual(['a', 'done']);
+      expect(localStorageMock.getItem('grove-bench:sidebar-show-completed')).toBe('1');
+    });
+  });
+
   describe('needsAttention', () => {
     it('marks and clears the attention flag', () => {
       const s1 = makeSession({ id: 's1' });
@@ -257,6 +287,43 @@ describe('SessionStore', () => {
       store.addSession(s1);
       store.updateBranch('s1', 'new-branch');
       expect(store.sessions.find(s => s.id === 's1')?.branch).toBe('new-branch');
+    });
+  });
+
+  describe('syncBranch', () => {
+    it('moves every loaded conversation on the checkout to the branch it switched to', async () => {
+      store.addSession(makeSession({ id: 's1', branch: 'feat/a' }), false);
+      store.addSession(makeSession({ id: 's2', branch: 'feat/a', direct: true }), false);
+      store.addSession(makeSession({ id: 'other', branch: 'feat/other' }), false);
+      // s3 shares the checkout but isn't loaded in this window.
+      mockGroveBench.syncBranch.mockResolvedValueOnce({ branch: 'feat/b', sessionIds: ['s1', 's2', 's3'] });
+
+      await store.syncBranch('s1');
+
+      expect(mockGroveBench.syncBranch).toHaveBeenCalledWith('s1');
+      expect(store.sessions.map((s) => [s.id, s.branch])).toEqual([
+        ['s1', 'feat/b'], ['s2', 'feat/b'], ['other', 'feat/other'],
+      ]);
+    });
+
+    it('leaves the store alone when the branch did not move', async () => {
+      store.addSession(makeSession({ id: 's1', branch: 'feat/a' }), false);
+      const before = store.sessions;
+      mockGroveBench.syncBranch.mockResolvedValueOnce(null);
+
+      await store.syncBranch('s1');
+
+      expect(store.sessions).toBe(before);
+    });
+
+    it('swallows a failed sync', async () => {
+      store.addSession(makeSession({ id: 's1', branch: 'feat/a' }), false);
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGroveBench.syncBranch.mockRejectedValueOnce(new Error('ipc down'));
+
+      await expect(store.syncBranch('s1')).resolves.toBeUndefined();
+      expect(store.sessions[0].branch).toBe('feat/a');
+      err.mockRestore();
     });
   });
 

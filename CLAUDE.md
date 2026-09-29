@@ -33,11 +33,14 @@ src/
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     git-status-parser.ts
+    preview.ts         # Preview tab: your page (WebContentsView) + Claude's (offscreen)
+    preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      preview-mcp-server.ts # Agent browser tools (grove-preview)
   renderer/            # Electron renderer (Svelte UI)
     App.svelte         # Root component
     main.ts            # Renderer entry

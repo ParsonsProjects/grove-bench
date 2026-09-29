@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import type { AgentEvent } from '../shared/types.js';
+import { IPC, type AgentEvent } from '../shared/types.js';
 import * as fs from 'node:fs';
 
 // ─── Mock infrastructure ───
@@ -49,7 +49,6 @@ const processTree = vi.hoisted(() => ({
 vi.mock('./process-tree.js', () => processTree);
 vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
-    defaultPermissionMode: 'default',
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
     toolDenyRules: [],
@@ -144,6 +143,8 @@ class MockAdapter implements AgentAdapter {
   pid: number | undefined = undefined;
   /** The handle the last start() returned. */
   lastHandle: AgentQueryHandle | null = null;
+  /** Every handle start() has returned, to check none is left running. */
+  handles: AgentQueryHandle[] = [];
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
   /** Two universal controls plus one ('speed') that only the full model offers,
@@ -241,6 +242,7 @@ class MockAdapter implements AgentAdapter {
       getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
     this.lastHandle = handle;
+    this.handles.push(handle);
     return handle;
   }
 }
@@ -259,8 +261,10 @@ function makeMockWindow() {
 // ─── Tests ───
 
 // Import the module under test AFTER mocks are set up
-const { sessionManager } = await import('./agent-session.js');
+const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
+const { getGitIdentity } = await import('./git.js');
+const { logger } = await import('./logger.js');
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -321,6 +325,58 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager git identity env', () => {
+  const start = (id: string) => sessionManager.createSession({
+    id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+  });
+  const identityNotices = (id: string) =>
+    sessionManager.getEventHistory(id).filter((e) => e.type === 'git_identity_missing').length;
+
+  afterEach(() => {
+    // Drop any unused once-values and restore the module-level default.
+    vi.mocked(getGitIdentity).mockReset().mockResolvedValue({ name: 'Test User', email: 'test@example.com' });
+  });
+
+  it('forces the configured identity on agent commits', async () => {
+    await start('test-identity');
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.extraEnv).toMatchObject({
+      GIT_AUTHOR_NAME: 'Test User',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'Test User',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    });
+    expect(identityNotices('test-identity')).toBe(0);
+    await sessionManager.destroySession('test-identity');
+  });
+
+  it('leaves the identity vars unset when git has no identity', async () => {
+    vi.mocked(getGitIdentity).mockResolvedValueOnce(null);
+    await start('test-no-identity');
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const env = mockAdapter.lastConfig?.extraEnv ?? {};
+    for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) {
+      expect(env).not.toHaveProperty(key);
+    }
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('user.name/user.email not set'));
+    expect(identityNotices('test-no-identity')).toBe(1);
+    await sessionManager.destroySession('test-no-identity');
+  });
+
+  it('tells the user once per conversation, not on every query restart', async () => {
+    vi.mocked(getGitIdentity).mockResolvedValue(null);
+    await start('test-identity-once');
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    await sessionManager.stopQuery('test-identity-once');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+
+    expect(getGitIdentity).toHaveBeenCalledTimes(2);
+    expect(identityNotices('test-identity-once')).toBe(1);
+    await sessionManager.destroySession('test-identity-once');
   });
 });
 
@@ -450,8 +506,7 @@ describe('AgentSessionManager caveman mode', () => {
 
   it('includes caveman prompt when mode is full', async () => {
     settingsMock.getSettings.mockReturnValue({
-      defaultPermissionMode: 'default',
-      defaultSystemPromptAppend: null,
+        defaultSystemPromptAppend: null,
       toolAllowRules: [],
       toolDenyRules: [],
       cavemanMode: 'full',
@@ -475,8 +530,7 @@ describe('AgentSessionManager caveman mode', () => {
 
   it('places caveman prompt after path rules', async () => {
     settingsMock.getSettings.mockReturnValue({
-      defaultPermissionMode: 'default',
-      defaultSystemPromptAppend: null,
+        defaultSystemPromptAppend: null,
       toolAllowRules: [],
       toolDenyRules: [],
       cavemanMode: 'lite',
@@ -945,6 +999,8 @@ describe('AgentSessionManager.stopQuery()', () => {
       requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
     }).then((r) => { permResolved = r; });
     await new Promise((r) => setTimeout(r, 50));
+    const modeSyncCount = () => sessionManager.getEventHistory('test-stop').filter((e) => e.type === 'mode_sync').length;
+    const beforeStop = modeSyncCount();
 
     await sessionManager.stopQuery('test-stop');
     await new Promise((r) => setTimeout(r, 50));
@@ -952,9 +1008,7 @@ describe('AgentSessionManager.stopQuery()', () => {
     expect(permResolved).toMatchObject({ behavior: 'deny' });
 
     // Should have emitted mode_sync after stop
-    const history = sessionManager.getEventHistory('test-stop');
-    const modeSyncEvents = history.filter((e) => e.type === 'mode_sync');
-    expect(modeSyncEvents.length).toBeGreaterThanOrEqual(1);
+    expect(modeSyncCount()).toBeGreaterThan(beforeStop);
 
     await sessionManager.destroySession('test-stop');
   });
@@ -1047,6 +1101,8 @@ describe('AgentSessionManager.interruptQuery()', () => {
     await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
     expect(mockAdapter.startCallCount).toBe(1);
     const handle = sessionManager.getSession('test-interrupt')?.queryHandle;
+    const modeSyncCount = () => sessionManager.getEventHistory('test-interrupt').filter((e) => e.type === 'mode_sync').length;
+    const beforeInterrupt = modeSyncCount();
 
     await sessionManager.interruptQuery('test-interrupt');
     await new Promise((r) => setTimeout(r, 50));
@@ -1057,8 +1113,7 @@ describe('AgentSessionManager.interruptQuery()', () => {
     expect(sessionManager.getSession('test-interrupt')?.queryHandle).toBe(handle);
 
     // mode_sync emitted for parity with stopQuery (clears renderer guard).
-    const history = sessionManager.getEventHistory('test-interrupt');
-    expect(history.some((e) => e.type === 'mode_sync')).toBe(true);
+    expect(modeSyncCount()).toBeGreaterThan(beforeInterrupt);
 
     await sessionManager.destroySession('test-interrupt');
   });
@@ -1386,6 +1441,23 @@ describe('AgentSessionManager.closeSession()', () => {
     await vi.waitFor(() => expect(mockAdapter.lastHandle?.close).toHaveBeenCalled());
   });
 
+  it('destroying a closed conversation cancels its pending auto-save and saves its metadata', async () => {
+    await startSession('test-close-memory');
+    await sessionManager.closeSession('test-close-memory');
+    const { worktreeManager } = await import('./worktree-manager.js');
+    vi.mocked(worktreeManager.getWorktreeOrManifest).mockResolvedValueOnce({
+      id: 'test-close-memory', path: '/wt/test-close-memory', branch: 'feat-x', repoPath: '/repo', createdAt: 0,
+    });
+    const autosave = await import('./memory-autosave.js');
+    vi.mocked(autosave.cancelAutoSave).mockClear();
+    vi.mocked(autosave.saveSessionMetadata).mockClear();
+
+    await sessionManager.destroySession('test-close-memory');
+
+    expect(autosave.cancelAutoSave).toHaveBeenCalledWith('test-close-memory');
+    expect(autosave.saveSessionMetadata).toHaveBeenCalledWith('/repo', 'test-close-memory', expect.any(Array), 'feat-x');
+  });
+
   it('destroying a closed conversation still removes its checkpoint refs', async () => {
     await startSession('test-close-destroy');
     await sessionManager.closeSession('test-close-destroy');
@@ -1399,6 +1471,252 @@ describe('AgentSessionManager.closeSession()', () => {
     const { CheckpointManager } = await import('./checkpoints.js');
     const instances = (CheckpointManager as unknown as { instances: { cleanup: ReturnType<typeof vi.fn> }[] }).instances;
     expect(instances.at(-1)!.cleanup).toHaveBeenCalledWith('test-close-destroy', '/wt/test-close-destroy');
+  });
+});
+
+describe('AgentSessionManager sleep and wake', () => {
+  /** A live session whose provider session has initialised (status 'running'). */
+  async function startSession(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'provider-1', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.status).toBe('running'));
+    return { win, session: sessionManager.getSession(id)! };
+  }
+
+  const statusesSent = (win: ReturnType<typeof makeMockWindow>, id: string) =>
+    win._send.mock.calls
+      .filter(([channel, sessionId]: [string, string]) => channel === IPC.SESSION_STATUS && sessionId === id)
+      .map(([, , status]: [string, string, string]) => status);
+
+  it('kills the agent but keeps the session open and reports it sleeping', async () => {
+    mockAdapter.pid = 6100;
+    const { win, session } = await startSession('test-sleep');
+    const handle = session.queryHandle!;
+
+    expect(await sessionManager.sleepSession('test-sleep')).toBe(true);
+
+    expect(processTree.killTree).toHaveBeenCalledWith(6100);
+    expect(processTree.killTree.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(handle.close).mock.invocationCallOrder[0]);
+    expect(sessionManager.getSession('test-sleep')).toBe(session);
+    expect(session.status).toBe('sleeping');
+    expect(session.queryHandle).toBeNull();
+    expect(statusesSent(win, 'test-sleep').at(-1)).toBe('sleeping');
+
+    await sessionManager.destroySession('test-sleep');
+  });
+
+  it('is not reported as the conversation ending or as an error', async () => {
+    mockAdapter.pid = 6200;
+    const { win } = await startSession('test-sleep-quiet');
+    processTree.killTree.mockImplementationOnce(async () => {
+      mockAdapter.control!.error(new Error('Claude Code process exited with code 1'));
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    await sessionManager.sleepSession('test-sleep-quiet');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const events = win._send.mock.calls.map(([, event]: [string, AgentEvent | undefined]) => event?.type);
+    expect(events).not.toContain('error');
+    expect(events).not.toContain('process_exit');
+    expect(statusesSent(win, 'test-sleep-quiet')).not.toContain('stopped');
+    const { triggerAutoSaveImmediate } = await import('./memory-autosave.js');
+    expect(triggerAutoSaveImmediate).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-sleep-quiet');
+  });
+
+  it('wakes on the same transcript with its mode, controls and always-allowed tools', async () => {
+    const { win, session } = await startSession('test-wake');
+    sessionManager.setMode('test-wake', 'plan');
+    await sessionManager.setControl('test-wake', 'thinking', 'low');
+    session.alwaysAllowedTools.add('Bash(npm test)');
+
+    await sessionManager.sleepSession('test-wake');
+    sessionManager.wakeSession('test-wake');
+
+    expect(session.status).toBe('running');
+    expect(statusesSent(win, 'test-wake').at(-1)).toBe('running');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    expect(mockAdapter.lastConfig).toMatchObject({
+      resumeSessionId: 'mock-session-id',
+      permissionMode: 'plan',
+      controls: expect.objectContaining({ thinking: 'low' }),
+    });
+    expect(mockAdapter.lastConfig!.alwaysAllowedTools).toBe(session.alwaysAllowedTools);
+    expect(session.alwaysAllowedTools.has('Bash(npm test)')).toBe(true);
+
+    await sessionManager.destroySession('test-wake');
+  });
+
+  it("won't sleep mid-turn, whatever the renderer thinks", async () => {
+    await startSession('test-sleep-turn');
+
+    await sessionManager.sendMessage('test-sleep-turn', 'run the tests');
+    expect(await sessionManager.sleepSession('test-sleep-turn')).toBe(false);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(async () => expect(await sessionManager.sleepSession('test-sleep-turn')).toBe(true));
+
+    await sessionManager.destroySession('test-sleep-turn');
+  });
+
+  it('counts a turn the agent starts itself, and an interrupt ends it', async () => {
+    await startSession('test-sleep-own-turn');
+
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'A background task finished.', uuid: 'u1' });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-own-turn')!.turnHandle).not.toBeNull());
+    expect(await sessionManager.sleepSession('test-sleep-own-turn')).toBe(false);
+
+    await sessionManager.interruptQuery('test-sleep-own-turn');
+    expect(await sessionManager.sleepSession('test-sleep-own-turn')).toBe(true);
+
+    await sessionManager.destroySession('test-sleep-own-turn');
+  });
+
+  it('a stop while waking waits for the old agent and leaves one agent running', async () => {
+    mockAdapter.pid = 7100;
+    const { session } = await startSession('test-wake-stop');
+    let releaseKill!: () => void;
+    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
+    const sleeping = sessionManager.sleepSession('test-wake-stop');
+    await vi.waitFor(() => expect(releaseKill).toBeDefined());
+    const startsBefore = mockAdapter.startCallCount;
+
+    sessionManager.wakeSession('test-wake-stop');
+    const sent = sessionManager.sendMessage('test-wake-stop', 'still there?');
+    const stopping = sessionManager.interruptQuery('test-wake-stop');
+    await new Promise((r) => setTimeout(r, 30));
+    // Nothing starts while the old agent is still being killed
+    expect(mockAdapter.startCallCount).toBe(startsBefore);
+
+    releaseKill();
+    await sleeping;
+    await stopping;
+    await expect(sent).resolves.toBe(true);
+    const running = mockAdapter.handles.filter((h) => vi.mocked(h.close).mock.calls.length === 0);
+    expect(running).toEqual([session.queryHandle]);
+
+    await sessionManager.destroySession('test-wake-stop');
+  });
+
+  it('wakes when sent a message and delivers it to the new agent', async () => {
+    const { session } = await startSession('test-wake-send');
+    await sessionManager.sleepSession('test-wake-send');
+
+    const sent = await sessionManager.sendMessage('test-wake-send', 'Are you there?');
+
+    expect(sent).toBe(true);
+    expect(mockAdapter.startCallCount).toBe(2);
+    expect(session.status).toBe('running');
+    expect(session.queryHandle).toBe(mockAdapter.lastHandle);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Are you there?' }));
+
+    await sessionManager.destroySession('test-wake-send');
+  });
+
+  it('wakes back into starting when the agent had not initialised yet', async () => {
+    await sessionManager.createSession({
+      id: 'test-wake-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-wake-starting')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-wake-starting')!;
+    expect(session.status).toBe('starting');
+
+    expect(await sessionManager.sleepSession('test-wake-starting')).toBe(true);
+    sessionManager.wakeSession('test-wake-starting');
+
+    expect(session.status).toBe('starting');
+    await sessionManager.destroySession('test-wake-starting');
+  });
+
+  it('stays awake while a permission is pending', async () => {
+    const { session } = await startSession('test-sleep-perm');
+    void mockAdapter.control!.permissionHandler!({
+      requestId: 'a1', toolName: 'Bash', toolUseId: 'tu_1', toolInput: {},
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(await sessionManager.sleepSession('test-sleep-perm')).toBe(false);
+    expect(session.status).toBe('running');
+    expect(session.queryHandle).not.toBeNull();
+
+    await sessionManager.destroySession('test-sleep-perm');
+  });
+
+  it('stays awake while its agent is still starting', async () => {
+    let openGate!: () => void;
+    mockAdapter.startGate = new Promise<void>((r) => { openGate = r; });
+    await sessionManager.createSession({
+      id: 'test-sleep-starting', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(1));
+
+    expect(await sessionManager.sleepSession('test-sleep-starting')).toBe(false);
+    expect(sessionManager.getSession('test-sleep-starting')!.status).toBe('starting');
+
+    openGate();
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-starting')?.queryHandle).toBeTruthy());
+    await sessionManager.destroySession('test-sleep-starting');
+  });
+
+  it('is left alone by the wake-from-suspend health check', async () => {
+    await startSession('test-sleep-health');
+    sessionManager.captureSuspendState();
+    await sessionManager.sleepSession('test-sleep-health');
+
+    sessionManager.healthCheckAll();
+
+    expect(sessionManager.getSession('test-sleep-health')!.status).toBe('sleeping');
+    await sessionManager.destroySession('test-sleep-health');
+  });
+
+  it('a stop does not wake it', async () => {
+    await startSession('test-sleep-stop');
+    await sessionManager.sleepSession('test-sleep-stop');
+
+    await sessionManager.interruptQuery('test-sleep-stop');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockAdapter.startCallCount).toBe(1);
+    expect(sessionManager.getSession('test-sleep-stop')!.status).toBe('sleeping');
+    await sessionManager.destroySession('test-sleep-stop');
+  });
+
+  it('can be closed while asleep', async () => {
+    const { win } = await startSession('test-sleep-close');
+    await sessionManager.sleepSession('test-sleep-close');
+
+    await sessionManager.closeSession('test-sleep-close');
+
+    expect(sessionManager.getSession('test-sleep-close')).toBeUndefined();
+    expect(statusesSent(win, 'test-sleep-close').at(-1)).toBe('stopped');
+  });
+
+  it('a close during the sleep waits for the agent to be killed', async () => {
+    mockAdapter.pid = 6300;
+    await startSession('test-sleep-close-race');
+    let releaseKill!: () => void;
+    processTree.killTree.mockImplementationOnce(() => new Promise((r) => { releaseKill = () => r(); }));
+
+    const sleeping = sessionManager.sleepSession('test-sleep-close-race');
+    const closing = sessionManager.closeSession('test-sleep-close-race');
+    let closed = false;
+    void closing.then(() => { closed = true; });
+    await vi.waitFor(() => expect(releaseKill).toBeDefined());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(closed).toBe(false);
+
+    releaseKill();
+    await sleeping;
+    await closing;
+    expect(closed).toBe(true);
+    expect(mockAdapter.startCallCount).toBe(1);
   });
 });
 
@@ -2091,7 +2409,7 @@ describe('AgentSessionManager model handling', () => {
     await sessionManager.destroySession('test-model-default');
   });
 
-  const BASE_SETTINGS = { defaultPermissionMode: 'default', defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
+  const BASE_SETTINGS = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
 
   it('records which agent the conversation runs', async () => {
     await sessionManager.createSession({ id: 'test-agent-recorded', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
@@ -2316,7 +2634,6 @@ describe('AgentSessionManager wake-from-sleep', () => {
 
 describe('AgentSessionManager session controls', () => {
   const SETTINGS = {
-    defaultPermissionMode: 'default',
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
     toolDenyRules: [],
@@ -2345,6 +2662,32 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-defaults');
   });
 
+  it('lays values chosen for this conversation over the saved defaults, ignoring ones not offered', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
+
+    await sessionManager.createSession({
+      id: 'ctl-chosen', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      controls: { thinking: 'high', speed: 'warp' },
+    });
+
+    expect(sessionManager.getControls('ctl-chosen').values).toEqual({ thinking: 'high', speed: 'standard' });
+
+    await sessionManager.destroySession('ctl-chosen');
+  });
+
+  it('keeps the saved default when the chosen value is not offered', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
+
+    await sessionManager.createSession({
+      id: 'ctl-chosen-bad', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      controls: { thinking: 'max' },
+    });
+
+    expect(sessionManager.getControls('ctl-chosen-bad').values.thinking).toBe('low');
+
+    await sessionManager.destroySession('ctl-chosen-bad');
+  });
+
   it('ignores saved defaults the adapter does not offer, and other adapters\' defaults', async () => {
     settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'adaptive', bogus: 'x' }, other: { thinking: 'low' } } });
 
@@ -2353,6 +2696,57 @@ describe('AgentSessionManager session controls', () => {
     expect(sessionManager.getControls('ctl-unknown-default').values.thinking).toBe('high');
 
     await sessionManager.destroySession('ctl-unknown-default');
+  });
+
+  it('starts in the agent\'s saved default mode, passes it to the adapter, and tells the renderer', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { permissionMode: 'acceptEdits' }, other: { permissionMode: 'plan' } } });
+    const win = makeMockWindow();
+
+    await sessionManager.createSession({ id: 'ctl-mode-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+
+    expect(sessionManager.getSession('ctl-mode-default')?.permissionMode).toBe('acceptEdits');
+    // Kept out of the other control values: the mode has its own field.
+    expect(sessionManager.getControls('ctl-mode-default').values).not.toHaveProperty('permissionMode');
+    const sync = { type: 'mode_sync', mode: 'acceptEdits', source: 'session' };
+    expect(sessionManager.getEventHistory('ctl-mode-default')).toContainEqual(sync);
+    expect(win.webContents.send).toHaveBeenCalledWith(`${IPC.AGENT_EVENT}:ctl-mode-default`, sync);
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.permissionMode).toBe('acceptEdits');
+
+    await sessionManager.destroySession('ctl-mode-default');
+  });
+
+  it('starts in the default mode when none is saved, and tells the renderer', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: {} });
+
+    await sessionManager.createSession({ id: 'ctl-mode-unset', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+
+    expect(sessionManager.getSession('ctl-mode-unset')?.permissionMode).toBe('default');
+    expect(sessionManager.getEventHistory('ctl-mode-unset')).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'session' });
+
+    await sessionManager.destroySession('ctl-mode-unset');
+  });
+
+  it('falls a saved mode the model does not offer back to the adapter default', async () => {
+    // mock-lite has no native auto mode (like Claude's Haiku).
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { permissionMode: 'auto' } } });
+
+    await sessionManager.createSession({ id: 'ctl-mode-fallback', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock', model: 'mock-lite' });
+
+    expect(sessionManager.getSession('ctl-mode-fallback')?.permissionMode).toBe('default');
+    expect(sessionManager.getEventHistory('ctl-mode-fallback')).toContainEqual({ type: 'mode_sync', mode: 'default', source: 'session' });
+
+    await sessionManager.destroySession('ctl-mode-fallback');
+  });
+
+  it('ignores a saved mode no adapter offers, such as the removed Bypass Permissions', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { permissionMode: 'bypassPermissions' } } });
+
+    await sessionManager.createSession({ id: 'ctl-mode-bypass', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+
+    expect(sessionManager.getSession('ctl-mode-bypass')?.permissionMode).toBe('default');
+
+    await sessionManager.destroySession('ctl-mode-bypass');
   });
 
   it('emits controls_sync once the query reports system_init', async () => {
@@ -2521,5 +2915,75 @@ describe('AgentSessionManager skill suggestions', () => {
 
     expect(result).toEqual([{ id: 'cached' }]);
     expect(analyzeRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentSessionManager.beginSearch()', () => {
+  it("doesn't let a single-conversation search start a new pass during a sweep", () => {
+    const beginPass = vi.spyOn((sessionManager as unknown as { searchIndexes: { beginPass(): void } }).searchIndexes, 'beginPass');
+    const endSweep = sessionManager.beginSearch({ sweep: true });
+    expect(beginPass).toHaveBeenCalledTimes(1);
+
+    sessionManager.beginSearch(); // Ctrl+F while the sweep is paused
+    expect(beginPass).toHaveBeenCalledTimes(1);
+
+    endSweep();
+    endSweep(); // ending twice is harmless
+    sessionManager.beginSearch();
+    expect(beginPass).toHaveBeenCalledTimes(2);
+    beginPass.mockRestore();
+  });
+});
+
+describe('MCP elicitation', () => {
+  async function startSession(id: string) {
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.onElicitation).toBeDefined());
+    return mockAdapter.lastConfig!.onElicitation!;
+  }
+  const request = { serverName: 'deploy', message: 'Which env?', mode: 'form' as const, requestedSchema: { type: 'object' } };
+
+  it('asks the renderer and answers with the cleaned response', async () => {
+    const onElicitation = await startSession('elicit-answer');
+    const answer = onElicitation(request, new AbortController().signal);
+
+    const asked = sessionManager.getEventHistory('elicit-answer').find((e) => e.type === 'elicitation_request');
+    expect(asked).toMatchObject({ type: 'elicitation_request', request });
+    const requestId = (asked as Extract<AgentEvent, { type: 'elicitation_request' }>).requestId;
+
+    expect(sessionManager.respondToElicitation('elicit-answer', requestId, {
+      action: 'accept',
+      content: { env: 'prod', bad: { nested: true } as never },
+    })).toBe(true);
+    await expect(answer).resolves.toEqual({ action: 'accept', content: { env: 'prod' } });
+    expect(sessionManager.getEventHistory('elicit-answer')).toContainEqual({ type: 'elicitation_resolved', requestId, action: 'accept' });
+    // Already answered
+    expect(sessionManager.respondToElicitation('elicit-answer', requestId, { action: 'decline' })).toBe(false);
+
+    await sessionManager.destroySession('elicit-answer');
+  });
+
+  it('cancels when the agent stops waiting', async () => {
+    const onElicitation = await startSession('elicit-abort');
+    const abort = new AbortController();
+    const answer = onElicitation(request, abort.signal);
+    abort.abort();
+    await expect(answer).resolves.toEqual({ action: 'cancel' });
+    expect(sessionManager.getSession('elicit-abort')!.pendingElicitations.size).toBe(0);
+    await sessionManager.destroySession('elicit-abort');
+  });
+
+  it('cancels pending requests when the conversation closes', async () => {
+    const onElicitation = await startSession('elicit-destroy');
+    const answer = onElicitation(request, new AbortController().signal);
+    await sessionManager.destroySession('elicit-destroy');
+    await expect(answer).resolves.toEqual({ action: 'cancel' });
+  });
+
+  it('rejects unknown actions', () => {
+    expect(sanitizeElicitationResponse({ action: 'maybe' })).toBeNull();
+    expect(sanitizeElicitationResponse(null)).toBeNull();
+    expect(sanitizeElicitationResponse({ action: 'decline', content: { a: 'x' } })).toEqual({ action: 'decline' });
+    expect(sanitizeElicitationResponse({ action: 'accept', content: { n: Infinity, l: ['a', 1], ok: ['a'] } })).toEqual({ action: 'accept', content: { ok: ['a'] } });
   });
 });

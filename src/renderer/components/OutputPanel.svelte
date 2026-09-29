@@ -8,8 +8,10 @@
   import ToolCallBlock from './ToolCallBlock.svelte';
   import PermissionBlock from './PermissionBlock.svelte';
   import QuestionBlock from './QuestionBlock.svelte';
+  import ElicitationBlock from './ElicitationBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
+  import GitIdentityNotice from './GitIdentityNotice.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
@@ -264,9 +266,28 @@
     }
   });
 
+  // The effect above can't scroll while the chat is hidden (another
+  // conversation or tab is open): a hidden element has no layout, so the
+  // write is dropped, and on showing it the browser restores the old offset.
+  // Output that arrived meanwhile then sits below the view, and a pane that
+  // loaded its history while hidden opens at the top. Showing it resizes the
+  // container from 0, so pin to the bottom then, and on any other resize
+  // (window, prompt box), while following the conversation.
+  $effect(() => {
+    const el = scrollContainer;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (shouldAutoScroll && el.clientHeight > 0) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
   function handleScroll() {
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+    // Hidden: no layout, so this says nothing about where the user is.
+    if (clientHeight === 0) return;
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 100;
   }
 
@@ -394,6 +415,15 @@
           selectedLabels={msg.selectedLabels}
         />
 
+      {:else if msg.kind === 'elicitation'}
+        <ElicitationBlock
+          {sessionId}
+          requestId={msg.requestId}
+          request={msg.request}
+          resolved={msg.resolved}
+          action={msg.action}
+        />
+
       {:else if msg.kind === 'thinking'}
         <ThinkingBlock thinking={msg.thinking} />
 
@@ -402,6 +432,9 @@
 
       {:else if msg.kind === 'error'}
         <SystemBlock text={msg.text} variant="error" />
+
+      {:else if msg.kind === 'git_identity_missing'}
+        <GitIdentityNotice />
 
       {:else if msg.kind === 'result'}
         <div class="py-1 border-t border-border mt-1">

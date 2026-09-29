@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import type { PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment } from '../shared/types.js';
+import type { OpenPrSummary, PrChecksSummary, PrCreateOpts, PrInfo, PrReviewComment } from '../shared/types.js';
 
 /** gh can sit forever on a stalled connection or an interactive prompt. The
  *  renderer polls PR status for every session in sequence, so one hung call
@@ -229,6 +229,46 @@ export async function prList(repoPath: string, branch: string, selfLogin?: strin
   }
   if (!Array.isArray(data)) return [];
   return data.map((item) => parsePr(item, selfLogin)).filter((pr): pr is PrInfo => pr !== null);
+}
+
+const OPEN_PR_FIELDS = 'number,title,headRefName,author,isDraft,isCrossRepository,url';
+const OPEN_PR_LIMIT = 50;
+
+/** Parse `gh pr list --json OPEN_PR_FIELDS` output, skipping malformed entries. */
+export function parseOpenPrs(stdout: string): OpenPrSummary[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  const result: OpenPrSummary[] = [];
+  for (const item of data) {
+    if (!item || typeof item.number !== 'number' || typeof item.headRefName !== 'string' || !item.headRefName) continue;
+    result.push({
+      number: item.number,
+      title: typeof item.title === 'string' ? item.title : '',
+      headRefName: item.headRefName,
+      author: typeof item.author?.login === 'string' ? item.author.login : '',
+      isDraft: item.isDraft === true,
+      isCrossRepository: item.isCrossRepository === true,
+      url: typeof item.url === 'string' ? item.url : '',
+    });
+  }
+  return result;
+}
+
+/** Open PRs in the repo, newest first (gh's default order). Throws on any gh
+ *  failure. Called when someone opens the picker, so it skips the offline
+ *  cooldown like other user-initiated calls. */
+export async function openPrs(repoPath: string): Promise<OpenPrSummary[]> {
+  const stdout = await ghOnline(
+    ['pr', 'list', '--state', 'open', '--limit', String(OPEN_PR_LIMIT), '--json', OPEN_PR_FIELDS],
+    repoPath,
+    { bypassCooldown: true },
+  );
+  return parseOpenPrs(stdout);
 }
 
 /** Order PRs primary-first: open before merged/closed, newest (highest

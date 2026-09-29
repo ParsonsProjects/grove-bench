@@ -107,9 +107,9 @@ The manifest already has a precedent for this kind of migration
   the workspace is `git`, otherwise `folder`. The dialog title becomes "Select a
   project folder".
 - **Starting a conversation.** A `folder` workspace has no branch mode. The
-  conversation always runs direct on the folder. `NewAgentDialog` hides the
-  Branch Mode, Branch Name and Base Branch fields when every workspace in the
-  chosen project is a folder.
+  conversation always runs direct on the folder. The draft conversation's
+  branch picker (`DraftStartPicker`) offers only "Project folder" when every
+  workspace in the chosen project is a folder.
 - **What the UI hides.** Changes, Checkpoints (branch and turn diffs), Git ops,
   Create PR, sync status and the PR watcher all need git. For a folder
   workspace each shows one line: "This workspace is not a git repository." The

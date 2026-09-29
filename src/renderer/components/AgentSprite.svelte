@@ -1,12 +1,15 @@
 <script lang="ts">
-  import { AGENT_SPRITES, SPRITE_W, SPRITE_H, agentLook, type AgentSpriteState } from '../lib/agent-sprite.js';
+  import { AGENT_SPRITES, SPRITE_W, SPRITE_H, agentColors, type AgentSpriteState } from '../lib/agent-sprite.js';
 
-  /** `seed` (the conversation id) picks the skin tone and hair colour. */
-  let { state, seed, scale = 2 }: { state: AgentSpriteState; seed?: string; scale?: number } = $props();
+  /**
+   * `seed` (the conversation id) picks the skin tone and hair colour.
+   * `projectColor` colours the logo on the laptop lid.
+   */
+  let { state, seed, projectColor = null, scale = 2 }: { state: AgentSpriteState; seed?: string; projectColor?: string | null; scale?: number } = $props();
 
   const sprite = $derived(AGENT_SPRITES[state]);
   const animated = $derived(sprite.frames.length > 1);
-  const look: Record<string, string> = $derived(seed ? agentLook(seed) : {});
+  const look = $derived(agentColors(seed, projectColor));
 </script>
 
 <svg
@@ -21,8 +24,8 @@
   style="--frame: {sprite.frameSeconds}s; --frame-w: {SPRITE_W}px"
   role="img"
   aria-label={sprite.label}
+  title={sprite.label}
 >
-  <title>{sprite.label}</title>
   <!-- Frames sit side by side and the viewBox shows one at a time. One
        animation slides the whole strip, so a frame is always in view. -->
   <g class="strip">

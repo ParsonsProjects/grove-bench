@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -258,20 +258,32 @@ describe('parseMcpListOutput()', () => {
     ]);
   });
 
-  it('handles names containing colons', () => {
+  it('handles names containing colons and tags plugin servers', () => {
     const out = 'plugin:figma:figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected\n';
     expect(parseMcpListOutput(out)).toEqual([
-      { name: 'plugin:figma:figma', target: 'https://mcp.figma.com/mcp', transport: 'HTTP', status: 'connected' },
+      {
+        name: 'plugin:figma:figma',
+        target: 'https://mcp.figma.com/mcp',
+        transport: 'HTTP',
+        status: 'connected',
+        managedBy: { label: 'figma plugin', hint: expect.stringMatching(/Plugins tab/) },
+      },
     ]);
   });
 
-  it('maps auth, pending, and failure statuses', () => {
+  it('tags claude.ai connectors', () => {
+    const out = 'claude.ai Gmail: https://mcp.example.com/gmail - ✔ Connected\n';
+    expect(parseMcpListOutput(out)[0]).toMatchObject({ name: 'claude.ai Gmail', managedBy: { label: 'claude.ai' } });
+  });
+
+  it('maps auth, approval, and failure statuses', () => {
+    // "Pending approval" is an unapproved .mcp.json server, not one still connecting
     const out = [
       'a: https://a.example/mcp - ! Needs authentication',
       'b: npx b-server - ⏸ Pending approval',
       'c: npx c-server - ✘ Failed to connect',
     ].join('\n');
-    expect(parseMcpListOutput(out).map((s) => s.status)).toEqual(['needs-auth', 'pending', 'failed']);
+    expect(parseMcpListOutput(out).map((s) => s.status)).toEqual(['needs-auth', 'needs-approval', 'failed']);
   });
 
   it('parses stdio servers without a transport annotation', () => {
@@ -283,6 +295,129 @@ describe('parseMcpListOutput()', () => {
 
   it('skips banner and blank lines', () => {
     expect(parseMcpListOutput('Checking MCP server health…\n\n')).toEqual([]);
+  });
+
+  it('tells unapproved and rejected project servers apart from connection states', () => {
+    const out = [
+      'repo-tools: npx repo-tools - ⏸ Pending approval (run `claude` to approve)',
+      'old-tools: npx old-tools - ✘ Rejected (see disabledMcpjsonServers in settings)',
+      'off: npx off - ⊘ Disabled for this project (re-enable via /mcp)',
+    ].join('\n');
+    expect(parseMcpListOutput(out).map((s) => s.status)).toEqual(['needs-approval', 'rejected', 'disabled']);
+  });
+});
+
+describe('mcpToolServerKey()', () => {
+  it('matches the server part of mcp__<server>__<tool> names', () => {
+    expect(mcpToolServerKey('my-server_1')).toBe('my-server_1');
+    expect(mcpToolServerKey('plugin:figma:figma')).toBe('plugin_figma_figma');
+    expect(mcpToolServerKey('claude.ai Google Drive')).toBe('claude_ai_Google_Drive');
+  });
+});
+
+describe('mcpContextCostByServer()', () => {
+  it('sums loaded and deferred tokens per server under its real name', () => {
+    const tools = [
+      { name: 'mcp__plugin_figma_figma__a', serverName: 'plugin_figma_figma', tokens: 100, isLoaded: true },
+      { name: 'mcp__plugin_figma_figma__b', serverName: 'plugin_figma_figma', tokens: 50 },
+      { name: 'mcp__plugin_figma_figma__c', serverName: 'plugin_figma_figma', tokens: 70, isLoaded: false },
+      { name: 'mcp__gone__x', serverName: 'gone', tokens: 5 },
+    ];
+    expect(mcpContextCostByServer(tools, ['plugin:figma:figma'])).toEqual([
+      { serverName: 'plugin:figma:figma', tokens: 150, deferredTokens: 70 },
+      { serverName: 'gone', tokens: 5, deferredTokens: 0 },
+    ]);
+  });
+});
+
+describe('toMcpElicitationRequest()', () => {
+  it('defaults the mode to form and keeps what the UI needs', () => {
+    expect(toMcpElicitationRequest({ serverName: 's', message: 'm', requestedSchema: { type: 'object' } })).toEqual({
+      serverName: 's', message: 'm', mode: 'form', requestedSchema: { type: 'object' },
+    });
+    expect(toMcpElicitationRequest({ serverName: 's', message: 'm', mode: 'url', url: 'https://x.example', elicitationId: 'e1' })).toEqual({
+      serverName: 's', message: 'm', mode: 'url', url: 'https://x.example',
+    });
+  });
+});
+
+describe('.mcp.json approvals', () => {
+  it('approves a server the way the CLI prompt does', () => {
+    expect(withMcpjsonApproval({ other: 1, enabledMcpjsonServers: ['a'], disabledMcpjsonServers: ['b', 'c'] }, 'b')).toEqual({
+      other: 1, enabledMcpjsonServers: ['a', 'b'], disabledMcpjsonServers: ['c'],
+    });
+    expect(withMcpjsonApproval({ disabledMcpjsonServers: ['b'] }, 'b')).toEqual({ enabledMcpjsonServers: ['b'] });
+    expect(withMcpjsonApproval({ enabledMcpjsonServers: ['b'] }, 'b')).toEqual({ enabledMcpjsonServers: ['b'] });
+  });
+
+  it('picks only the approval keys', () => {
+    expect(mcpjsonApprovalsFrom({ permissions: {}, enabledMcpjsonServers: ['a'], enableAllProjectMcpServers: false })).toEqual({
+      enabledMcpjsonServers: ['a'], enableAllProjectMcpServers: false,
+    });
+  });
+
+  it('writes approvals to the project and worktrees, and new worktrees inherit them', async () => {
+    const fsp = await import('node:fs/promises');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+    const root = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'grove-mcp-'));
+    const repo = nodePath.join(root, 'repo');
+    const wt = nodePath.join(root, 'wt');
+    await fsp.mkdir(nodePath.join(repo, '.claude'), { recursive: true });
+    await fsp.writeFile(nodePath.join(repo, '.claude', 'settings.local.json'), JSON.stringify({ keep: true }));
+    try {
+      const adapter = new ClaudeCodeAdapter();
+      await adapter.approveProjectMcpServer('repo-tools', [repo, wt]);
+      const read = async (dir: string) => JSON.parse(await fsp.readFile(nodePath.join(dir, '.claude', 'settings.local.json'), 'utf8'));
+      expect(await read(repo)).toEqual({ keep: true, enabledMcpjsonServers: ['repo-tools'] });
+      expect(await read(wt)).toEqual({ enabledMcpjsonServers: ['repo-tools'] });
+
+      const fresh = nodePath.join(root, 'fresh');
+      await adapter.generateWorktreeSettings(fresh, repo);
+      expect(await read(fresh)).toMatchObject({ permissions: expect.any(Object), enabledMcpjsonServers: ['repo-tools'] });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("doesn't overwrite a settings file it can't parse", async () => {
+    const fsp = await import('node:fs/promises');
+    const os = await import('node:os');
+    const nodePath = await import('node:path');
+    const root = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'grove-mcp-'));
+    const file = nodePath.join(root, '.claude', 'settings.local.json');
+    await fsp.mkdir(nodePath.dirname(file), { recursive: true });
+    await fsp.writeFile(file, '{ broken');
+    try {
+      await expect(new ClaudeCodeAdapter().approveProjectMcpServer('x', [root])).rejects.toThrow(/isn't valid JSON/);
+      expect(await fsp.readFile(file, 'utf8')).toBe('{ broken');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('mcpServerManager()', () => {
+  it('leaves servers from the MCP config untagged', () => {
+    expect(mcpServerManager('my-server')).toBeUndefined();
+    expect(mcpServerManager('plugin')).toBeUndefined();
+    expect(mcpServerManager('plugin:figma')).toBeUndefined();
+  });
+
+  it('keeps colons in the server part of a plugin server name', () => {
+    expect(mcpServerManager('plugin:tools:a:b')).toMatchObject({ label: 'tools plugin' });
+  });
+});
+
+describe('removeConfiguredMcpServer()', () => {
+  it('points plugin servers at the plugin instead of failing name validation', async () => {
+    await expect(new ClaudeCodeAdapter().removeConfiguredMcpServer('plugin:figma:figma'))
+      .rejects.toThrow(/figma plugin.*disable or uninstall the plugin/);
+  });
+
+  it('points claude.ai connectors at claude.ai', async () => {
+    await expect(new ClaudeCodeAdapter().removeConfiguredMcpServer('claude.ai Gmail'))
+      .rejects.toThrow(/claude\.ai.*connectors on claude\.ai/);
   });
 });
 
@@ -336,9 +471,23 @@ describe('quoteArg()', () => {
   });
 });
 
-describe('capabilities', () => {
-  it('advertises runtime MCP server control', () => {
-    expect(new ClaudeCodeAdapter().capabilities.mcpControl).toBe(true);
+describe('MCP support', () => {
+  it('offers every live control and describes its own rules', () => {
+    const { mcp } = new ClaudeCodeAdapter();
+    expect(mcp.controls).toEqual({ list: true, reconnect: true, toggle: true, signIn: true, contextCost: true });
+    expect(mcp.disconnectHint).toMatch(/this project/);
+    expect(mcp.config?.approvalHint).toMatch(/\.mcp\.json/);
+    // The name rule is the CLI's own, which rejects dots
+    const name = new RegExp(mcp.config!.namePattern);
+    expect(name.test('my-server_1')).toBe(true);
+    expect(name.test('my.server')).toBe(false);
+  });
+
+  it('labels where a live server comes from, trusting source over scope', () => {
+    expect(claudeMcpOrigin({ source: 'sdk' })).toBe('Grove Bench');
+    expect(claudeMcpOrigin({ source: 'claudeai', scope: 'user' })).toBe('claude.ai');
+    expect(claudeMcpOrigin({ scope: 'project' })).toBe('project');
+    expect(claudeMcpOrigin({})).toBeUndefined();
   });
 });
 

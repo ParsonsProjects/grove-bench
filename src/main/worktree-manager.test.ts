@@ -64,6 +64,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   manager = new WorktreeManager();
   savedManifest = {};
+  vi.mocked(worktreeBranches).mockResolvedValue(new Map());
 
   // Default: empty manifest
   mockFs.readFile.mockRejectedValue(new Error('ENOENT'));
@@ -582,7 +583,6 @@ describe('create — pulling the base branch', () => {
     mockFsUtils.pathExists.mockResolvedValue(false);
     vi.mocked(branchExists).mockResolvedValue(false);
     vi.mocked(branchHasRemote).mockResolvedValue(true);
-    vi.mocked(getGitIdentity).mockResolvedValue({ name: 'u', email: 'u@x' });
   });
 
   it('skips the network entirely when the base branch has no remote', async () => {
@@ -680,6 +680,40 @@ describe('create — pulling the base branch', () => {
     expect(calledWith('fetch')).toBe(false);
     expect(wtAddCall()?.[0]).toEqual(['worktree', 'add', expect.any(String), 'feat']);
   });
+
+  it('records the branch it creates, and not one it reuses', async () => {
+    scriptGit({});
+    await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect((savedManifest['a1'] as { createdBranches?: string[] }).createdBranches).toEqual(['feat']);
+    await manager.create({ repoPath: '/repo', branchName: 'old', useExisting: true, id: 'a2' });
+    expect(savedManifest['a2']).not.toHaveProperty('createdBranches');
+  });
+});
+
+describe('create: git identity', () => {
+  beforeEach(() => {
+    mockFsUtils.pathExists.mockResolvedValue(false);
+    vi.mocked(branchExists).mockResolvedValue(false);
+    vi.mocked(branchHasRemote).mockResolvedValue(false);
+    // An identity is available, so nothing stops create() from copying it.
+    vi.mocked(getGitIdentity).mockResolvedValue({ name: 'u', email: 'u@x' });
+    mockGit.mockResolvedValue('');
+  });
+
+  // `git config` inside a linked worktree writes the repo's shared .git/config,
+  // which would pin whatever identity was in effect into the user's repo.
+  // Agent commits get the identity from GIT_AUTHOR_*/GIT_COMMITTER_* env vars.
+  it.each([
+    ['a new branch', { baseBranch: 'main' }],
+    ['an existing branch', { useExisting: true }],
+  ])('does not write user.name or user.email when creating a worktree on %s', async (_label, opts) => {
+    await manager.create({ repoPath: '/repo', branchName: 'feat', id: 'a1', ...opts });
+    expect(mockGit).toHaveBeenCalledWith(expect.arrayContaining(['worktree', 'add']), '/repo');
+    const identityCalls = mockGit.mock.calls.filter(([args]) =>
+      args.some((a) => a === 'user.name' || a === 'user.email'),
+    );
+    expect(identityCalls).toEqual([]);
+  });
 });
 
 describe('switchBranch', () => {
@@ -745,6 +779,29 @@ describe('switchBranch', () => {
     expect(!result.success && result.error).toMatch(/uncommitted changes/);
     expect(checkoutBranch).not.toHaveBeenCalled();
     expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+  });
+
+  it("doesn't count untracked files, such as Grove's own .claude/settings.local.json", async () => {
+    addWorktreeSession();
+
+    await manager.switchBranch('wt-a', 'feat-b');
+
+    expect(isWorkingTreeClean).toHaveBeenCalledWith(WT, { ignoreUntracked: true });
+  });
+
+  it('records a branch created from the picker as Grove-created', async () => {
+    addWorktreeSession();
+    (savedManifest['wt-a'] as { createdBranches?: string[] }).createdBranches = ['feat-a'];
+    vi.mocked(localBranchExists).mockResolvedValue(false);
+
+    await manager.switchBranch('wt-a', 'feat-new', { create: true });
+    expect((savedManifest['wt-a'] as { createdBranches?: string[] }).createdBranches).toEqual(['feat-a', 'feat-new']);
+
+    // Switching onto an existing branch doesn't make it Grove's
+    vi.mocked(localBranchExists).mockResolvedValue(true);
+    vi.mocked(currentBranch).mockResolvedValue('feat-new');
+    await manager.switchBranch('wt-a', 'release');
+    expect((savedManifest['wt-a'] as { createdBranches?: string[] }).createdBranches).toEqual(['feat-a', 'feat-new']);
   });
 
   it('creates a new branch at HEAD even with uncommitted changes', async () => {
@@ -844,6 +901,141 @@ describe('switchBranch', () => {
     const result = await manager.switchBranch('wt-a', 'feat-b', { busySessionIds: [direct.id] });
 
     expect(result.success).toBe(true);
+  });
+});
+
+describe('remove: which branches go', () => {
+  const unmerged = (branch: string) => (args: string[]) =>
+    args[0] === 'branch' && args[1] === '-d' && args[2] === branch
+      ? Promise.reject(new Error(`error: the branch '${branch}' is not fully merged`))
+      : Promise.resolve('');
+
+  beforeEach(() => {
+    mockFs.readdir.mockResolvedValue([]);
+  });
+
+  it("never force-deletes a branch the conversation switched onto", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'release/1.4', createdAt: 1000, createdBranches: ['claude/foo'] },
+    }));
+    mockGit.mockImplementation(unmerged('release/1.4') as never);
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'release/1.4'], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'release/1.4'], '/repo');
+    // The branch Grove made is cleaned up too, but only if merged
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'claude/foo'], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'claude/foo'], '/repo');
+  });
+
+  it("force-deletes the conversation's own branch when it has unmerged work", async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'claude/foo', createdAt: 1000, createdBranches: ['claude/foo'] },
+    }));
+    mockGit.mockImplementation(unmerged('claude/foo') as never);
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-D', 'claude/foo'], '/repo');
+  });
+
+  it('only safe-deletes on entries from before created branches were recorded', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 },
+    }));
+    mockGit.mockImplementation(unmerged('feat-a') as never);
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'feat-a'], '/repo');
+  });
+
+  it('keeps a created branch that another conversation has checked out', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'claude/foo', createdAt: 1000, createdBranches: ['claude/foo', 'claude/bar'] },
+    }));
+    mockGit.mockResolvedValue('');
+    vi.mocked(worktreeBranches).mockResolvedValue(new Map([['claude/bar', '/elsewhere']]));
+
+    await manager.remove('wt-a', true);
+
+    expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'claude/foo'], '/repo');
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-d', 'claude/bar'], '/repo');
+  });
+
+  it('applies the same rules to deferred removals', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-a': { repoPath: '/repo', branch: 'release/1.4', createdAt: 1000, createdBranches: ['claude/foo'], pendingRemoval: true, pendingBranchDelete: true },
+    }));
+    mockFsUtils.pathExists.mockResolvedValue(false);
+    mockGit.mockImplementation(unmerged('release/1.4') as never);
+
+    await manager.processPendingRemovals();
+
+    expect(mockGit).not.toHaveBeenCalledWith(['branch', '-D', 'release/1.4'], '/repo');
+  });
+});
+
+describe('syncBranch', () => {
+  const WT = '/worktrees/abc/wt-a';
+
+  beforeEach(() => {
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+    vi.mocked(currentBranch).mockResolvedValue('feat-a');
+  });
+
+  function addWorktreeSession() {
+    savedManifest = { 'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 } };
+    manager.register({ id: 'wt-a', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 1000 });
+  }
+
+  it('records the branch the agent checked out in its own shell', async () => {
+    addWorktreeSession();
+    vi.mocked(currentBranch).mockResolvedValue('feat-b');
+
+    const result = await manager.syncBranch('wt-a');
+
+    expect(result).toEqual({ branch: 'feat-b', sessionIds: ['wt-a'] });
+    expect(currentBranch).toHaveBeenCalledWith(WT);
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-b');
+    expect((savedManifest['wt-a'] as { branch: string }).branch).toBe('feat-b');
+  });
+
+  it('does nothing when the checkout is still on the recorded branch', async () => {
+    addWorktreeSession();
+
+    expect(await manager.syncBranch('wt-a')).toBeNull();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the recorded branch while HEAD is detached (e.g. mid-rebase)', async () => {
+    addWorktreeSession();
+    vi.mocked(currentBranch).mockResolvedValue(null);
+
+    expect(await manager.syncBranch('wt-a')).toBeNull();
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+  });
+
+  it('returns null for a conversation that is not active', async () => {
+    expect(await manager.syncBranch('nope')).toBeNull();
+    expect(currentBranch).not.toHaveBeenCalled();
+  });
+
+  it('moves every conversation sharing the checkout, and no others', async () => {
+    addWorktreeSession();
+    const a = await manager.registerDirect('/repo', 'main');
+    const b = await manager.registerDirect('/repo', 'main');
+    vi.mocked(currentBranch).mockImplementation(async (cwd) => (cwd === '/repo' ? 'develop' : 'feat-a'));
+
+    const result = await manager.syncBranch(a.id);
+
+    expect(result?.branch).toBe('develop');
+    expect([...(result?.sessionIds ?? [])].sort()).toEqual([a.id, b.id].sort());
+    expect(manager.getWorktree(b.id)?.branch).toBe('develop');
+    expect(manager.getWorktree('wt-a')?.branch).toBe('feat-a');
+    expect((savedManifest[b.id] as { branch: string }).branch).toBe('develop');
+    expect((savedManifest['wt-a'] as { branch: string }).branch).toBe('feat-a');
   });
 });
 

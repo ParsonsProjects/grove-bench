@@ -543,6 +543,11 @@ describe('ingestEvent — error and status', () => {
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toBe('Loading...');
   });
+
+  it('pushes a git identity notice', () => {
+    messageStore.ingestEvent(SID, { type: 'git_identity_missing' });
+    expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['git_identity_missing']);
+  });
 });
 
 describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
@@ -1348,9 +1353,12 @@ describe('updateMcpServers', () => {
     ]);
   });
 
-  it('is a no-op before system_init', () => {
+  it('records servers for an agent that never reported them at startup', () => {
     messageStore.updateMcpServers('uninitialized', [{ name: 'docs', status: 'connected' }]);
-    expect(messageStore.getSystemInfo('uninitialized').mcpServers).toEqual([]);
+    expect(messageStore.getSystemInfo('uninitialized')).toMatchObject({
+      tools: [],
+      mcpServers: [{ name: 'docs', status: 'connected' }],
+    });
   });
 });
 

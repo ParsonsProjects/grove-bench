@@ -172,6 +172,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Dev & Preview
 - ~~Localhost run (start/preview dev server from worktree)~~ — implemented, then removed; run dev servers from the session terminal instead
+- [x] Preview tab (`Alt+5`) — a browser per conversation with two pages sharing storage: yours (a `WebContentsView` over the tab) and Claude's (an offscreen page driven by the `grove-preview` MCP tools: open, screenshot, read, logs, click, type; local URLs only). Localhost links in the conversation open there; addresses dev servers print are offered in the empty tab
 - [ ] Named background commands — a list of long-running processes with Running/Stopped state, Stop, follow-the-log, wrap, and downloadable output, decoupled from the session PTY (a narrower reimplementation of the removed dev-server feature)
 
 ## Already at Parity or Better

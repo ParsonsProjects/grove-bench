@@ -10,6 +10,7 @@
 
 // Shared with main, which reads @-references back out of stored messages.
 export { extractAtRefs } from '../../shared/prompt-text.js';
+import { buildContentBlock } from '../../shared/prompt-text.js';
 
 /**
  * Read each @-reference and wrap it in a `<file>`/`<folder>` tag. Unreadable
@@ -25,10 +26,9 @@ export async function buildRefTags(
     refs.map(async (ref) => {
       const tag = ref.endsWith('/') ? 'folder' : 'file';
       try {
-        const content = await readFile(ref);
-        return `<${tag} path="${ref}">\n${content}\n</${tag}>`;
+        return buildContentBlock(tag, ref, await readFile(ref));
       } catch {
-        return `<${tag} path="${ref}">\n(could not read)\n</${tag}>`;
+        return buildContentBlock(tag, ref, '(could not read)');
       }
     }),
   );

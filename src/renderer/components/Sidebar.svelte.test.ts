@@ -9,6 +9,7 @@ import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
+import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 
 beforeEach(() => {
   store.repos = ['/repo-a'];
@@ -31,6 +32,8 @@ afterEach(() => {
   store.repos = [];
   store.activeSessionId = null;
   store.finderOpen = false;
+  store.showCompleted = false;
+  store.sessionSort = { key: 'name', dir: 'asc' };
   messageStore.messagesBySession = {};
   messageStore.isRunning = {};
   messageStore.activityBySession = {};
@@ -89,6 +92,28 @@ describe('Sidebar session rows', () => {
       await waitFor(() => expect(screen.queryByRole('img', { name: 'Waiting for you' })).toBeNull());
     } finally {
       settingsStore.current = { ...settingsStore.current, groveCharacters: true };
+    }
+  });
+
+  it('shows the project colour on the laptop instead of a square when grove characters are on', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    const { container } = render(Sidebar);
+    const row = () => container.querySelector('.group\\/session')!;
+    const square = () => row().querySelector('span[style*="background-color"]');
+    const logoFills = () => [...row().querySelectorAll('svg.agent-sprite rect')].map((r) => r.getAttribute('fill'));
+
+    await waitFor(() => expect(logoFills()).toContain(DEFAULT_REPO_COLORS[0]));
+    expect(square()).toBeNull();
+
+    // Follows a colour picked in settings.
+    settingsStore.current = { ...settingsStore.current, repoColors: { '/repo-a': '#123456' } };
+    try {
+      await waitFor(() => expect(logoFills()).toContain('#123456'));
+
+      settingsStore.current = { ...settingsStore.current, groveCharacters: false };
+      await waitFor(() => expect(square()).not.toBeNull());
+    } finally {
+      settingsStore.current = { ...settingsStore.current, groveCharacters: true, repoColors: {} };
     }
   });
 

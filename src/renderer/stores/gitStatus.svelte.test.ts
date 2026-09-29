@@ -20,6 +20,16 @@ describe('gitStatusStore — per-session refresh suppression', () => {
     expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(1);
   });
 
+  it('checks for a branch switch alongside the status, but not while suppressed', async () => {
+    gitStatusStore.suppressRefresh('branch-sync');
+    await gitStatusStore.refresh('branch-sync');
+    expect(mockGroveBench.syncBranch).not.toHaveBeenCalled();
+
+    gitStatusStore.unsuppressRefresh('branch-sync');
+    await gitStatusStore.refresh('branch-sync');
+    expect(mockGroveBench.syncBranch).toHaveBeenCalledWith('branch-sync');
+  });
+
   it('resumes refreshing after unsuppress', async () => {
     gitStatusStore.suppressRefresh('C');
     gitStatusStore.unsuppressRefresh('C');

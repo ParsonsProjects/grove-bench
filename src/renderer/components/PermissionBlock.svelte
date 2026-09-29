@@ -6,6 +6,7 @@
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
+  import { sessionRepoColor } from '../lib/session-repo-color.js';
 
   let {
     sessionId,
@@ -207,7 +208,7 @@
 <div class="py-1 my-1 border-l-4 {borderColor} pl-3">
   <div class="flex items-center gap-2 text-xs">
     {#if settingsStore.current.groveCharacters}
-      <AgentSprite state={spriteState} seed={sessionId} scale={isResolved ? 2 : 3} />
+      <AgentSprite state={spriteState} seed={sessionId} projectColor={sessionRepoColor(sessionId)} scale={isResolved ? 2 : 3} />
     {/if}
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
     <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolName}</span>

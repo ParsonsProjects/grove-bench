@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { WALK_BACK, WALK_FRONT, WALK_GROUND_Y, WALK_VIEW_W, WALK_FRAME_SECONDS } from './grove-walk.js';
+import { WALK_BACK, WALK_FRONT, WALK_GROUND_Y, WALK_VIEW_W, WALK_FRAME_SECONDS, WAKE_AWAKE_AT_MS, WAKE_WALK_AT_MS, WAKE_SCENE_MS, WAKE_PATH_OFFSET, WAKE_PATH_HEAD_START_SECONDS, wakePhase } from './grove-walk.js';
+import { SCENERY_PALETTE, BENCH } from './agent-sprite.js';
 
 describe('grove walk layers', () => {
   for (const [name, layer] of Object.entries({ back: WALK_BACK, front: WALK_FRONT })) {
@@ -30,5 +31,28 @@ describe('grove walk layers', () => {
   it('takes a step for every few pixels of path', () => {
     const pathPerStep = (WALK_FRONT.width / WALK_FRONT.seconds) * WALK_FRAME_SECONDS;
     expect(pathPerStep).toBeCloseTo(3);
+  });
+});
+
+describe('wake-up scene', () => {
+  it('goes asleep, awake, then walking, and ends after the walk starts', () => {
+    expect(wakePhase(0)).toBe('asleep');
+    expect(wakePhase(WAKE_AWAKE_AT_MS - 1)).toBe('asleep');
+    expect(wakePhase(WAKE_AWAKE_AT_MS)).toBe('awake');
+    expect(wakePhase(WAKE_WALK_AT_MS - 1)).toBe('awake');
+    expect(wakePhase(WAKE_WALK_AT_MS)).toBe('walking');
+    expect(WAKE_SCENE_MS).toBeGreaterThan(WAKE_WALK_AT_MS);
+  });
+
+  it("starts the path at its bench, centred in the view, in whole pixels", () => {
+    expect(Number.isInteger(WAKE_PATH_OFFSET)).toBe(true);
+    // The bench's seat and back are the path's only full-width wooden runs
+    // (tree trunks share the colours but are 2 wide).
+    const bench = WALK_FRONT.rects.filter((r) => r.fill === SCENERY_PALETTE.w && r.w === BENCH[0].length);
+    expect(bench.length).toBeGreaterThan(0);
+    const left = Math.min(...bench.map((r) => r.x)) - WAKE_PATH_OFFSET;
+    const right = Math.max(...bench.map((r) => r.x + r.w)) - WAKE_PATH_OFFSET;
+    expect((left + right) / 2).toBe(WALK_VIEW_W / 2);
+    expect(WAKE_PATH_HEAD_START_SECONDS).toBeCloseTo((WAKE_PATH_OFFSET / WALK_FRONT.width) * WALK_FRONT.seconds);
   });
 });

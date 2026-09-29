@@ -20,7 +20,7 @@ export function pendingPermissionTool(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind === 'permission' && !m.resolved) return m.toolName;
-    if (m.kind === 'question' && !m.resolved) return 'question';
+    if ((m.kind === 'question' || m.kind === 'elicitation') && !m.resolved) return 'question';
   }
   return null;
 }

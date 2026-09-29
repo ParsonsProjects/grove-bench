@@ -1,4 +1,4 @@
-import type { AgentEvent, ControlDescriptor, ImageAttachment, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { displayTextFromSent } from '../../shared/prompt-text.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -9,6 +9,7 @@ import { rateLimitStore } from './rateLimit.svelte.js';
 import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
+import { previewStore } from './preview.svelte.js';
 
 // ─── Chat message types ───
 
@@ -53,6 +54,12 @@ export interface ChatErrorMessage {
   kind: 'error';
   id: string;
   text: string;
+}
+
+/** Git has no name/email for this conversation's checkout. */
+export interface ChatGitIdentityMessage {
+  kind: 'git_identity_missing';
+  id: string;
 }
 
 export interface ChatResultMessage {
@@ -115,16 +122,29 @@ export interface ChatQuestionMessage {
   selectedLabels?: string[];
 }
 
+/** An MCP server asking the user for input (a form or a page to open). */
+export interface ChatElicitationMessage {
+  kind: 'elicitation';
+  id: string;
+  requestId: string;
+  request: McpElicitationRequest;
+  resolved: boolean;
+  /** How it ended, once resolved. */
+  action?: McpElicitationResponse['action'];
+}
+
 export type ChatMessage =
   | ChatTextMessage
   | ChatToolCallMessage
   | ChatUserMessage
   | ChatSystemMessage
   | ChatErrorMessage
+  | ChatGitIdentityMessage
   | ChatResultMessage
   | ChatPermissionMessage
   | ChatThinkingMessage
-  | ChatQuestionMessage;
+  | ChatQuestionMessage
+  | ChatElicitationMessage;
 
 // ─── Store ───
 
@@ -170,6 +190,7 @@ class MessageStore {
 
   /** Whether the session has initialized (received system_init) and can accept messages */
   isReady = $state<Record<string, boolean>>({});
+  historyLoaded = $state<Record<string, boolean>>({});
 
   /** Model name per session */
   modelBySession = $state<Record<string, string>>({});
@@ -207,7 +228,7 @@ class MessageStore {
 
 
   /** Active tab per session (survives component remount) */
-  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal'>>({});
+  activeTabBySession = $state<Record<string, 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview'>>({});
 
   /** Activity view mode per session. Unset = the global default
    *  (settings.defaultActivityView). Not persisted across restarts. */
@@ -457,6 +478,18 @@ class MessageStore {
     this.isReady = { ...this.isReady, [sessionId]: value };
   }
 
+  /** Whether the conversation's chat has loaded its history since it last
+   *  mounted. Until then it is empty because it is loading, not because
+   *  nothing has been said. */
+  isHistoryLoaded(sessionId: string): boolean {
+    return this.historyLoaded[sessionId] ?? false;
+  }
+
+  setHistoryLoaded(sessionId: string, value: boolean) {
+    if (this.historyLoaded[sessionId] === value) return;
+    this.historyLoaded = { ...this.historyLoaded, [sessionId]: value };
+  }
+
   /** Whether a session has any unresolved permission requests */
   hasPendingPermission(sessionId: string): boolean {
     return (this.messagesBySession[sessionId] ?? []).some(
@@ -464,10 +497,10 @@ class MessageStore {
     );
   }
 
-  /** Whether the agent is blocked on an unanswered question */
+  /** Whether the agent is blocked on an unanswered question or MCP elicitation */
   hasPendingQuestion(sessionId: string): boolean {
     return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => m.kind === 'question' && !(m as { resolved?: boolean }).resolved,
+      (m) => (m.kind === 'question' || m.kind === 'elicitation') && !(m as { resolved?: boolean }).resolved,
     );
   }
 
@@ -564,8 +597,8 @@ class MessageStore {
 
   /** Replace the MCP server list with a live status snapshot (from listMcpServers). */
   updateMcpServers(sessionId: string, servers: McpServerInfo[]) {
-    const info = this.systemInfoBySession[sessionId];
-    if (!info) return;
+    // An agent that doesn't report its servers at startup has no entry yet.
+    const info = this.getSystemInfo(sessionId);
     this.systemInfoBySession[sessionId] = {
       ...info,
       mcpServers: servers.map((s) => ({ name: s.name, status: s.status })),
@@ -584,11 +617,11 @@ class MessageStore {
     return this.activityBySession[sessionId] ?? { activity: 'idle' as const };
   }
 
-  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' {
+  getActiveTab(sessionId: string): 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview' {
     return this.activeTabBySession[sessionId] ?? 'activity';
   }
 
-  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal') {
+  setActiveTab(sessionId: string, tab: 'activity' | 'changes' | 'checkpoints' | 'plan' | 'terminal' | 'preview') {
     this.activeTabBySession[sessionId] = tab;
   }
 
@@ -1053,6 +1086,10 @@ class MessageStore {
         changed = true;
         return { ...m, resolved: true, decision: 'deny' as const };
       }
+      if (m.kind === 'elicitation' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true, action: 'cancel' as const };
+      }
       return m;
     });
     if (changed) {
@@ -1141,6 +1178,8 @@ class MessageStore {
 
       case 'tool_result':
         this.onToolResult(sessionId, event);
+        // Dev servers print their URL; offer it in the Preview tab.
+        previewStore.noteText(sessionId, event.content);
         break;
 
       case 'permission_request':
@@ -1190,6 +1229,10 @@ class MessageStore {
           id: nextId(),
           text: event.message,
         });
+        break;
+
+      case 'git_identity_missing':
+        this.pushMessage(sessionId, { kind: 'git_identity_missing', id: nextId() });
         break;
 
       case 'usage': {
@@ -1337,6 +1380,14 @@ class MessageStore {
             text: `Hook "${event.hookName}" (${event.hookEvent}) failed${event.exitCode !== undefined ? ` (exit ${event.exitCode})` : ''}${event.output ? `: ${event.output}` : ''}`,
           });
         }
+        break;
+
+      case 'elicitation_request':
+        this.onElicitationRequest(sessionId, event);
+        break;
+
+      case 'elicitation_resolved':
+        this.markElicitationResolved(sessionId, event.requestId, event.action);
         break;
 
       case 'elicitation_complete':
@@ -1529,6 +1580,42 @@ class MessageStore {
         planText: event.planText,
       });
     }
+  }
+
+  private onElicitationRequest(sessionId: string, event: Extract<AgentEvent, { type: 'elicitation_request' }>) {
+    if (this.stoppingSession[sessionId]) return;
+    if (this._replayBuffer === null) {
+      notifyOs('permission_request', sessionId, `${event.request.serverName} needs your input`);
+    }
+    this.flushStreamingText(sessionId);
+    this.pushMessage(sessionId, {
+      kind: 'elicitation',
+      id: nextId(),
+      requestId: event.requestId,
+      request: event.request,
+      resolved: false,
+    });
+  }
+
+  private markElicitationResolved(sessionId: string, requestId: string, action: McpElicitationResponse['action']) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    const idx = msgs.findIndex((m) => m.kind === 'elicitation' && m.requestId === requestId && !m.resolved);
+    if (idx < 0) return;
+    this.setMessagesForMutation(sessionId, [
+      ...msgs.slice(0, idx),
+      { ...(msgs[idx] as ChatElicitationMessage), resolved: true, action },
+      ...msgs.slice(idx + 1),
+    ]);
+  }
+
+  /** Answer an MCP elicitation. Main confirms with elicitation_resolved; when
+   *  it already ended (stopped or timed out) the block is closed here. */
+  async respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse) {
+    let accepted = false;
+    try {
+      accepted = await window.groveBench.respondToElicitation(sessionId, requestId, response);
+    } catch { /* treated as already resolved */ }
+    if (!accepted) this.markElicitationResolved(sessionId, requestId, 'cancel');
   }
 
   private onPermissionResolved(sessionId: string, event: Extract<AgentEvent, { type: 'permission_resolved' }>) {
@@ -1955,7 +2042,7 @@ class MessageStore {
     for (const record of [
       this.messagesBySession, this.streamingText, this.streamingThinking,
       this.isRunning, this.pendingClear, this.activityBySession,
-      this.toolProgressBySession, this.isReady, this.modelBySession,
+      this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
       this.modeBySession, this.controlsBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
@@ -2043,6 +2130,10 @@ class MessageStore {
       if (m.kind === 'question' && !m.resolved) {
         changed = true;
         return { ...m, resolved: true as const };
+      }
+      if (m.kind === 'elicitation' && !m.resolved) {
+        changed = true;
+        return { ...m, resolved: true as const, action: 'cancel' as const };
       }
       if (m.kind === 'tool_call' && m.awaitingPermission) {
         changed = true;

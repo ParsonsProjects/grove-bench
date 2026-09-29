@@ -5,6 +5,7 @@ import activityTab from '../../../docs/help/activity-tab.md?raw';
 import changesTab from '../../../docs/help/changes-tab.md?raw';
 import checkpointsTab from '../../../docs/help/checkpoints-tab.md?raw';
 import terminalTab from '../../../docs/help/terminal-tab.md?raw';
+import previewTab from '../../../docs/help/preview-tab.md?raw';
 import statusBar from '../../../docs/help/status-bar.md?raw';
 import promptEditor from '../../../docs/help/prompt-editor.md?raw';
 import settings from '../../../docs/help/settings.md?raw';
@@ -26,6 +27,7 @@ export const topics: HelpTopic[] = [
   { id: 'changes-tab', title: 'Changes Tab', section: 'Interface', content: changesTab },
   { id: 'checkpoints-tab', title: 'Checkpoints Tab', section: 'Interface', content: checkpointsTab },
   { id: 'terminal-tab', title: 'Terminal Tab', section: 'Interface', content: terminalTab },
+  { id: 'preview-tab', title: 'Preview Tab', section: 'Interface', content: previewTab },
   { id: 'status-bar', title: 'Status Bar', section: 'Interface', content: statusBar },
   { id: 'prompt-editor', title: 'Prompt Editor', section: 'Interface', content: promptEditor },
   { id: 'settings', title: 'Settings', section: 'Features', content: settings },

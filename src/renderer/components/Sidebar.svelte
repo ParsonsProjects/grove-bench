@@ -5,12 +5,13 @@
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { previewStore } from '../stores/preview.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import MessageSquarePlusIcon from '@lucide/svelte/icons/message-square-plus';
-  import NewAgentDialog from './NewAgentDialog.svelte';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
@@ -18,15 +19,15 @@
   import SettingsPanel from './SettingsPanel.svelte';
   import MemoryPanel from './MemoryPanel.svelte';
   import { memoryStore } from '../stores/memory.svelte.js';
-  import SessionContextMenu from './SessionContextMenu.svelte';
+  import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
-  import { sortSessions, defaultDirFor, DEFAULT_SORT } from '../lib/session-sort.js';
+  import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageState, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
-  import { agentSpriteState } from '../lib/agent-sprite.js';
+  import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import AgentSprite from './AgentSprite.svelte';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
   import { onMount, untrack } from 'svelte';
@@ -36,9 +37,6 @@
   // Loaded on mount; the empty map renders the correct default immediately, so
   // there's no flash of expanded content.
   let collapsedRepos = $state<Record<string, boolean>>({});
-
-  // Session ordering (name/age, asc/desc), also persisted via app-state.
-  let sort = $state<SessionSortState>({ ...DEFAULT_SORT });
 
   // User-resizable sidebar width (px), persisted via app-state.
   const SIDEBAR_MIN = 240;
@@ -53,7 +51,9 @@
 
   onMount(async () => {
     let savedWidth: number | null;
-    [collapsedRepos, sort, savedWidth] = await Promise.all([
+    // Session ordering (name/age, asc/desc) lives in the store so the landing
+    // shares it; persisted via app-state.
+    [collapsedRepos, store.sessionSort, savedWidth] = await Promise.all([
       window.groveBench.getCollapsedRepos(),
       window.groveBench.getSessionSort(),
       window.groveBench.getSidebarWidth(),
@@ -119,10 +119,11 @@
   /** Click a sort key: flip its direction if already active, else switch to it
    *  with that key's natural default direction. */
   function setSort(key: SessionSortState['key']) {
-    sort = key === sort.key
+    const sort = store.sessionSort;
+    store.sessionSort = key === sort.key
       ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
       : { key, dir: defaultDirFor(key) };
-    window.groveBench.setSessionSort($state.snapshot(sort));
+    window.groveBench.setSessionSort($state.snapshot(store.sessionSort));
   }
 
   let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
@@ -163,9 +164,7 @@
     return items;
   }
 
-  let showNewAgent = $state(false);
   let showSettings = $state(false);
-  let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
@@ -358,9 +357,10 @@
     } catch { /* session may already be dead */ }
   }
 
-  function openNewAgent(defaultRepo = '') {
-    newAgentDefaultRepo = defaultRepo;
-    showNewAgent = true;
+  /** Open a draft conversation in `repo` (default: the open conversation's
+   *  project). Nothing is created until its first message is sent. */
+  function openNewAgent(repo = '') {
+    draftStore.open(repo);
   }
 
   function requestDestroy(id: string) {
@@ -389,6 +389,7 @@
       messageStore.destroySession(id);
       checkpointStore.clear(id);
       terminalStore.destroySession(id);
+      previewStore.forget(id);
       bookmarkStore.dropSessionLocal(id);
       sessionPreviewStore.invalidate(id);
       return true;
@@ -414,6 +415,8 @@
     try {
       await window.groveBench.removeRepo(repoPath);
       store.removeRepo(repoPath);
+      // A draft can't start in a project that's gone.
+      if (draftStore.draft?.repoPath === repoPath) draftStore.discard();
     } catch (e: any) {
       store.setError(e.message || String(e));
     }
@@ -477,15 +480,6 @@
 
   let triageFilter = $state<TriageFilter>('all');
 
-  /** "Show completed" is a per-viewer convenience, so it lives in localStorage. */
-  const SHOW_COMPLETED_KEY = 'grove-bench:sidebar-show-completed';
-  let showCompleted = $state(false);
-  try { showCompleted = localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; } catch { /* storage unavailable */ }
-  function toggleShowCompleted() {
-    showCompleted = !showCompleted;
-    try { localStorage.setItem(SHOW_COMPLETED_KEY, showCompleted ? '1' : '0'); } catch { /* ignore */ }
-  }
-
   const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
     'needs-you': 'bg-amber-500',
     working: 'bg-primary',
@@ -501,7 +495,7 @@
   }
 
   function notHiddenCompleted(session: { completedAt?: number | null }): boolean {
-    return showCompleted || !session.completedAt;
+    return store.showCompleted || !session.completedAt;
   }
 
   /** Every session the sidebar considers (completed ones only when asked). */
@@ -515,9 +509,9 @@
   }
 
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
-   *  active sort. This is the always-visible "working set". */
+   *  active sort. This is the always-visible "working set"; the landing's picker shows the same list. */
   let activeSessions = $derived(
-    sortSessions(store.sessions.filter((s) => store.isOpenTab(s) && rowVisible(s)), sort),
+    store.openConversations.filter((s) => matchesTriageFilter(triageFilter, triageOf(s))),
   );
 
   let stoppedCount = $derived(visibleSessions.filter((s) => !store.isOpenTab(s)).length);
@@ -540,7 +534,7 @@
       (groups[key] ??= []).push(s);
     }
     return Object.entries(groups).map(
-      ([branch, sessions]): [string, typeof store.sessions] => [branch, sortSessions(sessions, sort)],
+      ([branch, sessions]): [string, typeof store.sessions] => [branch, sortSessions(sessions, store.sessionSort)],
     );
   }
 </script>
@@ -568,13 +562,7 @@
       <div class="w-full flex items-center justify-between">
       <div class="flex items-center gap-2 min-w-0">
         {#if settingsStore.current.groveCharacters}
-          <AgentSprite state={agentSpriteState({
-            destroying: isDestroying,
-            status: session.status,
-            hasPending: getSessionHasPending(session.id),
-            isRunning: messageStore.getIsRunning(session.id),
-            needsAttention: !!store.needsAttention[session.id],
-          })} seed={session.id} />
+          <AgentSprite state={sessionSpriteState(session, isDestroying)} seed={session.id} projectColor={repoColor} />
         {:else if isDestroying}
           <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
         {:else if session.status === 'error'}
@@ -589,19 +577,22 @@
           <span class="w-2 h-2 bg-green-400 shrink-0 needs-attention-flash"></span>
         {:else if session.status === 'stopped'}
           <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
+        {:else if session.status === 'sleeping'}
+          <span class="w-2 h-2 bg-green-500/40 shrink-0" title="Sleeping: wakes when opened"></span>
         {:else}
           <span class="w-2 h-2 bg-green-500 shrink-0"></span>
         {/if}
         {#if session.direct}
-          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Direct (no worktree)"><title>Direct (no worktree)</title><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
+          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Direct (no worktree)" title="Direct (no worktree)"><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
         {:else}
-          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Worktree"><title>Worktree</title><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
+          <svg class="w-3.5 h-3.5 shrink-0 text-muted-foreground {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Worktree" title="Worktree"><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
         {/if}
         {#if session.completedAt}
-          <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed"><title>Completed</title><path d="M20 6 9 17l-5-5"/></svg>
+          <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed" title="Completed"><path d="M20 6 9 17l-5-5"/></svg>
         {/if}
+        <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
         <span class="text-sm truncate min-w-0 {greyedOut ? 'opacity-40' : ''} {session.completedAt ? 'text-muted-foreground' : ''}">
-          {#if showRepoPrefix}{#if repoColor}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
+          {#if showRepoPrefix}{#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
         </span>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -657,6 +648,7 @@
 
   <!-- Sort toggle, shared by the Conversations list and the Projects tree -->
   {#snippet sortButton(key: SessionSortState['key'], label: string)}
+    {@const sort = store.sessionSort}
     {@const active = sort.key === key}
     <button
       type="button"
@@ -719,10 +711,26 @@
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
     </div>
 
+    {#if draftStore.draft}
+      {@const draft = draftStore.draft}
+      <!-- The draft conversation: not started, so nothing exists yet. -->
+      <button
+        type="button"
+        onclick={() => draftStore.show()}
+        class="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+        title="New conversation, not started yet"
+      >
+        <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
+        <span class="text-sm truncate min-w-0">
+          <span class="text-muted-foreground/70">{store.repoDisplayName(draft.repoPath)}</span><span class="text-muted-foreground/40"> / </span><span class="italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
+        </span>
+        <span class="ml-auto text-[10px] text-muted-foreground/50 shrink-0">draft</span>
+      </button>
+    {/if}
     {#each activeSessions as session (session.id)}
       {@render sessionRow(session, true, null)}
     {/each}
-    {#if activeSessions.length === 0}
+    {#if activeSessions.length === 0 && !draftStore.draft}
       <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
     {/if}
 
@@ -736,13 +744,13 @@
         {#if store.completedCount > 0}
           <button
             type="button"
-            onclick={toggleShowCompleted}
-            aria-pressed={showCompleted}
+            onclick={() => store.toggleShowCompleted()}
+            aria-pressed={store.showCompleted}
             class="flex items-center gap-1 hover:text-foreground transition-colors"
-            title="{showCompleted ? 'Hide' : 'Show'} conversations you marked completed"
+            title="{store.showCompleted ? 'Hide' : 'Show'} conversations you marked completed"
           >
             <span class="w-2.5 h-2.5 border border-current flex items-center justify-center">
-              {#if showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
+              {#if store.showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
             </span>
             Show completed ({store.completedCount})
           </button>
@@ -787,20 +795,20 @@
               <span class="flex items-center gap-0.5 text-[10px] text-green-400 shrink-0" title="{rc.unread} unread"><span class="w-1.5 h-1.5 bg-green-400"></span>{rc.unread}</span>
             {/if}
           </button>
-          <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            {#if store.canCreate}
-              <button
-                onclick={() => openNewAgent(repo)}
-                class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
-                title="New conversation in this project"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-              </button>
-            {/if}
+          <div class="flex items-center gap-0.5">
+            <!-- Always shown: this is the main way to start a conversation in a project. -->
+            <button
+              onclick={() => openNewAgent(repo)}
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+              title="New conversation in {store.repoDisplayName(repo)}"
+              aria-label="New conversation in {store.repoDisplayName(repo)}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            </button>
             <button
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               title={canRemove ? 'Remove project' : 'Destroy all conversations first'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -850,7 +858,7 @@
         disabled={!store.canCreate}
         class="flex-1"
         size="sm"
-        title="New conversation"
+        title="New conversation (Ctrl+N)"
         aria-label="New conversation"
       >
         {#if compact}
@@ -910,15 +918,12 @@
   ></div>
 </aside>
 
-{#if showNewAgent}
-  <NewAgentDialog onclose={() => showNewAgent = false} defaultRepo={newAgentDefaultRepo} />
-{/if}
 
 <SettingsPanel open={showSettings} onclose={() => showSettings = false} />
 <MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />
 
 {#if contextMenu}
-  <SessionContextMenu
+  <ContextMenu
     x={contextMenu.x}
     y={contextMenu.y}
     items={getContextMenuItems(contextMenu.sessionId)}

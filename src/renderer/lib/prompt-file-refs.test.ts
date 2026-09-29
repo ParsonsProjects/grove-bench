@@ -28,19 +28,19 @@ describe('buildRefTags()', () => {
     const readFile = vi.fn().mockResolvedValue('const x = 1;');
     const tags = await buildRefTags(['src/a.ts'], readFile);
     expect(readFile).toHaveBeenCalledWith('src/a.ts');
-    expect(tags).toEqual(['<file path="src/a.ts">\nconst x = 1;\n</file>']);
+    expect(tags).toEqual(['<file path="src/a.ts" length="12">\nconst x = 1;\n</file>']);
   });
 
   it('uses a <folder> tag for refs ending in a slash', async () => {
     const readFile = vi.fn().mockResolvedValue('a.ts\nb.ts');
     const tags = await buildRefTags(['src/'], readFile);
-    expect(tags).toEqual(['<folder path="src/">\na.ts\nb.ts\n</folder>']);
+    expect(tags).toEqual(['<folder path="src/" length="9">\na.ts\nb.ts\n</folder>']);
   });
 
   it('marks unreadable refs instead of dropping them', async () => {
     const readFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
     const tags = await buildRefTags(['missing.ts'], readFile);
-    expect(tags).toEqual(['<file path="missing.ts">\n(could not read)\n</file>']);
+    expect(tags).toEqual(['<file path="missing.ts" length="16">\n(could not read)\n</file>']);
   });
 
   it('preserves ref order across mixed successes and failures', async () => {
@@ -76,7 +76,7 @@ describe('@ file inclusion pipeline', () => {
     const outgoing = buildOutgoingMessage(tags, text);
 
     expect(outgoing).toBe(
-      '<file path="src/util.ts">\nexport const answer = 42;\n</file>\n\nwhat does @src/util.ts do?',
+      '<file path="src/util.ts" length="25">\nexport const answer = 42;\n</file>\n\nwhat does @src/util.ts do?',
     );
   });
 });

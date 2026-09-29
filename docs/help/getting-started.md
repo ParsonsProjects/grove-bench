@@ -8,17 +8,19 @@ Click the **+ Project** button at the bottom of the sidebar to add a project. Br
 
 ## Starting a Conversation
 
-Click the **+ Conversation** button at the bottom of the sidebar to open the **New Conversation** dialog. If more than one agent is installed, pick one under **Agent**; otherwise the dialog skips that choice.
+Click **+** next to a project in the sidebar to start a conversation in that project. **+ Conversation** at the bottom of the sidebar, and `Ctrl+N`, do the same in the project of the conversation you have open.
 
-The first time you use an agent, you may be asked for its credentials. Paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. The key is stored encrypted on this computer. If you already signed in with `claude auth login` in a terminal, or set `ANTHROPIC_API_KEY`, click **Re-check** instead. You can change or remove the key later in **Settings > Agent**.
+This opens a new conversation as a draft: nothing is created until you send the first message. Type what the agent should work on and press `Enter` (`Shift+Enter` adds a new line), or click **Start**. The message is optional: you can also start empty and type in the conversation. **Discard** throws the draft away. While a draft exists it shows at the top of **Conversations** in the sidebar, so you can open another conversation and come back to it.
 
-Pick a project, then choose one of three options under **Branch Mode**:
+Before you send, the draft's status bar lets you change the choices that are fixed once the conversation starts:
 
-- **New branch** — Creates a new branch and a new worktree for it, so the agent's changes stay away from your other branches. This is the recommended choice for most tasks. Enter a **Branch Name**, and optionally a **Base Branch** (a branch, tag or commit hash) to start from. The base is prefilled with **Default Base Branch** from **Settings → General**, or the project's default branch (e.g. `main`), and Grove Bench fetches its latest commits from `origin` first when it can.
-- **Existing branch** — Creates a new worktree for a branch that already exists, local or remote. The list leaves out branches that another conversation in this project is already using.
-- **Direct** — Runs the agent in the project folder itself, on whatever branch is checked out there. No worktree is created and changes are made in place. Use this for quick tasks where isolation isn't needed.
+- **Agent settings** (left) — Pick the agent, the model, the mode and the other controls the agent offers. A new draft uses the agent and model of the conversation you had open, or your defaults. Once the conversation starts, the model and controls can still change but the agent can't.
+- **Project / branch** (next to it) — Click the project name to move the draft to another project. Click the branch to choose where the agent works:
+  - **New branch** (the default) — A separate copy of the project (a worktree) on a new branch, so the agent's changes stay away from your other work. You don't have to name the branch. It starts with a temporary name (`grove/` and a short id) and is renamed after the agent's first reply, from your message and the style of the project's recent branch names. Put a ticket ID in the message (e.g. `API-123`) to have it included. To describe the style in your own words, set **Branch Naming Rule** in **Settings → General**. A branch that has already been pushed keeps its name. **Base branch** is prefilled with **Default Base Branch** from **Settings → General**, or the project's default branch (e.g. `main`), and Grove Bench fetches its latest commits from `origin` first when it can.
+  - **Branch or PR** — A separate copy of an open pull request or a branch that already exists, local or remote. Open pull requests are listed when the GitHub CLI (`gh`) is installed and signed in; ones from forks are not listed yet. The list leaves out branches that another conversation in this project is already using. Picking a pull request switches the mode to **Plan**, so the agent explores and reports without editing files, unless you already picked a mode.
+  - **Project folder** — The agent works in the project folder itself, on whatever branch is checked out there. No separate copy is made and changes land in place.
 
-Click **Create** to start the conversation.
+The first time you use an agent, the draft may ask for its credentials. Paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. The key is stored encrypted on this computer. If you already signed in with `claude auth login` in a terminal, or set `ANTHROPIC_API_KEY`, click **Re-check** instead. You can change or remove the key later in **Settings > Agent**.
 
 ## Interacting with an Agent
 

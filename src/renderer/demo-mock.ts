@@ -21,10 +21,8 @@ const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
 
 const SETTINGS = {
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
   defaultModels: {},
@@ -37,8 +35,10 @@ const SETTINGS = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
-  idleAutoStopMinutes: 30,
+  previewAgentTools: true,
+  idleSleepMinutes: 30,
   defaultBaseBranch: '',
+  branchNamingRule: '',
   theme: 'dark',
   alwaysOnTop: false,
   repoColors: {},
@@ -270,20 +270,27 @@ const api: Record<string, unknown> = {
   checkPrerequisites: async () => ({
     git: { available: true, version: '2.47.0', meetsMinimum: true },
     gh: { available: true, version: '2.65.0', authenticated: true },
-    agents: { 'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' } },
+    agents: {
+      'claude-code': { available: true, authenticated: true, authMethod: 'oauth', email: 'demo@example.com' },
+      codex: { available: true, authenticated: true },
+    },
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
+  // Main reports a woken conversation 'running' straight away.
+  wakeSession: async (id: string) => {
+    const { store } = await import('./stores/sessions.svelte.js');
+    store.updateStatus(id, 'running');
+  },
   listWorktrees: async () => [],
   listFiles: async () => [],
-  // getActiveTab is restoreApp's last IPC call — seed only after it, so the
-  // restore pass can't stop the seeded sessions (it stops "running" sessions
-  // it doesn't recognize as open tabs).
-  getActiveTab: async () => {
+  // restoreApp's last IPC call. Seed only after it, so the restore pass can't
+  // stop the seeded sessions (it stops "running" sessions it doesn't
+  // recognize as open tabs).
+  notifyRestoreComplete: () => {
     setTimeout(seedSessions, 150);
-    return null;
   },
   listBookmarks: async () => [],
   getOpenTabs: async () => [],
@@ -311,6 +318,17 @@ const api: Record<string, unknown> = {
   switchBranch: async (id: string, branch: string) => branch === 'main'
     ? { success: false, error: `"main" is already checked out in ${REPO_B}. A branch can only be checked out in one place.` }
     : { success: true, branch, sessionIds: [id] },
+  syncBranch: async () => null,
+  autoNameBranch: async () => null,
+  // Existing-branch picker in the New Conversation dialog.
+  listOpenPrs: async (repoPath: string) => repoPath === REPO_B
+    ? [
+      { number: 51, title: 'Checkout v2: split payment step', headRefName: 'feat/checkout-v2', author: 'jo-dev', isDraft: false, isCrossRepository: false, url: '' },
+      { number: 50, title: 'Bump node to 22', headRefName: 'patch-1', author: 'outside-contributor', isDraft: false, isCrossRepository: true, url: '' },
+    ]
+    : [
+      { number: 12, title: 'Branch picker in the status bar', headRefName: 'feat/branch-picker', author: 'sam-k', isDraft: true, isCrossRepository: false, url: '' },
+    ],
   gitLogCommits: async () => [
     { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
     { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },
@@ -340,9 +358,30 @@ const api: Record<string, unknown> = {
     '+    <SessionSearch />',
   ].join('\n'),
   listMcpServers: async () => [],
-  listAdapters: async () => [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001' }],
-  getAdapterControls: async () => [
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Default' }] },
+  // A second agent so screenshots can show agent choice. Only Claude Code is
+  // registered in the app itself.
+  listAdapters: async () => [{
+    id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true, permissionModes: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
+    // The MCP popover only offers controls the agent declares.
+    mcp: {
+      controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
+      disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+    },
+  }, {
+    id: 'codex', displayName: 'Codex', capabilities: { permissionModes: true },
+  }],
+  getAdapterControls: async (adapterType?: string) => adapterType === 'codex' ? [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+      { value: 'default', label: 'Ask', tone: 'info' }, { value: 'acceptEdits', label: 'Auto edit', tone: 'accent' },
+    ] },
+  ] : [
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+      { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+      { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+      { value: 'auto', label: 'Auto', tone: 'highlight' },
+      { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+    ] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [
       { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
       { value: 'medium', label: 'Medium', description: 'Balanced speed and depth' },
@@ -351,7 +390,9 @@ const api: Record<string, unknown> = {
       { value: 'max', label: 'Max', description: 'Uncapped reasoning; slow and token-hungry, for the hardest tasks' },
     ] },
   ],
-  getModels: async () => [
+  getModels: async (adapterType?: string) => adapterType === 'codex' ? [
+    { id: 'codex-default', label: 'Default model', contextWindow: 400_000 },
+  ] : [
     { id: 'claude-opus-5-5', label: 'Opus 5.5', contextWindow: 1_000_000 },
     { id: 'claude-opus-5', label: 'Opus 5', contextWindow: 1_000_000 },
     { id: 'claude-fable-5', label: 'Fable 5', contextWindow: 1_000_000 },
