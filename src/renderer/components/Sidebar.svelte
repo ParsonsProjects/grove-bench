@@ -14,6 +14,7 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import SettingsPanel from './SettingsPanel.svelte';
@@ -160,7 +161,7 @@
     if (store.isOpenTab(session)) {
       items.push({ label: 'Stop', icon: 'stop', action: () => stopSession(sessionId) });
     }
-    items.push({ label: 'Destroy Agent', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
     return items;
   }
 
@@ -363,9 +364,29 @@
     draftStore.open(repo);
   }
 
+  /** What deleting the conversation in the confirm dialog would lose: files
+   *  with uncommitted changes in its worktree, and commits on its branch
+   *  that its base branch doesn't have. Null while unknown. */
+  let destroyUncommitted = $state<number | null>(null);
+  let destroyUnmerged = $state<{ count: number; base: string } | null>(null);
+
   function requestDestroy(id: string) {
     confirmDestroyId = id;
     deleteBranchOnDestroy = false;
+    destroyUncommitted = null;
+    destroyUnmerged = null;
+    const session = store.sessions.find((s) => s.id === id);
+    if (!session || session.direct) return;
+    // Best effort: the dialog works without them, it just can't warn.
+    window.groveBench.getGitStatus(id)
+      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = status.entries.length; })
+      .catch(() => {});
+    resolveBaseBranch(session.repoPath)
+      .then(async (base) => {
+        const commits = await window.groveBench.getBranchCommits(id, base);
+        if (confirmDestroyId === id) destroyUnmerged = { count: commits.length, base };
+      })
+      .catch(() => {});
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
@@ -606,7 +627,7 @@
           <span
             role="button"
             tabindex="-1"
-            title="Destroy agent"
+            title="Delete conversation"
             onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
             onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
             class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
@@ -809,7 +830,7 @@
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
               class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-              title={canRemove ? 'Remove project' : 'Destroy all conversations first'}
+              title={canRemove ? 'Remove project' : 'Delete all conversations first'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
@@ -1094,36 +1115,48 @@
   </Dialog.Root>
 {/if}
 
-<!-- Destroy session confirmation dialog -->
+<!-- Delete conversation confirmation dialog -->
 {#if confirmDestroyId}
   {@const session = store.sessions.find(s => s.id === confirmDestroyId)}
+  {@const branch = session?.branch ?? 'unknown'}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmDestroyId = null; }}>
-    <Dialog.Content class="max-w-xs">
+    <Dialog.Content class="max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>Destroy Agent?</Dialog.Title>
+        <Dialog.Title>Delete conversation?</Dialog.Title>
         <Dialog.Description>
           {#if session?.direct}
-            This will stop the conversation on branch
-            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
-            No files will be deleted.
+            This stops the conversation and removes it. It worked in the project folder on
+            <span class="text-foreground font-medium">{branch}</span>, so no files are deleted.
           {:else}
-            This will kill the shell process and remove the worktree for branch
-            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+            This removes the conversation and its copy of the project (the worktree for
+            <span class="text-foreground font-medium">{branch}</span>).
           {/if}
         </Dialog.Description>
       </Dialog.Header>
       {#if !session?.direct}
+        {#if destroyUncommitted}
+          <p class="text-xs text-yellow-500 mt-3" role="alert">
+            {destroyUncommitted} {destroyUncommitted === 1 ? 'file has' : 'files have'} uncommitted changes that will be lost.
+          </p>
+        {/if}
         <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
           <Checkbox bind:checked={deleteBranchOnDestroy} />
           Also delete the branch
         </label>
+        {#if deleteBranchOnDestroy && destroyUnmerged?.count}
+          <p class="text-xs text-yellow-500 mt-2" role="alert">
+            {destroyUnmerged.count} {destroyUnmerged.count === 1 ? 'commit' : 'commits'} on {branch}
+            {destroyUnmerged.count === 1 ? "isn't" : "aren't"} on {destroyUnmerged.base} yet. Unless you've pushed
+            {destroyUnmerged.count === 1 ? 'it' : 'them'}, deleting the branch can lose {destroyUnmerged.count === 1 ? 'it' : 'them'}.
+          </p>
+        {/if}
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel
         </Button>
         <Button variant="destructive" onclick={confirmDestroy}>
-          Destroy
+          Delete
         </Button>
       </Dialog.Footer>
     </Dialog.Content>

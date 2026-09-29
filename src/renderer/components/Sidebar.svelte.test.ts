@@ -403,3 +403,40 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.queryByRole('button', { name: /Select merged/ })).toBeDisabled();
   });
 });
+
+describe('Sidebar delete conversation', () => {
+  async function openDeleteDialog() {
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    return screen.findByRole('dialog');
+  }
+
+  it('warns about uncommitted files before deleting', async () => {
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] } as any);
+    const dialog = await openDeleteDialog();
+    expect(dialog).toHaveTextContent('Delete conversation?');
+    expect(await screen.findByText('2 files have uncommitted changes that will be lost.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('warns about commits the base branch lacks once the branch is to be deleted too', async () => {
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce([{ subject: 'Fix parser', body: '' }] as any);
+    await openDeleteDialog();
+    await waitFor(() => expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main'));
+    expect(screen.queryByText(/isn't on main yet/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('checkbox'));
+    expect(await screen.findByText(/1 commit on fix-parser isn't on main yet/)).toBeInTheDocument();
+  });
+
+  it('deletes after confirming', async () => {
+    const destroySession = vi.fn().mockResolvedValue(undefined);
+    (mockGroveBench as unknown as { destroySession: typeof destroySession }).destroySession = destroySession;
+    await openDeleteDialog();
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(destroySession).toHaveBeenCalledWith('s2', false));
+  });
+});

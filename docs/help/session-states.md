@@ -12,7 +12,7 @@ Each conversation displays a colored dot in the sidebar indicating its current s
 | 🟢 Dim green | None | **Sleeping** | Idle for a while, so its agent was shut down to save memory and CPU. Still open; wakes when you open it |
 | ⚫ Gray | None | **Stopped** | Conversation has been stopped |
 | 🔴 Red | None | **Error** | Conversation encountered an error |
-| ⚫ Muted | Pulsing | **Destroying** | Conversation is being cleaned up |
+| ⚫ Muted | Pulsing | **Deleting** | Conversation is being removed |
 
 ## Agent Activity Indicators
 
