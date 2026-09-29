@@ -463,25 +463,6 @@ export interface GitOpResult {
   error?: string;
 }
 
-/** What merging a conversation's branch into another branch would do, for
- *  the confirmation dialog. `mergeInto` checks the same things again. */
-export interface MergeIntoPlan {
-  /** The conversation's branch, merged from. */
-  branch: string;
-  /** The branch merged into. */
-  target: string;
-  /** Commits on `branch` that `target` doesn't have yet. */
-  commits: number;
-  /** The checkout that has `target`, where the merge runs. Null when no
-   *  checkout has it: then `target` can only be fast-forwarded. */
-  checkoutPath: string | null;
-  /** Files with uncommitted changes in the conversation. They aren't part of
-   *  the merge. */
-  uncommitted: number;
-  /** Why the merge can't run as things stand, in words for the dialog. */
-  blocked?: string;
-}
-
 /** Outcome of switching a conversation's checkout to another branch. Every
  *  conversation sharing that checkout moves with it, so `sessionIds` lists
  *  all of them (the one that asked included). */
@@ -1067,11 +1048,6 @@ export interface GroveBenchAPI {
   gitCherryPick(sessionId: string, sha: string): Promise<GitOpResult>;
   /** Squash every commit since the merge base with `base` into one. */
   gitSquash(sessionId: string, base: string, message: string): Promise<GitOpResult>;
-  /** What merging the conversation's branch into `target` would do, or why it can't. */
-  gitMergePlan(sessionId: string, target: string): Promise<MergeIntoPlan>;
-  /** Merge the conversation's branch into `target` in the project folder (or
-   *  fast-forward it when nothing has it checked out). Conflicts are aborted and reported. */
-  gitMergeInto(sessionId: string, target: string): Promise<GitOpResult>;
 
   // Checkpoint rewind
   rewindSession(sessionId: string, userMessageId: string, options?: RewindOptions): Promise<void>;
@@ -1586,8 +1562,6 @@ export const IPC = {
   GIT_REBASE: 'git:rebase',
   GIT_CHERRY_PICK: 'git:cherryPick',
   GIT_SQUASH: 'git:squash',
-  GIT_MERGE_PLAN: 'git:mergePlan',
-  GIT_MERGE_INTO: 'git:mergeInto',
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_LIST: 'pr:list',
   PR_LIST_OPEN: 'pr:listOpen',

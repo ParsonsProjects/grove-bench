@@ -44,9 +44,10 @@ When the agent is done, its work sits on the conversation's own branch, in a sep
 
 1. **Review**: open the **Changes** tab (`Alt+2`). **Uncommitted** shows what isn't committed yet; **Branch** shows everything since the conversation left its base branch.
 2. **Commit**: stage files, write a message (or generate one) and click **Commit**. You can also ask the agent to commit for you.
-3. **Merge or open a pull request**:
-   - **Merge into main** (the button names your base branch) sits at the bottom of the Changes tab. It shows what will happen, then merges the branch into that branch in your project folder. The project folder must have that branch checked out with no uncommitted changes. If both sides changed the same lines, the merge is stopped and nothing changes: ask the agent to rebase onto the base branch and fix the conflicts, then merge again. Nothing is pushed.
-   - **Create PR** in the status bar pushes the branch and opens a pull request. It shows when the GitHub CLI (`gh`) is installed and signed in. Without it, **& Push** next to **Commit** pushes the branch so you can open a pull request on your git host's website.
+3. **Open a pull request or merge**:
+   - **Create PR** in the status bar pushes the branch and opens a pull request. It shows when the GitHub CLI (`gh`) is installed and signed in.
+   - Without it, **& Push** next to **Commit** pushes the branch so you can open a pull request on your git host's website.
+   - To merge without a pull request, run `git merge <branch>` in your project folder. The branch name is shown in the status bar.
 4. **Tidy up**: right-click the conversation and choose **Mark Completed** to hide it, or **Delete Conversation** to remove its copy of the project.
 
 A conversation that works in the **Project folder** changes your files in place, so there is nothing to merge.

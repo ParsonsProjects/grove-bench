@@ -7,7 +7,6 @@
   import type { GitStatusEntry, DiffScope } from '../../shared/types.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
   import GitOpsDialog from './GitOpsDialog.svelte';
-  import MergeIntoDialog from './MergeIntoDialog.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -21,20 +20,6 @@
 
   /** Rebase / squash / cherry-pick dialog (branch operations between agent branches). */
   let gitOpsOpen = $state(false);
-
-  /** Merge this branch into its base in the project folder. A conversation
-   *  working in the project folder itself has no separate branch to merge. */
-  let mergeOpen = $state(false);
-  let mergeTarget = $state('');
-  let session = $derived(sessionStore.sessions.find(s => s.id === sessionId));
-  let canMergeBranch = $derived(!!session && !session.direct);
-  $effect(() => {
-    const repoPath = session?.repoPath;
-    if (!repoPath || !canMergeBranch) return;
-    let stale = false;
-    resolveBaseBranch(repoPath).then((b) => { if (!stale) mergeTarget = b; });
-    return () => { stale = true; };
-  });
 
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
@@ -54,6 +39,7 @@
     try {
       let base = scopeState.base;
       if (scope === 'branch' && !base) {
+        const session = sessionStore.sessions.find(s => s.id === sessionId);
         base = await resolveBaseBranch(session?.repoPath ?? '');
       }
       await gitStatusStore.setScope(sessionId, scope, base);
@@ -249,33 +235,6 @@
       </div>
     </div>
   {/if}
-  {#if canMergeBranch && mergeTarget}
-    <div class="border-t border-border p-2 shrink-0">
-      {@render mergeButton('w-full')}
-    </div>
-  {/if}
-{/snippet}
-
-<!-- Shown under the file list, and in the empty state: once everything is
-     committed the working tree is clean, which is when merging makes sense. -->
-{#snippet mergeButton(width: string)}
-  <button
-    onclick={() => mergeOpen = true}
-    disabled={isRunning}
-    class="{width} text-xs px-2 py-1 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-    title={isRunning
-      ? 'Merge once the agent finishes its turn'
-      : `Bring this branch's commits into ${mergeTarget} in your project folder. Shows what will happen first.`}
-  >
-    Merge into {mergeTarget}
-  </button>
-{/snippet}
-
-{#snippet emptyExtra()}
-  {@render scopeToggle()}
-  {#if canMergeBranch && mergeTarget}
-    <div class="mt-2">{@render mergeButton('')}</div>
-  {/if}
 {/snippet}
 
 {#snippet headerActions(entry: GitStatusEntry)}
@@ -324,9 +283,6 @@
   {#if gitOpsOpen}
     <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
   {/if}
-  {#if mergeOpen}
-    <MergeIntoDialog {sessionId} target={mergeTarget} onclose={() => mergeOpen = false} />
-  {/if}
 {/snippet}
 
 <ReviewDiffPanel
@@ -345,7 +301,7 @@
   commentContext={isBranchScope ? `branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}` : undefined}
   {emptyTitle}
   emptyHint={isRunning ? 'Edits show up here as the agent makes them' : undefined}
-  {emptyExtra}
+  emptyExtra={scopeToggle}
   {sidebarTop}
   {sidebarSummaryExtra}
   sidebarFooter={commitBox}

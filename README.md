@@ -25,7 +25,7 @@ You need Git 2.17 or later, and either a Claude plan (Pro, Max, Team or Enterpri
 1. **Add a project**: a git repository on your computer.
 2. **Start a conversation**: tell the agent what to work on. By default it works on a new branch in its own copy of the project (a git worktree), so your checkout is left alone.
 3. **Approve its actions**: in the default **Ask** mode the agent checks with you before each edit or command.
-4. **Finish**: review the work in the **Changes** tab, commit it, then **Merge into main** or **Create PR**.
+4. **Finish**: review the work in the **Changes** tab, commit it, then open a pull request (**Create PR**) or merge the branch yourself.
 
 The in-app help (the **?** in the title bar) covers each step in detail.
 
