@@ -34,6 +34,27 @@ describe('PermissionBlock grove character', () => {
   });
 });
 
+describe('PermissionBlock plan approval', () => {
+  const plan = {
+    sessionId: 's1', requestId: 'r2', toolName: 'ExitPlanMode', toolInput: { plan: '1. Do it' },
+    isPlanExecution: true, planText: '1. Do it', resolved: false,
+  };
+
+  it('offers plainly named choices, each saying what it does', () => {
+    render(PermissionBlock, { ...plan, suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] });
+    for (const name of ['Approve, auto-accept edits', 'Approve', 'Approve in a fresh conversation', 'Keep planning']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('title');
+    }
+    expect(screen.queryByRole('button', { name: /Execute/ })).toBeNull();
+  });
+
+  it('leaves out the suggested choice when there are no suggestions', () => {
+    render(PermissionBlock, plan);
+    expect(screen.queryByRole('button', { name: /^Approve, / })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+});
+
 describe('PermissionBlock timeout', () => {
   it('says nobody answered instead of a plain "denied"', () => {
     render(PermissionBlock, { ...props, resolved: true, decision: 'deny', timedOut: true });

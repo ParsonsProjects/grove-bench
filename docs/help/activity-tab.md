@@ -30,6 +30,15 @@ When the agent wants to perform an action that requires approval, a permission b
 
 A request nobody answers within 30 minutes is denied, so the agent isn't left waiting forever. The block then says there was no answer, and the agent is told the request timed out, so it can try another way or stop. The conversation is marked **Needs you** while a request waits, and a desktop notification can tell you (see **Settings**).
 
+### Plan Approval
+
+In **Plan** mode the agent explores and writes a plan instead of changing files. When it is ready, a **plan ready** block shows the plan (**Focus** reads it full-width) and these choices, each explained when you hover it:
+
+- **Approve**: the agent starts making the changes.
+- **Approve, auto-accept edits** (or similar): shown when the agent suggests a mode to build in. The label names the mode it switches to.
+- **Approve in a fresh conversation**: clears this conversation's messages and starts again with only the plan, so the agent has its whole context for the work. Your files are not changed.
+- **Keep planning**: don't start yet. To say what to change, type in the box under the buttons and press **Send**.
+
 ### MCP Input Requests
 An MCP server can ask you for input while the agent uses one of its tools. A block appears with the server's question. It is either a short form (fill it in and click **Submit**, or **Decline**) or a page to open in your browser, for example to sign in (**Open page**, or **Decline**). Your answers go to that server, so don't type passwords or API keys into a form. If the agent stops or the server gives up waiting, the block closes as cancelled.
 

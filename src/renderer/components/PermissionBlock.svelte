@@ -8,6 +8,7 @@
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { alwaysAllowLabel } from '../lib/always-allow.js';
+  import { suggestedApproval, PLAN_CHOICES } from '../lib/plan-approval.js';
   import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
   let {
@@ -57,6 +58,7 @@
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
+  let suggested = $derived(suggestedApproval(suggestions));
 
   async function approve() {
     if (submitting) return;
@@ -84,7 +86,8 @@
     }
   }
 
-  /** Execute and clear — allow with SDK suggestions to exit plan mode */
+  /** Approve with the agent's suggested permission changes (usually a mode
+   *  switch out of plan mode). The label comes from suggestedApproval(). */
   async function approveAndClear() {
     if (submitting) return;
     submitting = true;
@@ -299,7 +302,7 @@
       {#if timedOut}
         <span class="text-muted-foreground">no answer after {PERMISSION_TIMEOUT_MINUTES} minutes, so it was denied</span>
       {:else if isExitPlanMode}
-        {effectiveDecision === 'allow' ? 'plan executed' : 'kept planning'}
+        {effectiveDecision === 'allow' ? 'plan approved' : 'kept planning'}
       {:else}
         {effectiveDecision === 'allow' ? 'allowed' : 'denied'}
       {/if}
@@ -307,22 +310,22 @@
   {:else}
     {#if isExitPlanMode}
       <div class="flex gap-2 mt-2 flex-wrap">
-        {#if suggestions && suggestions.length > 0}
-          <Button variant="outline" size="sm" onclick={approveAndClear} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
-            Execute and clear
+        {#if suggested}
+          <Button variant="outline" size="sm" onclick={approveAndClear} disabled={submitting} title={suggested.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
+            {suggested.label}
           </Button>
         {/if}
-        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
-          Execute
-        </Button>
-        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
-          No
+        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title={PLAN_CHOICES.approve.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          {PLAN_CHOICES.approve.label}
         </Button>
         {#if planText}
-          <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
-            Clear &amp; Execute
+          <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} title={PLAN_CHOICES.fresh.title} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+            {PLAN_CHOICES.fresh.label}
           </Button>
         {/if}
+        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} title={PLAN_CHOICES.keepPlanning.title} class="text-destructive border-destructive hover:bg-destructive/10">
+          {PLAN_CHOICES.keepPlanning.label}
+        </Button>
       </div>
       <div class="flex gap-2 mt-2 items-center">
         <input
