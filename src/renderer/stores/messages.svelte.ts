@@ -55,6 +55,12 @@ export interface ChatErrorMessage {
   text: string;
 }
 
+/** Git has no name/email for this conversation's checkout. */
+export interface ChatGitIdentityMessage {
+  kind: 'git_identity_missing';
+  id: string;
+}
+
 export interface ChatResultMessage {
   kind: 'result';
   id: string;
@@ -121,6 +127,7 @@ export type ChatMessage =
   | ChatUserMessage
   | ChatSystemMessage
   | ChatErrorMessage
+  | ChatGitIdentityMessage
   | ChatResultMessage
   | ChatPermissionMessage
   | ChatThinkingMessage
@@ -1190,6 +1197,10 @@ class MessageStore {
           id: nextId(),
           text: event.message,
         });
+        break;
+
+      case 'git_identity_missing':
+        this.pushMessage(sessionId, { kind: 'git_identity_missing', id: nextId() });
         break;
 
       case 'usage': {

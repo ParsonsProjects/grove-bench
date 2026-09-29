@@ -543,6 +543,11 @@ describe('ingestEvent — error and status', () => {
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toBe('Loading...');
   });
+
+  it('pushes a git identity notice', () => {
+    messageStore.ingestEvent(SID, { type: 'git_identity_missing' });
+    expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['git_identity_missing']);
+  });
 });
 
 describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {

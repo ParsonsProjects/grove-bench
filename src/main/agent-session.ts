@@ -635,6 +635,11 @@ class AgentSessionManager {
         };
       } else {
         logger.warn(`[runQuery] session=${id} git user.name/user.email not set; agent commits use git's own identity rules`);
+        // Tell the user once per conversation. eventHistory is reloaded from
+        // disk, so this also holds across restarts and app relaunches.
+        if (!session.eventHistory.some((e) => e.type === 'git_identity_missing')) {
+          emit({ type: 'git_identity_missing' });
+        }
       }
     } catch { /* best effort */ }
 

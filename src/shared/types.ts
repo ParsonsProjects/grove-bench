@@ -194,7 +194,10 @@ export type AgentEvent =
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
   // Rewind checkpoint
-  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean };
+  | { type: 'rewind'; toMessageId: string; conversationOnly?: boolean; filesOnly?: boolean }
+  // Git has no user.name/user.email for this conversation's checkout, so the
+  // agent's commits will likely fail. Emitted at most once per conversation.
+  | { type: 'git_identity_missing' };
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {

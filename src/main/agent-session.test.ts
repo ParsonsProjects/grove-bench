@@ -329,6 +329,13 @@ describe('AgentSessionManager git identity env', () => {
   const start = (id: string) => sessionManager.createSession({
     id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
   });
+  const identityNotices = (id: string) =>
+    sessionManager.getEventHistory(id).filter((e) => e.type === 'git_identity_missing').length;
+
+  afterEach(() => {
+    // Drop any unused once-values and restore the module-level default.
+    vi.mocked(getGitIdentity).mockReset().mockResolvedValue({ name: 'Test User', email: 'test@example.com' });
+  });
 
   it('forces the configured identity on agent commits', async () => {
     await start('test-identity');
@@ -339,6 +346,7 @@ describe('AgentSessionManager git identity env', () => {
       GIT_COMMITTER_NAME: 'Test User',
       GIT_COMMITTER_EMAIL: 'test@example.com',
     });
+    expect(identityNotices('test-identity')).toBe(0);
     await sessionManager.destroySession('test-identity');
   });
 
@@ -351,7 +359,21 @@ describe('AgentSessionManager git identity env', () => {
       expect(env).not.toHaveProperty(key);
     }
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('user.name/user.email not set'));
+    expect(identityNotices('test-no-identity')).toBe(1);
     await sessionManager.destroySession('test-no-identity');
+  });
+
+  it('tells the user once per conversation, not on every query restart', async () => {
+    vi.mocked(getGitIdentity).mockResolvedValue(null);
+    await start('test-identity-once');
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    await sessionManager.stopQuery('test-identity-once');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+
+    expect(getGitIdentity).toHaveBeenCalledTimes(2);
+    expect(identityNotices('test-identity-once')).toBe(1);
+    await sessionManager.destroySession('test-identity-once');
   });
 });
 
