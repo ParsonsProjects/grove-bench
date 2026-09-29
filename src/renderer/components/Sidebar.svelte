@@ -15,6 +15,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
+  import { unsavedFileCount } from '../lib/unsaved-files.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import SettingsPanel from './SettingsPanel.svelte';
@@ -259,7 +260,7 @@
         }
         try {
           const status = await window.groveBench.getGitStatus(s.id);
-          dirty[s.id] = status.entries.length > 0;
+          dirty[s.id] = unsavedFileCount(status.entries) > 0;
         } catch {
           dirty[s.id] = false; // unreadable worktree — nothing to lose
         }
@@ -369,24 +370,30 @@
    *  that its base branch doesn't have. Null while unknown. */
   let destroyUncommitted = $state<number | null>(null);
   let destroyUnmerged = $state<{ count: number; base: string } | null>(null);
+  /** Delete waits for both checks, so a quick click can't skip a warning. */
+  let destroyChecking = $state(false);
 
   function requestDestroy(id: string) {
     confirmDestroyId = id;
     deleteBranchOnDestroy = false;
     destroyUncommitted = null;
     destroyUnmerged = null;
+    destroyChecking = false;
     const session = store.sessions.find((s) => s.id === id);
     if (!session || session.direct) return;
-    // Best effort: the dialog works without them, it just can't warn.
-    window.groveBench.getGitStatus(id)
-      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = status.entries.length; })
+    destroyChecking = true;
+    // Best effort: a failed check leaves its warning out rather than
+    // blocking the delete.
+    const uncommitted = window.groveBench.getGitStatus(id)
+      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = unsavedFileCount(status.entries); })
       .catch(() => {});
-    resolveBaseBranch(session.repoPath)
+    const unmerged = resolveBaseBranch(session.repoPath)
       .then(async (base) => {
         const commits = await window.groveBench.getBranchCommits(id, base);
         if (confirmDestroyId === id) destroyUnmerged = { count: commits.length, base };
       })
       .catch(() => {});
+    void Promise.all([uncommitted, unmerged]).then(() => { if (confirmDestroyId === id) destroyChecking = false; });
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
@@ -1155,8 +1162,8 @@
         <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel
         </Button>
-        <Button variant="destructive" onclick={confirmDestroy}>
-          Delete
+        <Button variant="destructive" onclick={confirmDestroy} disabled={destroyChecking}>
+          {destroyChecking ? 'Checking…' : 'Delete'}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>

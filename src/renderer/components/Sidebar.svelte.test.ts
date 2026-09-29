@@ -436,7 +436,23 @@ describe('Sidebar delete conversation', () => {
     const destroySession = vi.fn().mockResolvedValue(undefined);
     (mockGroveBench as unknown as { destroySession: typeof destroySession }).destroySession = destroySession;
     await openDeleteDialog();
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(destroySession).toHaveBeenCalledWith('s2', false));
+  });
+
+  it('waits for its checks before Delete can be pressed', async () => {
+    let finish!: (v: { entries: [] }) => void;
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+    await openDeleteDialog();
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+    finish({ entries: [] });
+    expect(await screen.findByRole('button', { name: 'Delete' })).not.toBeDisabled();
+  });
+
+  it('does not count the settings file Grove writes into every worktree', async () => {
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: '.claude/settings.local.json', status: 'untracked', staged: false }] } as any);
+    await openDeleteDialog();
+    await screen.findByRole('button', { name: 'Delete' });
+    expect(screen.queryByText(/uncommitted changes that will be lost/)).toBeNull();
   });
 });
