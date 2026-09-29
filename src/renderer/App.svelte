@@ -13,6 +13,7 @@
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
   import { sessionSpriteState } from './lib/session-sprite-state.js';
+  import { TurnEndWatcher } from './lib/turn-end.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -126,22 +127,20 @@
     void refreshAutoNames(store.sessions.map((s) => s.id));
   }
 
-  // Track per-session running state to detect turn completion. Flash state
-  // itself lives in the store so the sidebar can read it.
-  let prevRunningState = $state<Record<string, boolean>>({});
-
-  // Detect when a session transitions from running → idle (a turn completed)
+  // Detect a completed turn: running, then idle for a moment, so a turn that
+  // carries on straight after a result doesn't flag the conversation unread
+  // (its sidebar character would wave mid-turn). The flag lives in the store
+  // so the sidebar can read it.
+  const turnEnds = new TurnEndWatcher((sessionId) => {
+    if (!store.sessions.some((s) => s.id === sessionId)) return;
+    if (store.activeSessionId !== sessionId) {
+      store.markNeedsAttention(sessionId);
+    }
+    void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+  });
   $effect(() => {
     for (const session of store.sessions) {
-      const running = messageStore.getIsRunning(session.id);
-      const wasRunning = prevRunningState[session.id] ?? false;
-      if (wasRunning && !running) {
-        if (store.activeSessionId !== session.id) {
-          store.markNeedsAttention(session.id);
-        }
-        void autoNameSession(session.id).then(() => autoNameBranch(session.id));
-      }
-      prevRunningState[session.id] = running;
+      turnEnds.update(session.id, messageStore.getIsRunning(session.id));
     }
   });
 
