@@ -398,6 +398,7 @@
           toolInput={msg.toolInput}
           resolved={msg.resolved}
           decision={msg.decision}
+          timedOut={msg.timedOut}
           decisionReason={msg.decisionReason}
           suggestions={msg.suggestions}
           isPlanExecution={msg.isPlanExecution}

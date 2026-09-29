@@ -34,6 +34,13 @@ describe('PermissionBlock grove character', () => {
   });
 });
 
+describe('PermissionBlock timeout', () => {
+  it('says nobody answered instead of a plain "denied"', () => {
+    render(PermissionBlock, { ...props, resolved: true, decision: 'deny', timedOut: true });
+    expect(screen.getByText('no answer after 30 minutes, so it was denied')).toBeInTheDocument();
+  });
+});
+
 describe('PermissionBlock always-allow button', () => {
   it('says it covers every command, not just this one', () => {
     render(PermissionBlock, { ...props, toolCategory: 'bash', resolved: false });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import { IPC, type AgentEvent } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
 import * as fs from 'node:fs';
 
 // ─── Mock infrastructure ───
@@ -829,6 +829,38 @@ describe('AgentSessionManager.respondToPermission()', () => {
     });
 
     await sessionManager.destroySession('test-perm-msg');
+  });
+
+  it('denies an unanswered request after the timeout and says it timed out', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-perm-timeout',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    vi.useFakeTimers();
+    try {
+      const permPromise = mockAdapter.control!.permissionHandler!({
+        requestId: 't1',
+        toolName: 'Bash',
+        toolUseId: 'tu_timeout',
+        toolInput: { command: 'npm test' },
+      });
+      await vi.advanceTimersByTimeAsync(PERMISSION_TIMEOUT_MINUTES * 60 * 1000);
+      await expect(permPromise).resolves.toMatchObject({ behavior: 'deny' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const resolved = sessionManager.getEventHistory('test-perm-timeout').filter((e) => e.type === 'permission_resolved');
+    expect(resolved[resolved.length - 1]).toMatchObject({ decision: 'deny', reason: 'timeout' });
+
+    await sessionManager.destroySession('test-perm-timeout');
   });
 
   it('adds tool to alwaysAllowedTools on allowAlways', async () => {

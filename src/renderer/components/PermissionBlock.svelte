@@ -8,6 +8,7 @@
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { alwaysAllowLabel } from '../lib/always-allow.js';
+  import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
   let {
     sessionId,
@@ -16,6 +17,7 @@
     toolInput,
     resolved,
     decision,
+    timedOut = false,
     decisionReason,
     suggestions,
     isPlanExecution = false,
@@ -28,6 +30,8 @@
     toolInput: unknown;
     resolved: boolean;
     decision?: 'allow' | 'deny';
+    /** Denied because nobody answered in time. */
+    timedOut?: boolean;
     decisionReason?: string;
     suggestions?: unknown[];
     isPlanExecution?: boolean;
@@ -292,7 +296,9 @@
 
   {#if isResolved}
     <div class="text-xs mt-1 {effectiveDecision === 'allow' ? 'text-green-400' : 'text-destructive'}">
-      {#if isExitPlanMode}
+      {#if timedOut}
+        <span class="text-muted-foreground">no answer after {PERMISSION_TIMEOUT_MINUTES} minutes, so it was denied</span>
+      {:else if isExitPlanMode}
         {effectiveDecision === 'allow' ? 'plan executed' : 'kept planning'}
       {:else}
         {effectiveDecision === 'allow' ? 'allowed' : 'denied'}

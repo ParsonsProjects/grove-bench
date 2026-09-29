@@ -1,7 +1,7 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS } from '../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -749,7 +749,7 @@ class AgentSessionManager {
         if (session.permissionMode === 'readSafe' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath)) {
           return { behavior: 'allow', updatedInput: request.toolInput };
         }
-        const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
+        const PERMISSION_TIMEOUT_MS = PERMISSION_TIMEOUT_MINUTES * 60 * 1000;
         const requestId = `perm_${id}_${++session.permRequestCounter}`;
         return new Promise<PermissionResponse>((resolve) => {
           const timer = setTimeout(() => {
@@ -759,6 +759,7 @@ class AgentSessionManager {
               requestId,
               toolUseId: request.toolUseId,
               decision: 'deny',
+              reason: 'timeout',
             });
             resolve({ behavior: 'deny', message: 'Permission request timed out' });
           }, PERMISSION_TIMEOUT_MS);

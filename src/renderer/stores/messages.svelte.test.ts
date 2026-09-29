@@ -846,6 +846,26 @@ describe('ingestEvent — permission_resolved', () => {
     expect(perm.decision).toBe('allow');
   });
 
+  it('marks a permission denied by the timeout as timed out', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-to',
+      requestId: 'req-to',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-to',
+      toolUseId: 'tu-to',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const perm = messageStore.getMessages(SID).find((m) => m.kind === 'permission' && m.requestId === 'req-to') as any;
+    expect(perm).toMatchObject({ resolved: true, decision: 'deny', timedOut: true });
+  });
+
   it('stores the answer from a replayed question resolution', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',

@@ -82,6 +82,8 @@ export interface ChatPermissionMessage {
   toolUseId: string;
   resolved: boolean;
   decision?: 'allow' | 'deny';
+  /** Denied because nobody answered in time, not by the user. */
+  timedOut?: boolean;
   decisionReason?: string;
   suggestions?: unknown[];
   /** Set by the adapter when this permission is for executing a plan. */
@@ -1624,7 +1626,7 @@ class MessageStore {
     const updated = msgs.map((m) => {
       if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
         changed = true;
-        return { ...m, resolved: true as const, decision: event.decision };
+        return { ...m, resolved: true as const, decision: event.decision, ...(event.reason === 'timeout' ? { timedOut: true } : {}) };
       }
       if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
         changed = true;

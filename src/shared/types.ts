@@ -151,6 +151,10 @@ export interface PrerequisiteStatus {
  */
 export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
 
+/** How long a permission request waits for an answer before it is denied,
+ *  so a query can't hang forever on a prompt nobody sees. */
+export const PERMISSION_TIMEOUT_MINUTES = 30;
+
 // ─── Agent Events (renderer-side, serializable) ───
 
 /**
@@ -214,6 +218,9 @@ export type AgentEvent =
       /** The user's typed reply for a question (AskUserQuestion) or deny
        *  reason, so replayed history can still show what was answered. */
       message?: string;
+      /** Set when nobody answered: the request waited
+       *  PERMISSION_TIMEOUT_MINUTES and was denied. */
+      reason?: 'timeout';
     }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
