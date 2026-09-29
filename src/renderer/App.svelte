@@ -69,7 +69,7 @@
   async function restoreApp() {
     await restoreWorktrees();
 
-    // Resume all previously-open tabs, not just the active one
+    // Previously-open tabs come back in the Conversations list
     const persistedOpenTabs = await window.groveBench.getOpenTabs();
     const openSet = new Set(persistedOpenTabs);
 
@@ -82,35 +82,17 @@
       }
     }
 
-    // Restore persisted active tab, or fall back to the first running session,
-    // then the first previously-open tab
-    const persistedTabId = await window.groveBench.getActiveTab();
-    if (persistedTabId && store.sessions.find((s) => s.id === persistedTabId)) {
-      store.activeSessionId = persistedTabId;
-    } else {
-      const fallback = store.sessions.find((s) => s.status === 'running')
-        ?? store.sessions.find((s) => openSet.has(s.id));
-      if (fallback) {
-        store.activeSessionId = fallback.id;
-      }
-    }
-
-    // Only the active tab reconnects now (it's on screen). The other open tabs
-    // stay listed but don't start their agent until the user focuses them, so
-    // startup doesn't boot one agent subprocess per tab. The deferred marks are
-    // set before `restored` flips so the open-tabs persistence effect never
-    // writes a partial list.
-    for (const id of new Set(persistedOpenTabs)) {
+    // Startup opens no conversation: it lands on the picker, which lists the
+    // open tabs. None of them starts its agent until the user opens it, so
+    // startup doesn't boot one agent subprocess per tab. The deferred marks
+    // are set before `restored` flips so the open-tabs persistence effect
+    // never writes a partial list.
+    for (const id of openSet) {
       const session = store.sessions.find((s) => s.id === id);
-      if (session?.status === 'stopped' && id !== store.activeSessionId) {
-        store.deferResume(id);
-      }
+      if (session?.status === 'stopped') store.deferResume(id);
     }
-    resumeStoppedSession(store.activeSession);
 
-    // Bring back the unread flags from the previous run. The active tab's
-    // flag is cleared straight away by the focus effect below, same as if
-    // the user had just clicked it.
+    // Bring back the unread flags from the previous run.
     try {
       const unread = await window.groveBench.getUnreadSessions();
       for (const id of unread) {
@@ -176,14 +158,6 @@
     const activeId = store.activeSessionId;
     if (activeId) {
       store.clearNeedsAttention(activeId);
-    }
-  });
-
-  // Persist active tab across restarts — skip until restore completes
-  // to avoid overwriting the persisted value with null on hot reload
-  $effect(() => {
-    if (restored) {
-      window.groveBench.setActiveTab(store.activeSessionId);
     }
   });
 
@@ -290,8 +264,8 @@
   let prevActiveResumeId: string | null = null;
 
   /** Resume a stopped session, deduped against in-flight and recently-failed
-   *  resumes. Used by startup restore, the active-session auto-resume effect
-   *  and the wake-from-sleep handler (each only for the focused tab). */
+   *  resumes. Used by the active-session auto-resume effect and the
+   *  wake-from-sleep handler (each only for the focused tab). */
   function resumeStoppedSession(session: { id: string; repoPath: string; status: string } | null | undefined) {
     if (!session || session.status !== 'stopped') return;
     if (resumingIds.has(session.id) || failedResumeIds.has(session.id)) return;
@@ -393,9 +367,9 @@
 
     // After system resume (laptop wake), keep every tab that was running before
     // sleep. The main process reports which sessions died during suspend
-    // (their SDK query usually doesn't survive). Same as startup: only the
-    // focused tab reconnects now; the others stay in the Active list and
-    // reconnect when the user focuses them. (The focused session is also
+    // (their SDK query usually doesn't survive). Only the focused tab
+    // reconnects now; the others stay in the Active list and reconnect when
+    // the user focuses them, as at startup. (The focused session is also
     // covered by the auto-resume effect; resumingIds dedupes.)
     const unsubPower = window.groveBench.onPowerResume((resumeIds) => {
       for (const id of resumeIds) {

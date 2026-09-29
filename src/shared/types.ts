@@ -1138,8 +1138,6 @@ export interface GroveBenchAPI {
   saveSettings(settings: GroveBenchSettings): Promise<void>;
 
   // App state persistence
-  getActiveTab(): Promise<string | null>;
-  setActiveTab(id: string | null): void;
   getOpenTabs(): Promise<string[]>;
   setOpenTabs(ids: string[]): void;
   getCollapsedRepos(): Promise<Record<string, boolean>>;
@@ -1588,8 +1586,6 @@ export const IPC = {
   WIN_IS_MAXIMIZED: 'win:isMaximized',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
-  APP_STATE_GET_ACTIVE_TAB: 'appState:getActiveTab',
-  APP_STATE_SET_ACTIVE_TAB: 'appState:setActiveTab',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
   APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',
   APP_STATE_GET_COLLAPSED_REPOS: 'appState:getCollapsedRepos',

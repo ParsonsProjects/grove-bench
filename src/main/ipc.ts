@@ -30,7 +30,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
@@ -1609,15 +1609,6 @@ export function registerHandlers() {
   });
 
   // ─── App State ───
-
-  ipcMain.handle(IPC.APP_STATE_GET_ACTIVE_TAB, () => {
-    flushPendingSaves();
-    return loadAppState().activeTabId;
-  });
-
-  ipcMain.on(IPC.APP_STATE_SET_ACTIVE_TAB, (_event, id: string | null) => {
-    saveActiveTab(id);
-  });
 
   ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
     // Flush any debounced writes so the renderer always reads the latest state

@@ -45,6 +45,8 @@ Right-click a conversation to access:
 
 Stopping or destroying the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
 
+Grove Bench also starts on the landing screen. The conversations you had open are listed there and under **Conversations**, and none of them starts its agent until you open it.
+
 ## Bottom Controls
 
 At the bottom of the sidebar you'll find:
