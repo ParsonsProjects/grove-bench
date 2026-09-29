@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
@@ -35,6 +35,7 @@ type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
 type SDKUserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SpawnOptions = import('@anthropic-ai/claude-agent-sdk').SpawnOptions;
 type SpawnedProcess = import('@anthropic-ai/claude-agent-sdk').SpawnedProcess;
+type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').ElicitationRequest;
 
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
@@ -942,6 +943,152 @@ export function mapClaudeUsage(res: ClaudeUsageResponse | null | undefined, now 
 
 // ─── MCP config CLI helpers ───
 
+/** Server names `claude mcp add` accepts (it is stricter than Grove's own
+ *  shell-safety check, validateMcpName). */
+const CLAUDE_MCP_NAME_PATTERN = '^[A-Za-z0-9_-]+$';
+
+/** What Grove can offer for Claude Code's MCP servers, and how to word it. */
+export const CLAUDE_MCP_SUPPORT: McpSupport = {
+  controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },
+  // The CLI saves a disconnect to disabledMcpServers for the project (keyed by
+  // the main repo root, so every worktree shares it), not just this conversation.
+  disconnectHint: 'Disconnect this server in this project. New conversations here also start without it until you connect it again.',
+  config: {
+    scopes: [
+      { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
+      { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the project repository' },
+      { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
+    ],
+    namePattern: CLAUDE_MCP_NAME_PATTERN,
+    nameRule: 'Server names can only contain letters, numbers, hyphens and underscores',
+    approvalHint: "From this project's .mcp.json. Conversations won't connect it until you approve it. Only approve servers you trust: they run on your machine.",
+  },
+};
+
+/**
+ * Spot servers that `claude mcp list` shows but `claude mcp remove` can't
+ * remove, by the names the CLI gives them: `plugin:<plugin>:<server>` for a
+ * plugin's servers and `claude.ai <Name>` for claude.ai connectors.
+ */
+export function mcpServerManager(name: string): McpServerManager | undefined {
+  const plugin = name.match(/^plugin:([^:]+):./)?.[1];
+  if (plugin) {
+    return { label: `${plugin} plugin`, hint: 'To turn it off, disable or uninstall the plugin in the Plugins tab.' };
+  }
+  if (name.startsWith('claude.ai ')) {
+    return { label: 'claude.ai', hint: 'To turn it off, manage your connectors on claude.ai.' };
+  }
+  return undefined;
+}
+
+/** A short label for where a live server comes from. The CLI's `source` is
+ *  trusted over the name: sdk (a server Grove registers, e.g. its memory
+ *  tools), plugin, or a config scope such as user, project or claudeai. */
+export function claudeMcpOrigin(s: { source?: string; scope?: string }): string | undefined {
+  const origin = s.source ?? s.scope;
+  if (!origin) return undefined;
+  if (origin === 'sdk') return 'Grove Bench';
+  if (origin === 'claudeai') return 'claude.ai';
+  return origin;
+}
+
+/**
+ * The server part of an MCP tool name (`mcp__<key>__<tool>`), which is how
+ * context usage reports a tool's server. Mirrors the CLI's normalization:
+ * anything outside `[A-Za-z0-9_-]` becomes `_`, and claude.ai connector names
+ * also collapse and trim underscores.
+ */
+export function mcpToolServerKey(name: string): string {
+  const key = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return name.startsWith('claude.ai ') ? key.replace(/_+/g, '_').replace(/^_|_$/g, '') : key;
+}
+
+/**
+ * Sum context usage's per-tool token counts by server. Tools the CLI defers
+ * until the agent searches for them (`isLoaded: false`) don't sit in the
+ * context window, so they count separately. Keys that match no known server
+ * keep the normalized key as the name.
+ */
+export function mcpContextCostByServer(
+  tools: ReadonlyArray<{ serverName: string; tokens: number; isLoaded?: boolean }>,
+  serverNames: readonly string[],
+): McpServerContextCost[] {
+  const nameByKey = new Map(serverNames.map((n) => [mcpToolServerKey(n), n]));
+  const costs = new Map<string, McpServerContextCost>();
+  for (const tool of tools) {
+    const serverName = nameByKey.get(tool.serverName) ?? tool.serverName;
+    const cost = costs.get(serverName) ?? { serverName, tokens: 0, deferredTokens: 0 };
+    if (tool.isLoaded === false) cost.deferredTokens += tool.tokens;
+    else cost.tokens += tool.tokens;
+    costs.set(serverName, cost);
+  }
+  return [...costs.values()];
+}
+
+/** Map the SDK's elicitation request to the neutral shape. The SDK leaves
+ *  `mode` unset for plain form requests. */
+export function toMcpElicitationRequest(r: SdkElicitationRequest): McpElicitationRequest {
+  return {
+    serverName: r.serverName,
+    message: r.message,
+    mode: r.mode === 'url' ? 'url' : 'form',
+    ...(r.url ? { url: r.url } : {}),
+    ...(r.requestedSchema ? { requestedSchema: r.requestedSchema } : {}),
+    ...(r.title ? { title: r.title } : {}),
+  };
+}
+
+/** Settings keys that record which .mcp.json servers the user approved or
+ *  rejected (the CLI's approval prompt writes them to settings.local.json). */
+const MCPJSON_APPROVAL_KEYS = ['enabledMcpjsonServers', 'disabledMcpjsonServers', 'enableAllProjectMcpServers'] as const;
+
+/** The .mcp.json approval keys present in a settings object. */
+export function mcpjsonApprovalsFrom(settings: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of MCPJSON_APPROVAL_KEYS) {
+    if (settings[key] !== undefined) out[key] = settings[key];
+  }
+  return out;
+}
+
+/** Settings with `name` approved: added to enabledMcpjsonServers and taken
+ *  out of disabledMcpjsonServers, as the CLI's own prompt does. */
+export function withMcpjsonApproval(settings: Record<string, unknown>, name: string): Record<string, unknown> {
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  const enabled = list(settings.enabledMcpjsonServers);
+  const disabled = list(settings.disabledMcpjsonServers).filter((n) => n !== name);
+  const next: Record<string, unknown> = {
+    ...settings,
+    enabledMcpjsonServers: enabled.includes(name) ? enabled : [...enabled, name],
+  };
+  if (disabled.length > 0) next.disabledMcpjsonServers = disabled;
+  else delete next.disabledMcpjsonServers;
+  return next;
+}
+
+/** Read a JSON settings file. A missing file reads as `{}`; one that isn't a
+ *  JSON object throws, so callers don't overwrite it. */
+async function readSettingsFile(file: string): Promise<Record<string, unknown>> {
+  const fs = await import('node:fs/promises');
+  let text: string;
+  try {
+    text = await fs.readFile(file, 'utf8');
+  } catch (e: any) {
+    if (e?.code === 'ENOENT') return {};
+    throw e;
+  }
+  let parsed: unknown;
+  try {
+    parsed = text.trim() ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Could not read ${file}: it isn't valid JSON`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Could not read ${file}: expected a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 /** Names the CLI accepts and that are safe to pass through a shell. */
 export function validateMcpName(name: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) {
@@ -989,14 +1136,21 @@ export function parseMcpListOutput(stdout: string): McpConfiguredServer[] {
       target = target.slice(0, -transportMatch[0].length);
     }
 
+    // Unapproved .mcp.json servers: "⏸ Pending approval (run `claude` to
+    // approve)" and "✘ Rejected (see disabledMcpjsonServers in settings)".
+    // Check these first (they also contain "pending" and "disabled"), and
+    // only as the label itself, after its symbol, not inside an error text.
     const status: McpConfiguredServer['status'] =
-      statusText.includes('connected') && !statusText.includes('not connected') ? 'connected'
+      /^\S*\s*pending approval\b/.test(statusText) ? 'needs-approval'
+        : /^\S*\s*rejected\b/.test(statusText) ? 'rejected'
+        : statusText.includes('connected') && !statusText.includes('not connected') ? 'connected'
         : statusText.includes('auth') ? 'needs-auth'
         : statusText.includes('pending') ? 'pending'
         : statusText.includes('disabled') ? 'disabled'
         : 'failed';
 
-    servers.push({ name, target, ...(transport ? { transport } : {}), status });
+    const managedBy = mcpServerManager(name);
+    servers.push({ name, target, ...(transport ? { transport } : {}), status, ...(managedBy ? { managedBy } : {}) });
   }
   return servers;
 }
@@ -1075,13 +1229,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     label: 'Anthropic API key',
     helpUrl: 'https://platform.claude.com/',
   };
+  readonly mcp = CLAUDE_MCP_SUPPORT;
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
     resume: true,
     modelSwitching: true,
     thinking: true,
-    mcpControl: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1410,6 +1564,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
           : {}),
         canUseTool: canUseTool as any,
+        // Without a handler the SDK declines every elicitation.
+        ...(config.onElicitation ? {
+          onElicitation: async (request: SdkElicitationRequest, { signal }: { signal: AbortSignal }) => {
+            const { action, content } = await config.onElicitation!(toMcpElicitationRequest(request), signal);
+            return { action, ...(action === 'accept' && content ? { content } : {}) };
+          },
+        } : {}),
         spawnClaudeCodeProcess: (o: SpawnOptions) => {
           agentProcess = spawnClaudeCodeProcess(o, (data) => logger.debug(`[ClaudeCodeAdapter] SDK stderr: ${data}`));
           return agentProcess;
@@ -1569,8 +1730,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           status: s.status,
           ...(s.error ? { error: s.error } : {}),
           ...(s.scope ? { scope: s.scope } : {}),
-          ...(s.tools ? { toolCount: s.tools.length } : {}),
+          ...(claudeMcpOrigin(s) ? { origin: claudeMcpOrigin(s) } : {}),
+          ...(s.tools ? {
+            toolCount: s.tools.length,
+            tools: s.tools.map((t) => ({
+              name: t.name,
+              ...(t.description ? { description: t.description } : {}),
+              ...(t.annotations?.readOnly ? { readOnly: true } : {}),
+              ...(t.annotations?.destructive ? { destructive: true } : {}),
+            })),
+          } : {}),
         }));
+      },
+
+      async getMcpContextCost(): Promise<McpServerContextCost[]> {
+        // 'summary' estimates locally instead of calling the token-count API
+        // for every category; close enough for a per-server figure.
+        const [usage, statuses] = await Promise.all([
+          q.getContextUsage({ detail: 'summary' }),
+          q.mcpServerStatus(),
+        ]);
+        return mcpContextCostByServer(usage.mcpTools ?? [], statuses.map((s) => s.name));
       },
 
       async reconnectMcpServer(serverName: string) {
@@ -1634,6 +1814,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async removeConfiguredMcpServer(name: string, scope?: McpConfigScope, cwd?: string): Promise<void> {
+    const managedBy = mcpServerManager(name);
+    if (managedBy) {
+      throw new Error(`${name} can't be removed from Grove Bench (${managedBy.label}). ${managedBy.hint}`);
+    }
     validateMcpName(name);
     const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
     await execFileAsync('claude', args, {
@@ -1740,10 +1924,17 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   // ─── Worktree configuration ───
 
-  async generateWorktreeSettings(wtPath: string): Promise<void> {
+  async generateWorktreeSettings(wtPath: string, repoPath?: string): Promise<void> {
     const fs = await import('node:fs/promises');
     const claudeDir = path.join(wtPath, '.claude');
     const settingsPath = path.join(claudeDir, 'settings.local.json');
+
+    // The worktree gets its own settings.local.json, so carry over the
+    // project's .mcp.json approvals or its servers stay pending in every
+    // conversation (an SDK session can't show the CLI's approval prompt).
+    const approvals = repoPath
+      ? mcpjsonApprovalsFrom(await readSettingsFile(path.join(repoPath, '.claude', 'settings.local.json')).catch(() => ({})))
+      : {};
 
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(
@@ -1757,10 +1948,24 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             commit: '',
             pr: '',
           },
+          ...approvals,
         },
         null,
         2
       )
     );
+  }
+
+  async approveProjectMcpServer(name: string, dirs: string[]): Promise<void> {
+    if (!name) throw new Error('Server name is required');
+    const fs = await import('node:fs/promises');
+    for (const dir of dirs) {
+      const claudeDir = path.join(dir, '.claude');
+      const settingsPath = path.join(claudeDir, 'settings.local.json');
+      // A file we can't parse is the user's to fix; overwriting it would lose their settings.
+      const current = await readSettingsFile(settingsPath);
+      await fs.mkdir(claudeDir, { recursive: true });
+      await fs.writeFile(settingsPath, JSON.stringify(withMcpjsonApproval(current, name), null, 2));
+    }
   }
 }

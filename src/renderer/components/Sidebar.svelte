@@ -22,7 +22,7 @@
   import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
-  import { sortSessions, defaultDirFor, DEFAULT_SORT } from '../lib/session-sort.js';
+  import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageState, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
@@ -38,9 +38,6 @@
   // there's no flash of expanded content.
   let collapsedRepos = $state<Record<string, boolean>>({});
 
-  // Session ordering (name/age, asc/desc), also persisted via app-state.
-  let sort = $state<SessionSortState>({ ...DEFAULT_SORT });
-
   // User-resizable sidebar width (px), persisted via app-state.
   const SIDEBAR_MIN = 240;
   const SIDEBAR_MAX = 480;
@@ -54,7 +51,9 @@
 
   onMount(async () => {
     let savedWidth: number | null;
-    [collapsedRepos, sort, savedWidth] = await Promise.all([
+    // Session ordering (name/age, asc/desc) lives in the store so the landing
+    // shares it; persisted via app-state.
+    [collapsedRepos, store.sessionSort, savedWidth] = await Promise.all([
       window.groveBench.getCollapsedRepos(),
       window.groveBench.getSessionSort(),
       window.groveBench.getSidebarWidth(),
@@ -120,10 +119,11 @@
   /** Click a sort key: flip its direction if already active, else switch to it
    *  with that key's natural default direction. */
   function setSort(key: SessionSortState['key']) {
-    sort = key === sort.key
+    const sort = store.sessionSort;
+    store.sessionSort = key === sort.key
       ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
       : { key, dir: defaultDirFor(key) };
-    window.groveBench.setSessionSort($state.snapshot(sort));
+    window.groveBench.setSessionSort($state.snapshot(store.sessionSort));
   }
 
   let contextMenu = $state<{ x: number; y: number; sessionId: string } | null>(null);
@@ -479,15 +479,6 @@
 
   let triageFilter = $state<TriageFilter>('all');
 
-  /** "Show completed" is a per-viewer convenience, so it lives in localStorage. */
-  const SHOW_COMPLETED_KEY = 'grove-bench:sidebar-show-completed';
-  let showCompleted = $state(false);
-  try { showCompleted = localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; } catch { /* storage unavailable */ }
-  function toggleShowCompleted() {
-    showCompleted = !showCompleted;
-    try { localStorage.setItem(SHOW_COMPLETED_KEY, showCompleted ? '1' : '0'); } catch { /* ignore */ }
-  }
-
   const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
     'needs-you': 'bg-amber-500',
     working: 'bg-primary',
@@ -503,7 +494,7 @@
   }
 
   function notHiddenCompleted(session: { completedAt?: number | null }): boolean {
-    return showCompleted || !session.completedAt;
+    return store.showCompleted || !session.completedAt;
   }
 
   /** Every session the sidebar considers (completed ones only when asked). */
@@ -517,9 +508,9 @@
   }
 
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
-   *  active sort. This is the always-visible "working set". */
+   *  active sort. This is the always-visible "working set"; the landing's picker shows the same list. */
   let activeSessions = $derived(
-    sortSessions(store.sessions.filter((s) => store.isOpenTab(s) && rowVisible(s)), sort),
+    store.openConversations.filter((s) => matchesTriageFilter(triageFilter, triageOf(s))),
   );
 
   let stoppedCount = $derived(visibleSessions.filter((s) => !store.isOpenTab(s)).length);
@@ -542,7 +533,7 @@
       (groups[key] ??= []).push(s);
     }
     return Object.entries(groups).map(
-      ([branch, sessions]): [string, typeof store.sessions] => [branch, sortSessions(sessions, sort)],
+      ([branch, sessions]): [string, typeof store.sessions] => [branch, sortSessions(sessions, store.sessionSort)],
     );
   }
 </script>
@@ -662,6 +653,7 @@
 
   <!-- Sort toggle, shared by the Conversations list and the Projects tree -->
   {#snippet sortButton(key: SessionSortState['key'], label: string)}
+    {@const sort = store.sessionSort}
     {@const active = sort.key === key}
     <button
       type="button"
@@ -741,13 +733,13 @@
         {#if store.completedCount > 0}
           <button
             type="button"
-            onclick={toggleShowCompleted}
-            aria-pressed={showCompleted}
+            onclick={() => store.toggleShowCompleted()}
+            aria-pressed={store.showCompleted}
             class="flex items-center gap-1 hover:text-foreground transition-colors"
-            title="{showCompleted ? 'Hide' : 'Show'} conversations you marked completed"
+            title="{store.showCompleted ? 'Hide' : 'Show'} conversations you marked completed"
           >
             <span class="w-2.5 h-2.5 border border-current flex items-center justify-center">
-              {#if showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
+              {#if store.showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
             </span>
             Show completed ({store.completedCount})
           </button>

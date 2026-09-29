@@ -28,6 +28,9 @@ Common tool types:
 ### Permission Requests
 When the agent wants to perform an action that requires approval, a permission block appears with **Allow**, **Always Allow**, and **Deny** buttons. For file edits, a diff preview is shown so you can review changes before approving.
 
+### MCP Input Requests
+An MCP server can ask you for input while the agent uses one of its tools. A block appears with the server's question. It is either a short form (fill it in and click **Submit**, or **Decline**) or a page to open in your browser, for example to sign in (**Open page**, or **Decline**). Your answers go to that server, so don't type passwords or API keys into a form. If the agent stops or the server gives up waiting, the block closes as cancelled.
+
 ### Thinking Blocks
 Extended thinking from the agent appears as expandable sections. Click to see the agent's reasoning process.
 

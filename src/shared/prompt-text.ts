@@ -18,17 +18,47 @@ export function extractAtRefs(text: string): string[] {
   return refs;
 }
 
-/** One leading content block; the path is captured, the content skipped. */
-const BLOCK_RE = /^<(file|folder) path="([^"]*)">\n[\s\S]*?\n<\/\1>\n*/;
+/**
+ * Wrap file or folder content in the block the agent receives. `length` lets
+ * parseSentPrompt skip exactly the content, which may itself contain a
+ * `</file>` line (an XML file, or this very module).
+ */
+export function buildContentBlock(tag: 'file' | 'folder', path: string, content: string): string {
+  return `<${tag} path="${path}" length="${content.length}">\n${content}\n</${tag}>`;
+}
+
+/** A leading block's opening tag. `length` is absent in messages sent before
+ *  it was added. */
+const BLOCK_OPEN_RE = /^<(file|folder) path="([^"]*)"(?: length="(\d+)")?>\n/;
+/** Fallback for blocks without a usable `length`: ends at the first closing tag. */
+const FIRST_CLOSE_BLOCK_RE = /^<(file|folder) path="([^"]*)"(?: length="\d+")?>\n[\s\S]*?\n<\/\1>\n*/;
+
+/** The length of the leading content block of `text`, and its path. */
+function leadingBlock(text: string): { path: string; end: number } | null {
+  const open = BLOCK_OPEN_RE.exec(text);
+  if (!open) return null;
+  if (open[3] !== undefined) {
+    const close = `\n</${open[1]}>`;
+    const contentEnd = open[0].length + Number(open[3]);
+    if (text.startsWith(close, contentEnd)) {
+      let end = contentEnd + close.length;
+      while (text[end] === '\n') end++;
+      return { path: open[2], end };
+    }
+  }
+  // No length, or it doesn't line up: end at the first closing tag
+  const block = FIRST_CLOSE_BLOCK_RE.exec(text);
+  return block ? { path: block[2], end: block[0].length } : null;
+}
 
 /** Split a sent message into the paths of its leading content blocks (in
  *  order) and the typed text after them. */
 export function parseSentPrompt(sent: string): { paths: string[]; typed: string } {
   const paths: string[] = [];
   let typed = sent;
-  for (let m = BLOCK_RE.exec(typed); m; m = BLOCK_RE.exec(typed)) {
-    paths.push(m[2]);
-    typed = typed.slice(m[0].length);
+  for (let b = leadingBlock(typed); b; b = leadingBlock(typed)) {
+    paths.push(b.path);
+    typed = typed.slice(b.end);
   }
   return { paths, typed };
 }

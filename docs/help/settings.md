@@ -33,7 +33,7 @@ These apply to every agent:
 ## General
 
 - **Default Base Branch** — The branch used as the base when creating new worktrees (e.g. `main`)
-- **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, and while a conversation starts up again, where its agent walks through the grove. When you open a sleeping or stopped conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when stopped (grey) or sleeping (dim green). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
+- **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, and while a conversation starts up again, where its agent walks through the grove. A pixel grove also grows along the top of the status bar as the conversation fills its context window. When you open a sleeping or stopped conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when stopped (grey) or sleeping (dim green). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
 - **Project Colors** — Customize the accent color for each project in the sidebar
 - **Always on top** — Keep the Grove Bench window above other windows
 - **Enable spell checking** — Turn spell checking in the prompt editor on or off
@@ -45,14 +45,19 @@ These apply to every agent:
 
 ## MCP
 
-View the MCP servers configured in Claude Code and add new ones without leaving the app:
+View the MCP servers configured for an agent and add new ones without leaving the app:
 
+- **Agent** picks whose servers to list, when more than one agent can manage MCP servers. It starts with the open conversation's agent
+- **Project** picks which project's servers to list. Project and local servers belong to one project, so the list starts with the open conversation's project. Pick **None** to see only your user servers
 - The list shows each configured server with its live health status (the check can take a few seconds)
+- Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off in the Plugins tab, and claude.ai connectors on claude.ai
+- With agents that approve project servers before connecting them (Claude Agent does, for `.mcp.json`), an unapproved server shows **needs approval**. Conversations don't connect it until you click **Approve**, which approves it for the project and its conversations. Only approve servers you trust: they run on your machine
 - **Add MCP Server** — Register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
   - **User** — available in all projects on this machine
   - **Project** — shared with your team via `.mcp.json` in the chosen project's repository
   - **Local** — only this machine, only the chosen project
 - stdio servers accept arguments and environment variables; HTTP/SSE servers accept request headers
+- **Paste JSON** adds servers from a config you copied, such as a server's README or Claude Desktop's `mcpServers` block. It shows what it found before you add it
 - New and restarted conversations pick up added servers automatically; running conversations must be restarted
 
 ## Plugins

@@ -70,7 +70,16 @@ When thinking is active, a purple pulsing dot appears while the agent reasons.
 
 ## MCP Servers
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. Click it to see each server's live status and tool count, and to **Reconnect**, **Disconnect**, or re-**Connect** individual servers without restarting the conversation. New servers are added from Settings → MCP.
+When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the conversation. The popover only offers the controls the conversation's agent supports:
+
+- Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
+- Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
+- An estimate of how much of the context window the server's tool definitions use, so you can see which servers are worth disconnecting. "loaded on demand" means the agent only loads the tools when it searches for them
+- A failed server shows its error, with a button to copy it
+- **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
+- **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this conversation, so new conversations in the project also start without it
+
+New servers are added from Settings → MCP.
 
 Each server in the popover shows a status dot:
 
@@ -94,6 +103,8 @@ A colored bar shows how much of the agent's context window has been used:
 | 85–100% | Red | Nearly full — the agent may start compacting older context |
 
 A blue segment within the bar represents cached/reusable context.
+
+With **Show grove characters** on (Settings > General), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 
 ## Rate Limiting
 

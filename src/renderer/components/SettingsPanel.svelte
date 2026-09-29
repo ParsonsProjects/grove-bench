@@ -19,6 +19,7 @@
   import type { CavemanMode, McpConfigScope, ControlDescriptor, ControlOption } from '../../shared/types.js';
   import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../shared/types.js';
   import Fuse from 'fuse.js';
+  import { parseMcpJson } from '$lib/mcp-json.js';
 
   interface Props {
     open: boolean;
@@ -70,11 +71,15 @@
 
   // ─── MCP servers tab ───
 
-  // `claude mcp list` health-checks every server (slow), so load lazily on
+  // Listing health-checks every server (slow, e.g. `claude mcp list`), so load lazily on
   // first visit to the MCP tab rather than on every settings open.
   $effect(() => {
     if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
-      mcpConfigStore.refresh();
+      // Start with the open conversation's agent (if it can edit MCP config)
+      // and project: project and local servers only list for one project.
+      const active = store.activeSession;
+      mcpConfigStore.adapterType ??= mcpAgents.find((a) => a.id === active?.agentType)?.id;
+      mcpConfigStore.showProject(mcpConfigStore.cwd ?? active?.repoPath ?? store.repos[0]);
     }
     // Once per open. Keying this on `mcpRepos.length === 0` looped when there
     // were no projects: each empty result is a new array, which re-ran the
@@ -97,6 +102,33 @@
   let mcpScope = $state<McpConfigScope>('user');
   let mcpRepo = $state('');
   let mcpAdded = $state<string | null>(null);
+  /** Add form mode: fill in fields, or paste a JSON config. */
+  let mcpAddMode = $state<'form' | 'json'>('form');
+  let mcpJson = $state('');
+  /** Agents whose MCP config Grove can edit, and the one the tab shows
+   *  (undefined in the store: the default agent). */
+  let mcpAgents = $derived(agentsStore.supporting('mcpConfig'));
+  let mcpAgent = $derived(agentsStore.get(mcpConfigStore.adapterType ?? agentsStore.defaultId));
+  /** The agent's own scopes, wording and name rule for configured servers. */
+  let mcpRules = $derived(mcpAgent?.mcp?.config);
+  let mcpScopes = $derived(mcpRules?.scopes ?? DEFAULT_MCP_SCOPES);
+  let mcpJsonParsed = $derived(
+    mcpAddMode === 'json' && mcpJson.trim()
+      ? parseMcpJson(mcpJson, mcpName, mcpRules ? { pattern: mcpRules.namePattern, rule: mcpRules.nameRule } : undefined)
+      : null,
+  );
+  /** Projects to list servers for: those with conversations plus any opened this run. */
+  let mcpProjectOptions = $derived([...new Set([...mcpRepos, ...store.repos])]);
+  const MCP_NO_PROJECT = '__none__';
+
+  // Adding to a project defaults to the project the list shows.
+  $effect(() => {
+    if (mcpScope !== 'user' && !mcpRepo && mcpConfigStore.cwd) mcpRepo = mcpConfigStore.cwd;
+  });
+  // Another agent may not offer the scope that was picked.
+  $effect(() => {
+    if (!mcpScopes.some((s) => s.value === mcpScope)) mcpScope = mcpScopes[0]?.value ?? 'user';
+  });
 
   const mcpTransports: { value: 'stdio' | 'http' | 'sse'; label: string }[] = [
     { value: 'stdio', label: 'stdio (local command)' },
@@ -104,9 +136,10 @@
     { value: 'sse', label: 'SSE' },
   ];
 
-  const mcpScopes: { value: McpConfigScope; label: string; description: string }[] = [
+  /** Scopes for an agent that doesn't describe its own. */
+  const DEFAULT_MCP_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [
     { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
-    { value: 'project', label: 'Project', description: 'Shared with the team via .mcp.json in the project repository' },
+    { value: 'project', label: 'Project', description: 'Shared with the team in the project repository' },
     { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
   ];
 
@@ -114,6 +147,32 @@
     mcpName.trim() !== '' && mcpCommand.trim() !== ''
       && (mcpScope === 'user' || mcpRepo !== ''),
   );
+  const mcpCanAddJson = $derived(
+    mcpJsonParsed?.ok === true && (mcpScope === 'user' || mcpRepo !== ''),
+  );
+
+  async function addMcpJson() {
+    if (!mcpJsonParsed?.ok || !mcpCanAddJson || mcpConfigStore.actionInProgress) return;
+    const servers = mcpJsonParsed.servers;
+    const added = await mcpConfigStore.addMany(servers.map((server) => ({
+      ...server,
+      scope: mcpScope,
+      cwd: mcpScope !== 'user' ? mcpRepo : undefined,
+    })));
+    if (added.length === servers.length) {
+      mcpJson = '';
+      mcpName = '';
+    }
+    if (added.length > 0) {
+      const label = added.join(', ');
+      mcpAdded = label;
+      setTimeout(() => { if (mcpAdded === label) mcpAdded = null; }, 8000);
+    }
+  }
+
+  function mcpStatusLabel(status: string): string {
+    return status === 'needs-approval' ? 'needs approval' : status;
+  }
 
   async function addMcpServer() {
     if (!mcpCanAdd || mcpConfigStore.actionInProgress) return;
@@ -153,8 +212,8 @@
   function mcpStatusDot(status: string): string {
     return status === 'connected' ? 'bg-green-500'
       : status === 'pending' ? 'bg-yellow-400 animate-pulse'
-      : status === 'needs-auth' ? 'bg-yellow-500'
-      : status === 'disabled' ? 'bg-muted-foreground/40'
+      : status === 'needs-auth' || status === 'needs-approval' ? 'bg-yellow-500'
+      : status === 'disabled' || status === 'rejected' ? 'bg-muted-foreground/40'
       : 'bg-red-500';
   }
 
@@ -196,13 +255,14 @@
     { id: 'plugins', label: 'Plugins' },
   ];
 
-  // The MCP and Plugins tabs configure the default agent (their IPC calls
-  // don't name an agent), so they only show when that agent supports them.
-  // Until the agent list loads, they stay visible as before.
+  // The Plugins tab configures the default agent (its IPC calls don't name
+  // an agent), so it only shows when that agent supports it. The MCP tab
+  // picks its agent, so it shows when any agent can edit MCP config. Until
+  // the agent list loads, both stay visible as before.
   const defaultAgent = $derived(agentsStore.get(agentsStore.defaultId));
   const visibleTabs = $derived(tabs.filter((t) => {
     if (!defaultAgent) return true;
-    if (t.id === 'mcp') return defaultAgent.capabilities.mcpConfig ?? true;
+    if (t.id === 'mcp') return agentsStore.supporting('mcpConfig').length > 0;
     if (t.id === 'plugins') return defaultAgent.capabilities.plugins ?? true;
     return true;
   }));
@@ -864,20 +924,57 @@
         </div>
 
       {:else if tab === 'mcp'}
-        {#if featureAgentNote}
-          <p class="text-xs text-muted-foreground mb-3">{featureAgentNote}</p>
+        <!-- Each agent keeps its own MCP configuration. -->
+        {#if mcpAgents.length > 1}
+          <div class="flex items-center gap-2 mb-3">
+            <Label class="text-xs shrink-0">Agent</Label>
+            <Select.Root
+              type="single"
+              value={mcpAgent?.id ?? ''}
+              onValueChange={(v) => { if (v) mcpConfigStore.showAgent(v); }}
+            >
+              <Select.Trigger class="w-full" disabled={mcpConfigStore.loading}>
+                <span class="truncate">{mcpAgent?.displayName ?? 'Select an agent...'}</span>
+              </Select.Trigger>
+              <Select.Content>
+                {#each mcpAgents as agent (agent.id)}
+                  <Select.Item value={agent.id} label={agent.displayName} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
         {/if}
         <!-- Configured servers -->
         <div class="flex items-start justify-between mb-3">
           <div>
             <div class="text-sm font-medium text-foreground">MCP Servers</div>
             <p class="text-xs text-muted-foreground mt-0.5">
-              Servers from your Claude Code configuration. New and restarted conversations pick them up automatically.
+              Servers from {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted conversations pick them up automatically.
             </p>
           </div>
           <Button variant="ghost" size="sm" onclick={() => mcpConfigStore.refresh()} disabled={mcpConfigStore.loading} class="text-xs shrink-0">
             Refresh
           </Button>
+        </div>
+
+        <!-- Project and local servers belong to one project, so the list is for one project at a time. -->
+        <div class="flex items-center gap-2 mb-3">
+          <Label class="text-xs shrink-0">Project</Label>
+          <Select.Root
+            type="single"
+            value={mcpConfigStore.cwd ?? MCP_NO_PROJECT}
+            onValueChange={(v) => { if (v) mcpConfigStore.showProject(v === MCP_NO_PROJECT ? undefined : v); }}
+          >
+            <Select.Trigger class="w-full" disabled={mcpConfigStore.loading}>
+              <span class="truncate">{mcpConfigStore.cwd ?? 'None (user servers only)'}</span>
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value={MCP_NO_PROJECT} label="None (user servers only)" />
+              {#each mcpProjectOptions as repo (repo)}
+                <Select.Item value={repo} label={repo} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
 
         {#if mcpConfigStore.loading}
@@ -892,23 +989,54 @@
         {:else}
           <div class="flex flex-col gap-1.5 mb-4">
             {#each mcpConfigStore.servers as server (server.name)}
+              {@const unapproved = server.status === 'needs-approval' || server.status === 'rejected'}
               <div class="flex items-center gap-2.5 border border-border/50 px-2.5 py-2">
                 <span class="w-1.5 h-1.5 shrink-0 {mcpStatusDot(server.status)}"></span>
                 <div class="flex-1 min-w-0">
                   <div class="font-mono text-xs text-foreground truncate">{server.name}</div>
                   <div class="text-[10px] text-muted-foreground/60 truncate" title={server.target}>
-                    {server.target}{server.transport ? ` · ${server.transport}` : ''} · {server.status}
+                    {server.target}{server.transport ? ` · ${server.transport}` : ''} · {mcpStatusLabel(server.status)}
                   </div>
+                  {#if server.managedBy}
+                    <div class="text-[10px] text-muted-foreground/60">{server.managedBy.hint}</div>
+                  {:else if server.status === 'needs-approval'}
+                    <div class="text-[10px] text-muted-foreground/60">
+                      {mcpRules?.approvalHint ?? "Conversations won't connect it until it is approved."}
+                    </div>
+                  {:else if server.status === 'rejected'}
+                    <div class="text-[10px] text-muted-foreground/60">
+                      Turned down for this project. Approve it to let conversations connect it.
+                    </div>
+                  {/if}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="text-destructive hover:bg-destructive/10 text-xs shrink-0"
-                  disabled={mcpConfigStore.actionInProgress !== null}
-                  onclick={() => mcpConfigStore.remove(server.name)}
-                >
-                  {mcpConfigStore.actionInProgress === server.name ? 'Removing...' : 'Remove'}
-                </Button>
+                {#if server.managedBy}
+                  <!-- Owned by something else (e.g. a plugin): the agent can't remove it -->
+                  <span class="text-[10px] text-muted-foreground border border-border/50 px-1.5 py-0.5 shrink-0">
+                    {server.managedBy.label}
+                  </span>
+                {:else}
+                  {#if unapproved && mcpConfigStore.cwd && mcpRules?.approvalHint}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="text-xs shrink-0"
+                      disabled={mcpConfigStore.actionInProgress !== null}
+                      onclick={() => mcpConfigStore.approve(server.name)}
+                      title="Approve for this project and its conversations"
+                    >
+                      {mcpConfigStore.actionInProgress === server.name && mcpConfigStore.actionKind === 'approve' ? 'Approving...' : 'Approve'}
+                    </Button>
+                  {/if}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="text-destructive hover:bg-destructive/10 text-xs shrink-0"
+                    disabled={mcpConfigStore.actionInProgress !== null}
+                    onclick={() => mcpConfigStore.remove(server.name)}
+                  >
+                    {mcpConfigStore.actionInProgress === server.name && mcpConfigStore.actionKind === 'remove' ? 'Removing...' : 'Remove'}
+                  </Button>
+                {/if}
               </div>
             {/each}
           </div>
@@ -918,8 +1046,21 @@
 
         <!-- Add a new server -->
         <div class="mt-3 space-y-3">
-          <div class="text-sm font-medium text-foreground">Add MCP Server</div>
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium text-foreground">Add MCP Server</div>
+            <div class="flex items-center gap-1 text-xs">
+              <button
+                onclick={() => (mcpAddMode = 'form')}
+                class="px-2 py-0.5 border transition-colors {mcpAddMode === 'form' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}"
+              >Form</button>
+              <button
+                onclick={() => (mcpAddMode = 'json')}
+                class="px-2 py-0.5 border transition-colors {mcpAddMode === 'json' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}"
+              >Paste JSON</button>
+            </div>
+          </div>
 
+          {#if mcpAddMode === 'form'}
           <div class="grid grid-cols-2 gap-3">
             <div>
               <Label for="mcp-name" class="mb-1 block">Name</Label>
@@ -988,6 +1129,48 @@
               ></textarea>
             </div>
           {/if}
+          {:else}
+            <div>
+              <Label for="mcp-json" class="mb-1 block">JSON config</Label>
+              <textarea
+                id="mcp-json"
+                bind:value={mcpJson}
+                placeholder={'{\n  "mcpServers": {\n    "my-server": { "command": "npx", "args": ["-y", "my-mcp-server"] }\n  }\n}'}
+                spellcheck="false"
+                class="w-full bg-background border border-input px-3 py-2 text-xs min-h-[120px] max-h-[280px] resize-y font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+              ></textarea>
+              <p class="text-xs text-muted-foreground mt-1">
+                Paste the config from a server's README, Claude Desktop or another client. A config without a name uses the Name below.
+              </p>
+            </div>
+            {#if mcpJsonParsed && !mcpJsonParsed.ok}
+              <p class="text-xs text-destructive">{mcpJsonParsed.error}</p>
+              {#if mcpJsonParsed.needsName}
+                <div>
+                  <Label for="mcp-json-name" class="mb-1 block">Name</Label>
+                  <input
+                    id="mcp-json-name"
+                    type="text"
+                    bind:value={mcpName}
+                    placeholder="my-server"
+                    class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+              {/if}
+            {:else if mcpJsonParsed?.ok}
+              <div class="flex flex-col gap-1">
+                {#each mcpJsonParsed.servers as server (server.name)}
+                  <div class="text-xs border border-border/50 px-2.5 py-1.5 min-w-0">
+                    <span class="font-mono text-foreground">{server.name}</span>
+                    <span class="text-muted-foreground/70"> · {server.transport} · </span>
+                    <span class="font-mono text-muted-foreground truncate" title={[server.commandOrUrl, ...(server.args ?? [])].join(' ')}>{[server.commandOrUrl, ...(server.args ?? [])].join(' ')}</span>
+                    {#if server.env}<span class="text-muted-foreground/70"> · {Object.keys(server.env).length} env</span>{/if}
+                    {#if server.headers}<span class="text-muted-foreground/70"> · {server.headers.length} header{server.headers.length === 1 ? '' : 's'}</span>{/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          {/if}
 
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -1024,16 +1207,27 @@
           </div>
 
           <div class="flex items-center gap-3">
-            <Button
-              size="sm"
-              onclick={addMcpServer}
-              disabled={!mcpCanAdd || mcpConfigStore.actionInProgress !== null}
-            >
-              {mcpConfigStore.actionInProgress && mcpConfigStore.actionInProgress === mcpName.trim() ? 'Adding...' : 'Add Server'}
-            </Button>
+            {#if mcpAddMode === 'form'}
+              <Button
+                size="sm"
+                onclick={addMcpServer}
+                disabled={!mcpCanAdd || mcpConfigStore.actionInProgress !== null}
+              >
+                {mcpConfigStore.actionKind === 'add' && mcpConfigStore.actionInProgress === mcpName.trim() ? 'Adding...' : 'Add Server'}
+              </Button>
+            {:else}
+              {@const count = mcpJsonParsed?.ok ? mcpJsonParsed.servers.length : 0}
+              <Button
+                size="sm"
+                onclick={addMcpJson}
+                disabled={!mcpCanAddJson || mcpConfigStore.actionInProgress !== null}
+              >
+                {mcpConfigStore.actionKind === 'add' ? 'Adding...' : count > 1 ? `Add ${count} Servers` : 'Add Server'}
+              </Button>
+            {/if}
             {#if mcpAdded}
               <span class="text-xs text-green-400">
-                Added "{mcpAdded}" — restart conversations to connect it.
+                Added {mcpAdded}. Restart conversations to connect.
               </span>
             {/if}
           </div>
