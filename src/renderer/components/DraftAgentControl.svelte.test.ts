@@ -63,6 +63,14 @@ describe('DraftAgentControl', () => {
     expect(dialog).toHaveTextContent('Ask: Check with you first');
   });
 
+  it('forgets the pointed-at option when the popover closes', async () => {
+    await openPopover();
+    await fireEvent.mouseEnter(screen.getByRole('button', { name: 'Plan' }));
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.click(screen.getByTitle(/Agent settings/));
+    expect(screen.getByRole('dialog', { name: 'Agent settings' })).toHaveTextContent('Ask: Check with you first');
+  });
+
   it('lets any agent be picked, then shows that agent\'s models', async () => {
     await openPopover();
     await fireEvent.click(screen.getByRole('button', { name: 'Codex' }));

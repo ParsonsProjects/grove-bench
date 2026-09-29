@@ -866,6 +866,28 @@ describe('ingestEvent — permission_resolved', () => {
     expect(perm).toMatchObject({ resolved: true, decision: 'deny', timedOut: true });
   });
 
+  it('marks a question closed by the timeout as timed out, with no answer', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }] },
+      toolUseId: 'tu-qt',
+      requestId: 'req-qt',
+      toolCategory: 'question',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-qt',
+      toolUseId: 'tu-qt',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question' && m.requestId === 'req-qt') as any;
+    expect(q).toMatchObject({ resolved: true, timedOut: true });
+    expect(q.response).toBeUndefined();
+  });
+
   it('stores the answer from a replayed question resolution', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',

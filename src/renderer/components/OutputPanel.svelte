@@ -413,6 +413,7 @@
           resolved={msg.resolved}
           response={msg.response}
           selectedLabels={msg.selectedLabels}
+          timedOut={msg.timedOut}
         />
 
       {:else if msg.kind === 'elicitation'}

@@ -13,8 +13,10 @@
   import { controlHint } from '../lib/control-hint.js';
 
   let open = $state(false);
-  /** Option under the pointer or focus, explained in the footer. */
+  /** Option under the pointer or focus, explained in the footer. Removing
+   *  the popover fires no mouseleave, so closing it clears this too. */
   let hovered = $state<ControlOption | null>(null);
+  $effect(() => { if (!open) hovered = null; });
   let rootRef = $state<HTMLDivElement | null>(null);
 
   const draft = $derived(draftStore.draft);

@@ -17,6 +17,17 @@ window.addEventListener('unhandledrejection', (e) => {
 const now = Date.now();
 const min = 60_000;
 
+// The Claude Code adapter's mode options (PERMISSION_MODE_OPTIONS in
+// src/main/adapters/claude-code.ts), for both the draft and the live
+// conversation, so the two don't drift apart.
+const CLAUDE_MODE_OPTIONS = [
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
+  { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
+  { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+];
+
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
 
@@ -376,11 +387,7 @@ const api: Record<string, unknown> = {
     ] },
   ] : [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-      { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
-      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-      { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
-      { value: 'auto', label: 'Auto', tone: 'highlight' },
-      { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+      ...CLAUDE_MODE_OPTIONS,
     ] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [
       { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
@@ -418,11 +425,7 @@ const api: Record<string, unknown> = {
   getControls: async () => ({
     descriptors: [
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-        { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
-        { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-        { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
-        { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
-        { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+        ...CLAUDE_MODE_OPTIONS,
       ] },
       { id: 'effort', label: 'Effort', default: 'medium', options: [
         { value: 'low', label: 'Low', tone: 'muted' }, { value: 'medium', label: 'Medium', tone: 'accent-soft' },

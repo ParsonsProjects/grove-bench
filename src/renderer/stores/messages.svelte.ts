@@ -122,6 +122,8 @@ export interface ChatQuestionMessage {
   response?: string;
   /** Exact labels that were selected, for accurate resolved-state rendering */
   selectedLabels?: string[];
+  /** Closed because nobody answered in time. */
+  timedOut?: boolean;
 }
 
 /** An MCP server asking the user for input (a form or a page to open). */
@@ -1632,7 +1634,11 @@ class MessageStore {
         changed = true;
         // On replay the optimistic resolveQuestion() update never ran, so the
         // reply only exists on the event.
-        return { ...m, resolved: true as const, response: m.response ?? event.message };
+        return {
+          ...m,
+          resolved: true as const,
+          ...(event.reason === 'timeout' ? { timedOut: true } : { response: m.response ?? event.message }),
+        };
       }
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
         changed = true;
