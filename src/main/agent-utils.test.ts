@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
+import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
@@ -217,6 +217,89 @@ describe('splitShellCommand()', () => {
   });
 });
 
+describe('splitPowerShellCommand()', () => {
+  it('splits on every separator Claude Code recognizes for PowerShell', () => {
+    expect(splitPowerShellCommand('a; b | c && d || e\nf\r\ng\rh')).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+
+  it('keeps quoted operators inside their command', () => {
+    expect(splitPowerShellCommand(`git commit -m "fix: a; b && c" | Out-Null; echo 'x|y'`))
+      .toEqual(['git commit -m "fix: a; b && c"', 'Out-Null', "echo 'x|y'"]);
+    expect(splitPowerShellCommand('git commit -m "feat(parser): x"')).toEqual(['git commit -m "feat(parser): x"']);
+    expect(splitPowerShellCommand("echo 'it''s; fine'; ls")).toEqual(["echo 'it''s; fine'", 'ls']);
+    expect(splitPowerShellCommand('echo "say ""hi""; ok"')).toEqual(['echo "say ""hi""; ok"']);
+    expect(splitPowerShellCommand("Get-ChildItem -Filter '*.ts' -Recurse")).toEqual(["Get-ChildItem -Filter '*.ts' -Recurse"]);
+  });
+
+  it('treats a backslash as a plain character, not an escape', () => {
+    expect(splitPowerShellCommand('echo a\\; Remove-Item -Recurse ~')).toEqual(['echo a\\', 'Remove-Item -Recurse ~']);
+    expect(splitPowerShellCommand('echo "a\\"; Remove-Item ~; echo \\"b"'))
+      .toEqual(['echo "a\\"', 'Remove-Item ~', 'echo \\"b"']);
+  });
+
+  it('does not treat stream redirects as separators', () => {
+    expect(splitPowerShellCommand('npm test 2>&1 | Out-File log.txt')).toEqual(['npm test 2>&1', 'Out-File log.txt']);
+    expect(splitPowerShellCommand('npm test *>&1 >> log.txt')).toEqual(['npm test *>&1 >> log.txt']);
+  });
+
+  it('accepts a trailing ; and a line break after && or |', () => {
+    expect(splitPowerShellCommand('npm test;')).toEqual(['npm test']);
+    expect(splitPowerShellCommand('npm test &&\nnpm run lint')).toEqual(['npm test', 'npm run lint']);
+    expect(splitPowerShellCommand('Get-ChildItem |\r\nSelect-Object Name')).toEqual(['Get-ChildItem', 'Select-Object Name']);
+  });
+
+  it('returns null for anything it cannot split safely', () => {
+    for (const command of [
+      // Subexpressions, grouping, script blocks, hashtables, braced variables.
+      'npm run $(echo build)',
+      'echo "$(Remove-Item -Recurse ~)"',
+      'echo (Remove-Item -Recurse ~)',
+      'echo @(Remove-Item ~)',
+      'Get-ChildItem | ForEach-Object { Remove-Item $_ }',
+      'echo @{ a = 1 }',
+      'echo ${env:PATH}',
+      // Here-strings.
+      "echo @'\nx; Remove-Item ~\n'@",
+      'echo @"\nx\n"@',
+      // Backtick escapes and line continuations.
+      'echo `; Remove-Item ~',
+      'npm test `\n; Remove-Item ~',
+      // The call operator and background jobs.
+      '& $cmd',
+      '& "C:\\tools\\x.exe"',
+      'npm run dev &',
+      'npm test |& tee x',
+      'npm test 2>&2',
+      // Comments and the stop-parsing token, including with typographic dashes.
+      'npm test # comment',
+      'echo hi <# block #>',
+      'cmd /c --% echo a ; Remove-Item ~',
+      'cmd /c \u2014\u2013% echo a ; Remove-Item ~',
+      // PowerShell reads typographic quotes as quotes, so \u2018a' is a whole string there.
+      "echo \u2018a' ; Remove-Item -Recurse ~ ; echo 'b\u2019",
+      'echo \u201ca\u201d; ls',
+      // A quote inside a word with a dash in it, where PowerShell may not open a string.
+      "echo -a'x; Remove-Item ~; echo -b'y",
+      "echo \u2013a'x; Remove-Item ~; echo \u2013b'y",
+      'git log --format="%h %s"',
+      // Unbalanced quotes and dangling operators.
+      'echo "unbalanced',
+      "echo 'unbalanced",
+      'npm test &&',
+      'npm test ||',
+      'npm test |',
+      '&& ls',
+      '; ls',
+      '| Remove-Item ~',
+      'npm test && && ls',
+      '',
+      '   ',
+    ]) {
+      expect(splitPowerShellCommand(command), command).toBeNull();
+    }
+  });
+});
+
 describe('checkToolRules()', () => {
   const rules = (...patterns: string[]) => patterns.map((pattern) => ({ pattern }));
   const shell = (allow: string[], deny: string[], command: string) =>
@@ -266,6 +349,50 @@ describe('checkToolRules()', () => {
     expect(shell(['shell'], ['shell(rm *)'], 'echo $(rm -rf ~)')).toBeNull();
     // A deny rule for another tool doesn't count.
     expect(shell(['shell'], ['edit(.env)'], commit)).toEqual({ behavior: 'allow' });
+  });
+
+  describe('PowerShell', () => {
+    const ps = (allow: string[], deny: string[], command: string) =>
+      checkToolRules(rules(...allow), rules(...deny), 'PowerShell', command, 'bash', 'powershell');
+
+    it('allows a chain only when every command matches an allow rule', () => {
+      expect(ps(['PowerShell(npm run *)'], [], 'npm run build')).toEqual({ behavior: 'allow' });
+      expect(ps(['PowerShell(npm run *)'], [], 'npm run lint; npm run test')).toEqual({ behavior: 'allow' });
+      expect(ps(['PowerShell(npm run *)'], [], 'npm run build; Remove-Item -Recurse ~')).toBeNull();
+      expect(ps(['PowerShell(npm run *)'], [], 'npm run build | Remove-Item -Recurse ~')).toBeNull();
+    });
+
+    it('applies shell(...) rules to PowerShell too', () => {
+      expect(ps(['shell(npm run *)'], [], 'npm run lint && npm run test')).toEqual({ behavior: 'allow' });
+      expect(ps(['shell(npm run *)'], [], 'npm run build && Remove-Item -Recurse ~')).toBeNull();
+      expect(ps(['shell'], ['shell(Remove-Item *)'], 'npm test; Remove-Item -Recurse ~'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(Remove-Item *)' });
+    });
+
+    it('splits by PowerShell syntax, where a backslash does not escape', () => {
+      // Bash would read `echo a\; ...` as one echo command.
+      expect(ps(['shell(echo *)'], [], 'echo a\\; Remove-Item -Recurse ~')).toBeNull();
+      expect(ps(['shell(echo *)'], ['shell(Remove-Item *)'], 'echo a\\; Remove-Item -Recurse ~'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(Remove-Item *)' });
+    });
+
+    it('does not approve an unsplittable command with a glob rule', () => {
+      expect(ps(['PowerShell(echo *)'], [], 'echo (Remove-Item -Recurse ~)')).toBeNull();
+      expect(ps(['PowerShell(echo *)'], [], 'echo "$(Remove-Item -Recurse ~)"')).toBeNull();
+      expect(ps(['PowerShell(Get-ChildItem *)'], [], 'Get-ChildItem | ForEach-Object { Remove-Item $_ }')).toBeNull();
+      expect(ps(['PowerShell(npm *)'], [], '& npm test')).toBeNull();
+    });
+
+    it('lets a rule for every shell command approve an unsplittable one, unless a deny rule could apply', () => {
+      const loop = 'Get-ChildItem | ForEach-Object { $_.Name }';
+      expect(ps(['PowerShell'], [], loop)).toEqual({ behavior: 'allow' });
+      expect(ps(['shell(*)'], [], loop)).toEqual({ behavior: 'allow' });
+      expect(ps(['PowerShell'], ['PowerShell(Remove-Item *)'], loop)).toBeNull();
+    });
+
+    it('does not apply PowerShell(...) rules to Bash', () => {
+      expect(checkToolRules(rules('PowerShell(npm *)'), [], 'Bash', 'npm test', 'bash')).toBeNull();
+    });
   });
 
   it('leaves non-shell rules matching the whole specifier', () => {

@@ -111,6 +111,7 @@ function categorizeToolName(toolName: string): ToolCategory {
     case 'MultiEdit':
       return 'edit';
     case 'Bash':
+    case 'PowerShell':
       return 'bash';
     case 'Read':
     case 'Grep':
@@ -1457,10 +1458,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // Settings rules are written in neutral terms (shell(...), edit(...),
       // read(...), ...) or with Claude's tool names; both match here.
       // Chained shell commands are split first, so an allow rule has to
-      // match every command in the chain (see checkToolRules).
+      // match every command in the chain (see checkToolRules). shell(...)
+      // covers PowerShell too, split by PowerShell's own syntax.
       const category = categorizeToolName(toolName);
       const specifier = toolCallSpecifier(toolName, input, category);
-      const ruleVerdict = checkToolRules(config.toolAllowRules, config.toolDenyRules, toolName, specifier, category);
+      const shellSyntax = toolName === 'PowerShell' ? 'powershell' : 'bash';
+      const ruleVerdict = checkToolRules(
+        config.toolAllowRules, config.toolDenyRules, toolName, specifier, category, shellSyntax,
+      );
       if (ruleVerdict?.behavior === 'deny') {
         return { behavior: 'deny' as const, message: `Denied by settings rule: ${ruleVerdict.pattern}` };
       }
