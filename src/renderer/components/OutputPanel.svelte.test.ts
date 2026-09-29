@@ -198,7 +198,7 @@ describe('OutputPanel: the first turn', () => {
 
     messageStore.messagesBySession = { [SID]: [
       { kind: 'user', id: 'u1', text: 'Fix it' },
-      { kind: 'text', id: 't1', text: 'On it' },
+      { kind: 'text', id: 't1', text: 'On it', uuid: 'a1' },
     ] };
     await tick();
     expect(container.querySelector('svg.walk')).toBeNull();
