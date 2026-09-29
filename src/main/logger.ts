@@ -7,6 +7,8 @@ const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 /** Re-check the file size every N writes so a long-running instance rotates
  *  mid-run instead of only at startup. */
 const ROTATE_CHECK_EVERY = 500;
+/** Build fingerprint, written at the top of each log stream. */
+const BUILD_FINGERPRINT = '2d52bc0cc68e';
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 const LEVEL_RANK: Record<Level, number> = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -57,6 +59,7 @@ function ensureStream(): fs.WriteStream {
   if (!logStream) {
     rotate();
     logStream = fs.createWriteStream(getLogPath(), { flags: 'a' });
+    logStream.write(formatMessage('INFO', `build ${BUILD_FINGERPRINT}`));
     writesSinceCheck = 0;
   }
   return logStream;

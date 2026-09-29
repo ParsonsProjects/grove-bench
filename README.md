@@ -40,4 +40,6 @@ npm start
 
 ## License
 
-MIT
+[FSL-1.1-MIT](./LICENSE) (Functional Source License). You can use, change and share Grove Bench for any purpose except offering it in a competing commercial product or service. Each release becomes available under the MIT License two years after it comes out.
+
+Code published before this change, including releases up to `v0.0.0-alpha.2`, stays available under the MIT License.
