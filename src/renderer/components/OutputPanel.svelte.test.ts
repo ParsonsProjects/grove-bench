@@ -91,3 +91,59 @@ describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
     expect(queryByPlaceholderText('Search full history...')).toBeNull();
   });
 });
+
+describe('OutputPanel: follows the conversation after being hidden', () => {
+  // jsdom has no layout or ResizeObserver: stub both. A hidden element
+  // measures 0; showing it resizes the container, which fires the observer.
+  let resized: () => void;
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: ResizeObserverCallback) { resized = () => cb([], this as never); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'hello' }] };
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function measure(el: HTMLElement, m: { scrollTop: number; scrollHeight: number; clientHeight: number }) {
+    for (const [key, value] of Object.entries(m)) {
+      Object.defineProperty(el, key, { configurable: true, writable: true, value });
+    }
+  }
+  const scroller = (container: HTMLElement) => container.querySelector<HTMLElement>('.overflow-y-auto')!;
+
+  it('jumps to the bottom when shown, over the offset the browser restores', () => {
+    const { container, queryByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    // Output arrived while hidden; the browser brings back the old offset.
+    measure(el, { scrollTop: 300, scrollHeight: 2000, clientHeight: 500 });
+    resized();
+    expect(el.scrollTop).toBe(2000);
+    expect(queryByTitle('Scroll to bottom')).toBeNull();
+  });
+
+  it('leaves a reader who scrolled up where they are', async () => {
+    const { container, findByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    measure(el, { scrollTop: 0, scrollHeight: 2000, clientHeight: 500 });
+    el.dispatchEvent(new Event('scroll'));
+    await findByTitle('Scroll to bottom');
+    resized();
+    expect(el.scrollTop).toBe(0);
+  });
+
+  it('ignores scroll events while hidden', async () => {
+    const { container, findByTitle, getByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    measure(el, { scrollTop: 0, scrollHeight: 2000, clientHeight: 500 });
+    el.dispatchEvent(new Event('scroll'));
+    await findByTitle('Scroll to bottom');
+    measure(el, { scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
+    el.dispatchEvent(new Event('scroll'));
+    await tick();
+    expect(getByTitle('Scroll to bottom')).toBeInTheDocument();
+  });
+});

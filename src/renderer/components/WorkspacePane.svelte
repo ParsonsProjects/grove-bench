@@ -85,6 +85,9 @@
 
   onMount(async () => {
     window.addEventListener('keydown', handleKeydown);
+    // Before any await, so App covers the empty chat with the walk until the
+    // history is in, rather than showing "Waiting for input...".
+    messageStore.setHistoryLoaded(sessionId, false);
 
     // Always replay history on mount — clear any stale state first to avoid
     // duplicates. This is critical after refresh/restart where prior state is
@@ -157,6 +160,7 @@
       });
     } finally {
       gitStatusStore.unsuppressRefresh(sessionId);
+      messageStore.setHistoryLoaded(sessionId, true);
     }
 
     // Single git status refresh after replay

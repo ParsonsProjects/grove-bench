@@ -12,6 +12,8 @@
   import { wakeScene } from './stores/wakeScene.svelte.js';
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
+  import { sessionSpriteState } from './lib/session-sprite-state.js';
+  import { TurnEndWatcher } from './lib/turn-end.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -53,7 +55,11 @@
 
   /** onerror callback for a session pane's <svelte:boundary>. */
   function paneError(sessionId: string) {
-    return (error: unknown) => handleErrorReport(reportFromError('boundary', error, sessionId));
+    return (error: unknown) => {
+      // Nothing more will load: drop the loading walk so the error shows.
+      messageStore.setHistoryLoaded(sessionId, true);
+      handleErrorReport(reportFromError('boundary', error, sessionId));
+    };
   }
   function sidebarError(error: unknown) {
     handleErrorReport(reportFromError('boundary', error));
@@ -108,22 +114,20 @@
     void refreshAutoNames(store.sessions.map((s) => s.id));
   }
 
-  // Track per-session running state to detect turn completion. Flash state
-  // itself lives in the store so the sidebar can read it.
-  let prevRunningState = $state<Record<string, boolean>>({});
-
-  // Detect when a session transitions from running → idle (a turn completed)
+  // Detect a completed turn: running, then idle for a moment, so a turn that
+  // carries on straight after a result doesn't flag the conversation unread
+  // (its sidebar character would wave mid-turn). The flag lives in the store
+  // so the sidebar can read it.
+  const turnEnds = new TurnEndWatcher((sessionId) => {
+    if (!store.sessions.some((s) => s.id === sessionId)) return;
+    if (store.activeSessionId !== sessionId) {
+      store.markNeedsAttention(sessionId);
+    }
+    void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+  });
   $effect(() => {
     for (const session of store.sessions) {
-      const running = messageStore.getIsRunning(session.id);
-      const wasRunning = prevRunningState[session.id] ?? false;
-      if (wasRunning && !running) {
-        if (store.activeSessionId !== session.id) {
-          store.markNeedsAttention(session.id);
-        }
-        void autoNameSession(session.id).then(() => autoNameBranch(session.id));
-      }
-      prevRunningState[session.id] = running;
+      turnEnds.update(session.id, messageStore.getIsRunning(session.id));
     }
   });
 
@@ -490,6 +494,7 @@
       {#each store.sessions as session (session.id)}
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}
+        {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
         <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
           {#if live}
             <!-- A render/effect error in one session's pane must not take the
@@ -502,8 +507,9 @@
             </svelte:boundary>
           {/if}
           <!-- The walk: while a stopped conversation reconnects, and over the
-               chat (kept mounted underneath) while the wake-up scene plays. -->
-          {#if !live || scene}
+               chat (kept mounted underneath) while its history loads or the
+               wake-up scene plays. -->
+          {#if !live || scene || loading}
             <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
             <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
@@ -516,7 +522,7 @@
               {#if settingsStore.current.groveCharacters}
                 <!-- Only the open conversation's walk is drawn; hidden panes skip it. -->
                 {#if store.activeSessionId === session.id}
-                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} wake={scene} />
+                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} spriteState={sessionSpriteState(session)} wake={scene} />
                 {/if}
                 {#if scene}
                   <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>

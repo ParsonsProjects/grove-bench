@@ -25,8 +25,13 @@ describe('GroveWalk', () => {
     const fills = new Set([...container.querySelectorAll('.strip rect')].map((r) => r.getAttribute('fill')));
     expect(fills).toContain(look.h);
     expect(fills).toContain(look.s);
-    // The hoodie takes the "Starting" colour from its svg.
+    // The hoodie takes the sidebar's colour from its svg.
     expect(fills).toContain('currentColor');
+  });
+
+  it("wears the sidebar character's colour", () => {
+    const { container } = render(GroveWalk, { seed: 's1', spriteState: 'stopped' });
+    expect(container.querySelector('.strip')!.closest('svg')).toHaveClass(AGENT_SPRITES.stopped.colorClass);
   });
 
   it('puts the project colour on the laptop logo while seated', () => {
@@ -38,9 +43,9 @@ describe('GroveWalk', () => {
   describe('waking up', () => {
     const wake = (from: 'sleeping' | 'stopped') => ({ sessionId: 's1', from, startedAt: Date.now() });
 
-    it('starts asleep on the bench, in the colour of the state it wakes from, with the grove still', () => {
+    it("starts asleep on the bench, in the sidebar's colour, with the grove still", () => {
       vi.useFakeTimers();
-      const { container } = render(GroveWalk, { seed: 's1', wake: wake('stopped') });
+      const { container } = render(GroveWalk, { seed: 's1', spriteState: 'stopped', wake: wake('stopped') });
       expect(screen.getByText('Waking up...')).toBeInTheDocument();
       expect(screen.getByText('Click or press any key to skip')).toBeInTheDocument();
       const seated = container.querySelector('svg.seated')!;
@@ -51,16 +56,18 @@ describe('GroveWalk', () => {
 
     it('opens its eyes, then walks off and the grove moves', async () => {
       vi.useFakeTimers();
-      const { container } = render(GroveWalk, { seed: 's1', wake: wake('sleeping') });
-      expect(container.querySelector('svg.seated')).toHaveClass(AGENT_SPRITES.sleeping.colorClass);
+      // A woken sleeping conversation shows as Ready in the sidebar straight away.
+      const { container } = render(GroveWalk, { seed: 's1', spriteState: 'ready', wake: wake('sleeping') });
+      expect(container.querySelector('svg.seated')).toHaveClass(AGENT_SPRITES.ready.colorClass);
 
       await act(() => vi.advanceTimersByTime(WAKE_AWAKE_AT_MS));
-      expect(container.querySelector('svg.seated')).toHaveClass(AGENT_SPRITES.starting.colorClass);
+      expect(container.querySelector('svg.seated')).toHaveClass(AGENT_SPRITES.ready.colorClass);
       expect(screen.getByText('Waking up...')).toBeInTheDocument();
 
       await act(() => vi.advanceTimersByTime(WAKE_WALK_AT_MS - WAKE_AWAKE_AT_MS));
       expect(container.querySelector('svg.seated')).toBeNull();
       expect(container.querySelector('.strip')).not.toBeNull();
+      expect(container.querySelector('.strip')!.closest('svg')).toHaveClass(AGENT_SPRITES.ready.colorClass);
       expect(container.querySelector('svg.walk')).not.toHaveClass('still');
       expect(screen.getByText('Starting agent...')).toBeInTheDocument();
     });

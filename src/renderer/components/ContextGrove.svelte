@@ -38,13 +38,15 @@
   const paths = $derived(grovePaths(groveRuns(layout, frame.percent, frame.growth)));
 </script>
 
-<!-- Always the same height, so the bar doesn't move when the first plant
-     sprouts. The strip is drawn wide enough for any screen and clipped here;
-     it is absolutely placed so its width never stretches the pane. -->
+<!-- Takes no space and has no background: it stands on the bar's top border
+     and overlays the bottom of the chat, which shows between the plants.
+     Clicks pass through to the chat. The strip is drawn wide enough for any
+     screen and clipped here; it is absolutely placed so its width never
+     stretches the pane. -->
+<div class="relative h-0 shrink-0">
 <div
-  class="relative shrink-0 overflow-hidden"
+  class="absolute inset-x-0 bottom-0 z-10 overflow-hidden pointer-events-none"
   style:height="{GROVE_H * GROVE_SCALE}px"
-  title="The grove grows as this conversation fills its context window"
   data-testid="context-grove"
 >
   <svg
@@ -59,4 +61,5 @@
       <path d={p.d} fill={p.fill} opacity={p.far ? 0.4 : 1} />
     {/each}
   </svg>
+</div>
 </div>

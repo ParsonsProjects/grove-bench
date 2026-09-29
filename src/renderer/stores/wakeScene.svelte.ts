@@ -4,8 +4,8 @@ import { prefersReducedMotion } from '../lib/utils.js';
 
 export interface WakeScene {
   sessionId: string;
-  /** What the agent wakes from; its hoodie keeps that state's colour until
-   *  it is awake. */
+  /** What the agent wakes from, for its asleep pose. Its hoodie takes the
+   *  sidebar's colour throughout. */
   from: 'sleeping' | 'stopped';
   /** Date.now() when the scene started. */
   startedAt: number;

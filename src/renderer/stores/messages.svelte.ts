@@ -190,6 +190,7 @@ class MessageStore {
 
   /** Whether the session has initialized (received system_init) and can accept messages */
   isReady = $state<Record<string, boolean>>({});
+  historyLoaded = $state<Record<string, boolean>>({});
 
   /** Model name per session */
   modelBySession = $state<Record<string, string>>({});
@@ -475,6 +476,18 @@ class MessageStore {
   setIsReady(sessionId: string, value: boolean) {
     if (this.isReady[sessionId] === value) return;
     this.isReady = { ...this.isReady, [sessionId]: value };
+  }
+
+  /** Whether the conversation's chat has loaded its history since it last
+   *  mounted. Until then it is empty because it is loading, not because
+   *  nothing has been said. */
+  isHistoryLoaded(sessionId: string): boolean {
+    return this.historyLoaded[sessionId] ?? false;
+  }
+
+  setHistoryLoaded(sessionId: string, value: boolean) {
+    if (this.historyLoaded[sessionId] === value) return;
+    this.historyLoaded = { ...this.historyLoaded, [sessionId]: value };
   }
 
   /** Whether a session has any unresolved permission requests */
@@ -2029,7 +2042,7 @@ class MessageStore {
     for (const record of [
       this.messagesBySession, this.streamingText, this.streamingThinking,
       this.isRunning, this.pendingClear, this.activityBySession,
-      this.toolProgressBySession, this.isReady, this.modelBySession,
+      this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
       this.modeBySession, this.controlsBySession, this.usageBySession,
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
