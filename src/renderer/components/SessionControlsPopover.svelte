@@ -9,9 +9,10 @@
   import { onMount, onDestroy } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
   import { formatResetTime } from '../lib/reset-time.js';
-  import type { ControlTone } from '../../shared/types.js';
+  import { toneClass } from '../lib/control-tones.js';
   import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../shared/types.js';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
@@ -63,23 +64,6 @@
     return pct > 85 ? 'bg-red-400' : pct > 70 ? 'bg-orange-400' : pct > 40 ? 'bg-yellow-400' : 'bg-green-500';
   }
 
-  /** Adapters pick a tone per option; the theme colours live here so no
-   *  provider ships CSS classes. */
-  const toneClasses: Record<ControlTone, string> = {
-    muted: 'text-muted-foreground/50 border-muted-foreground/20',
-    neutral: 'text-foreground/80 border-border',
-    info: 'text-blue-400 border-blue-400/40',
-    warning: 'text-yellow-400 border-yellow-400/40',
-    accent: 'text-purple-400 border-purple-400/50',
-    'accent-soft': 'text-purple-300/70 border-purple-300/30',
-    success: 'text-green-400 border-green-400/40',
-    highlight: 'text-cyan-400 border-cyan-400/50',
-  };
-
-  function toneClass(tone?: ControlTone): string {
-    return toneClasses[tone ?? 'neutral'];
-  }
-
   async function switchModel(modelId: string) {
     if (modelId === model) return;
     // Reflect the choice immediately — the live SDK switch is slow (or a
@@ -97,6 +81,15 @@
   function choose(controlId: string, value: string) {
     if (messageStore.getControlValue(sessionId, controlId) === value) return;
     messageStore.setControl(sessionId, controlId, value).catch((e) => console.error(`Failed to set ${controlId}:`, e));
+  }
+
+  /** A conversation keeps the agent it started with (its history is that
+   *  agent's own session). Picking another starts a new conversation with it
+   *  in the same project, as a draft. */
+  function startWithAgent(adapterId: string) {
+    if (!session) return;
+    open = false;
+    draftStore.open(session.repoPath, { agentId: adapterId });
   }
 
   function handleClickOutside(e: MouseEvent) {
@@ -178,12 +171,14 @@
           {#each adapters.length > 0 ? adapters : [{ id: agentType, displayName: agentName }] as a (a.id)}
             {@const current = a.id === agentType}
             <button
-              disabled={!current}
-              class="w-full text-left px-2 py-1 border-l-2 transition-colors
-                {current ? 'border-primary text-foreground bg-accent/50' : 'border-transparent text-muted-foreground/50 cursor-not-allowed'}"
-              title={current ? 'Current agent' : 'The agent is chosen when a conversation is created'}
+              onclick={() => { if (!current) startWithAgent(a.id); }}
+              class="w-full text-left px-2 py-1 border-l-2 transition-colors group/agent flex items-center justify-between gap-2
+                {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
+              title={current ? 'This conversation\'s agent' : `Start a new conversation in this project with ${a.displayName}. This one keeps its agent.`}
+              aria-current={current ? 'true' : undefined}
             >
               {a.displayName}
+              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">new ↗</span>{/if}
             </button>
           {/each}
 

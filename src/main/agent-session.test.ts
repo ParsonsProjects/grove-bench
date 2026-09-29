@@ -2662,6 +2662,32 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-defaults');
   });
 
+  it('lays values chosen for this conversation over the saved defaults, ignoring ones not offered', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
+
+    await sessionManager.createSession({
+      id: 'ctl-chosen', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      controls: { thinking: 'high', speed: 'warp' },
+    });
+
+    expect(sessionManager.getControls('ctl-chosen').values).toEqual({ thinking: 'high', speed: 'standard' });
+
+    await sessionManager.destroySession('ctl-chosen');
+  });
+
+  it('keeps the saved default when the chosen value is not offered', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
+
+    await sessionManager.createSession({
+      id: 'ctl-chosen-bad', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      controls: { thinking: 'max' },
+    });
+
+    expect(sessionManager.getControls('ctl-chosen-bad').values.thinking).toBe('low');
+
+    await sessionManager.destroySession('ctl-chosen-bad');
+  });
+
   it('ignores saved defaults the adapter does not offer, and other adapters\' defaults', async () => {
     settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'adaptive', bogus: 'x' }, other: { thinking: 'low' } } });
 

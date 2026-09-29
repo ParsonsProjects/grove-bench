@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // General
   defaultBaseBranch: '', // empty = auto-detect the repo's default branch
+  branchNamingRule: '', // empty = copy the repo's recent branch names
   theme: 'system',
   alwaysOnTop: false,
 
@@ -217,6 +218,7 @@ const settingsSchema = z.object({
   idleSleepMinutes: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.idleSleepMinutes),
 
   defaultBaseBranch: z.string().catch(DEFAULT_SETTINGS.defaultBaseBranch),
+  branchNamingRule: z.string().catch(DEFAULT_SETTINGS.branchNamingRule),
   theme: z.enum(['system', 'dark', 'light']).catch(DEFAULT_SETTINGS.theme),
   alwaysOnTop: z.boolean().catch(DEFAULT_SETTINGS.alwaysOnTop),
 

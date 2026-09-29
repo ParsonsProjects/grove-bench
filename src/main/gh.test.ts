@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, isNetworkError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS } from './gh.js';
+import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, isNetworkError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
@@ -432,5 +432,50 @@ describe('prCreate()', () => {
       .mockRejectedValueOnce(new Error('boom'));
     await expect(prCreate('/repo', 'feat/x', { title: 'T', body: '', base: 'main' }))
       .rejects.toThrow(/could not be read back/);
+  });
+});
+
+describe('parseOpenPrs()', () => {
+  it('maps gh fields and skips malformed entries', () => {
+    const stdout = JSON.stringify([
+      { number: 7, title: 'Add login', headRefName: 'feat/API-7-login', author: { login: 'sam' }, isDraft: true, isCrossRepository: false, url: 'https://x/7' },
+      { number: 8, title: 'From a fork', headRefName: 'patch-1', author: null, isCrossRepository: true },
+      { number: 'nine', headRefName: 'bad' },
+      { number: 10, headRefName: '' },
+    ]);
+    expect(parseOpenPrs(stdout)).toEqual([
+      { number: 7, title: 'Add login', headRefName: 'feat/API-7-login', author: 'sam', isDraft: true, isCrossRepository: false, url: 'https://x/7' },
+      { number: 8, title: 'From a fork', headRefName: 'patch-1', author: '', isDraft: false, isCrossRepository: true, url: '' },
+    ]);
+  });
+
+  it('returns [] for output that is not a JSON array', () => {
+    expect(parseOpenPrs('not json')).toEqual([]);
+    expect(parseOpenPrs('{}')).toEqual([]);
+  });
+});
+
+describe('openPrs()', () => {
+  it('lists open PRs with the fields the picker needs', async () => {
+    mockExeca.mockResolvedValue({ stdout: '[]' } as any);
+    expect(await openPrs('/repo')).toEqual([]);
+    const [cmd, args, opts] = mockExeca.mock.calls[0] as unknown as [string, string[], any];
+    expect(cmd).toBe('gh');
+    expect(args.slice(0, 4)).toEqual(['pr', 'list', '--state', 'open']);
+    expect(args[args.indexOf('--json') + 1]).toBe('number,title,headRefName,author,isDraft,isCrossRepository,url');
+    expect(opts).toMatchObject({ cwd: '/repo' });
+  });
+
+  it('still tries while the offline cooldown holds (user-initiated)', async () => {
+    mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'error connecting to api.github.com' }));
+    await expect(prStatus('/repo', 'b')).rejects.toThrow();
+    expect(ghOffline()).toBe(true);
+    mockExeca.mockResolvedValue({ stdout: '[]' } as any);
+    expect(await openPrs('/repo')).toEqual([]);
+  });
+
+  it('throws when gh fails', async () => {
+    mockExeca.mockRejectedValue(Object.assign(new Error('gh failed'), { stderr: 'not logged in' }));
+    await expect(openPrs('/repo')).rejects.toThrow();
   });
 });

@@ -29,6 +29,9 @@
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
+  import { isTempBranch } from '../shared/temp-branch.js';
+  import { draftStore } from './stores/draft.svelte.js';
+  import DraftPane from './components/DraftPane.svelte';
 
   let showAnalyticsConsent = $state(false);
 
@@ -135,7 +138,7 @@
         if (store.activeSessionId !== session.id) {
           store.markNeedsAttention(session.id);
         }
-        void autoNameSession(session.id);
+        void autoNameSession(session.id).then(() => autoNameBranch(session.id));
       }
       prevRunningState[session.id] = running;
     }
@@ -149,6 +152,18 @@
       const name = await window.groveBench.autoNameSession(sessionId);
       if (name) store.updateDisplayName(sessionId, name);
     } catch { /* non-fatal — naming is best-effort */ }
+  }
+
+  /** Rename a placeholder branch (a conversation started without a branch
+   *  name) from its task. Runs after the auto name so the title can help.
+   *  Main does nothing for a branch that is already named. */
+  async function autoNameBranch(sessionId: string): Promise<void> {
+    const branch = store.sessions.find((s) => s.id === sessionId)?.branch;
+    if (!branch || !isTempBranch(branch)) return;
+    try {
+      const named = await window.groveBench.autoNameBranch(sessionId);
+      if (named) store.updateBranch(sessionId, named);
+    } catch { /* non-fatal — the placeholder stays and can be renamed by hand */ }
   }
 
   async function refreshAutoNames(sessionIds: string[]): Promise<void> {
@@ -253,6 +268,11 @@
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'b') {
       e.preventDefault();
       bookmarkStore.toggleDrawer();
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
+      e.preventDefault();
+      // A draft in the project of the conversation being looked at.
+      draftStore.open(store.activeSession?.repoPath ?? '');
     }
   }
 
@@ -446,7 +466,14 @@
   </svelte:boundary>
 
   <main class="flex-1 flex flex-col min-w-0 min-h-0">
-    {#if store.sessions.length === 0}
+    {#if draftStore.visible}
+      <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
+        <DraftPane />
+        {#snippet failed(error, reset)}
+          {@render crashed('The new conversation', error, reset)}
+        {/snippet}
+      </svelte:boundary>
+    {:else if store.sessions.length === 0}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i}
           <span
@@ -479,8 +506,11 @@
           </div>
         {/if}
       </div>
-    {:else}
-      <!-- Active session — keep all live panes mounted, show only the active one -->
+    {/if}
+    {#if store.sessions.length > 0}
+      <!-- Keep all live panes mounted, show only the active one. They stay
+           mounted under the draft and the landing too (all hidden), so their
+           terminals, scroll and half-typed prompts survive a trip there. -->
       {#each store.sessions as session (session.id)}
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}

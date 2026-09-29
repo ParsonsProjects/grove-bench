@@ -680,6 +680,21 @@
             </p>
           </div>
 
+          <!-- Branch naming rule -->
+          <div>
+            <Label for="settings-branch-rule" class="mb-1 block">Branch Naming Rule</Label>
+            <input
+              id="settings-branch-rule"
+              type="text"
+              bind:value={settingsStore.draft.branchNamingRule}
+              placeholder="e.g. <type>/<ticket>-<short-description>"
+              class="w-full bg-background border border-input px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Used when a new conversation starts without a branch name. Leave empty to copy the style of the project's recent branch names.
+            </p>
+          </div>
+
           <Separator />
 
           <!-- Theme -->
