@@ -441,7 +441,7 @@
               View source
             </a>
           </div>
-          <p class="small">Free and open source (MIT). Scroll down to climb through the tree.</p>
+          <p class="small">Free and source-available (FSL-1.1-MIT). Scroll down to climb through the tree.</p>
           {#if wide}<Key class="hero-key" />{/if}
         </div>
         <div class="cn-hero-stage" data-anchor="hero" data-area></div>
@@ -532,7 +532,7 @@
               View source
             </a>
           </div>
-          <p class="req">Windows 10 or later, git 2.17+ and the Claude Code CLI. Free and open source (MIT).</p>
+          <p class="req">Windows 10 or later, git 2.17+ and the Claude Code CLI. Free and source-available (FSL-1.1-MIT).</p>
         </div>
       </section>
     </div>
@@ -543,7 +543,7 @@
       <div class="foot-brand">
         {@render logo(12)}
         <span>Grove Bench</span>
-        <span class="mit">Open source under MIT</span>
+        <span class="license">Source available under FSL-1.1-MIT</span>
       </div>
       <ul class="foot-links">
         {#each FOOTER_LINKS as l}
@@ -873,7 +873,7 @@
     font-weight: 700;
     color: #eef1f8;
   }
-  .mit {
+  .license {
     font-weight: 400;
     color: #a4aec6;
   }
