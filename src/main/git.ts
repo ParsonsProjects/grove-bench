@@ -577,15 +577,16 @@ export function synthesizeUntrackedDiff(relPath: string, content: string): strin
   return header + lines.map(l => `+${l}`).join('\n');
 }
 
-/** Read the user's git identity from the repo (or global) config, with fallbacks. */
-export async function getGitIdentity(cwd: string): Promise<{ name: string; email: string }> {
-  let name = 'Grove Orchestrator';
-  let email = 'grove-orchestrator@localhost';
+/** Read the user's effective git identity. Null unless both user.name and
+ *  user.email are set, so callers never commit under a made-up author. */
+export async function getGitIdentity(cwd: string): Promise<{ name: string; email: string } | null> {
+  let name = '';
+  let email = '';
   try {
-    name = (await git(['config', 'user.name'], cwd)).trim() || name;
+    name = (await git(['config', 'user.name'], cwd)).trim();
   } catch { /* not set */ }
   try {
-    email = (await git(['config', 'user.email'], cwd)).trim() || email;
+    email = (await git(['config', 'user.email'], cwd)).trim();
   } catch { /* not set */ }
-  return { name, email };
+  return name && email ? { name, email } : null;
 }

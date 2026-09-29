@@ -260,6 +260,8 @@ function makeMockWindow() {
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
+const { getGitIdentity } = await import('./git.js');
+const { logger } = await import('./logger.js');
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -320,6 +322,36 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager git identity env', () => {
+  const start = (id: string) => sessionManager.createSession({
+    id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+  });
+
+  it('forces the configured identity on agent commits', async () => {
+    await start('test-identity');
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.extraEnv).toMatchObject({
+      GIT_AUTHOR_NAME: 'Test User',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'Test User',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    });
+    await sessionManager.destroySession('test-identity');
+  });
+
+  it('leaves the identity vars unset when git has no identity', async () => {
+    vi.mocked(getGitIdentity).mockResolvedValueOnce(null);
+    await start('test-no-identity');
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const env = mockAdapter.lastConfig?.extraEnv ?? {};
+    for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) {
+      expect(env).not.toHaveProperty(key);
+    }
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('user.name/user.email not set'));
+    await sessionManager.destroySession('test-no-identity');
   });
 });
 

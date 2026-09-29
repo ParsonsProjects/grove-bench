@@ -620,16 +620,22 @@ class AgentSessionManager {
     // Read the user's git identity so we can force it via env vars.
     // Environment variables take highest precedence in git's identity
     // resolution, ensuring commits are attributed to the user even if
-    // the agent SDK sets its own git config.
+    // the agent SDK sets its own git config. With no identity configured
+    // the vars stay unset and git's own rules apply (usually it refuses to
+    // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
     try {
       const identity = await getGitIdentity(session.worktreePath);
-      gitIdentityEnv = {
-        GIT_AUTHOR_NAME: identity.name,
-        GIT_AUTHOR_EMAIL: identity.email,
-        GIT_COMMITTER_NAME: identity.name,
-        GIT_COMMITTER_EMAIL: identity.email,
-      };
+      if (identity) {
+        gitIdentityEnv = {
+          GIT_AUTHOR_NAME: identity.name,
+          GIT_AUTHOR_EMAIL: identity.email,
+          GIT_COMMITTER_NAME: identity.name,
+          GIT_COMMITTER_EMAIL: identity.email,
+        };
+      } else {
+        logger.warn(`[runQuery] session=${id} git user.name/user.email not set; agent commits use git's own identity rules`);
+      }
     } catch { /* best effort */ }
 
     // Snapshot the rewind fork target for this start attempt. It stays set on
