@@ -54,6 +54,12 @@ interface ManifestEntry {
   pendingRemoval?: boolean;
   /** Whether the deferred removal should also delete the branch. */
   pendingBranchDelete?: boolean;
+  /** Branches Grove created for this conversation: its own branch, and any
+   *  created from the branch picker. Only these may be force-deleted on
+   *  removal; a branch the conversation merely switched onto may hold work
+   *  that exists nowhere else. Absent on entries written before this was
+   *  recorded, which get the safe delete only. */
+  createdBranches?: string[];
 }
 
 type Manifest = Record<string, ManifestEntry>;
@@ -180,7 +186,7 @@ export class WorktreeManager {
     }
 
     // Generate agent-specific settings (e.g. .claude/settings.local.json)
-    await this.generateAdapterSettings(wtPath, config.adapterType);
+    await this.generateAdapterSettings(wtPath, repoPath, config.adapterType);
 
     // Propagate the repo's git identity into the worktree so commits
     // are attributed to the user rather than the agent's default identity.
@@ -206,6 +212,7 @@ export class WorktreeManager {
         repoPath,
         branch: branchName,
         createdAt: info.createdAt,
+        ...(useExisting ? {} : { createdBranches: [branchName] }),
       };
     });
 
@@ -445,6 +452,7 @@ export class WorktreeManager {
 
   async remove(id: string, deleteBranch = false): Promise<void> {
     let info = this.worktrees.get(id);
+    const createdBranches = deleteBranch ? (await this.loadManifest())[id]?.createdBranches : undefined;
 
     // Fall back to manifest if not in memory (e.g. after restart)
     if (!info) {
@@ -506,7 +514,7 @@ export class WorktreeManager {
 
       // Optionally delete branch (skip for direct sessions — it's the checked-out branch)
       if (deleteBranch && !info.direct) {
-        await this.deleteBranchQuietly(repoPath, branch);
+        await this.deleteConversationBranches(repoPath, wtPath, branch, createdBranches);
       }
 
       // Remove entry from manifest
@@ -529,7 +537,31 @@ export class WorktreeManager {
     });
   }
 
-  private async deleteBranchQuietly(repoPath: string, branch: string): Promise<void> {
+  /**
+   * Delete a removed conversation's branches: the one it is on (what the
+   * destroy dialog names) and any others Grove created for it. Only branches
+   * Grove created are force-deleted; the rest get `git branch -d`, which
+   * refuses to drop unmerged work. Branches checked out elsewhere are kept.
+   */
+  private async deleteConversationBranches(repoPath: string, removedPath: string, current: string, created: string[] | undefined): Promise<void> {
+    const createdSet = new Set(created ?? []);
+    let inUse = new Map<string, string>();
+    try {
+      inUse = await worktreeBranches(repoPath);
+    } catch { /* git refuses to delete a checked-out branch anyway */ }
+    for (const branch of new Set([current, ...createdSet])) {
+      const usedBy = inUse.get(branch);
+      if (usedBy && !samePath(usedBy, removedPath)) {
+        logger.info(`Keeping branch ${branch}: it is checked out in ${usedBy}`);
+        continue;
+      }
+      // Grove's own branches the user asked to delete go even if unmerged;
+      // a created branch the conversation later left only goes if merged.
+      await this.deleteBranchQuietly(repoPath, branch, branch === current && createdSet.has(branch));
+    }
+  }
+
+  private async deleteBranchQuietly(repoPath: string, branch: string, force: boolean): Promise<void> {
     // A conversation can switch onto the default branch; closing it must not
     // take that branch with it.
     if (branch === (await getDefaultBranch(repoPath).catch(() => null))) {
@@ -538,11 +570,15 @@ export class WorktreeManager {
     }
     try {
       await git(['branch', '-d', branch], repoPath);
-    } catch {
+    } catch (e) {
+      if (!force) {
+        logger.info(`Keeping branch ${branch}: it has unmerged work and Grove didn't create it (${e})`);
+        return;
+      }
       try {
         await git(['branch', '-D', branch], repoPath);
-      } catch (e) {
-        logger.warn(`Failed to delete branch ${branch}: ${e}`);
+      } catch (e2) {
+        logger.warn(`Failed to delete branch ${branch}: ${e2}`);
       }
     }
   }
@@ -567,7 +603,7 @@ export class WorktreeManager {
           }
           try { await git(['worktree', 'prune'], entry.repoPath); } catch { /* repo may be gone */ }
           if (entry.pendingBranchDelete && !entry.direct) {
-            await this.deleteBranchQuietly(entry.repoPath, entry.branch);
+            await this.deleteConversationBranches(entry.repoPath, wtPath, entry.branch, entry.createdBranches);
           }
         });
         await this.withManifest((m) => { delete m[id]; });
@@ -734,8 +770,12 @@ export class WorktreeManager {
 
     // Update manifest
     await this.withManifest((manifest) => {
-      if (manifest[id]) {
-        manifest[id].branch = newName;
+      const entry = manifest[id];
+      if (entry) {
+        entry.branch = newName;
+        if (entry.createdBranches) {
+          entry.createdBranches = entry.createdBranches.map((b) => (b === oldName ? newName : b));
+        }
       }
     });
 
@@ -807,8 +847,12 @@ export class WorktreeManager {
             if (!track) return { success: false, error: `Branch "${name}" doesn't exist.` };
           }
 
-          if (!create && !(await isWorkingTreeClean(cwd))) {
-            return { success: false, error: 'This checkout has uncommitted changes or untracked files. Commit, stash or remove them first.' };
+          // Untracked files don't block a checkout unless it would overwrite
+          // them, and git refuses that case itself (reported below). Counting
+          // them blocked every switch: Grove writes an untracked
+          // .claude/settings.local.json into each worktree.
+          if (!create && !(await isWorkingTreeClean(cwd, { ignoreUntracked: true }))) {
+            return { success: false, error: 'This checkout has uncommitted changes. Commit or stash them first.' };
           }
 
           if (isLocal) {
@@ -824,7 +868,7 @@ export class WorktreeManager {
         return { success: false, error: (e?.stderr || e?.message || String(e)).trim().slice(0, 500) };
       }
 
-      await this.recordBranch(sharers, name);
+      await this.recordBranch(sharers, name, { created: create });
       return { success: true, branch: name, sessionIds: sharers };
     });
   }
@@ -854,15 +898,23 @@ export class WorktreeManager {
     });
   }
 
-  /** Record `name` as the branch of every conversation in `ids`, in memory and in the manifest. */
-  private async recordBranch(ids: string[], name: string): Promise<void> {
+  /** Record `name` as the branch of every conversation in `ids`, in memory
+   *  and in the manifest. `created` marks a branch Grove just made, which
+   *  removal may force-delete (see createdBranches). A switch the agent made
+   *  in its own shell never counts: it may have checked out someone's branch. */
+  private async recordBranch(ids: string[], name: string, opts: { created?: boolean } = {}): Promise<void> {
     const idSet = new Set(ids);
     for (const w of this.worktrees.values()) {
       if (idSet.has(w.id)) w.branch = name;
     }
     await this.withManifest((manifest) => {
       for (const s of ids) {
-        if (manifest[s]) manifest[s].branch = name;
+        const entry = manifest[s];
+        if (!entry) continue;
+        entry.branch = name;
+        if (opts.created && entry.createdBranches && !entry.createdBranches.includes(name)) {
+          entry.createdBranches = [...entry.createdBranches, name];
+        }
       }
     });
   }
@@ -1167,10 +1219,10 @@ export class WorktreeManager {
     return null;
   }
 
-  private async generateAdapterSettings(wtPath: string, adapterType?: string): Promise<void> {
+  private async generateAdapterSettings(wtPath: string, repoPath: string, adapterType?: string): Promise<void> {
     const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
     if (adapter.generateWorktreeSettings) {
-      await adapter.generateWorktreeSettings(wtPath);
+      await adapter.generateWorktreeSettings(wtPath, repoPath);
     } else {
       logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
     }

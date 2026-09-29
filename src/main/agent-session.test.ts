@@ -143,6 +143,8 @@ class MockAdapter implements AgentAdapter {
   pid: number | undefined = undefined;
   /** The handle the last start() returned. */
   lastHandle: AgentQueryHandle | null = null;
+  /** Every handle start() has returned, to check none is left running. */
+  handles: AgentQueryHandle[] = [];
 
   getModels() { return [{ id: 'mock-model', label: 'Mock' }, { id: 'mock-lite', label: 'Mock Lite' }]; }
   /** Two universal controls plus one ('speed') that only the full model offers,
@@ -240,6 +242,7 @@ class MockAdapter implements AgentAdapter {
       getUsage: vi.fn(async () => ({ available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 1 })),
     };
     this.lastHandle = handle;
+    this.handles.push(handle);
     return handle;
   }
 }
@@ -258,7 +261,7 @@ function makeMockWindow() {
 // ─── Tests ───
 
 // Import the module under test AFTER mocks are set up
-const { sessionManager } = await import('./agent-session.js');
+const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
@@ -1384,6 +1387,23 @@ describe('AgentSessionManager.closeSession()', () => {
     await vi.waitFor(() => expect(mockAdapter.lastHandle?.close).toHaveBeenCalled());
   });
 
+  it('destroying a closed conversation cancels its pending auto-save and saves its metadata', async () => {
+    await startSession('test-close-memory');
+    await sessionManager.closeSession('test-close-memory');
+    const { worktreeManager } = await import('./worktree-manager.js');
+    vi.mocked(worktreeManager.getWorktreeOrManifest).mockResolvedValueOnce({
+      id: 'test-close-memory', path: '/wt/test-close-memory', branch: 'feat-x', repoPath: '/repo', createdAt: 0,
+    });
+    const autosave = await import('./memory-autosave.js');
+    vi.mocked(autosave.cancelAutoSave).mockClear();
+    vi.mocked(autosave.saveSessionMetadata).mockClear();
+
+    await sessionManager.destroySession('test-close-memory');
+
+    expect(autosave.cancelAutoSave).toHaveBeenCalledWith('test-close-memory');
+    expect(autosave.saveSessionMetadata).toHaveBeenCalledWith('/repo', 'test-close-memory', expect.any(Array), 'feat-x');
+  });
+
   it('destroying a closed conversation still removes its checkpoint refs', async () => {
     await startSession('test-close-destroy');
     await sessionManager.closeSession('test-close-destroy');
@@ -1478,6 +1498,57 @@ describe('AgentSessionManager sleep and wake', () => {
     expect(session.alwaysAllowedTools.has('Bash(npm test)')).toBe(true);
 
     await sessionManager.destroySession('test-wake');
+  });
+
+  it("won't sleep mid-turn, whatever the renderer thinks", async () => {
+    await startSession('test-sleep-turn');
+
+    await sessionManager.sendMessage('test-sleep-turn', 'run the tests');
+    expect(await sessionManager.sleepSession('test-sleep-turn')).toBe(false);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(async () => expect(await sessionManager.sleepSession('test-sleep-turn')).toBe(true));
+
+    await sessionManager.destroySession('test-sleep-turn');
+  });
+
+  it('counts a turn the agent starts itself, and an interrupt ends it', async () => {
+    await startSession('test-sleep-own-turn');
+
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'A background task finished.', uuid: 'u1' });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-sleep-own-turn')!.turnHandle).not.toBeNull());
+    expect(await sessionManager.sleepSession('test-sleep-own-turn')).toBe(false);
+
+    await sessionManager.interruptQuery('test-sleep-own-turn');
+    expect(await sessionManager.sleepSession('test-sleep-own-turn')).toBe(true);
+
+    await sessionManager.destroySession('test-sleep-own-turn');
+  });
+
+  it('a stop while waking waits for the old agent and leaves one agent running', async () => {
+    mockAdapter.pid = 7100;
+    const { session } = await startSession('test-wake-stop');
+    let releaseKill!: () => void;
+    processTree.killTree.mockImplementationOnce(() => new Promise<void>((r) => { releaseKill = () => r(); }));
+    const sleeping = sessionManager.sleepSession('test-wake-stop');
+    await vi.waitFor(() => expect(releaseKill).toBeDefined());
+    const startsBefore = mockAdapter.startCallCount;
+
+    sessionManager.wakeSession('test-wake-stop');
+    const sent = sessionManager.sendMessage('test-wake-stop', 'still there?');
+    const stopping = sessionManager.interruptQuery('test-wake-stop');
+    await new Promise((r) => setTimeout(r, 30));
+    // Nothing starts while the old agent is still being killed
+    expect(mockAdapter.startCallCount).toBe(startsBefore);
+
+    releaseKill();
+    await sleeping;
+    await stopping;
+    await expect(sent).resolves.toBe(true);
+    const running = mockAdapter.handles.filter((h) => vi.mocked(h.close).mock.calls.length === 0);
+    expect(running).toEqual([session.queryHandle]);
+
+    await sessionManager.destroySession('test-wake-stop');
   });
 
   it('wakes when sent a message and delivers it to the new agent', async () => {
@@ -2764,5 +2835,75 @@ describe('AgentSessionManager skill suggestions', () => {
 
     expect(result).toEqual([{ id: 'cached' }]);
     expect(analyzeRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentSessionManager.beginSearch()', () => {
+  it("doesn't let a single-conversation search start a new pass during a sweep", () => {
+    const beginPass = vi.spyOn((sessionManager as unknown as { searchIndexes: { beginPass(): void } }).searchIndexes, 'beginPass');
+    const endSweep = sessionManager.beginSearch({ sweep: true });
+    expect(beginPass).toHaveBeenCalledTimes(1);
+
+    sessionManager.beginSearch(); // Ctrl+F while the sweep is paused
+    expect(beginPass).toHaveBeenCalledTimes(1);
+
+    endSweep();
+    endSweep(); // ending twice is harmless
+    sessionManager.beginSearch();
+    expect(beginPass).toHaveBeenCalledTimes(2);
+    beginPass.mockRestore();
+  });
+});
+
+describe('MCP elicitation', () => {
+  async function startSession(id: string) {
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig?.onElicitation).toBeDefined());
+    return mockAdapter.lastConfig!.onElicitation!;
+  }
+  const request = { serverName: 'deploy', message: 'Which env?', mode: 'form' as const, requestedSchema: { type: 'object' } };
+
+  it('asks the renderer and answers with the cleaned response', async () => {
+    const onElicitation = await startSession('elicit-answer');
+    const answer = onElicitation(request, new AbortController().signal);
+
+    const asked = sessionManager.getEventHistory('elicit-answer').find((e) => e.type === 'elicitation_request');
+    expect(asked).toMatchObject({ type: 'elicitation_request', request });
+    const requestId = (asked as Extract<AgentEvent, { type: 'elicitation_request' }>).requestId;
+
+    expect(sessionManager.respondToElicitation('elicit-answer', requestId, {
+      action: 'accept',
+      content: { env: 'prod', bad: { nested: true } as never },
+    })).toBe(true);
+    await expect(answer).resolves.toEqual({ action: 'accept', content: { env: 'prod' } });
+    expect(sessionManager.getEventHistory('elicit-answer')).toContainEqual({ type: 'elicitation_resolved', requestId, action: 'accept' });
+    // Already answered
+    expect(sessionManager.respondToElicitation('elicit-answer', requestId, { action: 'decline' })).toBe(false);
+
+    await sessionManager.destroySession('elicit-answer');
+  });
+
+  it('cancels when the agent stops waiting', async () => {
+    const onElicitation = await startSession('elicit-abort');
+    const abort = new AbortController();
+    const answer = onElicitation(request, abort.signal);
+    abort.abort();
+    await expect(answer).resolves.toEqual({ action: 'cancel' });
+    expect(sessionManager.getSession('elicit-abort')!.pendingElicitations.size).toBe(0);
+    await sessionManager.destroySession('elicit-abort');
+  });
+
+  it('cancels pending requests when the conversation closes', async () => {
+    const onElicitation = await startSession('elicit-destroy');
+    const answer = onElicitation(request, new AbortController().signal);
+    await sessionManager.destroySession('elicit-destroy');
+    await expect(answer).resolves.toEqual({ action: 'cancel' });
+  });
+
+  it('rejects unknown actions', () => {
+    expect(sanitizeElicitationResponse({ action: 'maybe' })).toBeNull();
+    expect(sanitizeElicitationResponse(null)).toBeNull();
+    expect(sanitizeElicitationResponse({ action: 'decline', content: { a: 'x' } })).toEqual({ action: 'decline' });
+    expect(sanitizeElicitationResponse({ action: 'accept', content: { n: Infinity, l: ['a', 1], ok: ['a'] } })).toEqual({ action: 'accept', content: { ok: ['a'] } });
   });
 });

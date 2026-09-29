@@ -105,6 +105,33 @@ describe('credentials', () => {
     expect(getApiKey('claude-code')).toBeNull();
   });
 
+  describe('when the file is briefly unreadable (e.g. locked by antivirus)', () => {
+    const busy = () => vi.spyOn(fs, 'readFileSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it("doesn't remember the failure as \"no key\"", () => {
+      saveApiKey('claude-code', 'sk-a');
+      resetCredentialsCache();
+      busy();
+      expect(getApiKey('claude-code')).toBeNull();
+      expect(getApiKey('claude-code')).toBe('sk-a');
+    });
+
+    it("doesn't overwrite the file when saving or clearing", () => {
+      saveApiKey('claude-code', 'sk-a');
+      saveApiKey('other-agent', 'sk-b');
+      busy();
+      expect(() => saveApiKey('claude-code', 'sk-new')).toThrow(/nothing was changed/);
+      busy();
+      expect(() => clearApiKey('claude-code')).toThrow(/nothing was changed/);
+      resetCredentialsCache();
+      expect(getApiKey('claude-code')).toBe('sk-a');
+      expect(getApiKey('other-agent')).toBe('sk-b');
+    });
+  });
+
   it('treats a corrupt file as empty', () => {
     fs.writeFileSync(credentialsFile(), '{not json');
     expect(getApiKey('claude-code')).toBeNull();
