@@ -328,8 +328,6 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SETTINGS_SAVE, s),
 
   // App state persistence
-  getActiveTab: () => ipcRenderer.invoke(IPC.APP_STATE_GET_ACTIVE_TAB),
-  setActiveTab: (id: string | null) => ipcRenderer.send(IPC.APP_STATE_SET_ACTIVE_TAB, id),
   getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
   setOpenTabs: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_OPEN_TABS, ids),
   getCollapsedRepos: () =>

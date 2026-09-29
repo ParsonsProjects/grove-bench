@@ -62,7 +62,7 @@
 
 ## Persistence & Window Management
 
-39. **As a developer, I want the app to remember my window position, size, and active tab across restarts** so I can pick up where I left off.
+39. **As a developer, I want the app to remember my window position, size, and open tabs across restarts** so I can pick up where I left off.
 
 ## Debugging
 

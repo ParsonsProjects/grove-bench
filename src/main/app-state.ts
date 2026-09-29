@@ -24,7 +24,6 @@ export interface SkillSuggestionCache {
 }
 
 export interface AppState {
-  activeTabId: string | null;
   openTabIds: string[];
   collapsedRepos: Record<string, boolean>;
   sessionSort: SessionSortState;
@@ -50,7 +49,6 @@ export interface AppState {
 }
 
 const DEFAULT_STATE: AppState = {
-  activeTabId: null,
   openTabIds: [],
   collapsedRepos: {},
   sessionSort: { key: 'name', dir: 'asc' },
@@ -75,7 +73,6 @@ export const APP_STATE_MIGRATIONS: readonly Migration[] = [
 
 /** Per-field fallback: a corrupt value resets that field only. */
 const appStateSchema = z.object({
-  activeTabId: z.string().nullable().catch(DEFAULT_STATE.activeTabId),
   openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
   collapsedRepos: z.record(z.string(), z.boolean()).catch(DEFAULT_STATE.collapsedRepos),
   sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
@@ -185,16 +182,11 @@ function debouncedWriter<T>(apply: (state: AppState, value: T) => void): Debounc
   return writer;
 }
 
-const activeTabWriter = debouncedWriter<string | null>((s, v) => { s.activeTabId = v; });
 const openTabsWriter = debouncedWriter<string[]>((s, v) => { s.openTabIds = v; });
 const collapsedReposWriter = debouncedWriter<Record<string, boolean>>((s, v) => { s.collapsedRepos = v; });
 const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessionSort = v; });
 const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
-
-export function saveActiveTab(id: string | null): void {
-  activeTabWriter.save(id);
-}
 
 export function saveOpenTabs(ids: string[]): void {
   openTabsWriter.save(ids);

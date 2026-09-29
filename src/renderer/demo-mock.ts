@@ -281,12 +281,11 @@ const api: Record<string, unknown> = {
   },
   listWorktrees: async () => [],
   listFiles: async () => [],
-  // getActiveTab is restoreApp's last IPC call — seed only after it, so the
-  // restore pass can't stop the seeded sessions (it stops "running" sessions
-  // it doesn't recognize as open tabs).
-  getActiveTab: async () => {
+  // restoreApp's last IPC call. Seed only after it, so the restore pass can't
+  // stop the seeded sessions (it stops "running" sessions it doesn't
+  // recognize as open tabs).
+  notifyRestoreComplete: () => {
     setTimeout(seedSessions, 150);
-    return null;
   },
   listBookmarks: async () => [],
   getOpenTabs: async () => [],
