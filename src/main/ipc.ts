@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
-import { IPC } from '../shared/types.js';
+import { IPC, PERMISSION_MODES } from '../shared/types.js';
 import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
@@ -55,12 +55,12 @@ function prelaunchPrefixedEvents(sessionId: string): import('../shared/types.js'
   return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
 }
 
-const PERMISSION_MODES: ReadonlySet<string> = new Set<PermissionMode>(['default', 'plan', 'acceptEdits', 'readSafe', 'auto']);
+const KNOWN_PERMISSION_MODES: ReadonlySet<string> = new Set<string>(PERMISSION_MODES);
 
 /** A mode the renderer asked a new conversation to start in. Anything else
  *  is dropped so the agent's saved default applies. */
 function isPermissionMode(value: unknown): value is PermissionMode {
-  return typeof value === 'string' && PERMISSION_MODES.has(value);
+  return typeof value === 'string' && KNOWN_PERMISSION_MODES.has(value);
 }
 
 /** Control values the renderer chose for a new conversation: string values
@@ -79,6 +79,9 @@ function sanitizeControls(value: unknown): Record<string, string> | undefined {
  *  every turn. */
 const branchAutoNameInFlight = new Set<string>();
 const branchAutoNameAttempts = new Map<string, number>();
+/** Names generated but not applied because a turn had started; used on the
+ *  next try instead of asking the agent again. */
+const branchAutoNamePending = new Map<string, string>();
 const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 
 /** Search a session in prelaunchPrefixedEvents' index space, using the cached
@@ -516,6 +519,10 @@ export function registerHandlers() {
     // to the same worktree has another id, and follows via BRANCH_SYNC.
     if (!live || live.branch !== tempBranchName(sessionId) || !isTempBranch(live.branch)) return null;
     if (branchAutoNameInFlight.has(sessionId)) return null;
+    // Renaming the checked-out branch under a running turn could break a git
+    // command the agent is running (a push of the old name, say). The
+    // renderer asks again after the next turn ends.
+    if (sessionManager.isMidTurn(sessionId)) return null;
     const attempts = branchAutoNameAttempts.get(sessionId) ?? 0;
     if (attempts >= MAX_BRANCH_AUTO_NAME_ATTEMPTS) return null;
     // As the chat showed it: attached files as a name label, not their content,
@@ -528,15 +535,23 @@ export function registerHandlers() {
     branchAutoNameAttempts.set(sessionId, attempts + 1);
     try {
       const title = (await worktreeManager.getDisplayNameState(sessionId))?.displayName ?? null;
-      const name = await generateBranchName({
+      const name = branchAutoNamePending.get(sessionId) ?? await generateBranchName({
         repoPath: live.repoPath,
         cwd: live.worktreePath,
         task,
         title,
         rule: settings.getSettings().branchNamingRule || null,
       }, live.adapter);
+      branchAutoNamePending.delete(sessionId);
       // The user may have renamed it while the name was being generated.
       if (sessionManager.getSession(sessionId)?.branch !== tempBranchName(sessionId)) return null;
+      // A queued message may have started a turn meanwhile: try again after
+      // it, without using up an attempt.
+      if (sessionManager.isMidTurn(sessionId)) {
+        branchAutoNameAttempts.set(sessionId, attempts);
+        branchAutoNamePending.set(sessionId, name);
+        return null;
+      }
       const newName = await worktreeManager.renameBranch(sessionId, name);
       sessionManager.setBranch(sessionId, newName);
       logger.info(`Named branch for ${sessionId}: ${newName}`);

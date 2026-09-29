@@ -506,8 +506,11 @@
           </div>
         {/if}
       </div>
-    {:else}
-      <!-- Active session — keep all live panes mounted, show only the active one -->
+    {/if}
+    {#if store.sessions.length > 0}
+      <!-- Keep all live panes mounted, show only the active one. They stay
+           mounted under the draft and the landing too (all hidden), so their
+           terminals, scroll and half-typed prompts survive a trip there. -->
       {#each store.sessions as session (session.id)}
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}

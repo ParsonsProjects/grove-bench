@@ -211,3 +211,35 @@ describe('draftStore.start', () => {
     expect(createSessionMock()).not.toHaveBeenCalled();
   });
 });
+
+describe('draftStore review fixes', () => {
+  it('applies Plan for a PR picked before the agent\'s modes have loaded', async () => {
+    let release: (v: ControlDescriptor[]) => void = () => {};
+    mockGroveBench.getAdapterControls.mockReturnValue(new Promise((r) => { release = r; }));
+    draftStore.open('/repo/one');
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
+    expect(draftStore.draft?.controls.permissionMode).toBeUndefined();
+
+    release([modeControl, effortControl]);
+    await settle();
+    expect(draftStore.controlValue('permissionMode')).toBe('plan');
+  });
+
+  it('keeps a PR draft in Plan after the agent changes', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
+    draftStore.setAgent('codex');
+    await settle();
+    expect(draftStore.draft?.controls.permissionMode).toBe('plan');
+  });
+
+  it('refuses to start in a project that was removed', async () => {
+    draftStore.open('/repo/one');
+    await settle();
+    store.repos = ['/repo/two'];
+    expect(await draftStore.start()).toBe(false);
+    expect(draftStore.error).toContain('project was removed');
+    expect(createSessionMock()).not.toHaveBeenCalled();
+  });
+});

@@ -112,8 +112,15 @@ class DraftStore {
     if (!this.draft || repo === this.draft.repoPath) return;
     this.draft.repoPath = repo;
     // Branches belong to the old project.
+    this.resetToNewBranch();
+  }
+
+  /** Back to the default place to run: a new branch from the project's
+   *  default branch. */
+  resetToNewBranch(): void {
+    if (!this.draft) return;
     this.setStart(newBranchStart());
-    void this.prefillBaseBranch(repo);
+    void this.prefillBaseBranch(this.draft.repoPath);
   }
 
   setAgent(agentId: string): void {
@@ -141,13 +148,18 @@ class DraftStore {
   setStart(start: DraftStart): void {
     if (!this.draft) return;
     this.draft.start = start;
-    // Opening a PR is usually a review: start it in Plan mode unless the
-    // user chose a mode themselves. Anything else goes back to the default.
-    if (!this.modeTouched) {
-      const { [CONTROL_IDS.permissionMode]: _mode, ...rest } = this.draft.controls;
-      const plan = start.kind === 'existing' && !!start.pr && this.offers(CONTROL_IDS.permissionMode, 'plan');
-      this.draft.controls = plan ? { ...rest, [CONTROL_IDS.permissionMode]: 'plan' } : rest;
-    }
+    this.applyAutoMode();
+  }
+
+  /** Opening a PR is usually a review: start it in Plan mode unless the user
+   *  chose a mode themselves. Anything else goes back to the default. Runs
+   *  again once the agent's modes load, and after the agent changes. */
+  private applyAutoMode(): void {
+    const d = this.draft;
+    if (!d || this.modeTouched) return;
+    const { [CONTROL_IDS.permissionMode]: _mode, ...rest } = d.controls;
+    const plan = d.start.kind === 'existing' && !!d.start.pr && this.offers(CONTROL_IDS.permissionMode, 'plan');
+    d.controls = plan ? { ...rest, [CONTROL_IDS.permissionMode]: 'plan' } : rest;
   }
 
   /** The model the draft would start on. */
@@ -205,6 +217,7 @@ class DraftStore {
       if (this.draft) {
         const kept = Object.entries(this.draft.controls).filter(([id, v]) => this.offers(id, v));
         this.draft.controls = Object.fromEntries(kept);
+        this.applyAutoMode();
       }
     } catch (e) {
       console.warn('[draft] could not load the agent\'s models and controls:', e);
@@ -238,6 +251,10 @@ class DraftStore {
     const d = this.draft;
     if (!d || this.starting) return false;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
+    if (!sessionStore.repos.includes(d.repoPath)) {
+      this.error = 'This project was removed. Pick another project in the bar below.';
+      return false;
+    }
     this.starting = true;
     this.error = '';
     const text = d.text.trim();

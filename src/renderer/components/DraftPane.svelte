@@ -27,12 +27,24 @@
   // Credentials are checked here, not at app startup. A cached "ready" is
   // trusted (a bad key still surfaces as an auth error in the conversation);
   // anything else gets a fresh check before the key form shows.
+  // Whether loading the agent list has finished (or failed), so a draft with
+  // no agent shows why instead of waiting forever.
+  let agentsTried = $state(agentsStore.loaded);
   const credentials = $derived.by(() => {
     const status = store.prerequisites;
     if (status && agentId && agentReady(status, agentId)) return 'ready';
-    if (prerequisitesStore.checking || !agentId) return 'checking';
+    if (!agentId) return agentsTried ? 'no-agent' : 'checking';
+    if (prerequisitesStore.checking) return 'checking';
     return 'missing';
   });
+
+  function retryAgents() {
+    agentsTried = false;
+    agentsStore.refresh().finally(() => {
+      agentsTried = true;
+      void draftStore.loadAgentInfo();
+    });
+  }
 
   // One fresh check per agent, as soon as we know which agent is meant.
   let checkedFor = '';
@@ -64,7 +76,7 @@
   });
 
   onMount(() => {
-    agentsStore.load();
+    agentsStore.load().finally(() => { agentsTried = true; });
     textEl?.focus();
   });
 
@@ -101,6 +113,14 @@
       <div class="flex items-center gap-2 text-sm relative z-10">
         <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
         Checking credentials…
+      </div>
+    {:else if credentials === 'no-agent'}
+      <div class="relative z-10 w-full max-w-sm flex flex-col gap-3 bg-background border border-border p-4">
+        <p class="text-sm text-foreground">No agent is available to start this conversation.</p>
+        <p class="text-xs text-muted-foreground">Grove Bench couldn't load its list of agents. Try again, or restart the app if it keeps happening.</p>
+        <div class="flex justify-end">
+          <Button variant="secondary" size="sm" onclick={retryAgents}>Try again</Button>
+        </div>
       </div>
     {:else if credentials === 'missing'}
       <div class="relative z-10 w-full max-w-sm flex flex-col gap-3 bg-background border border-border p-4">

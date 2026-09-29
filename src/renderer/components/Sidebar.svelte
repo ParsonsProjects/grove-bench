@@ -413,6 +413,8 @@
     try {
       await window.groveBench.removeRepo(repoPath);
       store.removeRepo(repoPath);
+      // A draft can't start in a project that's gone.
+      if (draftStore.draft?.repoPath === repoPath) draftStore.discard();
     } catch (e: any) {
       store.setError(e.message || String(e));
     }

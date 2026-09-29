@@ -1418,7 +1418,8 @@ export type UpdateStatus =
  *  'auto' is the provider's native auto mode (Claude Code's model classifier
  *  approves or blocks each action instead of prompting). It is passed
  *  through to the adapter untouched. */
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'readSafe' | 'auto';
+export const PERMISSION_MODES = ['default', 'plan', 'acceptEdits', 'readSafe', 'auto'] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export const IPC = {
   FILE_OPEN_IN_EDITOR: 'file:openInEditor',

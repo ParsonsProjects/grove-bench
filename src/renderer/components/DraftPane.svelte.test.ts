@@ -120,3 +120,21 @@ describe('DraftPane credentials', () => {
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
 });
+
+describe('DraftPane with no agent', () => {
+  it('says so instead of waiting forever, and can try again', async () => {
+    agentsStore.list = [];
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    draftStore.draft!.agentId = '';
+    mockGroveBench.listAdapters.mockResolvedValue([]);
+    render(DraftPane);
+    expect(await screen.findByText(/No agent is available/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
+
+    mockGroveBench.listAdapters.mockResolvedValue([claude]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(draftStore.draft?.agentId).toBe('claude-code'));
+    expect(await screen.findByLabelText('First message')).toBeInTheDocument();
+  });
+});

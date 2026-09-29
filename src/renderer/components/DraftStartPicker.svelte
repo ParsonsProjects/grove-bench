@@ -8,7 +8,6 @@
   import { store } from '../stores/sessions.svelte.js';
   import { draftStore, type DraftStart } from '../stores/draft.svelte.js';
   import type { OpenPrSummary } from '../../shared/types.js';
-  import { resolveBaseBranch } from '../lib/base-branch.js';
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -84,17 +83,10 @@
   function chooseTab(next: Tab) {
     tab = next;
     if (next === 'new' && start?.kind !== 'new') {
-      draftStore.setStart({ kind: 'new', branchName: '', baseBranch: '' });
-      void fillBase();
+      draftStore.resetToNewBranch();
     } else if (next === 'folder') {
       draftStore.setStart({ kind: 'folder' });
     }
-  }
-
-  async function fillBase() {
-    const base = await resolveBaseBranch(repoPath);
-    const s = draftStore.draft?.start;
-    if (s?.kind === 'new' && !s.baseBranch) draftStore.setStart({ ...s, baseBranch: base });
   }
 
   function setNew(patch: Partial<{ branchName: string; baseBranch: string }>) {
