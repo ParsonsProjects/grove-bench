@@ -50,6 +50,9 @@ export interface CreateSessionOpts {
   attachToSessionId?: string;
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
+  /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
+   *  a review). Falls back to the default when the agent doesn't offer it. */
+  permissionMode?: PermissionMode;
 }
 
 /** 'sleeping': an open conversation whose agent process was shut down after
@@ -355,6 +358,20 @@ export interface PrChecksSummary {
   passed: number;
   failed: number;
   pending: number;
+}
+
+/** An open pull request, as listed for picking one to review. */
+export interface OpenPrSummary {
+  number: number;
+  title: string;
+  /** The PR's head branch. */
+  headRefName: string;
+  /** Login of the PR's author; empty when gh didn't report one. */
+  author: string;
+  isDraft: boolean;
+  /** Head branch lives in a fork, so it isn't a branch of this repo. */
+  isCrossRepository: boolean;
+  url: string;
 }
 
 export interface PrInfo {
@@ -832,6 +849,10 @@ export interface GroveBenchAPI {
    *  from the first prompt). Resolves to the new name, or null when it is
    *  unchanged or was set by the user. */
   autoNameSession(sessionId: string): Promise<string | null>;
+  /** Rename a conversation's placeholder branch (see tempBranchName) to one
+   *  generated from its task. Returns the new name, or null when nothing
+   *  changed (already named, pushed, no prompt yet, or generation failed). */
+  autoNameBranch(sessionId: string): Promise<string | null>;
   /** Persist the completed flag (see WorktreeInfo.completedAt). */
   setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
@@ -991,6 +1012,8 @@ export interface GroveBenchAPI {
    *  it since it started — ordered primary first (open before closed/merged,
    *  newest first within each). Empty when none exist. */
   getPrs(sessionId: string): Promise<PrInfo[]>;
+  /** Open PRs in a project, newest first. Throws when gh can't list them. */
+  listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
 
@@ -1213,6 +1236,10 @@ export interface GroveBenchSettings {
   /** Base branch for new worktrees and PRs. Empty = auto-detect the
    *  repository's default branch (origin/HEAD, falling back to main/master). */
   defaultBaseBranch: string;
+  /** How to name branches that are named automatically, in the user's own
+   *  words (e.g. "<type>/<ticket>-<short-description>"). Empty = copy the
+   *  pattern of the repo's recent branch names. */
+  branchNamingRule: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
 
@@ -1412,6 +1439,7 @@ export const IPC = {
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
   BRANCH_SYNC: 'branch:sync',
+  BRANCH_AUTO_NAME: 'branch:autoName',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
   PREREQUISITES_GH: 'prerequisites:gh',
@@ -1455,6 +1483,7 @@ export const IPC = {
   GIT_SQUASH: 'git:squash',
   GIT_GENERATE_COMMIT_MESSAGE: 'git:generateCommitMessage',
   PR_LIST: 'pr:list',
+  PR_LIST_OPEN: 'pr:listOpen',
   PR_CREATE: 'pr:create',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   AGENT_SET_MODEL: 'agent:setModel',

@@ -479,3 +479,23 @@ describe('createAttachedSession', () => {
     store.sessions = [];
   });
 });
+
+describe('openNewConversation', () => {
+  beforeEach(() => {
+    store.newConversation = null;
+  });
+
+  it('opens the dialog on the given project', () => {
+    store.repos = ['/repo/a'];
+    store.openNewConversation('/repo/a');
+    expect(store.newConversation).toEqual({ repo: '/repo/a' });
+    store.repos = [];
+    store.newConversation = null;
+  });
+
+  it('does nothing when there is no project to start in', () => {
+    store.repos = [];
+    store.openNewConversation();
+    expect(store.newConversation).toBeNull();
+  });
+});

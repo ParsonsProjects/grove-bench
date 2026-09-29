@@ -15,6 +15,7 @@
 |----------|--------|
 | `Ctrl+F` | Search in Activity tab |
 | `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
+| `Ctrl+N` | New conversation (in the open conversation's project) |
 
 ## Agent Controls
 

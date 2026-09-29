@@ -163,9 +163,7 @@
     return items;
   }
 
-  let showNewAgent = $state(false);
   let showSettings = $state(false);
-  let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
@@ -359,8 +357,7 @@
   }
 
   function openNewAgent(defaultRepo = '') {
-    newAgentDefaultRepo = defaultRepo;
-    showNewAgent = true;
+    store.openNewConversation(defaultRepo);
   }
 
   function requestDestroy(id: string) {
@@ -845,7 +842,7 @@
         disabled={!store.canCreate}
         class="flex-1"
         size="sm"
-        title="New conversation"
+        title="New conversation (Ctrl+N)"
         aria-label="New conversation"
       >
         {#if compact}
@@ -905,8 +902,8 @@
   ></div>
 </aside>
 
-{#if showNewAgent}
-  <NewAgentDialog onclose={() => showNewAgent = false} defaultRepo={newAgentDefaultRepo} />
+{#if store.newConversation}
+  <NewAgentDialog onclose={() => store.newConversation = null} defaultRepo={store.newConversation.repo} />
 {/if}
 
 <SettingsPanel open={showSettings} onclose={() => showSettings = false} />

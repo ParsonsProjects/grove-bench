@@ -37,6 +37,7 @@ const SETTINGS = {
   autoInstallDeps: false,
   idleSleepMinutes: 30,
   defaultBaseBranch: '',
+  branchNamingRule: '',
   theme: 'dark',
   alwaysOnTop: false,
   repoColors: {},
@@ -315,6 +316,16 @@ const api: Record<string, unknown> = {
     ? { success: false, error: `"main" is already checked out in ${REPO_B}. A branch can only be checked out in one place.` }
     : { success: true, branch, sessionIds: [id] },
   syncBranch: async () => null,
+  autoNameBranch: async () => null,
+  // Existing-branch picker in the New Conversation dialog.
+  listOpenPrs: async (repoPath: string) => repoPath === REPO_B
+    ? [
+      { number: 51, title: 'Checkout v2: split payment step', headRefName: 'feat/checkout-v2', author: 'jo-dev', isDraft: false, isCrossRepository: false, url: '' },
+      { number: 50, title: 'Bump node to 22', headRefName: 'patch-1', author: 'outside-contributor', isDraft: false, isCrossRepository: true, url: '' },
+    ]
+    : [
+      { number: 12, title: 'Branch picker in the status bar', headRefName: 'feat/branch-picker', author: 'sam-k', isDraft: true, isCrossRepository: false, url: '' },
+    ],
   gitLogCommits: async () => [
     { sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0', shortSha: 'a1b2c3d', subject: 'Add OAuth callback route' },
     { sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1', shortSha: 'b2c3d4e', subject: 'Wire token refresh' },
@@ -345,7 +356,7 @@ const api: Record<string, unknown> = {
   ].join('\n'),
   listMcpServers: async () => [],
   listAdapters: async () => [{
-    id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
+    id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true, permissionModes: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
     // The MCP popover only offers controls the agent declares.
     mcp: {
       controls: { list: true, reconnect: true, toggle: true, signIn: true, contextCost: true },

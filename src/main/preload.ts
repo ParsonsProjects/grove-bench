@@ -46,6 +46,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
   syncBranch: (sessionId: string) =>
     ipcRenderer.invoke(IPC.BRANCH_SYNC, sessionId),
+  autoNameBranch: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.BRANCH_AUTO_NAME, sessionId),
 
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
@@ -198,6 +200,7 @@ const api: GroveBenchAPI = {
 
   // PR info
   getPrs: (sessionId: string) => ipcRenderer.invoke(IPC.PR_LIST, sessionId),
+  listOpenPrs: (repoPath: string) => ipcRenderer.invoke(IPC.PR_LIST_OPEN, repoPath),
   createPr: (sessionId: string, opts: import('../shared/types.js').PrCreateOpts) =>
     ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
   getPrReviewComments: (sessionId: string, prNumber: number) =>

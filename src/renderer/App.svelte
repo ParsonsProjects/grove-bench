@@ -29,6 +29,7 @@
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
+  import { isTempBranch } from '../shared/temp-branch.js';
 
   let showAnalyticsConsent = $state(false);
 
@@ -135,7 +136,7 @@
         if (store.activeSessionId !== session.id) {
           store.markNeedsAttention(session.id);
         }
-        void autoNameSession(session.id);
+        void autoNameSession(session.id).then(() => autoNameBranch(session.id));
       }
       prevRunningState[session.id] = running;
     }
@@ -149,6 +150,18 @@
       const name = await window.groveBench.autoNameSession(sessionId);
       if (name) store.updateDisplayName(sessionId, name);
     } catch { /* non-fatal — naming is best-effort */ }
+  }
+
+  /** Rename a placeholder branch (a conversation started without a branch
+   *  name) from its task. Runs after the auto name so the title can help.
+   *  Main does nothing for a branch that is already named. */
+  async function autoNameBranch(sessionId: string): Promise<void> {
+    const branch = store.sessions.find((s) => s.id === sessionId)?.branch;
+    if (!branch || !isTempBranch(branch)) return;
+    try {
+      const named = await window.groveBench.autoNameBranch(sessionId);
+      if (named) store.updateBranch(sessionId, named);
+    } catch { /* non-fatal — the placeholder stays and can be renamed by hand */ }
   }
 
   async function refreshAutoNames(sessionIds: string[]): Promise<void> {
@@ -253,6 +266,11 @@
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'b') {
       e.preventDefault();
       bookmarkStore.toggleDrawer();
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
+      e.preventDefault();
+      // Preselect the project of the conversation being looked at.
+      if (!store.newConversation) store.openNewConversation(store.activeSession?.repoPath ?? '');
     }
   }
 
