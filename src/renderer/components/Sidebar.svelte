@@ -11,7 +11,7 @@
   import { getRepoColor } from '../lib/repo-colors.js';
   import AddRepoButton from './AddRepoButton.svelte';
   import MessageSquarePlusIcon from '@lucide/svelte/icons/message-square-plus';
-  import NewAgentDialog from './NewAgentDialog.svelte';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
@@ -164,9 +164,7 @@
     return items;
   }
 
-  let showNewAgent = $state(false);
   let showSettings = $state(false);
-  let newAgentDefaultRepo = $state('');
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
@@ -359,9 +357,10 @@
     } catch { /* session may already be dead */ }
   }
 
-  function openNewAgent(defaultRepo = '') {
-    newAgentDefaultRepo = defaultRepo;
-    showNewAgent = true;
+  /** Open a draft conversation in `repo` (default: the open conversation's
+   *  project). Nothing is created until its first message is sent. */
+  function openNewAgent(repo = '') {
+    draftStore.open(repo);
   }
 
   function requestDestroy(id: string) {
@@ -416,6 +415,8 @@
     try {
       await window.groveBench.removeRepo(repoPath);
       store.removeRepo(repoPath);
+      // A draft can't start in a project that's gone.
+      if (draftStore.draft?.repoPath === repoPath) draftStore.discard();
     } catch (e: any) {
       store.setError(e.message || String(e));
     }
@@ -716,10 +717,26 @@
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
     </div>
 
+    {#if draftStore.draft}
+      {@const draft = draftStore.draft}
+      <!-- The draft conversation: not started, so nothing exists yet. -->
+      <button
+        type="button"
+        onclick={() => draftStore.show()}
+        class="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+        title="New conversation, not started yet"
+      >
+        <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
+        <span class="text-sm truncate min-w-0">
+          <span class="text-muted-foreground/70">{store.repoDisplayName(draft.repoPath)}</span><span class="text-muted-foreground/40"> / </span><span class="italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
+        </span>
+        <span class="ml-auto text-[10px] text-muted-foreground/50 shrink-0">draft</span>
+      </button>
+    {/if}
     {#each activeSessions as session (session.id)}
       {@render sessionRow(session, true, null)}
     {/each}
-    {#if activeSessions.length === 0}
+    {#if activeSessions.length === 0 && !draftStore.draft}
       <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
     {/if}
 
@@ -784,20 +801,20 @@
               <span class="flex items-center gap-0.5 text-[10px] text-green-400 shrink-0" title="{rc.unread} unread"><span class="w-1.5 h-1.5 bg-green-400"></span>{rc.unread}</span>
             {/if}
           </button>
-          <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            {#if store.canCreate}
-              <button
-                onclick={() => openNewAgent(repo)}
-                class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-sidebar-accent transition-colors"
-                title="New conversation in this project"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-              </button>
-            {/if}
+          <div class="flex items-center gap-0.5">
+            <!-- Always shown: this is the main way to start a conversation in a project. -->
+            <button
+              onclick={() => openNewAgent(repo)}
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+              title="New conversation in {store.repoDisplayName(repo)}"
+              aria-label="New conversation in {store.repoDisplayName(repo)}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            </button>
             <button
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               title={canRemove ? 'Remove project' : 'Destroy all conversations first'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -847,7 +864,7 @@
         disabled={!store.canCreate}
         class="flex-1"
         size="sm"
-        title="New conversation"
+        title="New conversation (Ctrl+N)"
         aria-label="New conversation"
       >
         {#if compact}
@@ -907,9 +924,6 @@
   ></div>
 </aside>
 
-{#if showNewAgent}
-  <NewAgentDialog onclose={() => showNewAgent = false} defaultRepo={newAgentDefaultRepo} />
-{/if}
 
 <SettingsPanel open={showSettings} onclose={() => showSettings = false} />
 <MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />

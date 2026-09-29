@@ -65,7 +65,7 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // reply, which is part of the conversation the user needs to follow.
       return true;
     default:
-      // user, text, error, result. Every assistant text block is kept: agents
+      // user, text, error, git_identity_missing, result. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next
       // steps), so keeping only the last would hide the part that matters.
       return true;

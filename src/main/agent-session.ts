@@ -52,21 +52,25 @@ function readSafeSandbox(worktreePath: string): Record<string, unknown> {
  * Initial control values for a new session: each of the adapter's declared
  * controls (except permissionMode, which has its own session field) starts
  * at the descriptor default, overlaid with the user's saved default for that
- * adapter when the descriptor offers that value.
+ * adapter, then with the value chosen for this conversation. Each layer only
+ * applies when the descriptor offers that value, so an unoffered choice
+ * falls back to the saved default rather than past it.
  */
 export function initialControls(
   adapter: Pick<AgentAdapter, 'getControls'>,
   model: string | null,
   adapterDefaults: Record<string, string> | undefined,
+  chosen?: Record<string, string> | null,
 ): Record<string, string> {
   const values: Record<string, string> = {};
   for (const d of adapter.getControls(model)) {
     if (d.id === CONTROL_IDS.permissionMode) continue;
+    const offered = (v: string | undefined): v is string => !!v && d.options.some((o) => o.value === v);
     values[d.id] = d.default;
     const saved = adapterDefaults?.[d.id];
-    if (saved && d.options.some((o) => o.value === saved)) {
-      values[d.id] = saved;
-    }
+    if (offered(saved)) values[d.id] = saved;
+    const pick = chosen?.[d.id];
+    if (offered(pick)) values[d.id] = pick;
   }
   return values;
 }
@@ -459,6 +463,10 @@ class AgentSessionManager {
     adapterType?: string;
     /** Model to run this session with. Falls back to the default when omitted. */
     model?: string | null;
+    /** Starting control values (effort, thinking, …) chosen for this
+     *  conversation. Laid over the saved defaults; a value the model doesn't
+     *  offer is ignored. */
+    controls?: Record<string, string> | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -541,7 +549,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id]),
+      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id], opts.controls),
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,
@@ -653,16 +661,27 @@ class AgentSessionManager {
     // Read the user's git identity so we can force it via env vars.
     // Environment variables take highest precedence in git's identity
     // resolution, ensuring commits are attributed to the user even if
-    // the agent SDK sets its own git config.
+    // the agent SDK sets its own git config. With no identity configured
+    // the vars stay unset and git's own rules apply (usually it refuses to
+    // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
     try {
       const identity = await getGitIdentity(session.worktreePath);
-      gitIdentityEnv = {
-        GIT_AUTHOR_NAME: identity.name,
-        GIT_AUTHOR_EMAIL: identity.email,
-        GIT_COMMITTER_NAME: identity.name,
-        GIT_COMMITTER_EMAIL: identity.email,
-      };
+      if (identity) {
+        gitIdentityEnv = {
+          GIT_AUTHOR_NAME: identity.name,
+          GIT_AUTHOR_EMAIL: identity.email,
+          GIT_COMMITTER_NAME: identity.name,
+          GIT_COMMITTER_EMAIL: identity.email,
+        };
+      } else {
+        logger.warn(`[runQuery] session=${id} git user.name/user.email not set; agent commits use git's own identity rules`);
+        // Tell the user once per conversation. eventHistory is reloaded from
+        // disk, so this also holds across restarts and app relaunches.
+        if (!session.eventHistory.some((e) => e.type === 'git_identity_missing')) {
+          emit({ type: 'git_identity_missing' });
+        }
+      }
     } catch { /* best effort */ }
 
     // Snapshot the rewind fork target for this start attempt. It stays set on
@@ -1489,6 +1508,13 @@ class AgentSessionManager {
       logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
+  }
+
+  /** Whether the agent is in the middle of a turn (a message sent or a reply
+   *  under way). Same test idle sleep uses. */
+  isMidTurn(id: string): boolean {
+    const session = this.sessions.get(id);
+    return !!session && (session.isStartingQuery || (!!session.turnHandle && session.turnHandle === session.queryHandle));
   }
 
   setBranch(id: string, newBranch: string): void {

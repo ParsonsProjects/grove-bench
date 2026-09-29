@@ -45,6 +45,7 @@ import {
   parseWorktreeBranches,
   checkoutBranch,
   isWorkingTreeClean,
+  getGitIdentity,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -751,6 +752,32 @@ describe('localBranchExists()', () => {
   it('returns false when the ref is missing', async () => {
     mockExeca.mockRejectedValue(new Error('not a valid ref'));
     expect(await localBranchExists('/wt', 'nope')).toBe(false);
+  });
+});
+
+describe('getGitIdentity()', () => {
+  /** `git config <key>` prints the value from `values`, or exits 1 like git when unset. */
+  function mockConfig(values: Record<string, string>) {
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) =>
+      args[1] in values ? Promise.resolve({ stdout: `${values[args[1]]}\n` }) : Promise.reject(new Error('exit code 1'))
+    ) as any);
+  }
+
+  it('returns the configured name and email', async () => {
+    mockConfig({ 'user.name': 'Ada', 'user.email': 'ada@example.com' });
+    expect(await getGitIdentity('/wt')).toEqual({ name: 'Ada', email: 'ada@example.com' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['config', 'user.name'], { cwd: '/wt' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['config', 'user.email'], { cwd: '/wt' });
+  });
+
+  it.each([
+    ['nothing is set', {}],
+    ['only the name is set', { 'user.name': 'Ada' }],
+    ['only the email is set', { 'user.email': 'ada@example.com' }],
+    ['the name is blank', { 'user.name': '  ', 'user.email': 'ada@example.com' }],
+  ])('returns null instead of a made-up identity when %s', async (_label, values) => {
+    mockConfig(values);
+    expect(await getGitIdentity('/wt')).toBeNull();
   });
 });
 

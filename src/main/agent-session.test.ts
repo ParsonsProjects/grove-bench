@@ -263,6 +263,8 @@ function makeMockWindow() {
 // Import the module under test AFTER mocks are set up
 const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
+const { getGitIdentity } = await import('./git.js');
+const { logger } = await import('./logger.js');
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -323,6 +325,58 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager git identity env', () => {
+  const start = (id: string) => sessionManager.createSession({
+    id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+  });
+  const identityNotices = (id: string) =>
+    sessionManager.getEventHistory(id).filter((e) => e.type === 'git_identity_missing').length;
+
+  afterEach(() => {
+    // Drop any unused once-values and restore the module-level default.
+    vi.mocked(getGitIdentity).mockReset().mockResolvedValue({ name: 'Test User', email: 'test@example.com' });
+  });
+
+  it('forces the configured identity on agent commits', async () => {
+    await start('test-identity');
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.extraEnv).toMatchObject({
+      GIT_AUTHOR_NAME: 'Test User',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'Test User',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+    });
+    expect(identityNotices('test-identity')).toBe(0);
+    await sessionManager.destroySession('test-identity');
+  });
+
+  it('leaves the identity vars unset when git has no identity', async () => {
+    vi.mocked(getGitIdentity).mockResolvedValueOnce(null);
+    await start('test-no-identity');
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    const env = mockAdapter.lastConfig?.extraEnv ?? {};
+    for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) {
+      expect(env).not.toHaveProperty(key);
+    }
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('user.name/user.email not set'));
+    expect(identityNotices('test-no-identity')).toBe(1);
+    await sessionManager.destroySession('test-no-identity');
+  });
+
+  it('tells the user once per conversation, not on every query restart', async () => {
+    vi.mocked(getGitIdentity).mockResolvedValue(null);
+    await start('test-identity-once');
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    await sessionManager.stopQuery('test-identity-once');
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+
+    expect(getGitIdentity).toHaveBeenCalledTimes(2);
+    expect(identityNotices('test-identity-once')).toBe(1);
+    await sessionManager.destroySession('test-identity-once');
   });
 });
 
@@ -2606,6 +2660,32 @@ describe('AgentSessionManager session controls', () => {
     expect(mockAdapter.lastConfig?.controls).toEqual({ thinking: 'low', speed: 'standard' });
 
     await sessionManager.destroySession('ctl-defaults');
+  });
+
+  it('lays values chosen for this conversation over the saved defaults, ignoring ones not offered', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
+
+    await sessionManager.createSession({
+      id: 'ctl-chosen', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      controls: { thinking: 'high', speed: 'warp' },
+    });
+
+    expect(sessionManager.getControls('ctl-chosen').values).toEqual({ thinking: 'high', speed: 'standard' });
+
+    await sessionManager.destroySession('ctl-chosen');
+  });
+
+  it('keeps the saved default when the chosen value is not offered', async () => {
+    settingsMock.getSettings.mockReturnValueOnce({ ...SETTINGS, adapterDefaults: { mock: { thinking: 'low' } } });
+
+    await sessionManager.createSession({
+      id: 'ctl-chosen-bad', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      controls: { thinking: 'max' },
+    });
+
+    expect(sessionManager.getControls('ctl-chosen-bad').values.thinking).toBe('low');
+
+    await sessionManager.destroySession('ctl-chosen-bad');
   });
 
   it('ignores saved defaults the adapter does not offer, and other adapters\' defaults', async () => {

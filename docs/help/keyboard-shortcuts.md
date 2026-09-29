@@ -16,6 +16,7 @@
 |----------|--------|
 | `Ctrl+F` | Search in Activity tab |
 | `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
+| `Ctrl+N` | New conversation draft (in the open conversation's project) |
 | `Ctrl+L` | Go to the address bar (Preview tab) |
 
 Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See [Preview tab](preview-tab.md#keys-inside-the-page).

@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   previewAgentTools: true,
   idleSleepMinutes: 30,
   defaultBaseBranch: '',
+  branchNamingRule: '',
   theme: 'system',
   alwaysOnTop: false,
   repoColors: {},

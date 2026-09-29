@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
-import { IPC } from '../shared/types.js';
-import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import { IPC, PERMISSION_MODES } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -13,7 +13,9 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
-import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
+import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
+import { displayTextFromSent } from '../shared/prompt-text.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -54,6 +56,35 @@ function prelaunchPrefixedEvents(sessionId: string): import('../shared/types.js'
   const history = sessionManager.getEventHistory(sessionId);
   return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
 }
+
+const KNOWN_PERMISSION_MODES: ReadonlySet<string> = new Set<string>(PERMISSION_MODES);
+
+/** A mode the renderer asked a new conversation to start in. Anything else
+ *  is dropped so the agent's saved default applies. */
+function isPermissionMode(value: unknown): value is PermissionMode {
+  return typeof value === 'string' && KNOWN_PERMISSION_MODES.has(value);
+}
+
+/** Control values the renderer chose for a new conversation: string values
+ *  only, and never the mode, which travels as permissionMode. */
+function sanitizeControls(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string' && k !== 'permissionMode') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Automatic branch renames per session this run: in flight, or how many
+ *  attempts have been made. Bounded so a failing agent isn't asked again on
+ *  every turn. */
+const branchAutoNameInFlight = new Set<string>();
+const branchAutoNameAttempts = new Map<string, number>();
+/** Names generated but not applied because a turn had started; used on the
+ *  next try instead of asking the agent again. */
+const branchAutoNamePending = new Map<string, string>();
+const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 
 /** Search a session in prelaunchPrefixedEvents' index space, using the cached
  *  search index for the history instead of scanning the combined array. */
@@ -175,6 +206,9 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_CREATE, async (event, opts: CreateSessionOpts) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
+    const permissionMode = isPermissionMode(opts.permissionMode) ? opts.permissionMode : undefined;
+    const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
+    const controls = sanitizeControls(opts.controls);
 
     if (opts.direct || opts.attachToSessionId) {
       // Direct mode — run in-place on an existing checkout, no worktree created.
@@ -201,35 +235,41 @@ export function registerHandlers() {
         repoPath: opts.repoPath,
         window: win,
         adapterType: opts.adapterType,
+        permissionMode,
+        model,
+        controls,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType };
     }
 
+    // Generate a stable ID up front so the renderer can open a tab immediately.
+    // It also names the placeholder branch when no name was given.
+    const id = crypto.randomUUID().slice(0, 8);
+    // No name for a new branch: start on a placeholder that is renamed from
+    // the task after the first turn (BRANCH_AUTO_NAME).
+    const branch = opts.useExisting ? opts.branchName : (opts.branchName.trim() || tempBranchName(id));
+
     // ── Validation (synchronous — errors shown in dialog) ──
 
     if (opts.useExisting) {
-      const exists = await branchExistsAnywhere(opts.repoPath, opts.branchName);
+      const exists = await branchExistsAnywhere(opts.repoPath, branch);
       if (!exists) {
-        throw new Error(`Branch "${opts.branchName}" does not exist`);
+        throw new Error(`Branch "${branch}" does not exist`);
       }
     } else {
-      const exists = await branchExists(opts.repoPath, opts.branchName);
-      const validName = await validateBranchName(opts.branchName);
+      const exists = await branchExists(opts.repoPath, branch);
+      const validName = await validateBranchName(branch);
       if (!validName) {
-        throw new Error(`Invalid branch name: "${opts.branchName}"`);
+        throw new Error(`Invalid branch name: "${branch}"`);
       }
       if (exists) {
-        throw new Error(`Branch "${opts.branchName}" already exists`);
+        throw new Error(`Branch "${branch}" already exists`);
       }
     }
 
-    logger.info(`Creating session: branch=${opts.branchName}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
-
-    // Generate a stable ID up front so the renderer can open a tab immediately
-    const id = crypto.randomUUID().slice(0, 8);
-    const branch = opts.branchName;
+    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
 
     // Helper to emit agent events before the session object exists.
     // Events are buffered so history replay can show them even if the
@@ -250,7 +290,7 @@ export function registerHandlers() {
 
         const worktree = await worktreeManager.create({
           repoPath: opts.repoPath,
-          branchName: opts.branchName,
+          branchName: branch,
           baseBranch: opts.baseBranch,
           useExisting: opts.useExisting,
           id,
@@ -300,6 +340,9 @@ export function registerHandlers() {
           repoPath: opts.repoPath,
           window: win,
           adapterType: opts.adapterType,
+          permissionMode,
+          model,
+          controls,
         });
 
         logger.info(`Session created: id=${worktree.id}`);
@@ -472,6 +515,62 @@ export function registerHandlers() {
     const newName = await worktreeManager.renameBranch(sessionId, newBranchName);
     sessionManager.setBranch(sessionId, newName);
     return { branch: newName };
+  });
+
+  ipcMain.handle(IPC.BRANCH_AUTO_NAME, async (_event, sessionId: string): Promise<string | null> => {
+    const live = sessionManager.getSession(sessionId);
+    // Only the conversation that owns the placeholder renames it: one attached
+    // to the same worktree has another id, and follows via BRANCH_SYNC.
+    if (!live || live.branch !== tempBranchName(sessionId) || !isTempBranch(live.branch)) return null;
+    if (branchAutoNameInFlight.has(sessionId)) return null;
+    // Renaming the checked-out branch under a running turn could break a git
+    // command the agent is running (a push of the old name, say). The
+    // renderer asks again after the next turn ends.
+    if (sessionManager.isMidTurn(sessionId)) return null;
+    const attempts = branchAutoNameAttempts.get(sessionId) ?? 0;
+    if (attempts >= MAX_BRANCH_AUTO_NAME_ATTEMPTS) return null;
+    // As the chat showed it: attached files as a name label, not their content,
+    // which would otherwise crowd the typed task out of the prompt.
+    const sent = firstUserPrompt(prelaunchPrefixedEvents(sessionId));
+    const task = sent ? displayTextFromSent(sent).trim() : '';
+    if (!task) return null; // nothing to name it from yet
+
+    branchAutoNameInFlight.add(sessionId);
+    branchAutoNameAttempts.set(sessionId, attempts + 1);
+    try {
+      const title = (await worktreeManager.getDisplayNameState(sessionId))?.displayName ?? null;
+      const name = branchAutoNamePending.get(sessionId) ?? await generateBranchName({
+        repoPath: live.repoPath,
+        cwd: live.worktreePath,
+        task,
+        title,
+        rule: settings.getSettings().branchNamingRule || null,
+      }, live.adapter);
+      branchAutoNamePending.delete(sessionId);
+      // The user may have renamed it while the name was being generated.
+      if (sessionManager.getSession(sessionId)?.branch !== tempBranchName(sessionId)) return null;
+      // A queued message may have started a turn meanwhile: try again after
+      // it, without using up an attempt.
+      if (sessionManager.isMidTurn(sessionId)) {
+        branchAutoNameAttempts.set(sessionId, attempts);
+        branchAutoNamePending.set(sessionId, name);
+        return null;
+      }
+      const newName = await worktreeManager.renameBranch(sessionId, name);
+      sessionManager.setBranch(sessionId, newName);
+      logger.info(`Named branch for ${sessionId}: ${newName}`);
+      return newName;
+    } catch (e) {
+      // Pushed already, generation failed, or the agent can't generate text.
+      // The placeholder stays; the user can still rename it by hand.
+      logger.warn(`Automatic branch name failed for ${sessionId}:`, e);
+      if (/pushed to a remote|does not support text generation/.test(String((e as Error)?.message ?? e))) {
+        branchAutoNameAttempts.set(sessionId, MAX_BRANCH_AUTO_NAME_ATTEMPTS);
+      }
+      return null;
+    } finally {
+      branchAutoNameInFlight.delete(sessionId);
+    }
   });
 
   ipcMain.handle(IPC.BRANCH_SWITCH, async (
@@ -1219,6 +1318,15 @@ export function registerHandlers() {
     const branches = await sessionPrBranches(worktree);
     try {
       return await prsForBranches(worktree.repoPath, branches, selfLogin);
+    } catch (e) {
+      rethrowGhFailure(e);
+    }
+  });
+
+  ipcMain.handle(IPC.PR_LIST_OPEN, async (_event, repoPath: string): Promise<OpenPrSummary[]> => {
+    if (typeof repoPath !== 'string' || !(await worktreeManager.validateRepo(repoPath))) return [];
+    try {
+      return await openPrs(repoPath);
     } catch (e) {
       rethrowGhFailure(e);
     }
