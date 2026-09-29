@@ -5,10 +5,8 @@ import { settingsStore } from './settings.svelte.js';
 import type { GroveBenchSettings } from '../../shared/types.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
   defaultModels: {},
@@ -21,8 +19,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
-  idleAutoStopMinutes: 30,
+  previewAgentTools: true,
+  idleSleepMinutes: 30,
   defaultBaseBranch: 'main',
+  branchNamingRule: '',
   theme: 'system',
   alwaysOnTop: false,
   repoColors: {},

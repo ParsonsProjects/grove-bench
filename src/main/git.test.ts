@@ -44,6 +44,8 @@ import {
   remoteTrackingRef,
   parseWorktreeBranches,
   checkoutBranch,
+  isWorkingTreeClean,
+  getGitIdentity,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -753,6 +755,32 @@ describe('localBranchExists()', () => {
   });
 });
 
+describe('getGitIdentity()', () => {
+  /** `git config <key>` prints the value from `values`, or exits 1 like git when unset. */
+  function mockConfig(values: Record<string, string>) {
+    mockExeca.mockImplementation(((_cmd: string, args: string[]) =>
+      args[1] in values ? Promise.resolve({ stdout: `${values[args[1]]}\n` }) : Promise.reject(new Error('exit code 1'))
+    ) as any);
+  }
+
+  it('returns the configured name and email', async () => {
+    mockConfig({ 'user.name': 'Ada', 'user.email': 'ada@example.com' });
+    expect(await getGitIdentity('/wt')).toEqual({ name: 'Ada', email: 'ada@example.com' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['config', 'user.name'], { cwd: '/wt' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['config', 'user.email'], { cwd: '/wt' });
+  });
+
+  it.each([
+    ['nothing is set', {}],
+    ['only the name is set', { 'user.name': 'Ada' }],
+    ['only the email is set', { 'user.email': 'ada@example.com' }],
+    ['the name is blank', { 'user.name': '  ', 'user.email': 'ada@example.com' }],
+  ])('returns null instead of a made-up identity when %s', async (_label, values) => {
+    mockConfig(values);
+    expect(await getGitIdentity('/wt')).toBeNull();
+  });
+});
+
 describe('remoteTrackingRef()', () => {
   /** `git remote` lists `remotes`; `show-ref` succeeds only for refs in `present`. */
   function mockRefs(remotes: string, present: string[]) {
@@ -819,5 +847,19 @@ describe('checkoutBranch()', () => {
   it('creates a new branch at HEAD', async () => {
     await checkoutBranch('/wt', 'feat/new', { create: true });
     expect(mockExeca).toHaveBeenCalledWith('git', ['checkout', '-b', 'feat/new'], { cwd: '/wt' });
+  });
+});
+
+describe('isWorkingTreeClean()', () => {
+  it('counts untracked files by default', async () => {
+    mockExeca.mockResolvedValue({ stdout: '?? .claude/\n' } as any);
+    expect(await isWorkingTreeClean('/wt')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain'], { cwd: '/wt' });
+  });
+
+  it('can leave untracked files out', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    expect(await isWorkingTreeClean('/wt', { ignoreUntracked: true })).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: '/wt' });
   });
 });

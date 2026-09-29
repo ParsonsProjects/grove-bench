@@ -124,6 +124,10 @@ class PrStore {
     if (!force && now - last < THROTTLE_MS) return;
     this.lastFetch.set(sessionId, now);
 
+    // The poll also catches a branch switch made outside the app while no
+    // agent turn was running (e.g. in a terminal).
+    void sessionStore.syncBranch(sessionId);
+
     // The two fetches are independent: a gh failure (offline, auth, timeout)
     // must not discard a fresh local sync count, and vice versa. Whatever
     // succeeded is stored; a failure keeps the previous snapshot and flags
@@ -257,12 +261,13 @@ class PrStore {
 
   private handleDetection(sessionId: string): void {
     // Alerts are only raised for sessions with a live agent — an old/stopped
-    // session has nothing actionable behind the alert. Detection is skipped
-    // entirely (not run-and-suppressed) so the watch state doesn't advance:
-    // feedback that arrives while a session is stopped still flags the next
-    // time the session is running.
+    // session has nothing actionable behind the alert. A sleeping one counts
+    // as live: a message wakes it. Detection is skipped entirely (not
+    // run-and-suppressed) so the watch state doesn't advance: feedback that
+    // arrives while a session is stopped still flags the next time the
+    // session is running.
     const status = sessionStore.sessions.find((s) => s.id === sessionId)?.status;
-    if (status !== 'running') return;
+    if (status !== 'running' && status !== 'sleeping') return;
 
     // Only the primary PR is watched. Each PR keeps its own state so that
     // becoming primary later seeds from its current feedback, not from
@@ -354,9 +359,11 @@ class PrStore {
     sessionStore.updateLastActive(sessionId);
   }
 
+  /** Idle and able to take a turn. A sleeping session qualifies: the auto
+   *  turn's message wakes it. */
   private sessionIdle(sessionId: string): boolean {
-    return !messageStore.getIsRunning(sessionId)
-      && sessionStore.sessions.find((s) => s.id === sessionId)?.status === 'running';
+    const status = sessionStore.sessions.find((s) => s.id === sessionId)?.status;
+    return !messageStore.getIsRunning(sessionId) && (status === 'running' || status === 'sleeping');
   }
 
   /** The PR's own head branch — it may not be the session's recorded branch

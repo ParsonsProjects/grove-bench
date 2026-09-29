@@ -1,3 +1,5 @@
+import { previewStore } from './preview.svelte.js';
+
 /**
  * Terminal store for per-session PTY terminals.
  *
@@ -41,6 +43,8 @@ class TerminalStore {
     const dataCleanup = window.groveBench.onPtyData(sessionId, (data) => {
       const handler = this.dataHandlers.get(sessionId);
       if (handler) handler(data);
+      // A dev server started here prints its URL; offer it in the Preview tab.
+      previewStore.noteStream(sessionId, data);
     });
     this.dataCleanups.set(sessionId, dataCleanup);
 

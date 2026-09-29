@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
-import { IPC } from '../shared/types.js';
-import type { BranchSwitchResult, CreateSessionOpts, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import { IPC, PERMISSION_MODES } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -13,22 +13,27 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
-import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
+import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
+import { displayTextFromSent } from '../shared/prompt-text.js';
 import { generateCommitMessage } from './commit-message.js';
+import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
 import { showOsNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
+import { previewManager } from './preview.js';
 import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveActiveTab, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -51,6 +56,35 @@ function prelaunchPrefixedEvents(sessionId: string): import('../shared/types.js'
   const history = sessionManager.getEventHistory(sessionId);
   return prelaunch.length > 0 ? [...prelaunch, ...history] : history;
 }
+
+const KNOWN_PERMISSION_MODES: ReadonlySet<string> = new Set<string>(PERMISSION_MODES);
+
+/** A mode the renderer asked a new conversation to start in. Anything else
+ *  is dropped so the agent's saved default applies. */
+function isPermissionMode(value: unknown): value is PermissionMode {
+  return typeof value === 'string' && KNOWN_PERMISSION_MODES.has(value);
+}
+
+/** Control values the renderer chose for a new conversation: string values
+ *  only, and never the mode, which travels as permissionMode. */
+function sanitizeControls(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string' && k !== 'permissionMode') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Automatic branch renames per session this run: in flight, or how many
+ *  attempts have been made. Bounded so a failing agent isn't asked again on
+ *  every turn. */
+const branchAutoNameInFlight = new Set<string>();
+const branchAutoNameAttempts = new Map<string, number>();
+/** Names generated but not applied because a turn had started; used on the
+ *  next try instead of asking the agent again. */
+const branchAutoNamePending = new Map<string, string>();
+const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
 
 /** Search a session in prelaunchPrefixedEvents' index space, using the cached
  *  search index for the history instead of scanning the combined array. */
@@ -172,6 +206,9 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_CREATE, async (event, opts: CreateSessionOpts) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
+    const permissionMode = isPermissionMode(opts.permissionMode) ? opts.permissionMode : undefined;
+    const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
+    const controls = sanitizeControls(opts.controls);
 
     if (opts.direct || opts.attachToSessionId) {
       // Direct mode — run in-place on an existing checkout, no worktree created.
@@ -198,35 +235,41 @@ export function registerHandlers() {
         repoPath: opts.repoPath,
         window: win,
         adapterType: opts.adapterType,
+        permissionMode,
+        model,
+        controls,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType };
     }
 
+    // Generate a stable ID up front so the renderer can open a tab immediately.
+    // It also names the placeholder branch when no name was given.
+    const id = crypto.randomUUID().slice(0, 8);
+    // No name for a new branch: start on a placeholder that is renamed from
+    // the task after the first turn (BRANCH_AUTO_NAME).
+    const branch = opts.useExisting ? opts.branchName : (opts.branchName.trim() || tempBranchName(id));
+
     // ── Validation (synchronous — errors shown in dialog) ──
 
     if (opts.useExisting) {
-      const exists = await branchExistsAnywhere(opts.repoPath, opts.branchName);
+      const exists = await branchExistsAnywhere(opts.repoPath, branch);
       if (!exists) {
-        throw new Error(`Branch "${opts.branchName}" does not exist`);
+        throw new Error(`Branch "${branch}" does not exist`);
       }
     } else {
-      const exists = await branchExists(opts.repoPath, opts.branchName);
-      const validName = await validateBranchName(opts.branchName);
+      const exists = await branchExists(opts.repoPath, branch);
+      const validName = await validateBranchName(branch);
       if (!validName) {
-        throw new Error(`Invalid branch name: "${opts.branchName}"`);
+        throw new Error(`Invalid branch name: "${branch}"`);
       }
       if (exists) {
-        throw new Error(`Branch "${opts.branchName}" already exists`);
+        throw new Error(`Branch "${branch}" already exists`);
       }
     }
 
-    logger.info(`Creating session: branch=${opts.branchName}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
-
-    // Generate a stable ID up front so the renderer can open a tab immediately
-    const id = crypto.randomUUID().slice(0, 8);
-    const branch = opts.branchName;
+    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
 
     // Helper to emit agent events before the session object exists.
     // Events are buffered so history replay can show them even if the
@@ -247,7 +290,7 @@ export function registerHandlers() {
 
         const worktree = await worktreeManager.create({
           repoPath: opts.repoPath,
-          branchName: opts.branchName,
+          branchName: branch,
           baseBranch: opts.baseBranch,
           useExisting: opts.useExisting,
           id,
@@ -297,6 +340,9 @@ export function registerHandlers() {
           repoPath: opts.repoPath,
           window: win,
           adapterType: opts.adapterType,
+          permissionMode,
+          model,
+          controls,
         });
 
         logger.info(`Session created: id=${worktree.id}`);
@@ -376,11 +422,25 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_CLOSE, async (_event, id: string) => {
     logger.info(`Closing session (agent, background tasks and terminal): id=${id}`);
+    previewManager.close(id);
     await Promise.all([
       terminalManager.killAllForSession(id),
       sessionManager.closeSession(id),
     ]);
     logger.info(`Session closed: id=${id}`);
+  });
+
+  // Idle sleep: only the agent process goes. The terminal and anything
+  // running in it are left alone, so a dev server there keeps serving.
+  ipcMain.handle(IPC.SESSION_SLEEP, async (_event, id: string) => {
+    const slept = await sessionManager.sleepSession(id);
+    if (slept) logger.info(`Session asleep: id=${id}`);
+    return slept;
+  });
+
+  ipcMain.handle(IPC.SESSION_WAKE, async (_event, id: string) => {
+    logger.info(`Waking session: id=${id}`);
+    sessionManager.wakeSession(id);
   });
 
   ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
@@ -390,6 +450,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
+    previewManager.close(id);
     await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
@@ -456,6 +517,62 @@ export function registerHandlers() {
     return { branch: newName };
   });
 
+  ipcMain.handle(IPC.BRANCH_AUTO_NAME, async (_event, sessionId: string): Promise<string | null> => {
+    const live = sessionManager.getSession(sessionId);
+    // Only the conversation that owns the placeholder renames it: one attached
+    // to the same worktree has another id, and follows via BRANCH_SYNC.
+    if (!live || live.branch !== tempBranchName(sessionId) || !isTempBranch(live.branch)) return null;
+    if (branchAutoNameInFlight.has(sessionId)) return null;
+    // Renaming the checked-out branch under a running turn could break a git
+    // command the agent is running (a push of the old name, say). The
+    // renderer asks again after the next turn ends.
+    if (sessionManager.isMidTurn(sessionId)) return null;
+    const attempts = branchAutoNameAttempts.get(sessionId) ?? 0;
+    if (attempts >= MAX_BRANCH_AUTO_NAME_ATTEMPTS) return null;
+    // As the chat showed it: attached files as a name label, not their content,
+    // which would otherwise crowd the typed task out of the prompt.
+    const sent = firstUserPrompt(prelaunchPrefixedEvents(sessionId));
+    const task = sent ? displayTextFromSent(sent).trim() : '';
+    if (!task) return null; // nothing to name it from yet
+
+    branchAutoNameInFlight.add(sessionId);
+    branchAutoNameAttempts.set(sessionId, attempts + 1);
+    try {
+      const title = (await worktreeManager.getDisplayNameState(sessionId))?.displayName ?? null;
+      const name = branchAutoNamePending.get(sessionId) ?? await generateBranchName({
+        repoPath: live.repoPath,
+        cwd: live.worktreePath,
+        task,
+        title,
+        rule: settings.getSettings().branchNamingRule || null,
+      }, live.adapter);
+      branchAutoNamePending.delete(sessionId);
+      // The user may have renamed it while the name was being generated.
+      if (sessionManager.getSession(sessionId)?.branch !== tempBranchName(sessionId)) return null;
+      // A queued message may have started a turn meanwhile: try again after
+      // it, without using up an attempt.
+      if (sessionManager.isMidTurn(sessionId)) {
+        branchAutoNameAttempts.set(sessionId, attempts);
+        branchAutoNamePending.set(sessionId, name);
+        return null;
+      }
+      const newName = await worktreeManager.renameBranch(sessionId, name);
+      sessionManager.setBranch(sessionId, newName);
+      logger.info(`Named branch for ${sessionId}: ${newName}`);
+      return newName;
+    } catch (e) {
+      // Pushed already, generation failed, or the agent can't generate text.
+      // The placeholder stays; the user can still rename it by hand.
+      logger.warn(`Automatic branch name failed for ${sessionId}:`, e);
+      if (/pushed to a remote|does not support text generation/.test(String((e as Error)?.message ?? e))) {
+        branchAutoNameAttempts.set(sessionId, MAX_BRANCH_AUTO_NAME_ATTEMPTS);
+      }
+      return null;
+    } finally {
+      branchAutoNameInFlight.delete(sessionId);
+    }
+  });
+
   ipcMain.handle(IPC.BRANCH_SWITCH, async (
     _event, sessionId: string, branch: string, opts?: { create?: boolean; busySessionIds?: string[] },
   ): Promise<BranchSwitchResult> => {
@@ -468,6 +585,15 @@ export function registerHandlers() {
       for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     } else {
       logger.warn(`Branch switch failed for session ${sessionId}: ${result.error}`);
+    }
+    return result;
+  });
+
+  ipcMain.handle(IPC.BRANCH_SYNC, async (_event, sessionId: string): Promise<BranchSyncResult | null> => {
+    const result = await worktreeManager.syncBranch(sessionId);
+    if (result) {
+      logger.info(`Session ${sessionId} checkout is now on branch ${result.branch}`);
+      for (const id of result.sessionIds) sessionManager.setBranch(id, result.branch);
     }
     return result;
   });
@@ -591,6 +717,10 @@ export function registerHandlers() {
     return sessionManager.listMcpServers(sessionId);
   });
 
+  ipcMain.handle(IPC.AGENT_MCP_CONTEXT_COST, (_event, sessionId: string) => {
+    return sessionManager.getMcpContextCost(sessionId);
+  });
+
   ipcMain.handle(IPC.AGENT_MCP_RECONNECT, (_event, sessionId: string, serverName: string) => {
     return sessionManager.reconnectMcpServer(sessionId, serverName);
   });
@@ -643,6 +773,10 @@ export function registerHandlers() {
     return sessionManager.respondToPermission(sessionId, decision);
   });
 
+  ipcMain.handle(IPC.AGENT_ELICITATION, (_event, sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) => {
+    return sessionManager.respondToElicitation(sessionId, requestId, response);
+  });
+
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
     const history = sessionManager.getEventHistory(sessionId);
@@ -690,29 +824,33 @@ export function registerHandlers() {
     // Cross-session search for the SessionFinder. Same prelaunch-prefixed index
     // space as AGENT_HISTORY_SEARCH, so hits feed the same jump path.
     const generation = ++searchAllGeneration;
-    sessionManager.beginSearch();
-    const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
-    const perSession = limitPerSession ?? 5;
-    let sliceStart = performance.now();
-    for (const id of sessionIds ?? []) {
-      if (maxHits !== undefined && hits.length >= maxHits) break;
-      try {
-        for (const hit of searchPrefixedHistory(id, query, perSession)) {
-          hits.push({ ...hit, sessionId: id });
+    const endSweep = sessionManager.beginSearch({ sweep: true });
+    try {
+      const hits: import('../shared/types.js').CrossSessionSearchHit[] = [];
+      const perSession = limitPerSession ?? 5;
+      let sliceStart = performance.now();
+      for (const id of sessionIds ?? []) {
+        if (maxHits !== undefined && hits.length >= maxHits) break;
+        try {
+          for (const hit of searchPrefixedHistory(id, query, perSession)) {
+            hits.push({ ...hit, sessionId: id });
+          }
+        } catch (e) {
+          logger.warn(`[history-search-all] search failed for ${id}:`, e);
         }
-      } catch (e) {
-        logger.warn(`[history-search-all] search failed for ${id}:`, e);
+        // The first search after launch parses every log it reaches. Yield now
+        // and then so terminals and other IPC keep flowing, and give up once a
+        // newer query has replaced this one (the renderer drops stale results).
+        if (performance.now() - sliceStart > 16) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (generation !== searchAllGeneration) return [];
+          sliceStart = performance.now();
+        }
       }
-      // The first search after launch parses every log it reaches. Yield now
-      // and then so terminals and other IPC keep flowing, and give up once a
-      // newer query has replaced this one (the renderer drops stale results).
-      if (performance.now() - sliceStart > 16) {
-        await new Promise((resolve) => setImmediate(resolve));
-        if (generation !== searchAllGeneration) return [];
-        sliceStart = performance.now();
-      }
+      return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
+    } finally {
+      endSweep();
     }
-    return maxHits !== undefined ? hits.slice(0, maxHits) : hits;
   });
 
   ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {
@@ -803,6 +941,37 @@ export function registerHandlers() {
     }
     await shell.openExternal(url);
   });
+
+  // ─── Preview tab ───
+
+  const PREVIEW_PAGES = new Set(['user', 'agent']);
+  const PREVIEW_COMMANDS = new Set(['back', 'forward', 'reload', 'hardReload', 'stop', 'devtools']);
+  const isPreviewPage = (page: unknown): page is PreviewPageKind => typeof page === 'string' && PREVIEW_PAGES.has(page);
+
+  ipcMain.handle(IPC.PREVIEW_NAVIGATE, (_event, sessionId: string, page: unknown, url: unknown) => {
+    if (!isPreviewPage(page) || typeof url !== 'string') throw new Error('Invalid preview request');
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error("This conversation's worktree isn't ready yet.");
+    previewManager.navigate(sessionId, worktree.path, page, url);
+  });
+
+  ipcMain.handle(IPC.PREVIEW_COMMAND, (_event, sessionId: string, page: unknown, command: unknown) => {
+    if (!isPreviewPage(page) || typeof command !== 'string' || !PREVIEW_COMMANDS.has(command)) throw new Error('Invalid preview request');
+    previewManager.command(sessionId, page, command as PreviewCommand);
+  });
+
+  ipcMain.on(IPC.PREVIEW_SET_VIEWPORT, (_event, sessionId: string, bounds: PreviewBounds | null) => {
+    const valid = bounds === null || (bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every((n) => Number.isFinite(n)));
+    if (typeof sessionId !== 'string' || !valid) return;
+    previewManager.setViewport(sessionId, bounds);
+  });
+
+  ipcMain.handle(IPC.PREVIEW_SNAPSHOT, (_event, sessionId: string) => previewManager.snapshot(sessionId));
+
+  ipcMain.handle(IPC.PREVIEW_AGENT_FRAME, (_event, sessionId: string, sinceVersion: number) =>
+    previewManager.agentFrame(sessionId, Number(sinceVersion) || 0));
+
+  ipcMain.handle(IPC.PREVIEW_GET_STATES, () => previewManager.getStates());
 
   ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string) => {
     const session = sessionManager.getSession(sessionId);
@@ -1154,6 +1323,15 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.PR_LIST_OPEN, async (_event, repoPath: string): Promise<OpenPrSummary[]> => {
+    if (typeof repoPath !== 'string' || !(await worktreeManager.validateRepo(repoPath))) return [];
+    try {
+      return await openPrs(repoPath);
+    } catch (e) {
+      rethrowGhFailure(e);
+    }
+  });
+
   ipcMain.handle(IPC.PR_REVIEW_COMMENTS, async (_event, sessionId: string, prNumber: number) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) return [];
@@ -1202,6 +1380,16 @@ export function registerHandlers() {
     const adapter = resolveAdapter(adapterType);
     if (!adapter.removeConfiguredMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP configuration`);
     await adapter.removeConfiguredMcpServer(name, scope, cwd);
+  });
+
+  ipcMain.handle(IPC.MCP_CONFIG_APPROVE, async (_event, name: string, repoPath: string, adapterType?: string) => {
+    const adapter = resolveAdapter(adapterType);
+    if (!adapter.approveProjectMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP server approval`);
+    if (!(await worktreeManager.validateRepo(repoPath))) {
+      throw new Error(`${repoPath} is not a git repository`);
+    }
+    const worktrees = await worktreeManager.list(repoPath);
+    await adapter.approveProjectMcpServer(name, [repoPath, ...worktrees.map((w) => w.path)]);
   });
 
   ipcMain.handle(IPC.PLUGIN_LIST, async (_event, adapterType?: string) => {
@@ -1294,6 +1482,7 @@ export function registerHandlers() {
       capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
       isDefault: a.id === defaultId,
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
+      ...(a.mcp ? { mcp: a.mcp } : {}),
     }));
   });
 
@@ -1421,15 +1610,6 @@ export function registerHandlers() {
 
   // ─── App State ───
 
-  ipcMain.handle(IPC.APP_STATE_GET_ACTIVE_TAB, () => {
-    flushPendingSaves();
-    return loadAppState().activeTabId;
-  });
-
-  ipcMain.on(IPC.APP_STATE_SET_ACTIVE_TAB, (_event, id: string | null) => {
-    saveActiveTab(id);
-  });
-
   ipcMain.handle(IPC.APP_STATE_GET_OPEN_TABS, () => {
     // Flush any debounced writes so the renderer always reads the latest state
     // (prevents closed tabs from reopening after Vite hot-reload).
@@ -1510,6 +1690,16 @@ export function registerHandlers() {
     if (!win || win.isDestroyed()) return;
     const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
+  });
+
+  // ─── Spell check ───
+
+  ipcMain.on(IPC.SPELLCHECK_REPLACE, (event, suggestion: unknown) => {
+    replaceMisspelling(event.sender, suggestion);
+  });
+
+  ipcMain.on(IPC.SPELLCHECK_ADD_WORD, (event) => {
+    addWordToDictionary(event.sender);
   });
 
   // ─── Window controls ───

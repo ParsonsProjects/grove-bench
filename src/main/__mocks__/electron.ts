@@ -28,6 +28,22 @@ export const BrowserWindow = vi.fn().mockImplementation(() => ({
   },
 }));
 
+export const WebContentsView = vi.fn();
+
+export const Menu = Object.assign(vi.fn(), {
+  buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
+});
+
+export const clipboard = {
+  writeText: vi.fn(),
+  readText: vi.fn(() => ''),
+};
+
+export const session = {
+  fromPartition: vi.fn(),
+  defaultSession: {},
+};
+
 export const ipcMain = {
   handle: vi.fn(),
   on: vi.fn(),
@@ -80,6 +96,10 @@ export const Notification = Object.assign(
 export default {
   app,
   BrowserWindow,
+  WebContentsView,
+  Menu,
+  clipboard,
+  session,
   ipcMain,
   ipcRenderer,
   dialog,

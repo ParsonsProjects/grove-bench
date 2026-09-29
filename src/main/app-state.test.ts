@@ -13,7 +13,7 @@ vi.mock('node:fs', () => ({
 }));
 
 import {
-  loadAppState, saveActiveTab, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
+  loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
   saveKnownSkills, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog,
 } from './app-state.js';
@@ -43,7 +43,6 @@ describe('loadAppState', () => {
   it('returns defaults when the file is missing', () => {
     useDisk(undefined);
     const s = loadAppState();
-    expect(s.activeTabId).toBeNull();
     expect(s.openTabIds).toEqual([]);
     expect(s.sessionSort).toEqual({ key: 'name', dir: 'asc' });
   });
@@ -54,15 +53,14 @@ describe('loadAppState', () => {
   });
 
   it('stamps an unversioned file on first load', () => {
-    const disk = useDisk({ activeTabId: 'a', openTabIds: ['a', 'b'] });
+    const disk = useDisk({ openTabIds: ['a', 'b'] });
     const s = loadAppState();
-    expect(s.activeTabId).toBe('a');
     expect(s.openTabIds).toEqual(['a', 'b']);
     expect(disk.get().schemaVersion).toBe(APP_STATE_SCHEMA_VERSION);
   });
 
   it('does not rewrite a current-version file', () => {
-    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, activeTabId: 'a' });
+    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['a'] });
     loadAppState();
     expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
@@ -71,19 +69,21 @@ describe('loadAppState', () => {
 describe('validateAppState', () => {
   it('resets only the corrupt fields', () => {
     const s = validateAppState({
-      activeTabId: 42,
       openTabIds: ['x', 3],
       collapsedRepos: { '/r': true },
       sessionSort: { key: 'size', dir: 'asc' },
       sidebarWidth: 'wide',
       unreadSessionIds: ['u1'],
     });
-    expect(s.activeTabId).toBeNull();
     expect(s.openTabIds).toEqual([]);
     expect(s.collapsedRepos).toEqual({ '/r': true });
     expect(s.sessionSort).toEqual({ key: 'name', dir: 'asc' });
     expect(s.sidebarWidth).toBeNull();
     expect(s.unreadSessionIds).toEqual(['u1']);
+  });
+
+  it('drops activeTabId, which older versions saved', () => {
+    expect(validateAppState({ activeTabId: 'a', openTabIds: ['a'] })).not.toHaveProperty('activeTabId');
   });
 
   it('keeps caches with the expected shape and drops malformed ones', () => {
@@ -99,8 +99,8 @@ describe('validateAppState', () => {
 
   it('warns but keeps known fields for a file newer than the app', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { state } = upgradeAppState({ schemaVersion: APP_STATE_SCHEMA_VERSION + 1, activeTabId: 'z', future: 1 });
-    expect(state.activeTabId).toBe('z');
+    const { state } = upgradeAppState({ schemaVersion: APP_STATE_SCHEMA_VERSION + 1, openTabIds: ['z'], future: 1 });
+    expect(state.openTabIds).toEqual(['z']);
     expect((state as any).future).toBeUndefined();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
@@ -110,21 +110,20 @@ describe('validateAppState', () => {
 describe('debounced writers', () => {
   it('coalesces rapid saves into one write and keeps other fields', () => {
     const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['keep'] });
-    saveActiveTab('a');
-    saveActiveTab('b');
+    saveUnreadSessionIds(['a']);
+    saveUnreadSessionIds(['b']);
     expect(mockWriteFileSync).not.toHaveBeenCalled();
     vi.advanceTimersByTime(500);
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-    expect(disk.get()).toMatchObject({ schemaVersion: APP_STATE_SCHEMA_VERSION, activeTabId: 'b', openTabIds: ['keep'] });
+    expect(disk.get()).toMatchObject({ schemaVersion: APP_STATE_SCHEMA_VERSION, unreadSessionIds: ['b'], openTabIds: ['keep'] });
   });
 
   it('flushPendingSaves writes every pending field immediately', () => {
     const disk = useDisk(undefined);
-    saveActiveTab('a');
     saveOpenTabs(['a']);
     saveUnreadSessionIds(['u']);
     flushPendingSaves();
-    expect(disk.get()).toMatchObject({ activeTabId: 'a', openTabIds: ['a'], unreadSessionIds: ['u'] });
+    expect(disk.get()).toMatchObject({ openTabIds: ['a'], unreadSessionIds: ['u'] });
     // Nothing left to write
     mockWriteFileSync.mockClear();
     vi.advanceTimersByTime(1000);

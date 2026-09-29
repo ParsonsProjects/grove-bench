@@ -1,6 +1,7 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
   import { linkifyLocalhost, hasLocalhostUrl } from '$lib/linkify.js';
+  import { openLink } from '$lib/preview-links.js';
 
   let {
     toolInput,
@@ -66,7 +67,7 @@
     if (link) {
       e.preventDefault();
       const url = link.dataset.url || link.href;
-      window.groveBench.openExternal(url);
+      openLink(url, e);
     }
   }
 </script>

@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -19,8 +19,6 @@ export interface AgentCapabilities {
   modelSwitching: boolean;
   /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
-  /** Supports runtime MCP server control (list status, disconnect/reconnect) */
-  mcpControl?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports packaged skill instructions (discovery via listSkills, authoring
@@ -70,6 +68,10 @@ export type PermissionResponse =
 
 export type PermissionHandler = (request: PermissionRequest) => Promise<PermissionResponse>;
 
+/** Ask the user to answer an MCP elicitation. `signal` aborts when the agent
+ *  stops waiting (the server gave up or the query ended). */
+export type ElicitationHandler = (request: McpElicitationRequest, signal: AbortSignal) => Promise<McpElicitationResponse>;
+
 // ─── User Message ───
 
 export interface UserMessage {
@@ -86,6 +88,37 @@ export interface MemoryOperations {
   read(path: string): string | null;
   write(path: string, content: string): void;
   delete(path: string): boolean;
+}
+
+// ─── Preview (browser) Operations ───
+
+/** Where to click or type: a CSS selector, the visible text of a clickable
+ *  element, or the label/placeholder/name of a form field. */
+export interface PreviewTarget {
+  selector?: string;
+  text?: string;
+  label?: string;
+}
+
+export interface PreviewScreenshot {
+  data: Buffer;
+  mimeType: 'image/png' | 'image/jpeg';
+  width: number;
+  height: number;
+  url: string;
+}
+
+/** Adapter-agnostic browser operations on the conversation's Preview page for
+ *  the agent (Claude's page, separate from the one the user drives). Text
+ *  results are ready to show the agent. Failures throw with a readable message. */
+export interface PreviewOperations {
+  open(opts: { url?: string; width?: number; height?: number }): Promise<string>;
+  screenshot(): Promise<PreviewScreenshot>;
+  read(opts: { selector?: string; maxChars?: number }): Promise<string>;
+  logs(opts: { errorsOnly?: boolean; all?: boolean }): Promise<string>;
+  /** `dialogs`: how to answer an alert or confirm the action opens (default accept). */
+  click(target: PreviewTarget, opts?: { dialogs?: 'accept' | 'dismiss' }): Promise<string>;
+  type(target: PreviewTarget, text: string, opts: { clear?: boolean; submit?: boolean; dialogs?: 'accept' | 'dismiss' }): Promise<string>;
 }
 
 // ─── Adapter Configuration ───
@@ -112,6 +145,9 @@ export interface AdapterConfig {
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
+  /** Browser operations on the conversation's Preview page. Unset when the
+   *  user turned the agent's browser tools off. */
+  previewOperations?: PreviewOperations | null;
   resumeSessionId?: string | null;
   /** Resume the conversation only up to and including this provider chain-entry
    *  UUID, forking to a new provider session id (used by rewind so the agent
@@ -119,6 +155,8 @@ export interface AdapterConfig {
    *  Only meaningful together with resumeSessionId. */
   resumeAtUuid?: string | null;
   onPermissionRequest: PermissionHandler;
+  /** Answers MCP elicitations. Without it the adapter declines them. */
+  onElicitation?: ElicitationHandler;
   toolAllowRules: ToolRule[];
   toolDenyRules: ToolRule[];
   alwaysAllowedTools: Set<string>;
@@ -167,10 +205,12 @@ export interface AgentQueryHandle {
    *  the provider has no such data. Check capabilities.usage first. */
   getUsage?(): Promise<ProviderUsage | null>;
 
-  // ─── Optional MCP server control — check capabilities.mcpControl first ───
+  // ─── Optional MCP server control — declare each in AgentAdapter.mcp.controls ───
 
   /** Current status of the agent's MCP server connections. */
   listMcpServers?(): Promise<McpServerInfo[]>;
+  /** Context-window cost of each server's tool definitions. */
+  getMcpContextCost?(): Promise<McpServerContextCost[]>;
   /** Reconnect a (failed or disconnected) MCP server by name. */
   reconnectMcpServer?(serverName: string): Promise<void>;
   /** Enable (connect) or disable (disconnect) an MCP server by name. */
@@ -213,6 +253,10 @@ export interface AgentAdapter {
   readonly displayName: string;
   /** What this adapter supports */
   readonly capabilities: AgentCapabilities;
+  /** How the agent handles MCP servers: which controls the UI may offer, and
+   *  the wording and rules it uses. Omit when the agent has no MCP support
+   *  Grove can drive; the UI then shows none. */
+  readonly mcp?: McpSupport;
 
   /** Available models for this provider, default first. May change at run
    *  time when the provider reports its current list (see onModelsChanged). */
@@ -253,8 +297,8 @@ export interface AgentAdapter {
 
   // ─── Optional MCP server configuration (CLI config, not per-session) ───
 
-  /** List MCP servers from the provider's configuration. Only implement if
-   *  capabilities.mcpControl is true. `cwd` scopes local/project servers. */
+  /** List MCP servers from the provider's configuration (Settings > MCP;
+   *  describe it in mcp.config). `cwd` scopes local/project servers. */
   listConfiguredMcpServers?(cwd?: string): Promise<McpConfiguredServer[]>;
   /** Register a new MCP server in the provider's configuration. */
   addConfiguredMcpServer?(opts: McpAddServerOpts): Promise<void>;
@@ -304,6 +348,11 @@ export interface AgentAdapter {
   // ─── Optional worktree configuration ───
 
   /** Generate agent-specific settings files inside a worktree directory.
-   *  E.g. Claude Code creates `.claude/settings.local.json`. */
-  generateWorktreeSettings?(wtPath: string): Promise<void>;
+   *  E.g. Claude Code creates `.claude/settings.local.json`. `repoPath` is the
+   *  project the worktree belongs to, for settings carried over from it. */
+  generateWorktreeSettings?(wtPath: string, repoPath?: string): Promise<void>;
+
+  /** Approve a project-scope MCP server (e.g. from `.mcp.json`) in each of
+   *  `dirs`: the project root and its conversations' worktrees. */
+  approveProjectMcpServer?(name: string, dirs: string[]): Promise<void>;
 }

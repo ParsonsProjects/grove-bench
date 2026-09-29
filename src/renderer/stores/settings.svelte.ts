@@ -1,10 +1,8 @@
 import type { GroveBenchSettings, ToolRule } from '../../shared/types.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
-  defaultPermissionMode: 'default',
   toolAllowRules: [],
   toolDenyRules: [],
-  disableBypassMode: false,
   disabledSkills: [],
   autoSkillSuggestions: false,
   defaultModels: {},
@@ -17,8 +15,10 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   memoryCompactTimeoutSeconds: 300,
   backgroundModels: {},
   autoInstallDeps: false,
-  idleAutoStopMinutes: 30,
+  previewAgentTools: true,
+  idleSleepMinutes: 30,
   defaultBaseBranch: '',
+  branchNamingRule: '',
   theme: 'system',
   alwaysOnTop: false,
   repoColors: {},

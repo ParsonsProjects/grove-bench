@@ -28,7 +28,7 @@ describe('loadSettings', () => {
   it('returns defaults when file does not exist', () => {
     mockReadFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
     const s = loadSettings();
-    expect(s.defaultPermissionMode).toBe('default');
+    expect(s.adapterDefaults).toEqual({});
     expect(s.theme).toBe('system');
     expect(s.defaultBaseBranch).toBe(''); // empty = auto-detect
     expect(s.alwaysOnTop).toBe(false);
@@ -52,13 +52,13 @@ describe('loadSettings', () => {
     }));
     const s = loadSettings();
     expect(s.theme).toBe('dark');
-    expect(s.defaultPermissionMode).toBe('default');
+    expect(s.adapterDefaults).toEqual({});
   });
 
   it('handles corrupt JSON gracefully', () => {
     mockReadFileSync.mockReturnValue('not valid json {{{');
     const s = loadSettings();
-    expect(s.defaultPermissionMode).toBe('default');
+    expect(s.theme).toBe('system');
   });
 });
 
@@ -141,13 +141,45 @@ describe('schema versioning', () => {
   it('renames a saved auto default mode to readSafe (2 → 3)', () => {
     // 'auto' meant Grove's read-only auto-approval before the provider's
     // native auto mode took the name; a v2 file keeps its old behaviour.
-    const { settings: fromV2, migrated } = upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'auto' });
-    expect(fromV2.defaultPermissionMode).toBe('readSafe');
+    // (6 → 7 then moves the mode under the Claude agent.)
+    const modeOf = (raw: Record<string, unknown>) => upgradeSettings(raw).settings.adapterDefaults['claude-code']?.permissionMode;
+    const { migrated } = upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'auto' });
+    expect(modeOf({ schemaVersion: 2, defaultPermissionMode: 'auto' })).toBe('readSafe');
     expect(migrated).toBe(true);
-    // A current-version 'auto' is the native mode and stays as is.
-    expect(upgradeSettings({ schemaVersion: 3, defaultPermissionMode: 'auto' }).settings.defaultPermissionMode).toBe('auto');
+    // A v3 'auto' is the native mode and stays as is.
+    expect(modeOf({ schemaVersion: 3, defaultPermissionMode: 'auto' })).toBe('auto');
     // Other modes pass through the migration untouched.
-    expect(upgradeSettings({ schemaVersion: 2, defaultPermissionMode: 'plan' }).settings.defaultPermissionMode).toBe('plan');
+    expect(modeOf({ schemaVersion: 2, defaultPermissionMode: 'plan' })).toBe('plan');
+  });
+
+  it('carries the idle auto-stop minutes over to idle sleep (7 → 8)', () => {
+    const { settings } = upgradeSettings({ schemaVersion: 7, idleAutoStopMinutes: 45 });
+    expect(settings.idleSleepMinutes).toBe(45);
+    expect(settings).not.toHaveProperty('idleAutoStopMinutes');
+    // 0 (off) stays off.
+    expect(upgradeSettings({ schemaVersion: 7, idleAutoStopMinutes: 0 }).settings.idleSleepMinutes).toBe(0);
+    // Never set: the default applies.
+    expect(upgradeSettings({ schemaVersion: 7 }).settings.idleSleepMinutes).toBe(30);
+  });
+
+  it('moves the default permission mode under the Claude agent and drops Bypass Permissions (6 → 7)', () => {
+    const { settings } = upgradeSettings({
+      schemaVersion: 6,
+      defaultPermissionMode: 'acceptEdits',
+      disableBypassMode: true,
+      adapterDefaults: { 'claude-code': { effort: 'high' }, other: { speed: 'fast' } },
+    });
+    expect(settings.adapterDefaults).toEqual({
+      'claude-code': { effort: 'high', permissionMode: 'acceptEdits' },
+      other: { speed: 'fast' },
+    });
+    expect(settings).not.toHaveProperty('defaultPermissionMode');
+    expect(settings).not.toHaveProperty('disableBypassMode');
+    // 'default' is the agent's own default, so nothing is stored.
+    expect(upgradeSettings({ schemaVersion: 6, defaultPermissionMode: 'default' }).settings.adapterDefaults).toEqual({});
+    // New conversations never started in Bypass Permissions, so it is dropped.
+    expect(upgradeSettings({ schemaVersion: 6, defaultPermissionMode: 'bypassPermissions' }).settings.adapterDefaults).toEqual({});
+    expect(upgradeSettings({ schemaVersion: 6 }).settings.adapterDefaults).toEqual({});
   });
 
   it('turns the global memory model into per-agent background models (5 → 6)', () => {
@@ -212,7 +244,7 @@ describe('validateSettings', () => {
     const s = validateSettings({
       theme: 'neon',
       adapterDefaults: 'ultra',
-      idleAutoStopMinutes: 'soon',
+      idleSleepMinutes: 'soon',
       toolAllowRules: [{ pattern: 'Bash(*)' }],
       toolDenyRules: 'nope',
       repoColors: { '/repo': '#fff' },
@@ -222,7 +254,7 @@ describe('validateSettings', () => {
     expect(s.theme).toBe('system');
     expect(s.defaultActivityView).toBe('summary');
     expect(s.adapterDefaults).toEqual({});
-    expect(s.idleAutoStopMinutes).toBe(30);
+    expect(s.idleSleepMinutes).toBe(30);
     expect(s.toolAllowRules).toEqual([{ pattern: 'Bash(*)' }]);
     expect(s.toolDenyRules).toEqual([]);
     expect(s.repoColors).toEqual({ '/repo': '#fff' });

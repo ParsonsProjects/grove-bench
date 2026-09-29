@@ -1,6 +1,6 @@
 # Sidebar & Projects
 
-The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, or waiting on you, across all projects. **Projects** lists each project (a git repository) with all of its conversations, where stopped conversations can be resumed, destroyed, or cleaned up.
+The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a git repository) with all of its conversations, where stopped conversations can be resumed, destroyed, or cleaned up.
 
 ## Projects
 
@@ -45,11 +45,13 @@ Right-click a conversation to access:
 
 Stopping or destroying the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
 
+Grove Bench also starts on the landing screen. The conversations you had open are listed there and under **Conversations**, and none of them starts its agent until you open it.
+
 ## Bottom Controls
 
 At the bottom of the sidebar you'll find:
 
-- **+ Project** and **+ Conversation** — Add a project / start a new conversation (side by side)
+- **+ Project** and **+ Conversation** — Add a project / start a new conversation in the open conversation's project (side by side). Each project row also has its own **+**, which starts a conversation in that project
 - **Project Memory** (brain icon) — Open the project memory panel
 - **Clean up old conversations** (broom icon) — Review and remove stopped conversations inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Conversations with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. When the GitHub CLI is available, each row also shows the state of the pull request on its branch (open, draft, merged, closed or none), and **Select merged** ticks only the conversations whose PR has been merged. Running conversations are never listed.
 - **Settings** (gear icon) — Open application settings

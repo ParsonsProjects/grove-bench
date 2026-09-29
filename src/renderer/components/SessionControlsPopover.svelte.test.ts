@@ -6,6 +6,7 @@ import SessionControlsPopover from './SessionControlsPopover.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
+import { draftStore } from '../stores/draft.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 const SID = 's1';
@@ -86,10 +87,22 @@ describe('SessionControlsPopover', () => {
     for (const heading of ['Agent', 'Model', 'Mode', 'Thinking', 'Speed']) {
       expect(dialog).toHaveTextContent(heading);
     }
-    // Other agents are listed but cannot be switched mid-session
-    expect(screen.getByRole('button', { name: 'Codex' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Claude Agent' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Claude Agent' })).toHaveAttribute('title', 'Current agent');
+    // The current agent is marked; others offer a new conversation with them
+    expect(screen.getByRole('button', { name: 'Claude Agent' })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('title', expect.stringContaining('Start a new conversation'));
+  });
+
+  it('opens a draft with another agent in the same project, leaving this conversation alone', async () => {
+    store.repos = ['/repo'];
+    store.activeSessionId = SID;
+    await openPopover();
+    await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
+
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo', agentId: 'codex' });
+    expect(store.activeSessionId).toBeNull();
+    expect(store.sessions.find((s) => s.id === SID)?.agentType).toBe('claude-code');
+    draftStore.discard();
+    store.repos = [];
   });
 
   it('divides grouped options from the provider\'s own with the group as a heading', async () => {

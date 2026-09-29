@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, ProviderUsage, SessionControls } from '../shared/types.js';
+import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { logger } from './logger.js';
@@ -23,6 +23,7 @@ import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import { killTree } from './process-tree.js';
+import { previewManager } from './preview.js';
 
 /**
  * Sandbox settings for Read-safe-mode queries: OS-level enforcement layered
@@ -51,21 +52,25 @@ function readSafeSandbox(worktreePath: string): Record<string, unknown> {
  * Initial control values for a new session: each of the adapter's declared
  * controls (except permissionMode, which has its own session field) starts
  * at the descriptor default, overlaid with the user's saved default for that
- * adapter when the descriptor offers that value.
+ * adapter, then with the value chosen for this conversation. Each layer only
+ * applies when the descriptor offers that value, so an unoffered choice
+ * falls back to the saved default rather than past it.
  */
 export function initialControls(
   adapter: Pick<AgentAdapter, 'getControls'>,
   model: string | null,
   adapterDefaults: Record<string, string> | undefined,
+  chosen?: Record<string, string> | null,
 ): Record<string, string> {
   const values: Record<string, string> = {};
   for (const d of adapter.getControls(model)) {
     if (d.id === CONTROL_IDS.permissionMode) continue;
+    const offered = (v: string | undefined): v is string => !!v && d.options.some((o) => o.value === v);
     values[d.id] = d.default;
     const saved = adapterDefaults?.[d.id];
-    if (saved && d.options.some((o) => o.value === saved)) {
-      values[d.id] = saved;
-    }
+    if (offered(saved)) values[d.id] = saved;
+    const pick = chosen?.[d.id];
+    if (offered(pick)) values[d.id] = pick;
   }
   return values;
 }
@@ -97,6 +102,30 @@ interface PendingPermission {
   resolve: (result: PermissionResponse) => void;
 }
 
+/** Keep only what an MCP elicitation result may carry: a known action and,
+ *  when accepting, string, number, boolean or string-list values. Null when
+ *  the action is unknown. */
+export function sanitizeElicitationResponse(response: unknown): McpElicitationResponse | null {
+  const r = response as Partial<McpElicitationResponse> | null;
+  if (!r || (r.action !== 'accept' && r.action !== 'decline' && r.action !== 'cancel')) return null;
+  if (r.action !== 'accept' || !r.content || typeof r.content !== 'object') return { action: r.action };
+  const content: NonNullable<McpElicitationResponse['content']> = {};
+  for (const [key, value] of Object.entries(r.content)) {
+    const ok = typeof value === 'string' || typeof value === 'boolean'
+      || (typeof value === 'number' && Number.isFinite(value))
+      || (Array.isArray(value) && value.every((v) => typeof v === 'string'));
+    if (ok) content[key] = value;
+  }
+  return { action: 'accept', content };
+}
+
+/** An MCP elicitation waiting on the user. `resolve` answers the server,
+ *  emits elicitation_resolved and drops the entry. */
+interface PendingElicitation {
+  requestId: string;
+  resolve: (response: McpElicitationResponse) => void;
+}
+
 interface ManagedSession {
   id: string;
   branch: string;
@@ -109,6 +138,7 @@ interface ManagedSession {
   queryHandle: AgentQueryHandle | null;
   abortController: AbortController;
   pendingPermissions: Map<string, PendingPermission>;
+  pendingElicitations: Map<string, PendingElicitation>;
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
   providerSessionId: string | null;
@@ -188,6 +218,17 @@ interface ManagedSession {
   resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
   checkpoints: CheckpointManager;
+  /** Status to go back to when a sleeping session wakes: 'running', or
+   *  'starting' when its query had not reported system_init yet. */
+  statusBeforeSleep: SessionStatus | null;
+  /** Resolves once sleepSession() has shut the agent process down. A wake,
+   *  close or destroy waits on it so two agents never share a transcript. */
+  sleepSettled: Promise<void> | null;
+  /** The query whose turn is in progress: set when a message is sent or the
+   *  agent starts replying, cleared on its result. Tied to the handle, so a
+   *  replaced query never counts as mid-turn. Idle sleep refuses while set,
+   *  rather than trusting the renderer's view alone. */
+  turnHandle: AgentQueryHandle | null;
 }
 
 export interface SessionCompletionResult {
@@ -422,6 +463,10 @@ class AgentSessionManager {
     adapterType?: string;
     /** Model to run this session with. Falls back to the default when omitted. */
     model?: string | null;
+    /** Starting control values (effort, thinking, …) chosen for this
+     *  conversation. Laid over the saved defaults; a value the model doesn't
+     *  offer is ignored. */
+    controls?: Record<string, string> | null;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -444,15 +489,16 @@ class AgentSessionManager {
     // Apply settings defaults for values not explicitly provided
     const appSettings = settings.getSettings();
     const initialModel = opts.model ?? (appSettings.defaultModels?.[adapter.id] || adapter.getModels()[0]?.id || null);
-    const requestedMode: PermissionMode = opts.permissionMode
-      || (appSettings.defaultPermissionMode === 'bypassPermissions' ? 'default' : appSettings.defaultPermissionMode)
-      || 'default';
-    // A saved default the adapter does not offer on this model (e.g. native
+    // The saved default mode is kept per agent with its other control
+    // defaults. One the adapter does not offer on this model (e.g. native
     // auto mode on Haiku) falls back to the adapter's default mode.
     const modeDescriptor = adapter.getControls(initialModel).find((d) => d.id === CONTROL_IDS.permissionMode);
-    const effectivePermissionMode: PermissionMode = modeDescriptor && !modeDescriptor.options.some((o) => o.value === requestedMode)
-      ? (modeDescriptor.default as PermissionMode)
-      : requestedMode;
+    const requestedMode = opts.permissionMode
+      || appSettings.adapterDefaults?.[adapter.id]?.[CONTROL_IDS.permissionMode]
+      || 'default';
+    const effectivePermissionMode = (modeDescriptor && !modeDescriptor.options.some((o) => o.value === requestedMode)
+      ? modeDescriptor.default
+      : requestedMode) as PermissionMode;
     // Inject project memory into the system prompt
     const memoryPrompt = memory.getMemoryForSystemPrompt(repoPath);
     const userAppend = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
@@ -481,6 +527,7 @@ class AgentSessionManager {
       queryHandle: null,
       abortController,
       pendingPermissions: new Map(),
+      pendingElicitations: new Map(),
       alwaysAllowedTools: new Set(),
       providerSessionId: opts.resumeSessionId || null,
       pendingResumeAt: null,
@@ -502,7 +549,7 @@ class AgentSessionManager {
       extraEnv: opts.extraEnv ?? null,
       eventLogPath: path.join(getEventsDir(), `${id}.jsonl`),
       displayName: null,
-      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id]),
+      controls: initialControls(adapter, initialModel, appSettings.adapterDefaults?.[adapter.id], opts.controls),
       stoppedByUser: false,
       interrupting: false,
       autoSaveInProgress: false,
@@ -513,6 +560,9 @@ class AgentSessionManager {
       queryReady: null,
       resolveQueryReady: null,
       checkpoints: new CheckpointManager(),
+      statusBeforeSleep: null,
+      sleepSettled: null,
+      turnHandle: null,
     };
 
     this.sessions.set(id, session);
@@ -521,6 +571,11 @@ class AgentSessionManager {
     try { fs.mkdirSync(getEventsDir(), { recursive: true }); } catch { /* already exists */ }
 
     const emit = this.createEmitter(session);
+
+    // Tell the renderer which mode the conversation starts in. It shows
+    // 'default' until a mode_sync arrives, and adapters don't report the
+    // mode a query starts in.
+    emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
     // Let sendMessage() wait for the first queryHandle instead of dropping a
     // prompt that arrives while adapter.start() is still in flight (the
@@ -606,16 +661,27 @@ class AgentSessionManager {
     // Read the user's git identity so we can force it via env vars.
     // Environment variables take highest precedence in git's identity
     // resolution, ensuring commits are attributed to the user even if
-    // the agent SDK sets its own git config.
+    // the agent SDK sets its own git config. With no identity configured
+    // the vars stay unset and git's own rules apply (usually it refuses to
+    // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
     try {
       const identity = await getGitIdentity(session.worktreePath);
-      gitIdentityEnv = {
-        GIT_AUTHOR_NAME: identity.name,
-        GIT_AUTHOR_EMAIL: identity.email,
-        GIT_COMMITTER_NAME: identity.name,
-        GIT_COMMITTER_EMAIL: identity.email,
-      };
+      if (identity) {
+        gitIdentityEnv = {
+          GIT_AUTHOR_NAME: identity.name,
+          GIT_AUTHOR_EMAIL: identity.email,
+          GIT_COMMITTER_NAME: identity.name,
+          GIT_COMMITTER_EMAIL: identity.email,
+        };
+      } else {
+        logger.warn(`[runQuery] session=${id} git user.name/user.email not set; agent commits use git's own identity rules`);
+        // Tell the user once per conversation. eventHistory is reloaded from
+        // disk, so this also holds across restarts and app relaunches.
+        if (!session.eventHistory.some((e) => e.type === 'git_identity_missing')) {
+          emit({ type: 'git_identity_missing' });
+        }
+      }
     } catch { /* best effort */ }
 
     // Snapshot the rewind fork target for this start attempt. It stays set on
@@ -662,6 +728,9 @@ class AgentSessionManager {
         write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
+      previewOperations: currentSettings.previewAgentTools
+        ? previewManager.operationsFor(id, session.worktreePath)
+        : null,
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,
       resumeSessionId: session.providerSessionId,
@@ -669,6 +738,7 @@ class AgentSessionManager {
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
+      onElicitation: (request, signal) => this.awaitElicitation(session, request, signal),
       onPermissionRequest: async (request) => {
         // Read-safe mode: read-only tool calls scoped to the worktree (file
         // reads, git reads) run without prompting. Mutating, out-of-worktree,
@@ -798,6 +868,13 @@ class AgentSessionManager {
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
 
+        // A reply means a turn is running, including ones the agent starts
+        // itself (e.g. when a background task finishes).
+        if (event.type === 'assistant_text' || event.type === 'assistant_tool_use'
+          || event.type === 'thinking' || event.type === 'partial_text') {
+          session.turnHandle = handle;
+        }
+
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
           session.status = 'running';
@@ -874,6 +951,7 @@ class AgentSessionManager {
 
         // Track result for completion callback
         if (event.type === 'result') {
+          if (session.turnHandle === handle) session.turnHandle = null;
           session.lastResult = {
             isError: event.isError,
             totalCostUsd: event.totalCostUsd,
@@ -901,8 +979,9 @@ class AgentSessionManager {
       // interrupting covers an in-place interrupt that tears down the event loop
       // (the SDK throws "Request was aborted" rather than yielding a result).
       // destroying covers a close or delete, which kills the agent process
-      // before closing its query.
-      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying) {
+      // before closing its query. A handle that is no longer the session's
+      // belongs to a run that was put to sleep, which also kills the process.
+      if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else {
@@ -921,6 +1000,8 @@ class AgentSessionManager {
       }
     }
 
+    if (session.turnHandle === handle) session.turnHandle = null;
+
     // If the user clicked Stop, don't mark the session as stopped or fire
     // process_exit — stopQuery will restart the query loop.
     if (session.stoppedByUser) {
@@ -934,6 +1015,13 @@ class AgentSessionManager {
     // and hold it locked while removal runs).
     if (session.destroying) {
       logger.debug(`[runQuery] session=${id} event loop ended during destroy`);
+      return;
+    }
+
+    // Put to sleep (or already replaced by a newer run): the conversation
+    // stays open, so this is not the end of it. Nothing to report.
+    if (session.queryHandle !== handle) {
+      logger.debug(`[runQuery] session=${id} event loop ended for a retired query`);
       return;
     }
 
@@ -993,6 +1081,9 @@ class AgentSessionManager {
    */
   private async awaitQueryHandle(session: ManagedSession): Promise<boolean> {
     const id = session.id;
+    // A message for a sleeping conversation wakes it; the send then waits for
+    // the restarted agent like a send right after a stop does.
+    if (session.status === 'sleeping') this.wake(session);
     if (!session.queryHandle && session.queryReady) {
       logger.debug(`[sendMessage] session=${id} waiting for queryHandle after stop`);
       const QUERY_READY_TIMEOUT_MS = 30_000;
@@ -1074,6 +1165,7 @@ class AgentSessionManager {
     const sessionId = session.providerSessionId ?? '';
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
+      session.turnHandle = queryHandle;
       queryHandle.sendMessage({
         text: content,
         images: images,
@@ -1133,6 +1225,52 @@ class AgentSessionManager {
     });
 
     return true;
+  }
+
+  /** Hold an MCP elicitation until the user answers it in the conversation,
+   *  the agent stops waiting (`signal`), or it times out. */
+  private awaitElicitation(
+    session: ManagedSession,
+    request: McpElicitationRequest,
+    signal: AbortSignal,
+  ): Promise<McpElicitationResponse> {
+    const ELICITATION_TIMEOUT_MS = 30 * 60 * 1000;
+    const requestId = `elicit_${session.id}_${++session.permRequestCounter}`;
+    return new Promise<McpElicitationResponse>((resolve) => {
+      const onAbort = () => finish({ action: 'cancel' });
+      const timer = setTimeout(onAbort, ELICITATION_TIMEOUT_MS);
+      function finish(response: McpElicitationResponse) {
+        if (!session.pendingElicitations.delete(requestId)) return;
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        session.emit?.({ type: 'elicitation_resolved', requestId, action: response.action });
+        resolve(response);
+      }
+      session.pendingElicitations.set(requestId, { requestId, resolve: finish });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      session.emit?.({ type: 'elicitation_request', requestId, request });
+    });
+  }
+
+  /** Answer a pending MCP elicitation. Returns false when it already
+   *  resolved (answered, cancelled or timed out). */
+  respondToElicitation(id: string, requestId: string, response: McpElicitationResponse): boolean {
+    const pending = this.sessions.get(id)?.pendingElicitations.get(requestId);
+    const clean = sanitizeElicitationResponse(response);
+    if (!pending || !clean) return false;
+    pending.resolve(clean);
+    return true;
+  }
+
+  /** Cancel every elicitation waiting on the user, e.g. when the turn stops. */
+  private cancelElicitations(session: ManagedSession): void {
+    for (const pending of [...session.pendingElicitations.values()]) {
+      pending.resolve({ action: 'cancel' });
+    }
   }
 
   setMode(id: string, mode: string): void {
@@ -1322,6 +1460,17 @@ class AgentSessionManager {
     }
   }
 
+  async getMcpContextCost(id: string): Promise<McpServerContextCost[]> {
+    const session = this.sessions.get(id);
+    if (!session?.queryHandle?.getMcpContextCost) return [];
+    try {
+      return await session.queryHandle.getMcpContextCost();
+    } catch (e) {
+      logger.warn(`Failed to read MCP context cost for session ${id}:`, e);
+      return [];
+    }
+  }
+
   async reconnectMcpServer(id: string, serverName: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.reconnectMcpServer) {
@@ -1359,6 +1508,13 @@ class AgentSessionManager {
       logger.warn(`Failed to ${enabled ? 'enable' : 'disable'} MCP server "${serverName}" for session ${id}:`, e);
       throw e;
     }
+  }
+
+  /** Whether the agent is in the middle of a turn (a message sent or a reply
+   *  under way). Same test idle sleep uses. */
+  isMidTurn(id: string): boolean {
+    const session = this.sessions.get(id);
+    return !!session && (session.isStartingQuery || (!!session.turnHandle && session.turnHandle === session.queryHandle));
   }
 
   setBranch(id: string, newBranch: string): void {
@@ -1411,6 +1567,7 @@ class AgentSessionManager {
       });
     }
     session.pendingPermissions.clear();
+    this.cancelElicitations(session);
 
     // Interrupt the current turn.  The event loop in runQuery stays parked on
     // handle.events and simply waits for the next user message — no respawn.
@@ -1424,6 +1581,8 @@ class AgentSessionManager {
       logger.warn(`[interruptQuery] session=${id} interrupt failed, falling back to teardown:`, err);
       return this.stopQuery(id);
     }
+    // The turn is over even if the agent never reports a result for it.
+    if (session.turnHandle === handle) session.turnHandle = null;
 
     // Re-sync the renderer with the current permission mode (parity with
     // stopQuery) — this also clears the renderer's stoppingSession guard so
@@ -1453,6 +1612,19 @@ class AgentSessionManager {
   async stopQuery(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    // Asleep: there is no query to stop. A rewind's fork point (set before
+    // this is called) is picked up when the session wakes.
+    if (session.status === 'sleeping') return;
+    // Waking while the sleep is still killing the old agent: starting a run
+    // now would put a second agent on the transcript beside it, and the
+    // wake would then start a third. Wait for the wake's run to begin; this
+    // stop then restarts it through restartRequested like any stop during
+    // startup.
+    if (session.sleepSettled) {
+      await session.sleepSettled;
+      // Re-read after the wait (TypeScript keeps the check above's narrowing)
+      if (session.destroying || (session.status as SessionStatus) === 'sleeping' || !this.sessions.has(id)) return;
+    }
 
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
@@ -1487,15 +1659,20 @@ class AgentSessionManager {
       });
     }
     session.pendingPermissions.clear();
+    this.cancelElicitations(session);
 
     // Re-sync the renderer with the current permission mode so the status bar
     // reflects the correct state after a stop/restart cycle.
     emit({ type: 'mode_sync', mode: session.permissionMode, source: 'session' });
 
-    // Create a deferred promise so sendMessage() can wait for the new queryHandle
-    session.queryReady = new Promise<void>((resolve) => {
-      session.resolveQueryReady = resolve;
-    });
+    // Create a deferred promise so sendMessage() can wait for the new
+    // queryHandle. Keep one that's still pending (e.g. a wake's): messages
+    // already waiting on it would otherwise never be delivered.
+    if (!session.resolveQueryReady) {
+      session.queryReady = new Promise<void>((resolve) => {
+        session.resolveQueryReady = resolve;
+      });
+    }
 
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
@@ -1505,6 +1682,87 @@ class AgentSessionManager {
       emit({ type: 'error', message: isAuthError
         ? session.adapter.authErrorMessage
         : errMsg });
+    });
+  }
+
+  /**
+   * Put an idle conversation to sleep to free its agent process. The agent
+   * and everything under it (MCP servers) are killed, but the session stays,
+   * so the conversation keeps its place, mode, controls and always-allowed
+   * tools. The terminal is left alone. It wakes (see wake()) when opened or
+   * sent a message. Returns false, leaving it awake, unless the agent is up
+   * and not mid-turn or waiting on a permission or an MCP elicitation.
+   */
+  async sleepSession(id: string): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying) return false;
+    if (session.status !== 'running' && session.status !== 'starting') return false;
+    const handle = session.queryHandle;
+    if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
+    if (session.turnHandle === handle) return false;
+
+    session.statusBeforeSleep = session.status;
+    session.status = 'sleeping';
+    // Detach the query first: runQuery treats a run whose handle is no longer
+    // the session's as retired, so the agent exiting below is neither an error
+    // nor the end of the conversation.
+    session.queryHandle = null;
+    const abortController = session.abortController;
+    session.abortController = new AbortController();
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, id, 'sleeping');
+    }
+
+    const settled = (async () => {
+      // Kill the tree while the agent is still running, as shutDown() does.
+      const pid = handle.processId?.();
+      if (pid) {
+        await killTree(pid);
+        logger.info(`Put session ${id} to sleep: killed agent pid=${pid}`);
+      }
+      try { handle.close(); } catch { /* may already be closed */ }
+      abortController.abort();
+    })();
+    session.sleepSettled = settled;
+    await settled;
+    if (session.sleepSettled === settled) session.sleepSettled = null;
+    return true;
+  }
+
+  /** Wake a sleeping conversation. No-op for any other state. */
+  wakeSession(id: string): void {
+    const session = this.sessions.get(id);
+    if (session?.status === 'sleeping') this.wake(session);
+  }
+
+  /** Restart a sleeping session's agent on the same provider transcript.
+   *  Messages sent meanwhile wait on queryReady (see awaitQueryHandle). */
+  private wake(session: ManagedSession): void {
+    const { id } = session;
+    session.status = session.statusBeforeSleep ?? 'running';
+    session.statusBeforeSleep = null;
+    session.queryReady = new Promise<void>((resolve) => {
+      session.resolveQueryReady = resolve;
+    });
+    if (!session.window.isDestroyed()) {
+      session.window.webContents.send(IPC.SESSION_STATUS, id, 'running');
+    }
+    const emit = session.emit ?? this.createEmitter(session);
+    const asleep = session.sleepSettled;
+    (async () => {
+      await asleep;
+      // Closed or deleted while the sleep was still finishing.
+      if (session.destroying) return;
+      await this.runQuery(session, emit);
+    })().catch((err) => {
+      console.error(`[runQuery] session=${id} FAILED on wake:`, err);
+      const errMsg = String(err?.message || err);
+      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      session.status = 'error';
+      if (!session.window.isDestroyed()) {
+        session.window.webContents.send(IPC.SESSION_STATUS, id, 'error');
+      }
     });
   }
 
@@ -1549,14 +1807,19 @@ class AgentSessionManager {
     await this.closing.get(id);
     const session = this.sessions.get(id);
     if (!session) {
-      // A closed conversation has no live session, but its checkpoint refs
-      // are still in the repository.
+      // A closed conversation has no live session, but a memory auto-save may
+      // still be pending, its metadata hasn't been saved, and its checkpoint
+      // refs are still in the repository.
+      memoryAutosave.cancelAutoSave(id);
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
       if (worktree) {
+        memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
         await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }
+      this.historyCache.delete(id);
+      this.searchIndexes.delete(id);
       return;
     }
 
@@ -1593,6 +1856,10 @@ class AgentSessionManager {
     // query end (see runQuery).
     session.destroying = true;
 
+    // A sleep still killing the agent: let it finish, so a reopen right after
+    // the close can't start a second agent on the same transcript.
+    await session.sleepSettled;
+
     // Kill the agent's process tree while the agent is still running. Once it
     // exits, whatever it left running can no longer be traced back to it.
     const pid = session.queryHandle?.processId?.();
@@ -1619,6 +1886,7 @@ class AgentSessionManager {
         decision: 'deny',
       });
     }
+    this.cancelElicitations(session);
 
     // Clean up completion callback and event listeners
     this.completionCallbacks.delete(id);
@@ -1786,10 +2054,26 @@ class AgentSessionManager {
     });
   }
 
-  /** Start a search request. Indexes it touches stay cached for the whole
-   *  request, so a sweep over every conversation can't evict its own work. */
-  beginSearch(): void {
-    this.searchIndexes.beginPass();
+  /** Cross-conversation search sweeps in progress (see beginSearch). */
+  private searchSweeps = 0;
+
+  /**
+   * Start a search request. Indexes it touches stay cached for the whole
+   * request, so a sweep over every conversation can't evict its own work.
+   * A single-conversation search that runs while a sweep is paused between
+   * slices joins the sweep's pass: a new pass would make the indexes the
+   * sweep already built evictable. Returns a function that ends the request.
+   */
+  beginSearch(opts: { sweep?: boolean } = {}): () => void {
+    if (opts.sweep || this.searchSweeps === 0) this.searchIndexes.beginPass();
+    if (!opts.sweep) return () => {};
+    this.searchSweeps++;
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      this.searchSweeps--;
+    };
   }
 
   /** Search a session's history, newest match first (see searchEvents). */

@@ -105,6 +105,25 @@ describe('restoreWorktrees', () => {
     expect(mockGroveBench.resumeSession).toHaveBeenCalledWith('wt1', '/repo/a');
   });
 
+  it('keeps a session main has put to sleep asleep, without waking it', async () => {
+    store.repos = ['/repo/a'];
+
+    mockGroveBench.listSessions.mockResolvedValueOnce([
+      makeSessionInfo({ id: 'wt1', status: 'sleeping' }),
+    ]);
+    mockGroveBench.validateRepo.mockResolvedValueOnce(true);
+    mockGroveBench.listWorktrees.mockResolvedValueOnce([
+      makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
+    ]);
+    mockGroveBench.resumeSession.mockResolvedValueOnce({ id: 'wt1' });
+
+    await restoreWorktrees();
+
+    expect(store.sessions[0].status).toBe('sleeping');
+    // Resume only reattaches the window to the session main still holds.
+    expect(mockGroveBench.resumeSession).toHaveBeenCalledWith('wt1', '/repo/a');
+  });
+
   it('continues restoring other repos when one throws', async () => {
     store.repos = ['/repo/a', '/repo/b'];
 
