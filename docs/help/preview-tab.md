@@ -39,7 +39,7 @@ When a page can't load, the tab says why. For example, a refused connection usua
 The agent can open a local page, take a screenshot, read the page's text, click, type and read console errors and failed network requests. Ask for it in plain words, for example "start the dev server and check the signup form in the preview".
 
 - It only opens local addresses (`localhost`, `127.0.0.1`, `[::1]`) and HTML files in the conversation's worktree. Links and redirects to other sites are blocked
-- Opening, screenshots, reading and logs run without asking. Clicking and typing ask for permission like other actions, with **Always Allow** for the rest of the conversation
+- Opening, screenshots, reading and logs run without asking. Clicking and typing ask for permission like other actions. **Always allow** stops asking for that action (for example every click) for the rest of the conversation
 - If the page shows an alert or a confirm box, it's answered OK unless the agent asked for Cancel, and the agent is told what it said
 - Files load only from the conversation's worktree, and the agent's page only loads web files (HTML, CSS, scripts, images, fonts, media)
 - A dot on the Preview tab means the agent used its browser since you last looked

@@ -26,7 +26,7 @@ Common tool types:
 - **Grep/Glob** — File and content searches
 
 ### Permission Requests
-When the agent wants to perform an action that requires approval, a permission block appears with **Allow**, **Always Allow**, and **Deny** buttons. For file edits, a diff preview is shown so you can review changes before approving.
+When the agent wants to perform an action that requires approval, a permission block appears with **Allow**, **Deny**, and a third button that approves every later call of the same kind in this conversation. Its label says what it covers: **Allow all commands** for shell commands (any command, not just this one), **Allow all web fetches** for any web address, **Allow all edits** for edits to existing files, and **Always allow** plus the tool's name for other tools. Hover it for details. The choice lasts while the conversation is live, through idle sleep, until you stop the conversation or restart Grove Bench. For file edits, a diff preview is shown so you can review changes before approving.
 
 ### MCP Input Requests
 An MCP server can ask you for input while the agent uses one of its tools. A block appears with the server's question. It is either a short form (fill it in and click **Submit**, or **Decline**) or a page to open in your browser, for example to sign in (**Open page**, or **Decline**). Your answers go to that server, so don't type passwords or API keys into a form. If the agent stops or the server gives up waiting, the block closes as cancelled.

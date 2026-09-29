@@ -33,3 +33,12 @@ describe('PermissionBlock grove character', () => {
     expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
   });
 });
+
+describe('PermissionBlock always-allow button', () => {
+  it('says it covers every command, not just this one', () => {
+    render(PermissionBlock, { ...props, toolCategory: 'bash', resolved: false });
+    const button = screen.getByRole('button', { name: 'Allow all commands' });
+    expect(button).toHaveAttribute('title', expect.stringContaining('every shell command'));
+    expect(screen.queryByRole('button', { name: 'Always Allow' })).toBeNull();
+  });
+});

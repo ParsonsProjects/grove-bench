@@ -7,6 +7,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
+  import { alwaysAllowLabel } from '../lib/always-allow.js';
 
   let {
     sessionId,
@@ -51,6 +52,7 @@
   let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
+  let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
 
   async function approve() {
     if (submitting) return;
@@ -339,8 +341,8 @@
         <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
           Allow
         </Button>
-        <Button variant="outline" size="sm" onclick={approveAlways} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
-          Always Allow
+        <Button variant="outline" size="sm" onclick={approveAlways} disabled={submitting} title={alwaysAllow.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          {alwaysAllow.label}
         </Button>
         <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
           Deny
