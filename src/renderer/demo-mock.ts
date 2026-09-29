@@ -418,9 +418,11 @@ const api: Record<string, unknown> = {
   getControls: async () => ({
     descriptors: [
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-        { value: 'default', label: 'Ask', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
-        { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'highlight' },
-        { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+        { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
+        { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+        { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
+        { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+        { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
       ] },
       { id: 'effort', label: 'Effort', default: 'medium', options: [
         { value: 'low', label: 'Low', tone: 'muted' }, { value: 'medium', label: 'Medium', tone: 'accent-soft' },

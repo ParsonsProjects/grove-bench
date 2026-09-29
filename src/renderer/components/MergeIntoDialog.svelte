@@ -108,7 +108,7 @@
         <div class="p-2 text-xs border bg-destructive/10 border-destructive/50 text-destructive" role="alert">{planError}</div>
       {:else if plan?.blocked}
         <div class="p-2 text-xs border bg-yellow-500/10 border-yellow-500/40 text-foreground/90" role="status">{plan.blocked}</div>
-      {:else if described}
+      {:else if described && !result?.ok}
         <p class="text-xs text-foreground/90">{described.summary}</p>
         {#if plan?.checkoutPath}
           <p class="text-[11px] text-muted-foreground font-mono truncate" title={plan.checkoutPath}>{plan.checkoutPath}</p>

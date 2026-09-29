@@ -163,7 +163,7 @@ describe('DraftPane sign-in choices', () => {
     expect(screen.queryByRole('button', { name: 'How to install Claude Code' })).toBeNull();
     const key = screen.getByRole('region', { name: 'Use an API key' });
     expect(key).toHaveTextContent('Or use an API key');
-    expect(key).toHaveTextContent('Billed per use, separately from any plan.');
+    expect(key).toHaveTextContent('Billed per use, separately from any plan. Stored encrypted');
   });
 
   it('links to the install guide when the CLI is not installed', async () => {

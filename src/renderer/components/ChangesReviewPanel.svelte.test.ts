@@ -248,7 +248,7 @@ describe('ChangesReviewPanel: merge into the base branch', () => {
 
   it('offers to merge a worktree conversation into its base, and merges after showing the plan', async () => {
     sessionStore.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as any;
-    const { findByRole, getByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+    const { findByRole, getByRole, findByText, queryByText } = render(ChangesReviewPanel, { sessionId: SID });
 
     await fireEvent.click(await findByRole('button', { name: 'Merge into main' }));
     expect(await findByText('1 commit from feat will be merged into main in your project folder. Nothing is pushed.')).toBeInTheDocument();
@@ -257,6 +257,8 @@ describe('ChangesReviewPanel: merge into the base branch', () => {
     await fireEvent.click(getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(mockGroveBench.gitMergeInto).toHaveBeenCalledWith(SID, 'main'));
     expect(await findByText(/Merged into main/)).toBeInTheDocument();
+    // The plan was about the future; once merged it goes.
+    expect(queryByText(/will be merged into main/)).toBeNull();
   });
 
   it('shows why a merge can\'t run and keeps the button disabled', async () => {
