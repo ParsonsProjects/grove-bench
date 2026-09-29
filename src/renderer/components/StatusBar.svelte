@@ -268,6 +268,9 @@
   }
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
   let contextExpanded = $state(false);
+  /** "Start fresh" asks once before clearing; closing the popover cancels. */
+  let confirmClear = $state(false);
+  $effect(() => { if (!contextExpanded) confirmClear = false; });
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
   let shortcutsOpen = $state(false);
@@ -1680,24 +1683,47 @@
           <!-- Per-server MCP status and connect/disconnect controls live in the
                status bar's dedicated MCP popover, not here. -->
 
-          <!-- Quick actions -->
-          <div class="border-t border-border pt-2.5 mt-2.5 flex gap-2">
-            <button
-              onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
-              disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Compact conversation to free context"
-            >
-              /compact
-            </button>
-            <button
-              onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
-              disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Clear conversation and start fresh"
-            >
-              /clear
-            </button>
+          <!-- Quick actions. Clearing drops the conversation, so it asks first. -->
+          <div class="border-t border-border pt-2.5 mt-2.5">
+            {#if confirmClear}
+              <p class="text-xs text-foreground mb-2" role="alert">
+                Clear this conversation? Its messages, and the agent's memory of them, are removed. Your files stay as they are.
+              </p>
+              <div class="flex gap-2">
+                <button
+                  onclick={() => confirmClear = false}
+                  class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
+                  disabled={isRunning}
+                  class="flex-1 px-2 py-1.5 text-xs border border-destructive/60 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Clear
+                </button>
+              </div>
+            {:else}
+              <div class="flex gap-2">
+                <button
+                  onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
+                  disabled={isRunning}
+                  class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Replace the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. (/compact)"
+                >
+                  Summarise to free space
+                </button>
+                <button
+                  onclick={() => confirmClear = true}
+                  disabled={isRunning}
+                  class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Clear the conversation and start again with an empty context. Asks first. (/clear)"
+                >
+                  Start fresh…
+                </button>
+              </div>
+            {/if}
           </div>
         </div>
       {/if}
