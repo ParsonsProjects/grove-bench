@@ -121,6 +121,48 @@ describe('DraftPane credentials', () => {
   });
 });
 
+describe('DraftPane sign-in choices', () => {
+  const cliSignIn = {
+    accountLabel: 'Claude plan',
+    accountDetail: 'Pro, Max, Team or Enterprise',
+    cliName: 'Claude Code',
+    command: 'claude',
+    setupUrl: 'https://example.com/setup',
+  };
+  function withCli(available: boolean): PrerequisiteStatus {
+    const s = status(false);
+    s.agents['claude-code'] = {
+      ...s.agents['claude-code'],
+      available,
+      cliSignIn,
+      apiKey: { ...s.agents['claude-code'].apiKey!, billingNote: 'Billed per use, separately from any plan.' },
+    };
+    return s;
+  }
+
+  it('offers the plan sign-in first, then an API key with how it is billed', async () => {
+    store.prerequisites = withCli(true);
+    mockGroveBench.checkPrerequisites.mockResolvedValue(withCli(true));
+    render(DraftPane);
+    const plan = await screen.findByRole('region', { name: 'Sign in with Claude Code' });
+    expect(plan).toHaveTextContent('Use your Claude plan (Pro, Max, Team or Enterprise)');
+    expect(plan).toHaveTextContent('Run claude in a terminal and sign in when it asks');
+    expect(screen.queryByRole('button', { name: 'How to install Claude Code' })).toBeNull();
+    const key = screen.getByRole('region', { name: 'Use an API key' });
+    expect(key).toHaveTextContent('Or use an API key');
+    expect(key).toHaveTextContent('Billed per use, separately from any plan.');
+  });
+
+  it('links to the install guide when the CLI is not installed', async () => {
+    store.prerequisites = withCli(false);
+    mockGroveBench.checkPrerequisites.mockResolvedValue(withCli(false));
+    render(DraftPane);
+    const install = await screen.findByRole('button', { name: 'How to install Claude Code' });
+    await fireEvent.click(install);
+    expect(mockGroveBench.openExternal).toHaveBeenCalledWith('https://example.com/setup');
+  });
+});
+
 describe('DraftPane with no agent', () => {
   it('says so instead of waiting forever, and can try again', async () => {
     agentsStore.list = [];

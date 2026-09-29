@@ -10,6 +10,7 @@ import type {
   AdapterConfig,
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
+  CliSignInDescriptor,
   ModelInfo,
   PermissionResponse,
   UserMessage,
@@ -1223,11 +1224,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude" in a terminal and sign in, then try again.';
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
     helpUrl: 'https://platform.claude.com/',
+    // https://support.claude.com/en/articles/9876003
+    billingNote: 'Billed per use by Anthropic, separately from any Claude plan.',
+  };
+  // Anthropic's own sign-in in its own CLI; Grove only reads `claude auth
+  // status` (DESIGN.md, "Allowed: the user's own Claude subscription").
+  readonly cliSignIn: CliSignInDescriptor = {
+    accountLabel: 'Claude plan',
+    accountDetail: 'Pro, Max, Team or Enterprise',
+    cliName: 'Claude Code',
+    command: 'claude',
+    setupUrl: 'https://code.claude.com/docs/en/setup',
   };
   readonly mcp = CLAUDE_MCP_SUPPORT;
   readonly capabilities: AgentCapabilities = {
@@ -1377,7 +1389,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         authenticated: envMethod !== null,
         ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
-        installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
+        installInstructions: 'Install Claude Code: https://code.claude.com/docs/en/setup',
       };
     }
 

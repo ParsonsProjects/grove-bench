@@ -243,7 +243,7 @@ describe('ChangesReviewPanel — review features', () => {
   });
 });
 
-describe('ChangesReviewPanel — merge into the base branch', () => {
+describe('ChangesReviewPanel: merge into the base branch', () => {
   afterEach(() => { sessionStore.sessions = []; });
 
   it('offers to merge a worktree conversation into its base, and merges after showing the plan', async () => {

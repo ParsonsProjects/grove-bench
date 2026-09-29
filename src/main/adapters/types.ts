@@ -242,6 +242,25 @@ export interface ApiKeyDescriptor {
   label: string;
   /** Page where the user can create a key. */
   helpUrl: string;
+  /** How using a key is paid for, shown under the field, e.g. that it is
+   *  billed separately from a subscription. */
+  billingNote?: string;
+}
+
+/** Signing in through the provider's own CLI instead of an API key: the
+ *  user runs the CLI in a terminal and its own sign-in flow stores the
+ *  credentials. Grove never handles them. */
+export interface CliSignInDescriptor {
+  /** What the sign-in uses, for a heading such as "Use your Claude plan". */
+  accountLabel: string;
+  /** Who can sign in this way, e.g. "Pro, Max, Team or Enterprise". */
+  accountDetail?: string;
+  /** The CLI's product name, e.g. "Claude Code". */
+  cliName: string;
+  /** The command that starts it and asks the user to sign in. */
+  command: string;
+  /** The provider's install and setup page. */
+  setupUrl: string;
 }
 
 // ─── The Adapter Interface ───
@@ -285,6 +304,9 @@ export interface AgentAdapter {
 
   /** Set when the provider accepts an API key entered in the app. */
   readonly apiKey?: ApiKeyDescriptor;
+
+  /** Set when the user can sign in with the provider's CLI instead. */
+  readonly cliSignIn?: CliSignInDescriptor;
 
   /** Cheap model for background tasks run on this agent: memory notes and
    *  compaction, commit messages, skill suggestions. Used unless the user

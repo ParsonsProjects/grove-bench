@@ -123,14 +123,43 @@
         </div>
       </div>
     {:else if credentials === 'missing'}
-      <div class="relative z-10 w-full max-w-sm flex flex-col gap-3 bg-background border border-border p-4">
+      {@const cli = agentStatus?.cliSignIn}
+      <div class="relative z-10 w-full max-w-md flex flex-col gap-4 bg-background border border-border p-4">
         <p class="text-sm text-foreground">Add credentials for {agentName} to start.</p>
+        {#if cli}
+          <!-- Two ways in, subscription first: most people have a plan, not
+               an API key, and a key is billed separately. -->
+          <section class="flex flex-col gap-1.5" aria-label="Sign in with {cli.cliName}">
+            <p class="text-xs font-medium text-foreground">
+              Use your {cli.accountLabel}{#if cli.accountDetail}{' '}<span class="font-normal text-muted-foreground">({cli.accountDetail})</span>{/if}
+            </p>
+            {#if agentStatus?.available}
+              <p class="text-xs text-muted-foreground">
+                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
+              </p>
+            {:else}
+              <p class="text-xs text-muted-foreground">
+                Install {cli.cliName}, run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
+              </p>
+              <button
+                type="button"
+                class="self-start text-xs text-primary hover:underline"
+                onclick={() => window.groveBench.openExternal(cli.setupUrl)}
+              >
+                How to install {cli.cliName}
+              </button>
+            {/if}
+          </section>
+        {/if}
         {#if agentStatus?.apiKey}
-          {#key agentId}
-            <ApiKeyField adapterId={agentId} autofocus />
-          {/key}
-          <p class="text-xs text-muted-foreground">Signed in with the CLI in a terminal instead? Re-check.</p>
-        {:else}
+          <section class="flex flex-col gap-1.5" aria-label="Use an API key">
+            {#if cli}<p class="text-xs font-medium text-foreground">Or use an API key</p>{/if}
+            {#key agentId}
+              <ApiKeyField adapterId={agentId} autofocus />
+            {/key}
+          </section>
+        {/if}
+        {#if !cli && !agentStatus?.apiKey}
           <p class="text-sm text-muted-foreground">
             {agentStatus?.authErrorMessage ?? agentStatus?.errorMessage ?? 'Could not check the agent\'s credentials.'}
           </p>

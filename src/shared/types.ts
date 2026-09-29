@@ -108,10 +108,21 @@ export interface AgentPrerequisiteStatus {
   apiKey?: {
     label: string;
     helpUrl: string;
+    /** How using a key is paid for, shown under the field. */
+    billingNote?: string;
     /** A key is saved. While saved it is used instead of any CLI sign-in. */
     saved: boolean;
     /** The OS can encrypt a key. Without it no key can be saved. */
     canStore: boolean;
+  };
+  /** Present when the user can sign in with the provider's CLI instead of a
+   *  key. `available` above says whether that CLI is installed. */
+  cliSignIn?: {
+    accountLabel: string;
+    accountDetail?: string;
+    cliName: string;
+    command: string;
+    setupUrl: string;
   };
 }
 

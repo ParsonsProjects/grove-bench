@@ -84,7 +84,7 @@
         </Button>
       </div>
       <p class="text-xs text-muted-foreground">
-        Stored encrypted on this computer. While saved, it is used instead of a CLI sign-in.
+        {#if apiKey.billingNote}{apiKey.billingNote} {/if}Stored encrypted on this computer. While saved, it is used instead of a CLI sign-in.
       </p>
       {#if apiKey.saved}
         <button
