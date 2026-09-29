@@ -4,7 +4,7 @@
 
 import path from 'node:path';
 import { TOOL_RULE_KEYWORDS } from '../shared/types.js';
-import type { ToolCategory } from '../shared/types.js';
+import type { ToolCategory, ToolRule } from '../shared/types.js';
 
 /**
  * True if `child` resolves to a location inside (or equal to) `parent`.
@@ -82,6 +82,21 @@ export function toolCallSpecifier(
   }
 }
 
+/** True when a parsed rule's `<tool>` part covers this tool, ignoring its glob. */
+function ruleTargetsTool(rule: { tool: string }, toolName: string, category?: ToolCategory): boolean {
+  const keyword = rule.tool.toLowerCase();
+  if (keyword === 'mcp') return toolName.startsWith('mcp__');
+  const neutralCategory = TOOL_RULE_KEYWORDS[keyword];
+  return (neutralCategory !== undefined && category !== undefined && neutralCategory === category)
+    || toolName === rule.tool
+    || toolName.startsWith(rule.tool);
+}
+
+/** A rule with no glob, or `(*)`, covers every call to its tool. */
+function isToolWideRule(rule: { specifier: string | null }): boolean {
+  return rule.specifier === null || rule.specifier === '*';
+}
+
 /**
  * Match a tool rule pattern against a tool call.
  *
@@ -91,20 +106,16 @@ export function toolCallSpecifier(
  * provider tool name matched by exact name / prefix. `toolCall` is
  * `Name(specifier)` (or just `Name`); the glob matches the specifier, except
  * for `mcp(...)` where it matches the tool name after `mcp__`.
+ *
+ * This matches the whole specifier as one string. To decide whether a call
+ * is allowed or denied, use checkToolRules, which splits chained shell
+ * commands first.
  */
 export function matchToolRule(pattern: string, toolName: string, toolCall: string, category?: ToolCategory): boolean {
   const rule = parseToolRule(pattern);
   if (!rule) return false;
-  const keyword = rule.tool.toLowerCase();
-  const isMcpKeyword = keyword === 'mcp';
-  const neutralCategory = TOOL_RULE_KEYWORDS[keyword];
-
-  const toolMatches = isMcpKeyword
-    ? toolName.startsWith('mcp__')
-    : (neutralCategory !== undefined && category !== undefined && neutralCategory === category)
-      || toolName === rule.tool
-      || toolName.startsWith(rule.tool);
-  if (!toolMatches) return false;
+  const isMcpKeyword = rule.tool.toLowerCase() === 'mcp';
+  if (!ruleTargetsTool(rule, toolName, category)) return false;
 
   if (rule.specifier === null) return true;
   if (rule.specifier === '*') return true;
@@ -116,6 +127,179 @@ export function matchToolRule(pattern: string, toolName: string, toolCall: strin
       : '');
   const re = globToRegExp(rule.specifier);
   return re ? re.test(subject) : false;
+}
+
+/** Operators that need a command on their right-hand side. */
+const BINARY_SHELL_OPERATORS = new Set(['&&', '||', '|', '|&']);
+
+/**
+ * Split a shell command into the commands it chains, on the separators
+ * Claude Code's own permission rules split on: `&&`, `||`, `;`, `|`, `|&`,
+ * `&` and newlines. Quotes and backslash escapes are respected, so
+ * `git commit -m "a; b"` is one command, and redirects such as `2>&1`,
+ * `&>` and `>|` are not separators.
+ *
+ * Returns null when the command can't be split with confidence: command or
+ * process substitution, backticks, `${...}`, parentheses outside quotes,
+ * here-docs (their bodies aren't shell syntax), comments, unbalanced quotes,
+ * or an operator with nothing around it (`npm test &&`, `; ls`). Callers
+ * must treat null as "no allow rule matches".
+ */
+export function splitShellCommand(command: string): string[] | null {
+  // Substitutions, plus ${...} and $[...] whose insides bash parses with
+  // its own quoting rules. Rejected even inside single quotes, where they'd
+  // be harmless: simpler to fail closed than to track where they are live.
+  if (/`|\$[({[]/.test(command)) return null;
+
+  const parts: { text: string; op: string | null }[] = [];
+  let current = '';
+  let quote: "'" | '"' | "$'" | null = null;
+  const endPart = (op: string | null) => {
+    parts.push({ text: current, op });
+    current = '';
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    const next = command[i + 1];
+
+    if (quote) {
+      current += c;
+      // Backslash escapes work in "..." and $'...', never in '...'.
+      if (c === '\\' && quote !== "'" && next !== undefined) {
+        current += next;
+        i++;
+      } else if (c === (quote === '"' ? '"' : "'")) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (c === '\\') {
+      current += c + (next ?? '');
+      i++;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      current += c;
+      continue;
+    }
+    // Like bash's tokenizer, read $$ as one token first, so the ' in $$'
+    // opens a plain quote and not a $'...' one.
+    if (c === '$' && (next === '$' || next === "'")) {
+      if (next === "'") quote = "$'";
+      current += c + next;
+      i++;
+      continue;
+    }
+    // Subshells, process substitution, $((...)), function bodies.
+    if (c === '(' || c === ')') return null;
+    // A # that starts a word begins a comment, which could hide a quote the
+    // shell ignores but we'd count. Mid-word (a#b) it's a literal.
+    if (c === '#' && (current === '' || /[\s<>&|;]$/.test(current))) return null;
+    if (c === '<' && next === '<') {
+      if (command[i + 2] !== '<') return null; // here-doc
+      current += '<<<'; // here-string: a single word
+      i += 2;
+      continue;
+    }
+    if (c === '>' || c === '<') {
+      // >&, <& and >| are redirects, not separators.
+      current += c;
+      if (next === '&' || (c === '>' && next === '|')) {
+        current += next;
+        i++;
+      }
+      continue;
+    }
+    if (c === '&') {
+      if (next === '&') { endPart('&&'); i++; }
+      else if (next === '>') { current += '&>'; i++; } // &> and &>> redirect
+      else endPart('&');
+      continue;
+    }
+    if (c === '|') {
+      if (next === '|' || next === '&') { endPart(c + next); i++; }
+      else endPart('|');
+      continue;
+    }
+    if (c === ';' || c === '\n') {
+      endPart(c);
+      continue;
+    }
+    current += c;
+  }
+  if (quote) return null;
+  endPart(null);
+
+  const commands: string[] = [];
+  let needsCommand = false;
+  for (const { text, op } of parts) {
+    const cmd = text.trim();
+    if (!cmd) {
+      // Blank lines are fine, and the shell reads on past a line ending in
+      // && or |. So is nothing after a final ; or &.
+      if (op === '\n') continue;
+      if (op === null && commands.length > 0 && !needsCommand) continue;
+      return null;
+    }
+    commands.push(cmd);
+    needsCommand = op !== null && BINARY_SHELL_OPERATORS.has(op);
+  }
+  return commands.length > 0 ? commands : null;
+}
+
+/**
+ * Check a tool call against the settings' allow and deny rules. Deny wins.
+ *
+ * Shell commands follow Claude Code's own permission rules: a chain such as
+ * `npm run build && rm -rf ~` is split first, a deny rule applies when it
+ * matches the whole command or any command in it, and allow rules approve
+ * only when every command in it matches one of them. When the command can't
+ * be split safely (see splitShellCommand), only a rule covering every shell
+ * call (`shell` or `shell(*)`) approves it, and only when no deny rule has a
+ * glob for shell, because we can't see which commands a deny rule might hit.
+ *
+ * Returns null when no rule decides, so the call falls through to the normal
+ * permission prompt.
+ */
+export function checkToolRules(
+  allowRules: readonly ToolRule[],
+  denyRules: readonly ToolRule[],
+  toolName: string,
+  specifier: string,
+  category?: ToolCategory,
+): { behavior: 'deny'; pattern: string } | { behavior: 'allow' } | null {
+  const matches = (rule: ToolRule, subject: string) =>
+    matchToolRule(rule.pattern, toolName, subject ? `${toolName}(${subject})` : toolName, category);
+
+  if (category !== 'bash') {
+    const denied = denyRules.find((rule) => matches(rule, specifier));
+    if (denied) return { behavior: 'deny', pattern: denied.pattern };
+    return allowRules.some((rule) => matches(rule, specifier)) ? { behavior: 'allow' } : null;
+  }
+
+  const commands = splitShellCommand(specifier);
+  const denied = denyRules.find(
+    (rule) => matches(rule, specifier) || (commands?.some((cmd) => matches(rule, cmd)) ?? false),
+  );
+  if (denied) return { behavior: 'deny', pattern: denied.pattern };
+
+  if (commands) {
+    const allowed = commands.every((cmd) => allowRules.some((rule) => matches(rule, cmd)));
+    return allowed ? { behavior: 'allow' } : null;
+  }
+
+  const rulesForTool = (rules: readonly ToolRule[]) =>
+    rules.flatMap((rule) => {
+      const parsed = parseToolRule(rule.pattern);
+      return parsed && ruleTargetsTool(parsed, toolName, category) ? [parsed] : [];
+    });
+  const allowsAnyCommand = rulesForTool(allowRules).some(isToolWideRule);
+  // Tool-wide deny rules already matched above, so any left here have a glob.
+  const denyMightApply = rulesForTool(denyRules).length > 0;
+  return allowsAnyCommand && !denyMightApply ? { behavior: 'allow' } : null;
 }
 
 /**
