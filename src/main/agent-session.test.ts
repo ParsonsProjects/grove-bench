@@ -152,7 +152,7 @@ class MockAdapter implements AgentAdapter {
   getControls(model?: string | null) {
     // Like Claude's Haiku, the lite model does not offer native auto mode.
     const modeOptions = [
-      { value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
+      { value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
       { value: 'auto', label: 'Auto' }, { value: 'readSafe', label: 'Read-safe', group: 'Grove Bench' },
     ].filter((o) => o.value !== 'auto' || model !== 'mock-lite');
     const controls = [

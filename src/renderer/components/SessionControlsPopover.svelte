@@ -13,13 +13,16 @@
   import { usageStore } from '../stores/usage.svelte.js';
   import { formatResetTime } from '../lib/reset-time.js';
   import { toneClass } from '../lib/control-tones.js';
-  import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../shared/types.js';
+  import { CONTROL_IDS, CONTROL_SHORTCUTS, type ControlOption } from '../../shared/types.js';
+  import { controlHint } from '../lib/control-hint.js';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
 
   let { sessionId, modelOptions = [] }: { sessionId: string; modelOptions?: ModelOption[] } = $props();
 
   let open = $state(false);
+  /** Option under the pointer or focus, explained in the footer. */
+  let hovered = $state<ControlOption | null>(null);
   let rootRef = $state<HTMLDivElement | null>(null);
   let adapters = $state<Array<{ id: string; displayName: string }>>([]);
 
@@ -31,6 +34,7 @@
   let model = $derived(messageStore.getModel(sessionId));
   let modelLabel = $derived(modelOptions.find((o) => o.value === model)?.label ?? model);
   let controls = $derived(messageStore.getControlDescriptors(sessionId));
+  let hint = $derived(controlHint(controls, (id) => messageStore.getControlValue(sessionId, id), hovered));
 
   /** What the subtitle shows besides the model: the mode always (tinted, since
    *  it governs what the agent may do), every other control only when it is
@@ -255,7 +259,10 @@
                 onclick={() => choose(ctl.id, opt.value)}
                 class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent
                   {current ? `bg-accent/50 ${toneClass(opt.tone).split(' ')[0]} border-current` : 'border-transparent text-muted-foreground'}"
-                title={opt.description}
+                onmouseenter={() => hovered = opt}
+                onmouseleave={() => hovered = null}
+                onfocus={() => hovered = opt}
+                onblur={() => hovered = null}
               >
                 {opt.label}
               </button>
@@ -264,7 +271,14 @@
         {/each}
       </div>
 
-      <div class="flex justify-end mt-3 pt-2 border-t border-border">
+      <div class="flex items-center justify-between gap-4 mt-3 pt-2 border-t border-border">
+        {#if hint}
+          <p class="text-[11px] text-muted-foreground max-w-md" aria-live="polite">
+            <span class="text-foreground">{hint.label}:</span> {hint.description}
+          </p>
+        {:else}
+          <span></span>
+        {/if}
         <button
           onclick={() => open = false}
           class="px-3 py-1 border border-border text-foreground hover:bg-accent transition-colors"

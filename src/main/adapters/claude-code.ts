@@ -679,9 +679,9 @@ export function supportsFastMode(model: string | null | undefined, learned?: Lea
 }
 
 const PERMISSION_MODE_OPTIONS: ControlOption[] = [
-  { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
   { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
   // Grove's own mode, listed after Claude's so the divider shows it isn't one
   // of the CLI's.

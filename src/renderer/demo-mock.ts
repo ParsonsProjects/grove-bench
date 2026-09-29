@@ -376,7 +376,7 @@ const api: Record<string, unknown> = {
     ] },
   ] : [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-      { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+      { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
       { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
       { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
       { value: 'auto', label: 'Auto', tone: 'highlight' },
@@ -418,7 +418,7 @@ const api: Record<string, unknown> = {
   getControls: async () => ({
     descriptors: [
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-        { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
+        { value: 'default', label: 'Ask', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
         { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'highlight' },
         { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
       ] },

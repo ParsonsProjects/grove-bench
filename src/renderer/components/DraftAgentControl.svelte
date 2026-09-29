@@ -8,10 +8,13 @@
   import { onMount, onDestroy } from 'svelte';
   import { draftStore } from '../stores/draft.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
-  import { CONTROL_IDS } from '../../shared/types.js';
+  import { CONTROL_IDS, type ControlOption } from '../../shared/types.js';
   import { toneText } from '../lib/control-tones.js';
+  import { controlHint } from '../lib/control-hint.js';
 
   let open = $state(false);
+  /** Option under the pointer or focus, explained in the footer. */
+  let hovered = $state<ControlOption | null>(null);
   let rootRef = $state<HTMLDivElement | null>(null);
 
   const draft = $derived(draftStore.draft);
@@ -19,6 +22,7 @@
   const model = $derived(draftStore.effectiveModel);
   const modelLabel = $derived(draftStore.models.find((m) => m.value === model)?.label ?? model);
 
+  const hint = $derived(controlHint(draftStore.descriptors, (id) => draftStore.controlValue(id), hovered));
   /** Subtitle: the mode always, other controls only when off their default. */
   const subtitleItems = $derived(draftStore.descriptors.flatMap((ctl) => {
     const value = draftStore.controlValue(ctl.id);
@@ -138,7 +142,10 @@
                 onclick={() => draftStore.setControl(ctl.id, opt.value)}
                 class="w-full text-left px-2 py-1 border-l-2 transition-colors hover:bg-accent
                   {current ? `bg-accent/50 ${toneText(opt.tone)} border-current` : 'border-transparent text-muted-foreground'}"
-                title={opt.description}
+                onmouseenter={() => hovered = opt}
+                onmouseleave={() => hovered = null}
+                onfocus={() => hovered = opt}
+                onblur={() => hovered = null}
                 aria-pressed={current}
               >
                 {opt.label}
@@ -148,7 +155,14 @@
         {/each}
       </div>
 
-      <div class="flex justify-end mt-3 pt-2 border-t border-border">
+      <div class="flex items-center justify-between gap-4 mt-3 pt-2 border-t border-border">
+        {#if hint}
+          <p class="text-[11px] text-muted-foreground max-w-md" aria-live="polite">
+            <span class="text-foreground">{hint.label}:</span> {hint.description}
+          </p>
+        {:else}
+          <span></span>
+        {/if}
         <button
           onclick={() => open = false}
           class="px-3 py-1 border border-border text-foreground hover:bg-accent transition-colors"

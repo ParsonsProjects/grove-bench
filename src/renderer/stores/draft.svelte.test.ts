@@ -8,7 +8,7 @@ import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
   id: 'permissionMode', label: 'Mode', default: 'default',
-  options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' }],
+  options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' }],
 };
 const effortControl: ControlDescriptor = {
   id: 'effort', label: 'Effort', default: 'medium',

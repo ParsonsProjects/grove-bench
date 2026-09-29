@@ -12,6 +12,7 @@
   import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { agentReady } from '../../shared/prerequisites.js';
+  import { controlHint } from '../lib/control-hint.js';
   import ApiKeyField from './ApiKeyField.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import DraftStatusBar from './DraftStatusBar.svelte';
@@ -74,6 +75,9 @@
       ? `The agent will work on a new branch, ${start.branchName.trim()}, from ${from}, in a separate copy.`
       : `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message after the first reply.`;
   });
+
+  /** The mode the conversation will start in, in words. */
+  const modeHint = $derived(controlHint(draftStore.descriptors, (id) => draftStore.controlValue(id), null));
 
   onMount(() => {
     agentsStore.load().finally(() => { agentsTried = true; });
@@ -172,12 +176,18 @@
       <GroveEmptyState variant="draft">
         <p class="text-sm mt-5 mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs text-muted-foreground max-w-md">{plan}</p>
+        {#if modeHint}
+          <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
+        {/if}
         <p class="text-xs text-muted-foreground/70 mt-2 max-w-md">Change the agent, model, mode or branch in the bar below before you send.</p>
       </GroveEmptyState>
     {:else}
       <div class="relative z-10 text-center">
         <p class="text-sm mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs max-w-md">{plan}</p>
+        {#if modeHint}
+          <p class="text-xs max-w-md mt-1">Mode: {modeHint.label}. {modeHint.description}.</p>
+        {/if}
       </div>
     {/if}
   </div>

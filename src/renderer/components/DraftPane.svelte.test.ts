@@ -69,6 +69,19 @@ describe('DraftPane', () => {
     expect(screen.getByText(/new branch from main, in a separate copy/)).toBeInTheDocument();
   });
 
+  it('says in words which mode the conversation will start in', async () => {
+    mockGroveBench.getAdapterControls.mockResolvedValue([
+      { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+        { value: 'default', label: 'Ask', description: 'Check with you before each edit or command' },
+      ] },
+    ]);
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    await settle();
+    render(DraftPane);
+    expect(await screen.findByText(/Check with you before each edit or command\./)).toHaveTextContent('Mode: Ask.');
+  });
+
   it('starts on Enter and sends the message', async () => {
     render(DraftPane);
     const box = screen.getByLabelText('First message');

@@ -1238,7 +1238,7 @@ describe('getters with defaults', () => {
 
 describe('session controls', () => {
   const descriptors = [
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }] },
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }] },
     { id: 'thinking', label: 'Thinking', default: 'high', options: [{ value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] },
   ];
 
