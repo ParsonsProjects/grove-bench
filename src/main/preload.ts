@@ -171,6 +171,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.GIT_CHERRY_PICK, sessionId, sha),
   gitSquash: (sessionId: string, base: string, message: string) =>
     ipcRenderer.invoke(IPC.GIT_SQUASH, sessionId, base, message),
+  gitMergePlan: (sessionId: string, target: string) =>
+    ipcRenderer.invoke(IPC.GIT_MERGE_PLAN, sessionId, target),
+  gitMergeInto: (sessionId: string, target: string) =>
+    ipcRenderer.invoke(IPC.GIT_MERGE_INTO, sessionId, target),
 
   // Checkpoint rewind
   rewindSession: (sessionId: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions) =>

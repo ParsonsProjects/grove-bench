@@ -7,6 +7,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import ChangesReviewPanel from './ChangesReviewPanel.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { store as sessionStore } from '../stores/sessions.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
 const SID = 'changes-session';
@@ -239,5 +240,43 @@ describe('ChangesReviewPanel — review features', () => {
     expect(getByText('Working tree clean')).toBeInTheDocument();
     await fireEvent.click(getByText('Branch'));
     await waitFor(() => expect(getByText('No merge base with main')).toBeInTheDocument());
+  });
+});
+
+describe('ChangesReviewPanel — merge into the base branch', () => {
+  afterEach(() => { sessionStore.sessions = []; });
+
+  it('offers to merge a worktree conversation into its base, and merges after showing the plan', async () => {
+    sessionStore.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as any;
+    const { findByRole, getByRole, findByText } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: 'Merge into main' }));
+    expect(await findByText('1 commit from feat will be merged into main in your project folder. Nothing is pushed.')).toBeInTheDocument();
+    expect(mockGroveBench.gitMergePlan).toHaveBeenCalledWith(SID, 'main');
+
+    await fireEvent.click(getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(mockGroveBench.gitMergeInto).toHaveBeenCalledWith(SID, 'main'));
+    expect(await findByText(/Merged into main/)).toBeInTheDocument();
+  });
+
+  it('shows why a merge can\'t run and keeps the button disabled', async () => {
+    sessionStore.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as any;
+    mockGroveBench.gitMergePlan.mockResolvedValueOnce({
+      branch: 'feat', target: 'main', commits: 1, checkoutPath: '/repo', uncommitted: 0,
+      blocked: 'The project folder has uncommitted changes on main. Commit or stash them first.',
+    });
+    const { findByRole, findByText, getByRole } = render(ChangesReviewPanel, { sessionId: SID });
+
+    await fireEvent.click(await findByRole('button', { name: 'Merge into main' }));
+    expect(await findByText(/project folder has uncommitted changes/)).toBeInTheDocument();
+    expect(getByRole('button', { name: 'Merge' })).toBeDisabled();
+  });
+
+  it('has no merge button for a conversation working in the project folder', async () => {
+    sessionStore.sessions = [{ id: SID, branch: 'main', repoPath: '/repo', status: 'running', direct: true }] as any;
+    const { queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    await tick();
+    expect(queryByRole('button', { name: /Merge into/ })).toBeNull();
   });
 });

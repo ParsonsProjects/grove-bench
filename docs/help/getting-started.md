@@ -32,3 +32,16 @@ Once a conversation is running, type your instructions in the **prompt editor** 
 4. Ask for permission before potentially destructive actions
 
 You can monitor progress in the **Activity** tab and review file changes in the **Changes** tab.
+
+## Finishing a Conversation
+
+When the agent is done, its work sits on the conversation's own branch, in a separate copy of the project. To bring it into your main branch:
+
+1. **Review** — Open the **Changes** tab (`Alt+2`). **Uncommitted** shows what isn't committed yet; **Branch** shows everything since the conversation left its base branch.
+2. **Commit** — Stage files, write a message (or generate one) and click **Commit**. You can also ask the agent to commit for you.
+3. **Merge or open a pull request**:
+   - **Merge into main** (the button names your base branch) sits at the bottom of the Changes tab. It shows what will happen, then merges the branch into that branch in your project folder. The project folder must have that branch checked out with no uncommitted changes. If both sides changed the same lines, the merge is stopped and nothing changes: ask the agent to rebase onto the base branch and fix the conflicts, then merge again. Nothing is pushed.
+   - **Create PR** in the status bar pushes the branch and opens a pull request. It shows when the GitHub CLI (`gh`) is installed and signed in. Without it, **& Push** next to **Commit** pushes the branch so you can open a pull request on your git host's website.
+4. **Tidy up** — Right-click the conversation and choose **Mark Completed** to hide it, or **Delete Conversation** to remove its copy of the project.
+
+A conversation that works in the **Project folder** changes your files in place, so there is nothing to merge.

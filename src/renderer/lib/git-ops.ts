@@ -2,7 +2,7 @@
  * Pure helpers behind the branch-operations dialog (rebase / cherry-pick /
  * squash between agent branches).
  */
-import type { CommitEntry, GitOpResult } from '../../shared/types.js';
+import type { CommitEntry, GitOpResult, MergeIntoPlan } from '../../shared/types.js';
 
 export interface BranchCandidate {
   branch: string;
@@ -63,4 +63,34 @@ export function describeOpResult(result: GitOpResult, verb: string): { ok: boole
     return { ok: false, text: `${verb} aborted: conflicts in ${files}${more}. The branch is unchanged. Resolve in the terminal, or ask the agent to do it.` };
   }
   return { ok: false, text: `${verb} failed: ${result.error || 'unknown error'}` };
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** What the merge dialog says will happen, from a plan with no `blocked`
+ *  reason: the main line, and a note when some changes won't be included. */
+export function describeMergePlan(plan: MergeIntoPlan): { summary: string; note?: string } {
+  const what = `${plural(plan.commits, 'commit')} from ${plan.branch}`;
+  const summary = plan.checkoutPath
+    ? `${what} will be merged into ${plan.target} in your project folder. Nothing is pushed.`
+    : `${what} will be added to ${plan.target}. No checkout has ${plan.target}, so it moves forward without touching any files. Nothing is pushed.`;
+  if (plan.uncommitted === 0) return { summary };
+  return {
+    summary,
+    note: `${plural(plan.uncommitted, 'file')} with uncommitted changes won't be included. Commit them first if you want them in ${plan.target}.`,
+  };
+}
+
+/** Outcome text for the merge dialog. */
+export function describeMergeResult(result: GitOpResult, target: string): { ok: boolean; text: string } {
+  if (result.success) return { ok: true, text: `Merged into ${target}. Push ${target} when you're ready to share it.` };
+  if (result.conflicts && result.conflicts.length > 0) {
+    const files = result.conflicts.slice(0, 8).join(', ');
+    const more = result.conflicts.length > 8 ? ` and ${result.conflicts.length - 8} more` : '';
+    return {
+      ok: false,
+      text: `Merge stopped: ${target} and this branch both changed ${files}${more}. Nothing was changed. Ask the agent to rebase this branch onto ${target} and fix the conflicts, then merge again.`,
+    };
+  }
+  return { ok: false, text: `Merge failed: ${result.error || 'unknown error'}` };
 }

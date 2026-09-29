@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { candidateBranches, squashMessageFrom, describeOpResult } from './git-ops.js';
+import { candidateBranches, squashMessageFrom, describeOpResult, describeMergePlan, describeMergeResult } from './git-ops.js';
 
 const sessions = [
   { id: 'a', branch: 'feat/a', repoPath: '/r1', displayName: 'Auth work' },
@@ -57,5 +57,40 @@ describe('describeOpResult', () => {
   it('caps the conflict list', () => {
     const many = Array.from({ length: 10 }, (_, i) => `f${i}.ts`);
     expect(describeOpResult({ success: false, conflicts: many }, 'Cherry-pick').text).toContain('and 2 more');
+  });
+});
+
+describe('describeMergePlan', () => {
+  const plan = { branch: 'feat/x', target: 'main', commits: 2, checkoutPath: '/repo', uncommitted: 0 };
+
+  it('says where the merge runs and that nothing is pushed', () => {
+    expect(describeMergePlan(plan)).toEqual({
+      summary: '2 commits from feat/x will be merged into main in your project folder. Nothing is pushed.',
+    });
+  });
+
+  it('explains a fast-forward when no checkout has the target', () => {
+    expect(describeMergePlan({ ...plan, commits: 1, checkoutPath: null }).summary)
+      .toBe('1 commit from feat/x will be added to main. No checkout has main, so it moves forward without touching any files. Nothing is pushed.');
+  });
+
+  it('warns that uncommitted files are left out', () => {
+    expect(describeMergePlan({ ...plan, uncommitted: 1 }).note).toBe(
+      "1 file with uncommitted changes won't be included. Commit them first if you want them in main.",
+    );
+  });
+});
+
+describe('describeMergeResult', () => {
+  it('formats success, conflicts and errors', () => {
+    expect(describeMergeResult({ success: true }, 'main')).toEqual({
+      ok: true,
+      text: "Merged into main. Push main when you're ready to share it.",
+    });
+    const conflict = describeMergeResult({ success: false, conflicts: ['a.ts'] }, 'main');
+    expect(conflict.ok).toBe(false);
+    expect(conflict.text).toContain('both changed a.ts');
+    expect(conflict.text).toContain('Nothing was changed');
+    expect(describeMergeResult({ success: false, error: 'boom' }, 'main').text).toBe('Merge failed: boom');
   });
 });

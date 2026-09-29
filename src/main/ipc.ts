@@ -12,7 +12,7 @@ import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, planMergeInto, mergeInto, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -1179,6 +1179,24 @@ export function registerHandlers() {
     if (typeof base !== 'string' || !base.trim() || base.startsWith('-')) return { success: false, error: 'Pick a base branch.' };
     logger.info(`Squashing session ${sessionId} (${worktree.branch}) since ${base}`);
     return squashSince(worktree.path, base.trim(), typeof message === 'string' ? message : '');
+  });
+
+  // Merging runs in the project folder, not the conversation's worktree. A
+  // conversation that works in the project folder itself has nothing to merge.
+  ipcMain.handle(IPC.GIT_MERGE_PLAN, async (_event, sessionId: string, target: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (worktree.direct) throw new Error('This conversation works in the project folder, so there is nothing to merge.');
+    return planMergeInto(worktree.repoPath, worktree.path, typeof target === 'string' ? target.trim() : '');
+  });
+
+  ipcMain.handle(IPC.GIT_MERGE_INTO, async (_event, sessionId: string, target: string) => {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
+    if (worktree.direct) return { success: false, error: 'This conversation works in the project folder, so there is nothing to merge.' };
+    const into = typeof target === 'string' ? target.trim() : '';
+    logger.info(`Merging session ${sessionId} (${worktree.branch}) into ${into}`);
+    return mergeInto(worktree.repoPath, worktree.path, into);
   });
 
   ipcMain.handle(IPC.GIT_BRANCH_COMMITS, async (_event, sessionId: string, base: string) => {
