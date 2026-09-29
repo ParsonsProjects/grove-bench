@@ -151,6 +151,8 @@ describe('Sidebar session rows', () => {
       await waitFor(() => expect(icon()).toHaveAttribute('data-pr-health', 'failing'));
       expect(icon()).toHaveClass('text-red-500');
       expect(icon()).toHaveAccessibleName('Worktree, PR #12: CI failing');
+      // The app's tooltip layer reads title attributes, so hovering the icon explains the colour.
+      expect(icon()).toHaveAttribute('title', 'Worktree, PR #12: CI failing');
     } finally {
       prStore.clear('s1');
     }
