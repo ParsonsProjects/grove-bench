@@ -5,12 +5,20 @@ const LASTS = 'Lasts until you stop the conversation or restart Grove Bench.';
 /**
  * Button text and tooltip for a permission prompt's "always allow" choice.
  *
- * Main approves the whole tool from then on (agent-session's
- * `alwaysAllowedTools`), not just this command or URL, so the label names
- * everything it covers. The choice survives idle sleep but not stopping the
- * conversation or restarting the app, since both drop the live session.
+ * For file edits (the 'edit' category) the renderer switches the whole
+ * conversation to Edit mode (messageStore.resolvePermission), so the label
+ * says that. Anything else is approved tool-wide from then on (agent-session's
+ * `alwaysAllowedTools`), not just this command or URL; that survives idle
+ * sleep but not stopping the conversation or restarting the app, since both
+ * drop the live session.
  */
 export function alwaysAllowLabel(toolName: string, category?: ToolCategory): { label: string; title: string } {
+  if (category === 'edit') {
+    return {
+      label: 'Allow all edits (Edit mode)',
+      title: 'Switches this conversation to Edit mode: file edits inside the worktree, new files included, are applied without asking. Commands still ask. Switch back in the agent settings (Alt+M).',
+    };
+  }
   const { label, covers } = scope(toolName, category);
   return { label, title: `${covers} ${LASTS}` };
 }
@@ -22,17 +30,8 @@ function scope(toolName: string, category?: ToolCategory): { label: string; cove
   if (category === 'web_fetch' || toolName === 'WebFetch') {
     return { label: 'Allow all web fetches', covers: 'Fetches any web address in this conversation without asking.' };
   }
-  switch (toolName) {
-    case 'Edit':
-    case 'MultiEdit':
-      return {
-        label: 'Allow all edits',
-        covers: 'Applies every edit to existing files in this conversation without asking. Creating new files still asks.',
-      };
-    case 'Write':
-      return { label: 'Allow all file writes', covers: 'Creates or replaces any file in this conversation without asking.' };
-    case 'NotebookEdit':
-      return { label: 'Allow all notebook edits', covers: 'Applies every notebook edit in this conversation without asking.' };
+  if (toolName === 'NotebookEdit') {
+    return { label: 'Allow all notebook edits', covers: 'Applies every notebook edit in this conversation without asking.' };
   }
   const name = mcpToolName(toolName) ?? toolName;
   return { label: `Always allow ${name}`, covers: `Runs every ${name} call in this conversation without asking.` };

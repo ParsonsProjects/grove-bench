@@ -18,10 +18,13 @@ describe('alwaysAllowLabel', () => {
     expect(title).toContain('any web address');
   });
 
-  it('tells edits and new files apart', () => {
-    expect(alwaysAllowLabel('Edit', 'edit').label).toBe('Allow all edits');
-    expect(alwaysAllowLabel('Edit', 'edit').title).toContain('Creating new files still asks');
-    expect(alwaysAllowLabel('Write', 'edit').label).toBe('Allow all file writes');
+  it('says that allowing edits switches the conversation to Edit mode', () => {
+    for (const tool of ['Edit', 'Write', 'MultiEdit']) {
+      const { label, title } = alwaysAllowLabel(tool, 'edit');
+      expect(label).toBe('Allow all edits (Edit mode)');
+      expect(title).toContain('new files included');
+      expect(title).not.toContain('restart');
+    }
   });
 
   it('names an MCP tool by its own name', () => {
