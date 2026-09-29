@@ -91,31 +91,36 @@ a network or a key. It passes 40 of 40 checks; the trimmed recordings are in
 ## Where we are today
 
 The adapter layer is ready for a second agent. The rest of the app is not
-fully. From an audit of the code (line numbers at commit `f880fe3`):
+fully. From an audit of the code (re-checked after merging main; line numbers
+at commit `8be60ca`):
 
 **Already adapter-neutral**
 - `AgentAdapter` / `AgentQueryHandle` in `src/main/adapters/types.ts`, with
   capability flags, `getControls(model)`, optional `apiKey`,
   `backgroundModel` and `generateText`.
 - The registry, per-adapter settings, saved keys and default models
-  (`DESIGN.md`, "Several agents"). The New Conversation dialog shows an agent
-  picker once two adapters are registered
-  (`src/renderer/components/NewAgentDialog.svelte:227`).
+  (`DESIGN.md`, "Several agents"). The Draft pane that replaced the New
+  Conversation dialog keeps an agent per draft (`agentId` in
+  `src/renderer/stores/draft.svelte.ts`, `DraftAgentControl.svelte`).
+- MCP settings pass the agent through (`mcpConfig*` in
+  `src/main/preload.ts`), since main made MCP provider-neutral.
 - Background tasks skip cleanly when an adapter has no `generateText`
   (`src/main/memory-autosave.ts:246`, `src/main/commit-message.ts:51`).
 - File restore on rewind is git-only (`src/main/checkpoints.ts`).
 
 **Bugs that a second adapter will hit**
 1. Worktree conversations lose their agent id: the create handler returns
-   `{ id, branch }` without `agentType` (`src/main/ipc.ts:322`), while direct
-   mode returns it (`:204`) and the type requires it
-   (`src/shared/types.ts:696`). Until restart the status bar shows the
-   default adapter's models, so a Claude model id could be sent to an
-   OpenCode conversation.
+   `{ id, branch }` without `agentType` (`src/main/ipc.ts:368`), while direct
+   mode returns it (`:244`) and the type requires it
+   (`src/shared/types.ts:878`). The Draft pane stores the missing value
+   (`src/renderer/stores/draft.svelte.ts:288`), so until restart the app
+   treats the conversation as the default agent's, and a Claude model id
+   could be sent to an OpenCode conversation.
 2. `getControls()` for a conversation that isn't live returns the default
-   adapter's controls (`src/main/agent-session.ts:1271`).
-3. The MCP and Plugins settings always act on the default adapter
-   (`src/main/preload.ts:200-212`).
+   adapter's controls (`src/main/agent-session.ts:1409`).
+3. The Plugins settings still act on the default adapter (`plugin*` in
+   `src/main/preload.ts` take no agent). Minor, since only Claude has
+   plugins.
 
 **Claude assumptions in the renderer and main process**
 - Tool blocks are picked by tool name, not category
@@ -123,19 +128,20 @@ fully. From an audit of the code (line numbers at commit `f880fe3`):
   read Claude's input fields (`file_path`, `old_string`, `new_string`).
 - Summary view only shows tools named `Edit`, `Write`, `Bash`
   (`src/renderer/lib/message-view.ts:34`). The last-turn changes list only
-  counts `Edit`/`Write` (`messages.svelte.ts:798`).
+  counts `Edit`/`Write` (`messages.svelte.ts:831`).
 - Question prompts read `AskUserQuestion`'s `questions` array
-  (`messages.svelte.ts:1505`).
+  (`messages.svelte.ts:1558`).
 - Approving an edit "always" or a plan forces `acceptEdits`
-  (`messages.svelte.ts:1827-1838`).
+  (`messages.svelte.ts:1915`, `:1923`).
 - The memory system prompt always says a `grove-memory` MCP server exists
-  (`src/main/memory.ts:243`), but that server is built with the Claude SDK
-  (`adapters/memory-mcp-server.ts`).
+  (`src/main/memory.ts:244`), but that server is built with the Claude SDK
+  (`adapters/memory-mcp-server.ts`). The new Preview tools are built the same
+  way (`adapters/preview-mcp-server.ts`), so they are Claude-only too.
 - Rewind needs `resumeAtUuid`; nothing checks whether the adapter supports it
-  (`agent-session.ts:1840`), so an adapter that ignores it would look rewound
+  (`agent-session.ts:2125`), so an adapter that ignores it would look rewound
   while the agent still remembers everything.
 - Read-safe mode only knows Claude tool names (`src/main/read-only-tools.ts`).
-- `/compact` and `/clear` are always offered (`PromptEditor.svelte:69`).
+- `/compact` and `/clear` are always offered (`PromptEditor.svelte:87`).
 - Several capability flags are declared but never read: `permissions`,
   `permissionModes`, `resume`, `modelSwitching`, `thinking`,
   `imageAttachments`, `structuredOutput`, `sandbox`.
@@ -325,7 +331,8 @@ panel can come later. The unstable `plan_update` / `plan_removed` updates
 
 ### Memory tools
 
-The current memory server is in-process and Claude-SDK-only. For ACP:
+The current memory server is in-process and Claude-SDK-only, and so is the
+Preview server that main added. For ACP (the same approach serves both):
 
 - Run a small MCP server in the main process over HTTP on `127.0.0.1`, random
   port, random bearer token per app run. Pass it in `session/new`
@@ -385,9 +392,10 @@ before and after, and fails if anything in them changed. Answers:
 - Does Stop end a real turn, and does the same session work afterwards?
 - What a wrong key looks like against the real OpenRouter.
 
-**Phase 1: multi-adapter fixes (independent value).** Fix the three bugs
-above, gate the memory prompt and rewind on capabilities, stop forcing
-unsupported modes. Tests for each.
+**Phase 1: multi-adapter fixes.** Fix bugs 1 and 2 above, gate the memory
+prompt and rewind on capabilities, stop forcing unsupported modes. Tests for
+each. No visible change while Claude is the only agent; it is groundwork for
+any second adapter.
 
 **Phase 2: neutral tool display.** Add `ToolView`, fill it in the Claude
 adapter, switch the renderer and main-process checks from names to
@@ -400,7 +408,7 @@ mapper tests driven by the Phase 0 fixtures, permissions, models, key,
 prerequisites. Help page and `DESIGN.md` section. Ships behind a setting until
 it has been used for real work.
 
-**Phase 4: memory server over HTTP and `generateText`.**
+**Phase 4: memory and Preview servers over HTTP, and `generateText`.**
 
 **Phase 5: more profiles.** Each one gets its own mini-spike: how to set the
 provider and model, what it advertises, how it asks for permission.
