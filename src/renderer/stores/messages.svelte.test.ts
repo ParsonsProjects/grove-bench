@@ -1353,9 +1353,12 @@ describe('updateMcpServers', () => {
     ]);
   });
 
-  it('is a no-op before system_init', () => {
+  it('records servers for an agent that never reported them at startup', () => {
     messageStore.updateMcpServers('uninitialized', [{ name: 'docs', status: 'connected' }]);
-    expect(messageStore.getSystemInfo('uninitialized').mcpServers).toEqual([]);
+    expect(messageStore.getSystemInfo('uninitialized')).toMatchObject({
+      tools: [],
+      mcpServers: [{ name: 'docs', status: 'connected' }],
+    });
   });
 });
 

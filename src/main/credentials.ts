@@ -28,11 +28,36 @@ function getCredentialsPath(): string {
   return path.join(app.getPath('userData'), 'credentials.json');
 }
 
+/**
+ * The saved keys. A missing file, or one that isn't valid, reads as empty
+ * (saving a key then replaces a corrupt file). Any other read error, such as
+ * the file being briefly locked by antivirus, throws, so a passing failure
+ * isn't mistaken for "no keys saved".
+ */
 function readCredentials(): CredentialsFile {
+  let text: string;
   try {
-    return credentialsFileSchema.parse(JSON.parse(fs.readFileSync(getCredentialsPath(), 'utf-8')));
-  } catch {
+    text = fs.readFileSync(getCredentialsPath(), 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { apiKeys: {} };
+    throw err;
+  }
+  try {
+    return credentialsFileSchema.parse(JSON.parse(text));
+  } catch (err) {
+    logger.warn('[credentials] credentials.json is not valid; treating it as empty:', err);
     return { apiKeys: {} };
+  }
+}
+
+/** readCredentials for save and clear, which must not overwrite a file they
+ *  couldn't read: that would drop the other agents' keys. */
+function readCredentialsForUpdate(): CredentialsFile {
+  try {
+    return readCredentials();
+  } catch (err) {
+    logger.warn('[credentials] could not read saved API keys:', err);
+    throw new Error("Couldn't read your saved API keys, so nothing was changed. Try again in a moment.");
   }
 }
 
@@ -58,8 +83,16 @@ export function getApiKey(adapterId: string): string | null {
   const cached = cache.get(adapterId);
   if (cached !== undefined) return cached;
 
+  let data: CredentialsFile;
+  try {
+    data = readCredentials();
+  } catch (err) {
+    // Not cached: the next launch tries the file again.
+    logger.warn(`[credentials] could not read saved API keys; will retry:`, err);
+    return null;
+  }
   let key: string | null = null;
-  const stored = readCredentials().apiKeys[adapterId];
+  const stored = data.apiKeys[adapterId];
   if (stored) {
     try {
       key = safeStorage.decryptString(Buffer.from(stored, 'base64'));
@@ -88,14 +121,14 @@ export function saveApiKey(adapterId: string, rawKey: unknown): void {
   if (!canStoreApiKey()) {
     throw new Error('This computer has no secure storage, so the API key cannot be saved.');
   }
-  const data = readCredentials();
+  const data = readCredentialsForUpdate();
   data.apiKeys[adapterId] = safeStorage.encryptString(parsed.data).toString('base64');
   writeCredentials(data);
   cache.set(adapterId, parsed.data);
 }
 
 export function clearApiKey(adapterId: string): void {
-  const data = readCredentials();
+  const data = readCredentialsForUpdate();
   if (adapterId in data.apiKeys) {
     delete data.apiKeys[adapterId];
     writeCredentials(data);

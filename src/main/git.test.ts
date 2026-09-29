@@ -44,6 +44,7 @@ import {
   remoteTrackingRef,
   parseWorktreeBranches,
   checkoutBranch,
+  isWorkingTreeClean,
   getGitIdentity,
 } from './git.js';
 
@@ -846,5 +847,19 @@ describe('checkoutBranch()', () => {
   it('creates a new branch at HEAD', async () => {
     await checkoutBranch('/wt', 'feat/new', { create: true });
     expect(mockExeca).toHaveBeenCalledWith('git', ['checkout', '-b', 'feat/new'], { cwd: '/wt' });
+  });
+});
+
+describe('isWorkingTreeClean()', () => {
+  it('counts untracked files by default', async () => {
+    mockExeca.mockResolvedValue({ stdout: '?? .claude/\n' } as any);
+    expect(await isWorkingTreeClean('/wt')).toBe(false);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain'], { cwd: '/wt' });
+  });
+
+  it('can leave untracked files out', async () => {
+    mockExeca.mockResolvedValue({ stdout: '' } as any);
+    expect(await isWorkingTreeClean('/wt', { ignoreUntracked: true })).toBe(true);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: '/wt' });
   });
 });
