@@ -54,7 +54,11 @@
 
   /** onerror callback for a session pane's <svelte:boundary>. */
   function paneError(sessionId: string) {
-    return (error: unknown) => handleErrorReport(reportFromError('boundary', error, sessionId));
+    return (error: unknown) => {
+      // Nothing more will load: drop the loading walk so the error shows.
+      messageStore.setHistoryLoaded(sessionId, true);
+      handleErrorReport(reportFromError('boundary', error, sessionId));
+    };
   }
   function sidebarError(error: unknown) {
     handleErrorReport(reportFromError('boundary', error));
@@ -514,6 +518,7 @@
       {#each store.sessions as session (session.id)}
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}
+        {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
         <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
           {#if live}
             <!-- A render/effect error in one session's pane must not take the
@@ -526,8 +531,9 @@
             </svelte:boundary>
           {/if}
           <!-- The walk: while a stopped conversation reconnects, and over the
-               chat (kept mounted underneath) while the wake-up scene plays. -->
-          {#if !live || scene}
+               chat (kept mounted underneath) while its history loads or the
+               wake-up scene plays. -->
+          {#if !live || scene || loading}
             <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
             <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
