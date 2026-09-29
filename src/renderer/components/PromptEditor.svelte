@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
@@ -19,13 +19,11 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
-  let value = $state('');
+  // Restore the draft before the first render (sessionId is stable per
+  // instance). Set in onMount instead, the resize below would measure the
+  // textarea before bind:value had written the draft into it.
+  let value = $state(untrack(() => messageStore.getDraft(sessionId)));
   let textarea: HTMLTextAreaElement;
-
-  // Restore draft on mount (sessionId is stable per instance)
-  onMount(() => {
-    value = messageStore.getDraft(sessionId);
-  });
 
   // Sync draft to store whenever value changes
   $effect(() => {
@@ -37,6 +35,24 @@
     if (textarea && value) {
       autoResize();
     }
+  });
+
+  // A pane that mounts hidden (another conversation or the draft is open)
+  // can't size its prompt box: autoResize skips it while there is no layout.
+  // Showing the pane gives the textarea a width, so size it then. Resizing
+  // inside the callback lands before paint; the browser then reports a
+  // "ResizeObserver loop" error, which is benign (error-handling.ts skips it).
+  $effect(() => {
+    const el = textarea;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let shown = el.clientWidth > 0;
+    const observer = new ResizeObserver(() => {
+      const wasShown = shown;
+      shown = el.clientWidth > 0;
+      if (shown && !wasShown && value) autoResize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   });
 
   // Insert text pushed from elsewhere (e.g. the activity thread's "copy
@@ -267,6 +283,9 @@
 
   function autoResize() {
     if (!textarea || userResized) return;
+    // Hidden: no layout, so scrollHeight reads 0 and the box would collapse
+    // to its padding. The observer above sizes it once it is shown.
+    if (textarea.clientWidth === 0) return;
     textarea.style.height = '0';
     const scrollH = textarea.scrollHeight;
     // Cap textarea itself at 150px, let container flex naturally
