@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AGENT_SPRITES, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SPRITE_W, SPRITE_H, agentColors, toRuns } from '../lib/agent-sprite.js';
+  import { AGENT_SPRITES, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SPRITE_W, SPRITE_H, agentColors, toRuns, type AgentSpriteState } from '../lib/agent-sprite.js';
   import {
     WALK_BACK, WALK_FRONT, WALK_VIEW_W, WALK_VIEW_H, WALK_GROUND_Y, WALK_FRAME_SECONDS,
     WAKE_PATH_HEAD_START_SECONDS, WAKE_AWAKE_AT_MS, WAKE_WALK_AT_MS,
@@ -10,15 +10,17 @@
   /**
    * Grove character version of "Starting agent...": the conversation's agent
    * walks through the grove until it is ready. `seed` (the conversation id)
-   * gives it the same skin tone and hair colour as in the sidebar, and
-   * `projectColor` the same laptop logo. With `wake`, it first wakes up on a
-   * bench, then stands and walks off.
+   * gives it the same skin tone and hair colour as in the sidebar,
+   * `projectColor` the same laptop logo, and `spriteState` (the sidebar
+   * character's state) the same hoodie colour. With `wake`, it first wakes up
+   * on a bench, then stands and walks off.
    */
-  let { seed, projectColor = null, wake = null }: { seed: string; projectColor?: string | null; wake?: WakeScene | null } = $props();
+  let { seed, projectColor = null, spriteState = 'starting', wake = null }: { seed: string; projectColor?: string | null; spriteState?: AgentSpriteState; wake?: WakeScene | null } = $props();
 
   const SCALE = 4;
   const frames = SIDE_WALK_MAPS.map((map) => toRuns(map));
   const look = $derived(agentColors(seed, projectColor));
+  const colorClass = $derived(AGENT_SPRITES[spriteState].colorClass);
   const agentX = (WALK_VIEW_W - SIDE_WALK_W) / 2;
   const agentY = WALK_GROUND_Y - SIDE_WALK_H;
   // Seated front-on on the path's bench, feet on the ground. Columns 0 to 5
@@ -46,6 +48,7 @@
   });
   const phase = $derived(wake ? scenePhase : 'walking');
 
+  // The seated pose: asleep as it was in the sidebar, then eyes open.
   const seated = $derived(
     phase === 'asleep'
       ? AGENT_SPRITES[wake?.from ?? 'sleeping']
@@ -82,10 +85,10 @@
     {/key}
     <rect x="0" y={WALK_GROUND_Y} width={WALK_VIEW_W} height="1" fill="#3a9a48" opacity="0.45" />
     {#if phase === 'walking'}
-      <!-- The agent, in the sidebar's "Starting" colour. Its frames sit side by
-           side and this viewBox shows one at a time, as in AgentSprite. -->
+      <!-- The agent, in its sidebar colour. Its frames sit side by side and
+           this viewBox shows one at a time, as in AgentSprite. -->
       <svg
-        class={AGENT_SPRITES.starting.colorClass}
+        class={colorClass}
         x={agentX}
         y={agentY}
         width={SIDE_WALK_W}
@@ -104,10 +107,9 @@
         </g>
       </svg>
     {:else}
-      <!-- Seated on the bench: asleep in the colour of the state it wakes
-           from, then eyes open in the "Starting" colour. -->
+      <!-- Seated on the bench, in its sidebar colour: asleep, then eyes open. -->
       <svg
-        class="seated {phase === 'asleep' ? seated.colorClass : AGENT_SPRITES.starting.colorClass}"
+        class="seated {colorClass}"
         x={agentX}
         y={seatedY}
         width={SPRITE_W}

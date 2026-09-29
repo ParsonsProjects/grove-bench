@@ -658,7 +658,9 @@
   <span class="w-px self-stretch bg-border"></span>
 
   <!-- Activity view toggle (cycles Summary → Focus → Detailed). Per session;
-       the default for new sessions is set in Settings → Default Activity View. -->
+       the default for new sessions is set in Settings → Default Activity View.
+       The rate-limit warning sits underneath. -->
+  <div class="flex flex-col gap-px leading-snug">
   <button
     onclick={() => messageStore.setViewMode(sessionId, NEXT_VIEW_MODE[viewMode])}
     class="flex items-center gap-1 transition-colors
@@ -678,10 +680,24 @@
     {VIEW_MODE_LABELS[viewMode]}{#if hiddenCount > 0}<span class="text-muted-foreground/70">&nbsp;({hiddenCount} hidden)</span>{/if}
   </button>
 
+  {#if rateLimit && rateLimit.status !== 'allowed'}
+    <span class="flex items-center gap-1 text-[11px] whitespace-nowrap {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}" data-testid="rate-limit">
+      <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
+      {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
+      {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
+      {#if rateLimit.resetsAt}
+        <span class="text-muted-foreground" title={new Date(rateLimit.resetsAt * 1000).toLocaleString()}>
+          resets {formatResetTime(rateLimit.resetsAt)}
+        </span>
+      {/if}
+    </span>
+  {/if}
+  </div>
+
   <span class="w-px self-stretch bg-border"></span>
 
   <!-- Activity stack: session state on top; transient chips (pending tools,
-       rate limit, background tasks, memory compaction) underneath. -->
+       background tasks, memory compaction) underneath. -->
   <div class="flex flex-col gap-px leading-snug">
   <span class="flex items-center gap-1.5">
     {#if isRunning}
@@ -703,7 +719,7 @@
     {/if}
   </span>
 
-  {#if pendingTools.length > 0 || (rateLimit && rateLimit.status !== 'allowed') || backgroundTasks.length > 0 || memoryCompacting}
+  {#if pendingTools.length > 0 || backgroundTasks.length > 0 || memoryCompacting}
   <div class="flex items-center gap-3 text-[11px]">
   {#if pendingTools.length > 0}
     <div class="relative" bind:this={tasksRef}>
@@ -734,19 +750,6 @@
         </div>
       {/if}
     </div>
-  {/if}
-
-  {#if rateLimit && rateLimit.status !== 'allowed'}
-    <span class="flex items-center gap-1 {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}">
-      <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
-      {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
-      {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
-      {#if rateLimit.resetsAt}
-        <span class="text-muted-foreground" title={new Date(rateLimit.resetsAt * 1000).toLocaleString()}>
-          resets {formatResetTime(rateLimit.resetsAt)}
-        </span>
-      {/if}
-    </span>
   {/if}
 
   {#if backgroundTasks.length > 0}

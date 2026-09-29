@@ -6,6 +6,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
@@ -102,6 +103,24 @@ describe('StatusBar MCP controls follow the agent', () => {
     render(StatusBar, { props: { sessionId: ID } });
 
     await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
+  });
+});
+
+describe('StatusBar rate limit', () => {
+  afterEach(() => rateLimitStore.destroy(ACTIVE));
+
+  it('shows the warning under the activity view toggle', () => {
+    rateLimitStore.set(ACTIVE, { status: 'allowed_warning', utilization: 0.85 });
+    const { getByTestId, getByRole } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const warning = getByTestId('rate-limit');
+    expect(warning.textContent).toMatch(/rate warning\s+\(85%\)/);
+    expect(getByRole('button', { name: /^Activity view:/ }).nextElementSibling).toBe(warning);
+  });
+
+  it('shows nothing while requests are allowed', () => {
+    rateLimitStore.set(ACTIVE, { status: 'allowed' });
+    const { queryByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(queryByTestId('rate-limit')).toBeNull();
   });
 });
 

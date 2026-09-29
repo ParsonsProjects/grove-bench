@@ -12,6 +12,7 @@
   import { wakeScene } from './stores/wakeScene.svelte.js';
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
+  import { sessionSpriteState } from './lib/session-sprite-state.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -540,7 +541,7 @@
               {#if settingsStore.current.groveCharacters}
                 <!-- Only the open conversation's walk is drawn; hidden panes skip it. -->
                 {#if store.activeSessionId === session.id}
-                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} wake={scene} />
+                  <GroveWalk seed={session.id} projectColor={sessionRepoColor(session.id)} spriteState={sessionSpriteState(session)} wake={scene} />
                 {/if}
                 {#if scene}
                   <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Skip the wake-up" onclick={() => wakeScene.end()}></button>
