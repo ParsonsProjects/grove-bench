@@ -604,7 +604,9 @@
     if (bgTasksExpanded && bgTasksRef && !bgTasksRef.contains(target)) {
       bgTasksExpanded = false;
     }
-    if (contextExpanded && contextRef && !contextRef.contains(target)) {
+    // isConnected: "Start fresh…" swaps itself for the confirm buttons before
+    // the click bubbles here (see the skills popover below).
+    if (contextExpanded && contextRef && target.isConnected && !contextRef.contains(target)) {
       contextExpanded = false;
     }
     if (shortcutsOpen && shortcutsRef && !shortcutsRef.contains(target)) {
