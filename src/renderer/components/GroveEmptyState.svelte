@@ -2,6 +2,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
+  import FirstSteps from './FirstSteps.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { agentSpriteState, toRuns, BENCH, LAMP, SCENERY_PALETTE } from '../lib/agent-sprite.js';
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
@@ -65,10 +66,9 @@
     {#if variant === 'draft'}
       {@render children?.()}
     {:else}
-      <p class="text-sm mt-5 mb-2 text-foreground/80">No conversations yet</p>
-      <p class="text-xs text-muted-foreground">
-        Add a project, then press <span class="text-foreground">+ Conversation</span>. An agent will take the bench.
-      </p>
+      <div class="mt-5 flex flex-col items-center">
+        <FirstSteps />
+      </div>
     {/if}
   </div>
 {:else}

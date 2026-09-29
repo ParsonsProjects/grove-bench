@@ -18,7 +18,18 @@ Electron · Svelte 5 · Tailwind CSS v4 · TypeScript · node-pty · xterm.js
 
 Download `Grove-Bench-Setup-<version>.exe` from [Releases](https://github.com/ParsonsProjects/grove-bench/releases). The installer is not code signed yet, so Windows SmartScreen shows "Windows protected your PC" on first run: choose **More info**, then **Run anyway**. After that, the app checks for new releases and offers the update in the title bar.
 
-## Getting Started
+## Using Grove Bench
+
+You need Git 2.17 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in, or an Anthropic API key.
+
+1. **Add a project**: a git repository on your computer.
+2. **Start a conversation**: tell the agent what to work on. By default it works on a new branch in its own copy of the project (a git worktree), so your checkout is left alone.
+3. **Approve its actions**: in the default **Ask** mode the agent checks with you before each edit or command.
+4. **Finish**: review the work in the **Changes** tab, commit it, then **Merge into main** or **Create PR**.
+
+The in-app help (the **?** in the title bar) covers each step in detail.
+
+## Building from Source
 
 ```bash
 # Install dependencies

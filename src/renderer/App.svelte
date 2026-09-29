@@ -23,6 +23,7 @@
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import SessionFinder from './components/SessionFinder.svelte';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
+  import FirstSteps from './components/FirstSteps.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
@@ -464,9 +465,8 @@
         {#if settingsStore.current.groveCharacters}
           <GroveEmptyState variant="empty" />
         {:else}
-          <div class="text-center relative z-10">
-            <p class="text-sm mb-2">No active agents</p>
-            <p class="text-xs">Add a project and start a conversation to get started.</p>
+          <div class="text-center relative z-10 flex flex-col items-center">
+            <FirstSteps />
           </div>
         {/if}
       </div>

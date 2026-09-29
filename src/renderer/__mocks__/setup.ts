@@ -53,6 +53,7 @@ const mockGroveBench = {
   gitMergePlan: vi.fn((_sessionId: string, target: string) => Promise.resolve({ branch: 'feat', target, commits: 1, checkoutPath: '/repo', uncommitted: 0 } as import('../../shared/types.js').MergeIntoPlan)),
   gitMergeInto: vi.fn(() => Promise.resolve({ success: true } as import('../../shared/types.js').GitOpResult)),
   getDefaultBranch: vi.fn(() => Promise.resolve('main')),
+  addRepo: vi.fn(() => Promise.resolve(null as string | null)),
   listBranches: vi.fn((_repoPath: string, _opts?: { fetch?: boolean }) => Promise.resolve([] as string[])),
   switchBranch: vi.fn(() => Promise.resolve({ success: false, error: 'not mocked' } as import('../../shared/types.js').BranchSwitchResult)),
   syncBranch: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').BranchSyncResult | null)),
