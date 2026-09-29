@@ -32,6 +32,7 @@ describe('previewKeyAction', () => {
   it("hands Grove's shortcuts back to Grove", () => {
     for (const n of ['1', '2', '3', '4', '5']) expect(previewKeyAction(key(n, { alt: true }))).toEqual({ kind: 'grove' });
     expect(previewKeyAction(key('b', { control: true }))).toEqual({ kind: 'grove' });
+    expect(previewKeyAction(key('n', { control: true }))).toEqual({ kind: 'grove' });
     expect(previewKeyAction(key('T', { control: true, shift: true }))).toEqual({ kind: 'grove' });
     // Mode, thinking and effort.
     for (const k of ['m', 't', 'e']) expect(previewKeyAction(key(k, { alt: true }))).toEqual({ kind: 'grove' });

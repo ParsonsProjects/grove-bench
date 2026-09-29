@@ -5,8 +5,8 @@
  *
  * Keep this in step with the handlers: keyboard-shortcuts.ts (Alt+1..5, a
  * test checks it), StatusBar.svelte (Alt+M/T/E) and App.svelte (Ctrl+B,
- * Ctrl+Shift+T). Ctrl+R is left out on purpose: in the page it reloads, like
- * a browser. So is Ctrl+F, which searches the Activity tab.
+ * Ctrl+N, Ctrl+Shift+T). Ctrl+R is left out on purpose: in the page it
+ * reloads, like a browser. So is Ctrl+F, which searches the Activity tab.
  */
 
 export interface ShortcutKey {
@@ -23,6 +23,7 @@ export const GROVE_WINDOW_SHORTCUTS: readonly ShortcutKey[] = [
   { key: 't', alt: true },
   { key: 'e', alt: true },
   { key: 'b', ctrl: true },
+  { key: 'n', ctrl: true },
   { key: 't', ctrl: true, shift: true },
 ];
 

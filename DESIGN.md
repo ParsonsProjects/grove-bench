@@ -212,7 +212,7 @@ Rules (`src/main/preview-policy.ts`, `src/main/preview.ts`):
 - Certificate errors are accepted for local hosts only, for dev servers with self-signed certificates
 - Console messages, uncaught errors, failed loads, blocked navigations and files, dialogs, and 4xx/5xx or failed requests from Claude's page go to a 300-entry log (`src/main/preview-log.ts`) that `preview_logs` reads
 
-Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove's window shortcuts (listed once in `src/shared/grove-shortcuts.ts`: `Alt+1..5`, `Alt+M/T/E`, `Ctrl+B`, `Ctrl+Shift+T`) and `Ctrl+L` are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes (Claude's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app). Events a closing page still fires are ignored.
+Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove's window shortcuts (listed once in `src/shared/grove-shortcuts.ts`: `Alt+1..5`, `Alt+M/T/E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T`) and `Ctrl+L` are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes (Claude's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app). Events a closing page still fires are ignored.
 
 ### 4.3 Renderer / UI
 

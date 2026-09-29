@@ -30,7 +30,7 @@ When a page can't load, the tab says why. For example, a refused connection usua
 | `F12` or `Ctrl+Shift+I` | Developer tools |
 | `Alt+Left` / `Alt+Right` | Back / forward |
 | `Ctrl+L` or `Alt+D` | Go to the address bar |
-| `Alt+1` to `Alt+5`, `Alt+M`, `Alt+T`, `Alt+E`, `Ctrl+B`, `Ctrl+Shift+T` | Grove Bench shortcuts, as usual |
+| `Alt+1` to `Alt+5`, `Alt+M`, `Alt+T`, `Alt+E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T` | Grove Bench shortcuts, as usual |
 
 `Ctrl+R` reloads the page while the page has focus. Elsewhere in Grove Bench it still opens the conversation finder.
 
