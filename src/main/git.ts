@@ -34,6 +34,18 @@ export async function gitVersion(): Promise<{ version: string; major: number; mi
   }
 }
 
+/** The top-level folder of the work tree containing `dir`, as git prints it
+ *  (forward slashes on Windows). Null outside a work tree, including a bare
+ *  repository or a `.git` folder. */
+export async function repoRoot(dir: string): Promise<string | null> {
+  try {
+    const out = (await git(['rev-parse', '--show-toplevel'], dir)).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function isGitRepo(path: string): Promise<boolean> {
   try {
     await execa('git', ['rev-parse', '--git-dir'], { cwd: path });

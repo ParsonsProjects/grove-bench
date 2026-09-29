@@ -4,7 +4,7 @@ Grove Bench is a multi-agent git worktree orchestrator for Claude Code. It lets 
 
 ## Adding a Project
 
-Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to the folder containing your git repository and select it. The project will appear in the sidebar, ready for new conversations. A project must be a git repository for now.
+Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to the folder containing your git repository and select it. The project will appear in the sidebar, ready for new conversations. A project must be a git repository for now: pick a folder that isn't in one and Grove Bench says so. Pick a folder inside a repository and the repository's top-level folder is added.
 
 ## Starting a Conversation
 

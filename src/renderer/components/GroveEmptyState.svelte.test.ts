@@ -31,6 +31,16 @@ describe('GroveEmptyState', () => {
     await waitFor(() => expect(store.repos).toContain('/repo/new'));
   });
 
+  it('says why a picked folder could not be added', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockRejectedValueOnce(new Error("Error invoking remote method 'repo:select': Error: C:\\notes isn't in a git repository. Pick the folder that contains your project's .git folder, or run \"git init\" in it first."));
+    render(GroveEmptyState, { variant: 'empty' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.error).toBe('C:\\notes isn\'t in a git repository. Pick the folder that contains your project\'s .git folder, or run "git init" in it first.'));
+    expect(store.repos).toEqual([]);
+    store.clearError();
+  });
+
   it('offers to start a conversation once a project exists', async () => {
     store.repos = ['/repo/one'];
     render(GroveEmptyState, { variant: 'empty' });

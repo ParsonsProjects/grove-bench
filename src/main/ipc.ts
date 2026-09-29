@@ -13,6 +13,7 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
+import { projectPathFor } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -171,10 +172,7 @@ export function registerHandlers() {
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
-    const repoPath = result.filePaths[0];
-
-    const valid = await worktreeManager.validateRepo(repoPath);
-    if (!valid) return null;
+    const repoPath = await projectPathFor(result.filePaths[0]);
 
     // Clean up any orphan worktrees from previous crashes
     const orphans = await worktreeManager.cleanupOrphans(repoPath);
