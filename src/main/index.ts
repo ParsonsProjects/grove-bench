@@ -1,9 +1,9 @@
-import { app, BrowserWindow, powerMonitor } from 'electron';
+import { app, BrowserWindow, powerMonitor, screen } from 'electron';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
-import { loadWindowState, trackWindowState } from './window-state.js';
+import { keepOnScreen, loadWindowState, trackWindowState } from './window-state.js';
 import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
 import { logger } from './logger.js';
@@ -40,7 +40,7 @@ let isQuitting = false;
 installProcessErrorHandlers({ getWindow: () => mainWindow });
 
 function createWindow() {
-  const state = loadWindowState();
+  const state = keepOnScreen(loadWindowState(), screen.getAllDisplays().map((d) => d.workArea));
 
   mainWindow = new BrowserWindow({
     x: state.x,
