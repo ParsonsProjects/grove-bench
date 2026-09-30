@@ -301,8 +301,8 @@
   commentContext={isBranchScope ? `branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}` : undefined}
   {emptyTitle}
   emptyHint={isRunning ? 'Edits show up here as the agent makes them' : undefined}
-  emptyExtra={scopeToggle}
   emptyScene="changes"
+  keepSidebar
   {sidebarTop}
   {sidebarSummaryExtra}
   sidebarFooter={commitBox}

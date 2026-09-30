@@ -41,8 +41,8 @@
     commentContext,
     emptyTitle,
     emptyHint,
-    emptyExtra,
     emptyScene,
+    keepSidebar = false,
     sidebarTop,
     sidebarSummaryExtra,
     sidebarFooter,
@@ -72,9 +72,11 @@
     commentContext?: string;
     emptyTitle: string;
     emptyHint?: string;
-    emptyExtra?: Snippet;
     /** Which tab's props the grove scene over the empty message shows. */
     emptyScene?: GroveTab;
+    /** Keep the file sidebar with nothing to list, the empty message in the
+     *  diff pane, so the layout doesn't jump when the first file shows up. */
+    keepSidebar?: boolean;
     sidebarTop?: Snippet;
     sidebarSummaryExtra?: Snippet;
     sidebarFooter?: Snippet;
@@ -613,7 +615,7 @@
 
 <svelte:window onkeydown={handleShortcuts} />
 
-{#if entries.length === 0}
+{#snippet emptyPane(title: string, hint: string | undefined)}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
     {#each Array(20) as _, i}
       <span
@@ -627,28 +629,31 @@
       ></span>
     {/each}
     {#snippet emptyDetails()}
-      {#if emptyExtra}{@render emptyExtra()}{/if}
-      {#if emptyHint}
+      {#if hint}
         <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
           <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
-          {emptyHint}
+          {hint}
         </span>
       {/if}
     {/snippet}
     {#if groveAgent}
       <GroveEmptyState variant="agent" agent={groveAgent} tab={emptyScene}>
         <div class="mt-5 flex flex-col items-center gap-2">
-          <span class="text-foreground/80">{emptyTitle}</span>
+          <span class="text-foreground/80">{title}</span>
           {@render emptyDetails()}
         </div>
       </GroveEmptyState>
     {:else}
       <div class="relative z-10 flex flex-col items-center gap-2">
-        <span>{emptyTitle}</span>
+        <span>{title}</span>
         {@render emptyDetails()}
       </div>
     {/if}
   </div>
+{/snippet}
+
+{#if entries.length === 0 && !keepSidebar}
+  {@render emptyPane(emptyTitle, emptyHint)}
 {:else}
   <div class="flex-1 flex overflow-hidden">
     <!-- Left: File sidebar -->
@@ -936,11 +941,10 @@
             </div>
           </div>
         {/if}
+      {:else if entries.length === 0}
+        {@render emptyPane(emptyTitle, emptyHint)}
       {:else}
-        <!-- No file selected -->
-        <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-          Select a file to view changes
-        </div>
+        {@render emptyPane('Select a file to view changes', undefined)}
       {/if}
     </div>
   </div>

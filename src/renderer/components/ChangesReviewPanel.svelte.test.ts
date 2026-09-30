@@ -264,8 +264,28 @@ describe('ChangesReviewPanel with grove characters', () => {
     messageStore.setIsRunning(SID, true);
     expect(await findByRole('img', { name: 'Working' })).toBeInTheDocument();
     expect(getByText('Edits show up here as the agent makes them')).toBeInTheDocument();
-    // The scope toggle stays under the scene.
+    // The scope toggle stays in the sidebar.
     expect(getByText('Branch')).toBeInTheDocument();
+  });
+
+  it('keeps the file sidebar with nothing to list, so the first change does not move the layout', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('first') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    const { getByText, getByLabelText, queryByText, container } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const sidebar = getByLabelText('Changed files');
+    expect(getByText('0 changes')).toBeInTheDocument();
+    // The scene sits in the diff pane, next to the sidebar.
+    expect(sidebar.contains(getByText('Working tree clean'))).toBe(false);
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+    // Same sidebar element: it was not torn down and rebuilt.
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    expect(getByText('1 change')).toBeInTheDocument();
+    expect(queryByText('Working tree clean')).toBeNull();
+    expect(container.querySelector('[data-scenery="watering-can"]')).toBeNull();
   });
 
   it('shows only the message when grove characters are off', () => {
