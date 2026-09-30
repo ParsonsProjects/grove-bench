@@ -12,6 +12,10 @@ import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './se
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
 const NPM_CACHE_DIR = '.npm-cache';
+/** Where the sweep moves worktree folders it can't account for. */
+const TRASH_DIR = '.trash';
+/** How long a folder stays in the trash before it is deleted. */
+export const TRASH_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_COPY_PATTERNS = ['.env', '.env.local', '.env.development', '.npmrc', '.nvmrc'];
 
 /** Entries written before the agent was recorded all ran Claude Code. */
@@ -939,6 +943,45 @@ export class WorktreeManager {
   }
 
   /**
+   * Move a worktree folder the app can't account for into the trash instead
+   * of deleting it. Such a folder may still hold uncommitted work: a lost or
+   * deleted manifest makes every folder look unknown. purgeTrash() deletes
+   * it once TRASH_RETENTION_MS has passed. Throws when the folder is locked,
+   * like a deletion would, so the sweep retries next time.
+   */
+  private async moveToTrash(dirPath: string, now = Date.now()): Promise<string> {
+    const trash = path.join(this.getWorktreeRoot(), TRASH_DIR);
+    await fs.mkdir(trash, { recursive: true });
+    const dest = path.join(trash, `${now}-${path.basename(path.dirname(dirPath))}-${path.basename(dirPath)}`);
+    await fs.rename(dirPath, dest);
+    logger.warn(`Moved unaccounted-for worktree folder ${dirPath} to ${dest}; it will be deleted after ${TRASH_RETENTION_MS / 86_400_000} days`);
+    return dest;
+  }
+
+  /** Delete trashed folders older than TRASH_RETENTION_MS. Returns how many. */
+  async purgeTrash(now = Date.now()): Promise<number> {
+    const trash = path.join(this.getWorktreeRoot(), TRASH_DIR);
+    let names: string[];
+    try {
+      names = await fs.readdir(trash);
+    } catch {
+      return 0;
+    }
+    let purged = 0;
+    for (const name of names) {
+      const movedAt = Number(name.split('-')[0]);
+      if (!Number.isFinite(movedAt) || now - movedAt < TRASH_RETENTION_MS) continue;
+      try {
+        await removeDirectory(path.join(trash, name));
+        purged++;
+      } catch (e) {
+        logger.warn(`Could not purge ${name} from the worktree trash, will retry: ${e}`);
+      }
+    }
+    return purged;
+  }
+
+  /**
    * Detect orphan worktrees in the manifest that are no longer valid.
    * Called on startup to clean up after crashes.
    */
@@ -987,10 +1030,12 @@ export class WorktreeManager {
         if (!dirExists || !gitKnows) {
           logger.warn(`Found orphan worktree: ${id} (dir=${dirExists}, git=${gitKnows})`);
           if (dirExists) {
+            // git no longer lists it, but the folder may still hold work.
             try {
-              await removeDirectory(wtPath);
+              await this.moveToTrash(wtPath);
             } catch (e) {
-              logger.error(`Failed to clean orphan ${wtPath}:`, e);
+              logger.error(`Failed to move orphan ${wtPath} to the trash:`, e);
+              continue; // keep the entry; retry next sweep
             }
           }
           delete manifest[id];
@@ -1040,12 +1085,14 @@ export class WorktreeManager {
       return 0;
     }
 
-    // Phase 0: finish removals that were deferred because the directory was locked
+    // Phase 0: finish removals that were deferred because the directory was
+    // locked, and empty the trash of folders past their retention.
     try {
       totalCleaned += await this.processPendingRemovals();
     } catch (e) {
       logger.warn('Sweep: failed to process pending removals:', e);
     }
+    await this.purgeTrash();
 
     const manifest = await this.loadManifest();
 
@@ -1074,7 +1121,7 @@ export class WorktreeManager {
     try {
       const hashDirs = await fs.readdir(root);
       for (const hashDir of hashDirs) {
-        if (hashDir === MANIFEST_FILE) continue;
+        if (hashDir === MANIFEST_FILE || hashDir === TRASH_DIR) continue;
         const hashDirPath = path.join(root, hashDir);
         const stat = await fs.stat(hashDirPath).catch(() => null);
         if (!stat?.isDirectory()) continue;
@@ -1091,9 +1138,8 @@ export class WorktreeManager {
           // have been created while this loop awaited.
           const live = activeIds.has(entry) || this.creating.has(entry) || this.worktrees.has(entry);
           if (!freshManifest[entry] && !live) {
-            logger.warn(`Sweep: removing untracked worktree directory: ${entryPath}`);
             try {
-              await removeDirectory(entryPath);
+              await this.moveToTrash(entryPath);
               totalCleaned++;
             } catch (e) {
               logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockFs = vi.hoisted(() => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  rename: vi.fn(),
   mkdir: vi.fn(),
   rm: vi.fn(),
   cp: vi.fn(),
@@ -1167,5 +1168,69 @@ describe('manifest safety', () => {
     const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
     expect(ran.some((c) => c.startsWith('branch -D') || c.startsWith('worktree remove'))).toBe(false);
     expect(savedManifest).not.toHaveProperty('dup00001');
+  });
+});
+
+describe('worktree trash', () => {
+  const crypto = require('node:crypto') as typeof import('node:crypto');
+  const root = '/mock/userData/worktrees';
+  const hash = crypto.createHash('sha256').update('/repo').digest('hex').slice(0, 8);
+  const DAY = 86_400_000;
+
+  beforeEach(() => {
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+    mockFs.rename.mockResolvedValue(undefined);
+    mockGit.mockResolvedValue('');
+  });
+
+  it('the sweep moves a folder missing from the manifest to the trash instead of deleting it', async () => {
+    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? [hash] : p === `${root}/${hash}` ? ['lost0001'] : []));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(mockFs.rename).toHaveBeenCalledWith(
+      `${root}/${hash}/lost0001`, expect.stringMatching(new RegExp(`^${root}/\\.trash/\\d+-${hash}-lost0001$`)),
+    );
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+  });
+
+  it('the sweep leaves the trash itself alone', async () => {
+    const recent = `${Date.now() - DAY}-${hash}-old00001`;
+    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? ['.trash'] : p === `${root}/.trash` ? [recent] : []));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(mockFs.rename).not.toHaveBeenCalled();
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+  });
+
+  it('purges only folders older than the retention period', async () => {
+    const now = Date.now();
+    const expired = `${now - 8 * DAY}-${hash}-a0000001`;
+    const kept = `${now - 6 * DAY}-${hash}-b0000001`;
+    mockFs.readdir.mockResolvedValue([expired, kept, 'not-a-trash-name']);
+    mockFsUtils.removeDirectory.mockResolvedValue(undefined);
+
+    expect(await manager.purgeTrash(now)).toBe(1);
+    expect(mockFsUtils.removeDirectory).toHaveBeenCalledTimes(1);
+    expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(`${root}/.trash/${expired}`);
+  });
+
+  it('an orphan whose folder git no longer lists goes to the trash', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'b', createdAt: 1 } }));
+
+    expect(await manager.cleanupOrphans('/repo')).toBe(1);
+    expect(mockFs.rename).toHaveBeenCalledWith(`${root}/${hash}/wt-1`, expect.stringContaining(`${root}/.trash/`));
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+    expect(savedManifest).not.toHaveProperty('wt-1');
+  });
+
+  it('keeps the entry of an orphan whose folder is locked, to retry', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'b', createdAt: 1 } }));
+    mockFs.rename.mockRejectedValue(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+
+    expect(await manager.cleanupOrphans('/repo')).toBe(0);
+    expect(savedManifest).toHaveProperty('wt-1');
   });
 });
