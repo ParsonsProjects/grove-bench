@@ -26,6 +26,7 @@ Configure agent behavior. There is one group per installed agent, each with:
   - **Auto**: Claude's classifier approves or blocks each action instead of asking
   - **Read-safe**: Grove Bench's own mode, under the "Grove Bench" divider. Accepts edits and read-only commands; everything else asks
 - **Default Effort**, **Default Thinking**, **Default Speed** — The conversation controls the agent declares for its default model (for Claude Agent, each one shows only when the default model offers it). Pick the value new conversations start with; each conversation can still change it from the status bar
+- **Show thinking summaries** (Claude Agent) — Show a short summary of the model's thinking in the conversation. Newer Claude models send no thinking text unless asked, so with this off their thinking doesn't show. Some older models, such as Haiku 4.5, may still show theirs. It doesn't change how much the model thinks or what it costs. Applies to agents started after the change (on by default)
 
 If a conversation starts on a model that doesn't offer the saved mode, it starts in Code instead.
 

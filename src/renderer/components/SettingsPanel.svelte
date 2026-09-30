@@ -294,6 +294,8 @@
     controls: ControlDescriptor[];
     /** The adapter's own model for background tasks, if it declares one. */
     backgroundModel?: string;
+    /** Offers the Show thinking summaries setting. */
+    thinkingSummaries: boolean;
   }
   let agentGroups = $state<AgentGroup[]>([]);
   let agentGroupsLoading = $state(false);
@@ -315,6 +317,7 @@
           models,
           controls,
           backgroundModel: a.backgroundModel,
+          thinkingSummaries: !!a.capabilities.thinkingSummaries,
         };
       }));
       if (request === agentGroupsRequest) agentGroups = groups;
@@ -593,6 +596,16 @@
                   </div>
                 {/each}
                 <p class="text-xs text-muted-foreground">Options depend on the default model above. Applied to new conversations only.</p>
+              {/if}
+
+              {#if agent.thinkingSummaries}
+                <div>
+                  <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                    <Checkbox bind:checked={settingsStore.draft.showThinkingSummaries} aria-label={`${agent.displayName} show thinking summaries`} />
+                    Show thinking summaries
+                  </label>
+                  <p class="text-xs text-muted-foreground mt-1 ml-6">Asks for a short summary of the model's thinking to show in the conversation. Off asks for none. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change. On by default.</p>
+                </div>
               {/if}
             </div>
             <Separator />

@@ -19,6 +19,9 @@ export interface AgentCapabilities {
   modelSwitching: boolean;
   /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
+  /** Can return a readable summary of the model's thinking, switched by the
+   *  showThinkingSummaries setting (see AdapterConfig.thinkingSummaries). */
+  thinkingSummaries?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports packaged skill instructions (discovery via listSkills, authoring
@@ -142,6 +145,10 @@ export interface AdapterConfig {
    *  the session with, keyed by control id. permissionMode is passed
    *  separately. Missing ids mean the provider default applies. */
   controls?: Record<string, string> | null;
+  /** Show a readable summary of the model's thinking (false: show none).
+   *  Unset means true. Only adapters with the thinkingSummaries capability
+   *  read it. */
+  thinkingSummaries?: boolean;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
