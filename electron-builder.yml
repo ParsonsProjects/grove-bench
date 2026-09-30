@@ -29,6 +29,9 @@ asarUnpack:
   - "**/*.node"
   - "**/*.dll"
   - "**/node-pty/**"
+  # The agent SDK's native `claude` binary: the OS can't run a file inside
+  # app.asar, so the app runs it from app.asar.unpacked (claude-code.ts).
+  - "**/@anthropic-ai/claude-agent-sdk-*/**"
 
 win:
   target:

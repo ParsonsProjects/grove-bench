@@ -40,15 +40,16 @@ type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').Elicitatio
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
  *
- * By default the SDK launches its bundled CLI as `node <…/cli.js>`, relying on a
- * `node` binary being on PATH. A GUI-launched Electron app on Windows frequently
- * inherits a minimal PATH with no `node`, so that spawn fails with ENOENT —
- * surfaced confusingly as "Claude Code executable not found at …cli.js. Is
- * options.pathToClaudeCodeExecutable set?". Electron's own binary runs as a plain
- * Node process when ELECTRON_RUN_AS_NODE=1, and `process.execPath` is always a
- * valid path in both dev and packaged builds — so we redirect the `node`
- * invocation to ourselves and drop the PATH dependency entirely. Non-node
- * commands (e.g. a native `claude` binary) are spawned unchanged.
+ * The SDK runs its native `claude` binary, which it finds next to its own
+ * module. In the packaged app that path is inside app.asar: Electron can read
+ * files there, so the SDK sees the binary, but the OS can't run one (spawn
+ * fails with ENOTDIR or ENOENT). electron-builder unpacks the binary to
+ * app.asar.unpacked (see asarUnpack in electron-builder.yml), so it runs
+ * from there.
+ *
+ * A `node` command (older SDKs ran `node <…/cli.js>`) is redirected to
+ * Electron's own binary with ELECTRON_RUN_AS_NODE=1: a GUI-launched app on
+ * Windows often has no `node` on PATH, and `process.execPath` is always valid.
  */
 /** Tool results are kept only for display, replay and memory extraction — the
  *  model already received the full text. Cap what we retain so a test suite
@@ -64,12 +65,18 @@ export function capToolResult(content: string): string {
   return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
 }
 
-function spawnClaudeCodeProcess(
+/** `p` with an `app.asar` directory swapped for `app.asar.unpacked`, where
+ *  electron-builder puts files that must exist on disk. Unchanged otherwise. */
+export function asarUnpackedPath(p: string): string {
+  return p.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+}
+
+export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
 ): SpawnedProcess & { readonly pid?: number } {
   const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
-  const command = isNode ? process.execPath : opts.command;
+  const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
     : opts.env;
