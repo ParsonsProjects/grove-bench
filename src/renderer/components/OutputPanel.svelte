@@ -15,6 +15,7 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import ActivityContextMenu from './ActivityContextMenu.svelte';
   import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
@@ -583,3 +584,4 @@
 </div>
 
 <SelectionMenu {sessionId} container={scrollContainer} />
+<ActivityContextMenu {sessionId} container={scrollContainer} />

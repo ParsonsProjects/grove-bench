@@ -1,8 +1,9 @@
 <script lang="ts" module>
-  import { Marked } from 'marked';
+  import { Marked, Renderer, type Tokens } from 'marked';
   import DOMPurify from 'dompurify';
   import hljs from '../lib/hljs.js';
   import { openLink } from '$lib/preview-links.js';
+  import { writeRichText, encodeCopyText, decodeCopyText } from '$lib/clipboard.js';
 
   // Allow data-code attribute through DOMPurify for copy button support
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
@@ -22,7 +23,7 @@
   function codeRenderer(highlight: boolean) {
     return {
       code({ text, lang }: { text: string; lang?: string }) {
-        const encoded = btoa(encodeURIComponent(text));
+        const encoded = encodeCopyText(text);
         const copyBtn = `<button class="code-copy-btn" data-code="${encoded}" title="Copy">${COPY_SVG}</button>`;
 
         if (highlight && lang && hljs.getLanguage(lang)) {
@@ -34,12 +35,22 @@
     };
   }
 
-  // One-time setup: configured marked instances with custom code renderers
+  /** Table renderer: marked's default table plus a copy button that holds the
+   *  Markdown source. The click handler adds the rendered table as HTML. */
+  const tableRenderer = {
+    table(this: Renderer, token: Tokens.Table) {
+      const encoded = encodeCopyText(token.raw.trim());
+      const copyBtn = `<button class="table-copy-btn" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
+      return `<div class="table-wrapper">${Renderer.prototype.table.call(this, token)}${copyBtn}</div>`;
+    },
+  };
+
+  // One-time setup: configured marked instances with custom code and table renderers
   const markedInstance = new Marked({ gfm: true, breaks: true });
-  markedInstance.use({ renderer: codeRenderer(true) });
+  markedInstance.use({ renderer: { ...codeRenderer(true), ...tableRenderer } });
 
   const markedStreaming = new Marked({ gfm: true, breaks: true });
-  markedStreaming.use({ renderer: codeRenderer(false) });
+  markedStreaming.use({ renderer: { ...codeRenderer(false), ...tableRenderer } });
 
   export function renderMarkdown(content: string, opts: { highlight?: boolean } = {}): string {
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
@@ -80,7 +91,7 @@
     };
     container.addEventListener('click', linkHandler);
 
-    const buttons = container.querySelectorAll<HTMLButtonElement>('.code-copy-btn');
+    const buttons = container.querySelectorAll<HTMLButtonElement>('.code-copy-btn, .table-copy-btn');
     const handlers: Array<[HTMLButtonElement, () => void]> = [];
 
     for (const btn of buttons) {
@@ -88,8 +99,14 @@
         const encoded = btn.getAttribute('data-code');
         if (!encoded) return;
         try {
-          const text = decodeURIComponent(atob(encoded));
-          await navigator.clipboard.writeText(text);
+          const text = decodeCopyText(encoded);
+          // Tables also go on the clipboard as HTML so spreadsheets and
+          // documents paste real cells; plain-text targets get the Markdown.
+          const table = btn.classList.contains('table-copy-btn')
+            ? btn.parentElement?.querySelector('table')
+            : null;
+          if (table) await writeRichText(text, table.outerHTML);
+          else await navigator.clipboard.writeText(text);
           btn.innerHTML = checkSvg;
           btn.classList.add('copied');
           setTimeout(() => {
@@ -175,6 +192,16 @@
     padding: 0.4em 0.8em;
     text-align: left;
   }
+  /* marked writes `:---:` and `---:` columns as an align attribute, which the
+     rule above would override. */
+  .markdown-content :global(th[align='center']),
+  .markdown-content :global(td[align='center']) {
+    text-align: center;
+  }
+  .markdown-content :global(th[align='right']),
+  .markdown-content :global(td[align='right']) {
+    text-align: right;
+  }
   .markdown-content :global(th) {
     background: #1a1a1a;
     font-weight: 600;
@@ -191,7 +218,16 @@
   .markdown-content :global(.code-block-wrapper) {
     position: relative;
   }
-  .markdown-content :global(.code-copy-btn) {
+  .markdown-content :global(.table-wrapper) {
+    position: relative;
+    margin: 0.5em 0;
+    padding-top: 1.6em;
+  }
+  .markdown-content :global(.table-wrapper > table) {
+    margin: 0;
+  }
+  .markdown-content :global(.code-copy-btn),
+  .markdown-content :global(.table-copy-btn) {
     position: absolute;
     top: 0.4em;
     right: 0.4em;
@@ -206,13 +242,21 @@
     align-items: center;
     justify-content: center;
   }
-  .markdown-content :global(.code-block-wrapper:hover .code-copy-btn) {
+  /* Sits in a strip above the table so it never covers header text. */
+  .markdown-content :global(.table-copy-btn) {
+    top: 0;
+    right: 0;
+  }
+  .markdown-content :global(.code-block-wrapper:hover .code-copy-btn),
+  .markdown-content :global(.table-wrapper:hover .table-copy-btn) {
     opacity: 1;
   }
-  .markdown-content :global(.code-copy-btn:hover) {
+  .markdown-content :global(.code-copy-btn:hover),
+  .markdown-content :global(.table-copy-btn:hover) {
     color: #ccc;
   }
-  .markdown-content :global(.code-copy-btn.copied) {
+  .markdown-content :global(.code-copy-btn.copied),
+  .markdown-content :global(.table-copy-btn.copied) {
     color: #4ade80;
     opacity: 1;
   }
