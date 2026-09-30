@@ -98,6 +98,12 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 
 ## Key Dependencies
 
+Vite bundles the renderer and nearly all of the main process, so
+`dependencies` in package.json holds only what main loads from
+`node_modules` at run time: the agent SDK, `electron-updater` and `node-pty`.
+Everything else goes in `devDependencies`, or it ships in the installer
+unused. `scripts/smoke-deps.mjs` checks the packaged app (Package workflow).
+
 - `@anthropic-ai/claude-agent-sdk` — Claude Code agent integration
 - `@xterm/xterm` — Terminal emulation in renderer
 - `node-pty` — PTY spawning in main process
