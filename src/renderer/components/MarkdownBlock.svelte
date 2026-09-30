@@ -211,6 +211,7 @@
   .markdown-content :global(.table-wrapper) {
     position: relative;
     margin: 0.5em 0;
+    padding-top: 1.6em;
   }
   .markdown-content :global(.table-wrapper > table) {
     margin: 0;
@@ -231,10 +232,10 @@
     align-items: center;
     justify-content: center;
   }
-  /* Sits over the last header cell, so match its background to keep the
-     header text from showing through. */
+  /* Sits in a strip above the table so it never covers header text. */
   .markdown-content :global(.table-copy-btn) {
-    background: #1a1a1a;
+    top: 0;
+    right: 0;
   }
   .markdown-content :global(.code-block-wrapper:hover .code-copy-btn),
   .markdown-content :global(.table-wrapper:hover .table-copy-btn) {
