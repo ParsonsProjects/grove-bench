@@ -183,9 +183,9 @@
   });
 </script>
 
-{#snippet noGitNote(tab: string, why: string, withAgent = false)}
+{#snippet noGitNote(tab: string, why: string)}
   <div class="flex-1 flex items-center justify-center p-6">
-    {#if withAgent && session && settingsStore.current.groveCharacters}
+    {#if session && settingsStore.current.groveCharacters}
       <!-- The conversation's agent on its bench, as in the sidebar: typing
            while it edits your files in place, sitting when it's idle. -->
       <GroveEmptyState
@@ -290,7 +290,7 @@
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
     <GitNotice />
     {#if noGit}
-      {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.', true)}
+      {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
     {:else}
       <ChangesReviewPanel {sessionId} />
     {/if}

@@ -50,10 +50,11 @@ describe('WorkspacePane in a conversation without git', () => {
     store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
     render(WorkspacePane, { sessionId: 'n1' });
     await screen.findByText('Changes needs git');
-    expect(screen.getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    // One on Changes, one on the hidden Checkpoints tab.
+    expect(screen.getAllByRole('img', { name: 'Ready' })).toHaveLength(2);
 
     messageStore.setIsRunning('n1', true);
-    expect(await screen.findByRole('img', { name: 'Working' })).toBeInTheDocument();
+    expect(await screen.findAllByRole('img', { name: 'Working' })).toHaveLength(2);
   });
 
   it('shows only the message when grove characters are off', async () => {
@@ -62,5 +63,16 @@ describe('WorkspacePane in a conversation without git', () => {
     render(WorkspacePane, { sessionId: 'n1' });
     await screen.findByText('Changes needs git');
     expect(screen.queryByRole('img', { name: 'Ready' })).not.toBeInTheDocument();
+  });
+
+  it('puts the same agent on its bench in the Checkpoints tab', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    messageStore.setActiveTab('n1', 'checkpoints');
+    render(WorkspacePane, { sessionId: 'n1' });
+    await screen.findByText('Checkpoints needs git');
+    expect(screen.getByText(/This conversation runs without git, so no checkpoints are saved/)).toBeInTheDocument();
+    // One on Checkpoints, one on the hidden Changes tab.
+    expect(screen.getAllByRole('img', { name: 'Ready' })).toHaveLength(2);
+    expect(mockGroveBench.listCheckpoints).not.toHaveBeenCalled();
   });
 });
