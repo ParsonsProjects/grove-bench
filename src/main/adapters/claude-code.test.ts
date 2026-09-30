@@ -119,11 +119,14 @@ describe('getControls()', () => {
   it('builds query-start thinking and effort from recorded controls', () => {
     expect(reasoningOptionsFor('claude-opus-5', { thinking: 'off', effort: 'low' }))
       .toEqual({ thinking: { type: 'disabled' }, effort: 'low' });
-    // Opus 5.5 can't turn thinking off: a carried-over 'off' is not sent.
+    // Opus 5.5 can't turn thinking off: a carried-over 'off' is not sent, but
+    // adaptive is, so the thinking display can be set.
     expect(reasoningOptionsFor('claude-opus-5-5', { thinking: 'off', effort: 'medium' }))
-      .toEqual({ thinking: null, effort: 'medium' });
+      .toEqual({ thinking: { type: 'adaptive', display: 'summarized' }, effort: 'medium' });
+    expect(reasoningOptionsFor('claude-fable-5', undefined))
+      .toEqual({ thinking: { type: 'adaptive', display: 'summarized' }, effort: undefined });
     expect(reasoningOptionsFor('claude-haiku-4-5-20251001', { thinking: 'low', effort: 'high' }))
-      .toEqual({ thinking: { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low }, effort: undefined });
+      .toEqual({ thinking: { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'summarized' }, effort: undefined });
     expect(reasoningOptionsFor('claude-opus-5', undefined)).toEqual({ thinking: null, effort: undefined });
   });
 
@@ -236,8 +239,8 @@ describe('thinkingConfigFor()', () => {
     expect(thinkingConfigFor(undefined)).toBeNull();
   });
 
-  it('maps adaptive to the adaptive thinking config', () => {
-    expect(thinkingConfigFor('adaptive')).toEqual({ type: 'adaptive' });
+  it('maps adaptive to the adaptive thinking config with summaries shown', () => {
+    expect(thinkingConfigFor('adaptive')).toEqual({ type: 'adaptive', display: 'summarized' });
   });
 
   it('maps off to disabled', () => {
@@ -245,8 +248,8 @@ describe('thinkingConfigFor()', () => {
   });
 
   it('maps low/medium to fixed budgets', () => {
-    expect(thinkingConfigFor('low')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low });
-    expect(thinkingConfigFor('medium')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.medium });
+    expect(thinkingConfigFor('low')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'summarized' });
+    expect(thinkingConfigFor('medium')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.medium, display: 'summarized' });
   });
 });
 

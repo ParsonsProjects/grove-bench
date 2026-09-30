@@ -571,17 +571,28 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
 };
 
 /**
+ * How thinking text is returned. Opus 4.7+, Opus 5/5.5, Fable 5/5.1 and
+ * Sonnet 5/5.5 default to 'omitted' (thinking blocks with empty text), and
+ * Claude Code doesn't ask for anything else in SDK mode, so we ask for
+ * summaries. Claude Code drops the field for models that don't take it.
+ */
+export const THINKING_DISPLAY = 'summarized' as const;
+
+type ThinkingConfig =
+  | { type: 'adaptive'; display: typeof THINKING_DISPLAY }
+  | { type: 'disabled' }
+  | { type: 'enabled'; budgetTokens: number; display: typeof THINKING_DISPLAY };
+
+/**
  * Thinking level → the SDK's query-start `thinking` config, which (unlike the
  * deprecated runtime token control) can express adaptive thinking explicitly.
  * Returns null for 'high' (and unset) so the provider default applies.
  */
-export function thinkingConfigFor(
-  level: ThinkingLevel | null | undefined,
-): { type: 'adaptive' } | { type: 'disabled' } | { type: 'enabled'; budgetTokens: number } | null {
+export function thinkingConfigFor(level: ThinkingLevel | null | undefined): ThinkingConfig | null {
   if (!level || level === 'high') return null;
-  if (level === 'adaptive') return { type: 'adaptive' };
+  if (level === 'adaptive') return { type: 'adaptive', display: THINKING_DISPLAY };
   if (level === 'off') return { type: 'disabled' };
-  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]!, display: THINKING_DISPLAY };
 }
 
 // ─── Session controls ───
@@ -769,16 +780,18 @@ export function claudeControlsFor(model?: string | null, learned?: LearnedModel)
 /**
  * The query-start `thinking` and `effort` options for recorded control values.
  * Models that reject disabled thinking get no Thinking control, so a stale
- * recorded value (e.g. 'off' carried over from another model) is not sent.
+ * recorded value (e.g. 'off' carried over from another model) is not sent;
+ * they always think adaptively, and we send that only to set the display.
  */
 export function reasoningOptionsFor(
   model: string | null | undefined,
   controls: Record<string, string> | null | undefined,
   learned?: LearnedModel,
 ): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
-  const thinking = claudeModelCaps(model, learned).thinkingOff
+  const caps = claudeModelCaps(model, learned);
+  const thinking = caps.thinkingOff
     ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
-    : null;
+    : caps.adaptiveThinking ? thinkingConfigFor('adaptive') : null;
   return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort], learned) };
 }
 
@@ -1697,7 +1710,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             // The runtime token control can't express 'adaptive'; null clears
             // the limit so the provider default (adaptive on capable models)
             // applies until the next query start passes the full config.
-            await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null);
+            // A session that started with thinking off has no display set,
+            // so turning it on must ask for summaries again.
+            await q.setMaxThinkingTokens(
+              THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null,
+              value === 'off' ? undefined : THINKING_DISPLAY,
+            );
             return;
           case CONTROL_IDS.effort:
             // Session-scoped; 'max' is accepted here though never persisted

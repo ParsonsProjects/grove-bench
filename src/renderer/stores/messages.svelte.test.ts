@@ -277,6 +277,14 @@ describe('ingestEvent — thinking', () => {
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('thinking');
   });
+
+  it('skips thinking that arrived without text', () => {
+    messageStore.streamingThinking[SID] = 'preview';
+    messageStore.ingestEvent(SID, { type: 'thinking', thinking: '', uuid: 'uuid-t' } as AgentEvent);
+
+    expect(messageStore.getStreamingThinking(SID)).toBe('');
+    expect(messageStore.getMessages(SID)).toHaveLength(0);
+  });
 });
 
 describe('ingestEvent — tool_use and tool_result', () => {

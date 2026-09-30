@@ -1193,6 +1193,10 @@ class MessageStore {
       case 'thinking':
         this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
+        // Thinking the API returned without text (display 'omitted', e.g.
+        // conversations recorded before we asked for summaries) has nothing
+        // to show.
+        if (!event.thinking.trim()) break;
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
