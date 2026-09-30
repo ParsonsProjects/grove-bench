@@ -55,7 +55,7 @@
     selMenuPos = { left, top };
   });
 
-  // Watch the container for selections and dismissals. Re-runs when `container`
+  // Watch the container for selections and scrolling. Re-runs when `container`
   // is (re)bound.
   $effect(() => {
     const el = container;
@@ -63,17 +63,30 @@
     // Only a left-button release: a right-click opens the context menu, which
     // has the same actions, so this popup stays out of its way.
     const onUp = (e: MouseEvent) => { if (e.button === 0) handleSelectionUp(); };
-    const onDown = () => { if (selAnchor) clear(); };
     const onScroll = () => { if (selAnchor) clear(); };
     el.addEventListener('mouseup', onUp);
-    el.addEventListener('mousedown', onDown);
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       el.removeEventListener('mouseup', onUp);
-      el.removeEventListener('mousedown', onDown);
       el.removeEventListener('scroll', onScroll);
     };
   });
+
+  // Hide when attention moves on: a press anywhere but the popup (the prompt
+  // box, the sidebar, another tab), the window losing focus, or the selection
+  // changing or going away.
+  function handleDocumentMouseDown(e: MouseEvent) {
+    if (selAnchor && !selMenuEl?.contains(e.target as Node)) clear();
+  }
+
+  function handleSelectionChange() {
+    if (!selAnchor || !container) return;
+    if (selectionIn(container)?.text !== pendingSelection?.text) clear();
+  }
+
+  function handleBlur() {
+    if (selAnchor) clear();
+  }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && selAnchor) clear();
@@ -97,13 +110,18 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onblur={handleBlur} />
+<svelte:document onmousedowncapture={handleDocumentMouseDown} onselectionchange={handleSelectionChange} />
 
 {#if selAnchor}
+  <!-- mousedown is cancelled so pressing a button never clears the selection
+       (which would hide the popup before the click lands). -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     bind:this={selMenuEl}
     style="position: fixed; top: {selMenuPos.top}px; left: {selMenuPos.left}px;"
     class="z-50 flex flex-col items-stretch text-xs bg-card border border-border shadow-md"
+    onmousedown={(e) => e.preventDefault()}
   >
     <button
       onclick={addBookmark}

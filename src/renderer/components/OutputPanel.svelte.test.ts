@@ -309,20 +309,67 @@ describe('OutputPanel: right-click menu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('keeps the selection popup for left-button releases only', async () => {
+});
+
+describe('OutputPanel: selection popup', () => {
+  beforeEach(() => {
+    store.activeSessionId = SID;
     messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 't1', text: 'pick these words', uuid: '' }] };
+    // jsdom's Range has no layout; the popup only needs a rect to place itself.
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect() });
+  });
+  afterEach(() => {
+    window.getSelection()?.removeAllRanges();
+    delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+  });
+
+  const popup = () => screen.queryByRole('button', { name: 'Bookmark' });
+
+  /** Select the reply's text and release the mouse in the pane. */
+  async function selectWords(button = 0) {
     const { container } = render(OutputPanel, { sessionId: SID });
     const range = document.createRange();
     range.selectNodeContents(screen.getByText('pick these words'));
     window.getSelection()!.addRange(range);
-    const scroller = container.querySelector<HTMLElement>('.overflow-y-auto')!;
-    // jsdom's Range has no layout; the popup only needs a rect to place itself.
-    Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect() });
+    await fireEvent.mouseUp(container.querySelector<HTMLElement>('.overflow-y-auto')!, { button });
+  }
 
-    await fireEvent.mouseUp(scroller, { button: 2 });
-    expect(screen.queryByRole('button', { name: 'Bookmark' })).toBeNull();
-    await fireEvent.mouseUp(scroller, { button: 0 });
-    expect(screen.getByRole('button', { name: 'Bookmark' })).toBeInTheDocument();
-    delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+  it('opens on a left-button release only', async () => {
+    await selectWords(2);
+    expect(popup()).toBeNull();
+    await fireEvent.mouseUp(screen.getByText('pick these words'), { button: 0 });
+    expect(popup()).toBeInTheDocument();
+  });
+
+  it('hides on a press outside it, such as the prompt box', async () => {
+    await selectWords();
+    await fireEvent.mouseDown(document.body);
+    expect(popup()).toBeNull();
+  });
+
+  it('hides when the window loses focus', async () => {
+    await selectWords();
+    await fireEvent.blur(window);
+    expect(popup()).toBeNull();
+  });
+
+  it('hides when the selection goes away', async () => {
+    await selectWords();
+    window.getSelection()!.removeAllRanges();
+    await fireEvent(document, new Event('selectionchange'));
+    expect(popup()).toBeNull();
+  });
+
+  it('stays while the selection is unchanged, and pressing its buttons keeps it', async () => {
+    await selectWords();
+    await fireEvent(document, new Event('selectionchange'));
+    const pressed = await fireEvent.mouseDown(popup()!);
+    expect(pressed).toBe(false);
+    expect(popup()).toBeInTheDocument();
+
+    const insertSpy = vi.spyOn(messageStore, 'requestPromptInsert');
+    await fireEvent.click(screen.getByRole('button', { name: 'To prompt' }));
+    expect(insertSpy).toHaveBeenCalledWith(SID, 'pick these words');
+    insertSpy.mockRestore();
   });
 });
