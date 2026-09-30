@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoSkillSuggestions: false,
   defaultModels: {},
   adapterDefaults: {},
+  showThinkingSummaries: true,
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',

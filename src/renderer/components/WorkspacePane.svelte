@@ -16,8 +16,8 @@
   import GitNotice from './GitNotice.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
-  import { sessionSpriteState } from '$lib/session-sprite-state.js';
-  import { sessionRepoColor } from '$lib/session-repo-color.js';
+  import { conversationAgent } from '$lib/session-sprite-state.js';
+  import type { GroveTab } from '$lib/agent-sprite.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -183,15 +183,13 @@
   });
 </script>
 
-{#snippet noGitNote(tab: string, why: string)}
+{#snippet noGitNote(scene: GroveTab, tab: string, why: string)}
+  {@const agent = settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null}
   <div class="flex-1 flex items-center justify-center p-6">
-    {#if session && settingsStore.current.groveCharacters}
+    {#if agent}
       <!-- The conversation's agent on its bench, as in the sidebar: typing
            while it edits your files in place, sitting when it's idle. -->
-      <GroveEmptyState
-        variant="agent"
-        agent={{ seed: sessionId, state: sessionSpriteState(session), projectColor: sessionRepoColor(sessionId) }}
-      >
+      <GroveEmptyState variant="agent" {agent} tab={scene}>
         <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
         <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
       </GroveEmptyState>
@@ -213,8 +211,9 @@
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
-      Activity
+      <!-- A pixel chat bubble: two lines of text, tail at the bottom left. -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
+      Thread
       {#if hasPendingPermission}
         <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
       {:else if isRunning}
@@ -290,14 +289,14 @@
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
     <GitNotice />
     {#if noGit}
-      {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
+      {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
     {:else}
       <ChangesReviewPanel {sessionId} />
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
     {#if noGit}
-      {@render noGitNote('Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in Activity; files stay as they are.')}
+      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in the Thread tab; files stay as they are.')}
     {:else}
       <CheckpointsPanel {sessionId} />
     {/if}
@@ -326,7 +325,7 @@
         onclick={() => switchTab('activity')}
         class="text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        Switch to Activity to send messages (Alt+1)
+        Switch to Thread to send messages (Alt+1)
       </button>
     </div>
   {/if}

@@ -294,6 +294,8 @@
     controls: ControlDescriptor[];
     /** The adapter's own model for background tasks, if it declares one. */
     backgroundModel?: string;
+    /** Offers the Show thinking summaries setting. */
+    thinkingSummaries: boolean;
   }
   let agentGroups = $state<AgentGroup[]>([]);
   let agentGroupsLoading = $state(false);
@@ -315,6 +317,7 @@
           models,
           controls,
           backgroundModel: a.backgroundModel,
+          thinkingSummaries: !!a.capabilities.thinkingSummaries,
         };
       }));
       if (request === agentGroupsRequest) agentGroups = groups;
@@ -594,6 +597,16 @@
                 {/each}
                 <p class="text-xs text-muted-foreground">Options depend on the default model above. Applied to new conversations only.</p>
               {/if}
+
+              {#if agent.thinkingSummaries}
+                <div>
+                  <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                    <Checkbox bind:checked={settingsStore.draft.showThinkingSummaries} aria-label={`${agent.displayName} show thinking summaries`} />
+                    Show thinking summaries
+                  </label>
+                  <p class="text-xs text-muted-foreground mt-1 ml-6">Asks for a short summary of the model's thinking to show in the conversation. Off asks for none. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change. On by default.</p>
+                </div>
+              {/if}
             </div>
             <Separator />
           {/each}
@@ -720,7 +733,7 @@
               <Checkbox bind:checked={settingsStore.draft.groveCharacters} />
               Show grove characters
             </label>
-            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, when no conversation is open, and walking through the grove while a conversation starts up again.</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, when no conversation is open, on empty Changes, Checkpoints and Preview tabs, and walking through the grove while a conversation starts up again.</p>
           </div>
 
           <Separator />
@@ -812,9 +825,9 @@
 
           <Separator />
 
-          <!-- Default Activity View -->
+          <!-- Default Thread View -->
           <div>
-            <Label class="mb-1 block">Default Activity View</Label>
+            <Label class="mb-1 block">Default Thread View</Label>
             <Select.Root type="single" value={settingsStore.draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
               <Select.Trigger class="w-48">
                 {VIEW_MODE_LABELS[settingsStore.draft.defaultActivityView] ?? 'Summary'}

@@ -748,6 +748,7 @@ class AgentSessionManager {
         : null,
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,
+      thinkingSummaries: currentSettings.showThinkingSummaries,
       resumeSessionId: session.providerSessionId,
       resumeAtUuid,
       toolAllowRules: currentSettings.toolAllowRules,

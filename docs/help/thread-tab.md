@@ -1,6 +1,6 @@
-# Activity Tab
+# Thread Tab
 
-The Activity tab (`Alt+1`) is the primary view for interacting with your agent. It displays the full conversation history including messages, tool calls, and permission requests.
+The Thread tab (`Alt+1`) is the primary view for interacting with your agent. It displays the full conversation history including messages, tool calls, and permission requests.
 
 ## Message Types
 
@@ -48,8 +48,22 @@ An MCP server can ask you for input while the agent uses one of its tools. A blo
 ### Thinking Blocks
 Extended thinking from the agent appears as expandable sections. Click to see the agent's reasoning process.
 
+## Copying and the Right-Click Menu
+
+Hover a code block or a table to reveal its copy icon. A table copies as Markdown, and also as a real table, so pasting into a spreadsheet or document gives you cells.
+
+Select text to get **Bookmark** and **To prompt**.
+
+Right-click anything in the thread for a menu of what you can do there. It lists the most specific things first:
+
+- **Selected text**: **Copy**, **Bookmark selection**, **Copy to prompt**
+- **A code block, table or link**: **Copy code**, **Copy table**, **Copy link**
+- **The message itself**: **Copy message**. Your messages also get **Rewind to this message**, and document-like responses get **Read full-width**. Tool calls offer **Copy command**, **Copy path**, **Copy pattern** or **Copy input**, and **Copy output**.
+
+Text boxes keep their own spell check menu.
+
 ## Controls
 
 - **Search** (`Ctrl+F`) — Search through the conversation history
-- **Activity view** — The toggle in the status bar shows the current view and cycles through **Summary**, **Focus** and **Detailed**. Detailed shows everything. Summary hides thinking blocks and most tool calls. It keeps file edits, commands, tools that returned images (such as a preview screenshot), and tools from MCP servers you added, since those can act outside the project (for example creating a ticket or sending a message). Focus shows only the agent's responses, its questions and your answers. New conversations start in the view set by **Default Activity View** in **Settings → General**.
+- **Thread view** — The toggle in the status bar shows the current view and cycles through **Summary**, **Focus** and **Detailed**. Detailed shows everything. Summary hides thinking blocks and most tool calls. It keeps file edits, commands, tools that returned images (such as a preview screenshot), and tools from MCP servers you added, since those can act outside the project (for example creating a ticket or sending a message). Focus shows only the agent's responses, its questions and your answers. New conversations start in the view set by **Default Thread View** in **Settings → General**.
 - **Scroll** — The view auto-scrolls to the latest message. Scroll up to browse history; new messages will appear at the bottom.

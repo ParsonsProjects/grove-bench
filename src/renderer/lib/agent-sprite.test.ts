@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agentSpriteState, agentLook, agentColors, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, type AgentSpriteInput } from './agent-sprite.js';
+import { agentSpriteState, agentLook, agentColors, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, SCENERY_MAPS, SCENERY_PALETTE, type AgentSpriteInput } from './agent-sprite.js';
 
 const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false };
 
@@ -48,6 +48,17 @@ describe('sprite maps', () => {
       expect(sprite.colorClass, state).toMatch(/^text-/);
       expect(sprite.frames.length, state).toBeGreaterThanOrEqual(1);
       expect(sprite.frames.length, state).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+describe('scenery maps', () => {
+  it('have rows of one width, drawn only in scenery colours', () => {
+    for (const [name, map] of Object.entries(SCENERY_MAPS)) {
+      for (const row of map) {
+        expect(row, `${name}: ${row}`).toHaveLength(map[0].length);
+        for (const key of row.replaceAll('.', '')) expect(SCENERY_PALETTE, `${name}: ${key}`).toHaveProperty(key);
+      }
     }
   });
 });

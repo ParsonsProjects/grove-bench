@@ -38,6 +38,7 @@ const SETTINGS = {
   autoSkillSuggestions: false,
   defaultModels: {},
   adapterDefaults: {},
+  showThinkingSummaries: true,
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',

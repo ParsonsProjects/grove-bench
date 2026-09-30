@@ -7,6 +7,8 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import ChangesReviewPanel from './ChangesReviewPanel.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
 const SID = 'changes-session';
@@ -239,5 +241,37 @@ describe('ChangesReviewPanel — review features', () => {
     expect(getByText('Working tree clean')).toBeInTheDocument();
     await fireEvent.click(getByText('Branch'));
     await waitFor(() => expect(getByText('No merge base with main')).toBeInTheDocument());
+  });
+});
+
+describe('ChangesReviewPanel with grove characters', () => {
+  beforeEach(() => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/r', status: 'running' }] as any;
+    gitStatusStore.scopeBySession = {};
+  });
+
+  afterEach(() => {
+    store.sessions = [];
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it("puts the conversation's agent on its bench above the empty message, typing while it works", async () => {
+    const { getByText, getByRole, findByRole, container } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    messageStore.setIsRunning(SID, true);
+    expect(await findByRole('img', { name: 'Working' })).toBeInTheDocument();
+    expect(getByText('Edits show up here as the agent makes them')).toBeInTheDocument();
+    // The scope toggle stays under the scene.
+    expect(getByText('Branch')).toBeInTheDocument();
+  });
+
+  it('shows only the message when grove characters are off', () => {
+    settingsStore.current.groveCharacters = false;
+    const { getByText, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(queryByRole('img', { name: 'Ready' })).toBeNull();
   });
 });

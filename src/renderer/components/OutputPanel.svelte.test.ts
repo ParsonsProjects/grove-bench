@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 // MarkdownBlock (pulled in transitively) calls DOMPurify.addHook at module load.
@@ -263,5 +263,144 @@ describe('OutputPanel: the first turn', () => {
     const { container, getByText } = render(OutputPanel, { sessionId: SID });
     expect(container.querySelector('svg.walk')).toBeNull();
     expect(getByText('Working...')).toBeInTheDocument();
+  });
+});
+
+describe('OutputPanel: right-click menu', () => {
+  let writeText: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  });
+  afterEach(() => window.getSelection()?.removeAllRanges());
+
+  const menuLabels = () => within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.textContent?.trim());
+
+  it('offers copy and rewind for a user message, and rewinds to it', async () => {
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'first prompt', uuid: 'uuid-1' }] };
+    const openSpy = vi.spyOn(messageStore, 'openRewindDialog');
+    render(OutputPanel, { sessionId: SID });
+
+    const notPrevented = await fireEvent.contextMenu(screen.getByText('first prompt'));
+    expect(notPrevented).toBe(false);
+    expect(menuLabels()).toEqual(['Copy message', 'Rewind to this message']);
+
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rewind to this message' }));
+    expect(openSpy).toHaveBeenCalledWith(SID, 'uuid-1');
+    expect(screen.queryByRole('menu')).toBeNull();
+    openSpy.mockRestore();
+    messageStore.closeRewindDialog(SID);
+  });
+
+  it('puts the code block under the pointer ahead of the whole message', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'text', id: 't1', text: 'Try this:\n\n```\nconst a = 1;\n```', uuid: '' }],
+    };
+    render(OutputPanel, { sessionId: SID });
+
+    await fireEvent.contextMenu(screen.getByText('const a = 1;'));
+    expect(menuLabels()).toEqual(['Copy code', 'Copy message']);
+
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy code' }));
+    expect(writeText).toHaveBeenCalledWith('const a = 1;');
+  });
+
+  it('copies a table under the pointer', async () => {
+    const table = '| a | b |\n| --- | --- |\n| 1 | 2 |';
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 't1', text: table, uuid: '' }] };
+    render(OutputPanel, { sessionId: SID });
+
+    await fireEvent.contextMenu(screen.getByText('2'));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy table' }));
+    // No ClipboardItem in jsdom, so rich copy falls back to the Markdown.
+    expect(writeText).toHaveBeenCalledWith(table);
+  });
+
+  it('acts on selected text', async () => {
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 't1', text: 'pick these words', uuid: '' }] };
+    const insertSpy = vi.spyOn(messageStore, 'requestPromptInsert');
+    render(OutputPanel, { sessionId: SID });
+
+    const words = screen.getByText('pick these words');
+    const range = document.createRange();
+    range.selectNodeContents(words);
+    window.getSelection()!.addRange(range);
+
+    await fireEvent.contextMenu(words);
+    expect(menuLabels()).toEqual(['Copy', 'Bookmark selection', 'Copy to prompt', 'Copy message']);
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy to prompt' }));
+    expect(insertSpy).toHaveBeenCalledWith(SID, 'pick these words');
+    insertSpy.mockRestore();
+  });
+
+  it('leaves right-clicks with nothing to offer alone', async () => {
+    const { getByText } = render(OutputPanel, { sessionId: SID });
+    expect(await fireEvent.contextMenu(getByText('Waiting for input...'))).toBe(true);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+});
+
+describe('OutputPanel: selection popup', () => {
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = { [SID]: [{ kind: 'text', id: 't1', text: 'pick these words', uuid: '' }] };
+    // jsdom's Range has no layout; the popup only needs a rect to place itself.
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect() });
+  });
+  afterEach(() => {
+    window.getSelection()?.removeAllRanges();
+    delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+  });
+
+  const popup = () => screen.queryByRole('button', { name: 'Bookmark' });
+
+  /** Select the reply's text and release the mouse in the pane. */
+  async function selectWords(button = 0) {
+    const { container } = render(OutputPanel, { sessionId: SID });
+    const range = document.createRange();
+    range.selectNodeContents(screen.getByText('pick these words'));
+    window.getSelection()!.addRange(range);
+    await fireEvent.mouseUp(container.querySelector<HTMLElement>('.overflow-y-auto')!, { button });
+  }
+
+  it('opens on a left-button release only', async () => {
+    await selectWords(2);
+    expect(popup()).toBeNull();
+    await fireEvent.mouseUp(screen.getByText('pick these words'), { button: 0 });
+    expect(popup()).toBeInTheDocument();
+  });
+
+  it('hides on a press outside it, such as the prompt box', async () => {
+    await selectWords();
+    await fireEvent.mouseDown(document.body);
+    expect(popup()).toBeNull();
+  });
+
+  it('hides when the window loses focus', async () => {
+    await selectWords();
+    await fireEvent.blur(window);
+    expect(popup()).toBeNull();
+  });
+
+  it('hides when the selection goes away', async () => {
+    await selectWords();
+    window.getSelection()!.removeAllRanges();
+    await fireEvent(document, new Event('selectionchange'));
+    expect(popup()).toBeNull();
+  });
+
+  it('stays while the selection is unchanged, and pressing its buttons keeps it', async () => {
+    await selectWords();
+    await fireEvent(document, new Event('selectionchange'));
+    const pressed = await fireEvent.mouseDown(popup()!);
+    expect(pressed).toBe(false);
+    expect(popup()).toBeInTheDocument();
+
+    const insertSpy = vi.spyOn(messageStore, 'requestPromptInsert');
+    await fireEvent.click(screen.getByRole('button', { name: 'To prompt' }));
+    expect(insertSpy).toHaveBeenCalledWith(SID, 'pick these words');
+    insertSpy.mockRestore();
   });
 });
