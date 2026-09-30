@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -55,15 +55,19 @@
 
   const folders = ['repo', 'conventions', 'architecture', 'sessions'];
 
+  // The project the panel shows by default: the open conversation's, else
+  // the first. A string, so the effect below only re-runs when it changes:
+  // reading the conversation list directly re-ran it on every status change
+  // or rename anywhere, reloading the panel and closing an edit in progress.
+  const defaultRepo = $derived.by(() => {
+    const currentRepo = store.activeSession?.repoPath;
+    return currentRepo && store.repos.includes(currentRepo) ? currentRepo : (store.repos[0] ?? null);
+  });
+
   $effect(() => {
-    if (open && store.repos.length > 0) {
-      // Default to the repo of the currently active session
-      const currentRepo = store.activeSession?.repoPath;
-      const targetRepo = currentRepo && store.repos.includes(currentRepo)
-        ? currentRepo
-        : store.repos[0];
-      memoryStore.loadForRepo(targetRepo);
-    }
+    if (!open || !defaultRepo) return;
+    const repo = defaultRepo;
+    untrack(() => memoryStore.loadForRepo(repo));
   });
 
   function selectFile(path: string) {
