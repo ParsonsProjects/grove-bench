@@ -18,6 +18,19 @@ describe('extractAtRefs()', () => {
     expect(extractAtRefs('no refs here')).toEqual([]);
   });
 
+  it('keeps characters real file names use', () => {
+    expect(extractAtRefs('@src/routes/+page.svelte @pages/[id].tsx @app/(site)/page.tsx')).toEqual([
+      'src/routes/+page.svelte', 'pages/[id].tsx', 'app/(site)/page.tsx',
+    ]);
+    expect(extractAtRefs('@café.ts and @node_modules/@types/node/')).toEqual(['café.ts', 'node_modules/@types/node/']);
+  });
+
+  it('drops sentence punctuation and closing brackets after a reference', () => {
+    expect(extractAtRefs('Fix @src/a.ts, then @b.ts.')).toEqual(['src/a.ts', 'b.ts']);
+    expect(extractAtRefs('(see @src/a.ts) or `@b.ts`')).toEqual(['src/a.ts', 'b.ts']);
+    expect(extractAtRefs('an @ alone, or @.')).toEqual([]);
+  });
+
   it('stops at whitespace (paths with spaces are not supported)', () => {
     expect(extractAtRefs('@my file.ts')).toEqual(['my']);
   });

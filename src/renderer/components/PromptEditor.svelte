@@ -307,7 +307,8 @@
 
     const pos = textarea?.selectionStart ?? 0;
     const textBefore = value.slice(0, pos);
-    const atMatch = textBefore.match(/@([\w.\/\-]*)$/);
+    // Same characters extractAtRefs accepts: anything but whitespace.
+    const atMatch = textBefore.match(/@(\S*)$/);
 
     if (atMatch) {
       pickerOpen = true;
