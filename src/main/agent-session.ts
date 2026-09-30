@@ -1893,9 +1893,12 @@ class AgentSessionManager {
     this.eventListeners.delete(id);
   }
 
-  async destroyAll(): Promise<void> {
-    const ids = [...this.sessions.keys()];
-    await Promise.all([...ids.map((id) => this.destroySession(id)), this.waitForCloses()]);
+  /** App quit: stop every live agent the way closing its conversation does.
+   *  Worktrees, branches and checkpoints stay, so the conversations reopen
+   *  on the next launch. */
+  async closeAll(): Promise<void> {
+    for (const id of [...this.sessions.keys()]) void this.closeSession(id);
+    await this.waitForCloses();
   }
 
   /** Resolves once every conversation being closed has finished shutting down. */

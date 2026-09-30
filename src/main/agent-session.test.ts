@@ -1474,6 +1474,27 @@ describe('AgentSessionManager.closeSession()', () => {
   });
 });
 
+describe('AgentSessionManager.closeAll()', () => {
+  it('stops every live agent on quit and keeps their checkpoints', async () => {
+    const sessions = [];
+    for (const id of ['test-quit-a', 'test-quit-b']) {
+      await sessionManager.createSession({
+        id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+      sessions.push(sessionManager.getSession(id)!);
+    }
+    await sessionManager.closeAll();
+
+    expect(sessionManager.count).toBe(0);
+    expect(sessionManager.closingCount).toBe(0);
+    for (const session of sessions) {
+      expect(session.queryHandle!.close).toHaveBeenCalled();
+      expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe('AgentSessionManager sleep and wake', () => {
   /** A live session whose provider session has initialised (status 'running'). */
   async function startSession(id: string) {

@@ -151,7 +151,8 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// Graceful shutdown: destroy all sessions and clean up worktrees
+// Graceful shutdown: stop every agent and shell. Worktrees, branches and
+// checkpoints are left alone; conversations reopen on the next launch.
 app.on('before-quit', (event) => {
   if (isQuitting) return;
 
@@ -166,11 +167,9 @@ app.on('before-quit', (event) => {
 
     (async () => {
       try {
-        logger.info(`Cleaning up ${sessionManager.count} sessions...`);
+        logger.info(`Closing ${sessionManager.count} sessions...`);
         await terminalManager.killAll();
-        await sessionManager.destroyAll();
-        await new Promise((r) => setTimeout(r, 500));
-        await worktreeManager.cleanupAll();
+        await sessionManager.closeAll();
         logger.info('Cleanup complete');
       } catch (e) {
         logger.error('Cleanup error during quit:', e);

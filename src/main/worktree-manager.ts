@@ -693,21 +693,6 @@ export class WorktreeManager {
     return [...repos];
   }
 
-  async cleanupAll(): Promise<void> {
-    // Collect repo paths before removal (remove() deletes from the map)
-    const repoPaths = new Set([...this.worktrees.values()].map((w) => w.repoPath));
-    const ids = [...this.worktrees.keys()];
-    for (const id of ids) {
-      await this.remove(id, true);
-    }
-    // Final prune for any leftovers
-    for (const repoPath of repoPaths) {
-      try {
-        await git(['worktree', 'prune'], repoPath);
-      } catch { /* ignore */ }
-    }
-  }
-
   async copyUntrackedFiles(worktreeId: string, files: string[]): Promise<void> {
     const info = this.worktrees.get(worktreeId);
     if (!info) return;

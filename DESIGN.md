@@ -111,9 +111,6 @@ class WorktreeManager {
   // Lists all grove-bench-managed worktrees for a repo
   async list(repoPath: string): Promise<WorktreeInfo[]>;
 
-  // Cleans up all grove-bench worktrees (called on app quit)
-  async cleanupAll(): Promise<void>;
-
   // Validates that a path is a git repo
   async validateRepo(path: string): Promise<boolean>;
 
@@ -438,14 +435,14 @@ User clicks "X" on agent pane OR closes app
 
 ```
 App close event (before-quit)
-  → AgentSessionManager.destroyAll()
-    → Kill all PTYs
-    → Wait 500ms for Windows file handle release
-  → WorktreeManager.cleanupAll()
-    → Remove all grove-bench-managed worktrees (with retry logic per Section 7.2)
-    → Optionally delete orphaned branches
-    → git worktree prune (clean up any stale references)
+  → TerminalManager.killAll()
+  → AgentSessionManager.closeAll()
+    → Same as closing each conversation: kill the agent process tree, deny
+      pending permissions, flush the event log
   → App exits
+
+Worktrees, branches and checkpoint refs are kept: conversations reopen on the
+next launch. Only an explicit delete removes a worktree (Section 7.2).
 ```
 
 ## 8. Technical Considerations
