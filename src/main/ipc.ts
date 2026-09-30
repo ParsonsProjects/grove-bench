@@ -247,18 +247,17 @@ export function registerHandlers() {
 
     if (opts.direct) {
       // Direct mode: run in-place on the repo's current checkout, no worktree created.
-      const checkoutPath = opts.repoPath;
       const branch = noGit
         ? ''
         : opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
-      logger.info(`Creating direct session: branch=${branch || '(no git)'}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
+      logger.info(`Creating direct session: branch=${branch || '(no git)'}, repo=${opts.repoPath}`);
 
-      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath, { noGit });
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, { noGit });
 
       const session = await sessionManager.createSession({
         id: entry.id,
         branch: entry.branch,
-        cwd: checkoutPath,
+        cwd: opts.repoPath,
         repoPath: opts.repoPath,
         window: win,
         adapterType: opts.adapterType,

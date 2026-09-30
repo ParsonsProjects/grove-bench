@@ -301,18 +301,17 @@ export class WorktreeManager {
   }
 
   /**
-   * Register a "direct" session — runs in-place on an existing checkout, no new
-   * worktree created. Defaults to the repo checkout; pass `checkoutPath` to
-   * attach the session to another session's worktree (sharing its branch).
-   * Still tracked in the manifest for session ID persistence.
+   * Register a "direct" session — runs in-place on the repo checkout, no new
+   * worktree created. Still tracked in the manifest for session ID persistence.
+   * (Older manifests may hold "attached" direct sessions that ran in another
+   * session's worktree; they carry a stored `path`, read back on restart.)
    */
-  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath, opts: { noGit?: boolean } = {}): Promise<WorktreeInfo> {
+  async registerDirect(repoPath: string, branch: string, opts: { noGit?: boolean } = {}): Promise<WorktreeInfo> {
     const id = crypto.randomUUID().slice(0, 8);
-    const attached = checkoutPath !== repoPath;
 
     const info: WorktreeInfo = {
       id,
-      path: checkoutPath,
+      path: repoPath,
       branch,
       repoPath,
       createdAt: Date.now(),
@@ -329,9 +328,6 @@ export class WorktreeManager {
         createdAt: info.createdAt,
         direct: true,
         ...(opts.noGit ? { noGit: true } : {}),
-        // Persist the path only for attached sessions; plain direct sessions
-        // derive it from repoPath, so storing it would be redundant.
-        ...(attached ? { path: checkoutPath } : {}),
       };
     });
 

@@ -25,14 +25,15 @@
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
-  import { triageState, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
+  import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
-  import { AGENT_SPRITES, type AgentSpriteState } from '../lib/agent-sprite.js';
   import AgentSprite from './AgentSprite.svelte';
+  import StatusDot from './StatusDot.svelte';
+  import { mapLimit } from '../lib/map-limit.js';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
   import { onMount, untrack } from 'svelte';
 
@@ -99,13 +100,14 @@
     const msgs = messageStore.getMessages(session.id);
     const loaded = msgs.length > 0;
     const preview = sessionPreviewStore.get(session.id);
-    return sessionSubtitle({
-      isRunning: messageStore.getIsRunning(session.id),
-      activity: messageStore.getActivity(session.id),
-      pendingTool: loaded ? pendingPermissionTool(msgs) : null,
-      lastText: (loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null),
-      firstPrompt: (loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null),
-    });
+    const isRunning = messageStore.getIsRunning(session.id);
+    const pendingTool = loaded ? pendingPermissionTool(msgs) : null;
+    // Past messages only show when nothing live does, so skip that work while
+    // the agent runs (its reply grows with every update) or waits on you.
+    const quiet = !isRunning && !pendingTool;
+    const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
+    const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
+    return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, lastText, firstPrompt });
   }
 
   const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
@@ -442,6 +444,9 @@
     await destroySessionById(id, deleteBranch);
   }
 
+  /** The conversations the remove-project dialog checked and will delete.
+   *  Fixed when it opens, so nothing is deleted without its checks. */
+  let removeRepoIds = $state<string[]>([]);
   /** What removing the project in the confirm dialog would lose, over all of
    *  its conversations: how many have uncommitted changes, and how many of
    *  their branches have commits the base branch doesn't. Null while unknown. */
@@ -451,51 +456,72 @@
   let removeRepoChecking = $state(false);
   let removeRepoDeleteBranches = $state(false);
   let removingRepo = $state(false);
+  /** Set when conversations appeared while the dialog was open, so it checked again. */
+  let removeRepoRechecked = $state(false);
   /** Bumped per request so a slow check from an earlier open is dropped. */
   let removeRepoGeneration = 0;
+  /** git calls the checks run at once, so a big project doesn't start one
+   *  process per conversation in a burst (as the clean-up limits gh). */
+  const REMOVE_CHECK_CONCURRENCY = 3;
 
   function requestRemoveRepo(repo: string) {
     const generation = ++removeRepoGeneration;
+    const sessions = store.sessionsForRepo(repo);
     confirmRemoveRepo = repo;
+    removeRepoIds = sessions.map((s) => s.id);
     removeRepoDeleteBranches = false;
+    removeRepoRechecked = false;
     removeRepoDirty = null;
     removeRepoUnmerged = null;
     removingRepo = false;
     // Direct conversations work in the project folder itself: removing one
     // deletes no files and keeps the branch, so there is nothing to check.
-    const worktreeSessions = store.sessionsForRepo(repo).filter((s) => !s.direct);
+    const worktreeSessions = sessions.filter((s) => !s.direct);
     removeRepoChecking = worktreeSessions.length > 0;
     if (!removeRepoChecking) return;
     const current = () => generation === removeRepoGeneration && confirmRemoveRepo === repo;
-    // Best effort, like the single delete: a failed check leaves its warning out.
-    const dirty = Promise.all(worktreeSessions.map((s) =>
-      window.groveBench.getGitStatus(s.id)
-        .then((status) => unsavedFileCount(status.entries) > 0)
-        .catch(() => false),
-    )).then((flags) => { if (current()) removeRepoDirty = flags.filter(Boolean).length; });
-    // One check per branch: conversations sharing a branch share its commits.
-    const oneSessionPerBranch = [...new Map(worktreeSessions.map((s) => [s.branch, s])).values()];
-    const unmerged = resolveBaseBranch(repo)
-      .then(async (base) => {
-        const counts = await Promise.all(oneSessionPerBranch.map((s) =>
-          window.groveBench.getBranchCommits(s.id, base).then((c) => c.length).catch(() => 0),
-        ));
-        if (current()) removeRepoUnmerged = { count: counts.filter((n) => n > 0).length, base };
-      })
-      .catch(() => {});
-    void Promise.all([dirty, unmerged]).then(() => { if (current()) removeRepoChecking = false; });
+    // Best effort, like the single delete: a failed check leaves its warning
+    // out. Uncommitted changes first, then unmerged commits (one per branch:
+    // conversations sharing a branch share its commits).
+    void (async () => {
+      const dirty = await mapLimit(worktreeSessions, REMOVE_CHECK_CONCURRENCY, (s) =>
+        window.groveBench.getGitStatus(s.id)
+          .then((status) => unsavedFileCount(status.entries) > 0)
+          .catch(() => false),
+      );
+      if (!current()) return;
+      removeRepoDirty = dirty.filter(Boolean).length;
+      const base = await resolveBaseBranch(repo);
+      const oneSessionPerBranch = [...new Map(worktreeSessions.map((s) => [s.branch, s])).values()];
+      const commits = await mapLimit(oneSessionPerBranch, REMOVE_CHECK_CONCURRENCY, (s) =>
+        window.groveBench.getBranchCommits(s.id, base).then((c) => c.length).catch(() => 0),
+      );
+      if (!current()) return;
+      removeRepoUnmerged = { count: commits.filter((n) => n > 0).length, base };
+      removeRepoChecking = false;
+    })();
   }
 
-  /** Delete every conversation in the project, then remove the project. */
+  /** Delete the project's checked conversations, then remove the project. */
   async function confirmRemoveProject() {
     const repo = confirmRemoveRepo;
     if (!repo) return;
+    // A conversation started or restored since the dialog opened hasn't been
+    // checked: check again, keeping the branch choice, rather than delete it blind.
+    if (store.sessionsForRepo(repo).some((s) => !removeRepoIds.includes(s.id))) {
+      const deleteBranches = removeRepoDeleteBranches;
+      requestRemoveRepo(repo);
+      removeRepoDeleteBranches = deleteBranches;
+      removeRepoRechecked = true;
+      return;
+    }
     const deleteBranches = removeRepoDeleteBranches;
     removingRepo = true;
     // One at a time, as the clean-up does. Stop at the first failure (its
     // error is shown) so the project stays listed with what is left.
-    for (const s of store.sessionsForRepo(repo)) {
-      if (!(await destroySessionById(s.id, deleteBranches))) {
+    for (const id of removeRepoIds) {
+      if (!store.sessions.some((s) => s.id === id)) continue; // already gone
+      if (!(await destroySessionById(id, deleteBranches))) {
         removingRepo = false;
         confirmRemoveRepo = null;
         return;
@@ -569,10 +595,6 @@
     if (e.key === 'Enter') { e.preventDefault(); confirmRename(); }
   }
 
-  function getSessionHasPending(sessionId: string): boolean {
-    return messageStore.needsInput(sessionId);
-  }
-
   // ── Attention triage: filter chips, per-repo counts, completed sessions ──
 
   let triageFilter = $state<TriageFilter>('all');
@@ -591,20 +613,6 @@
     unread: 'bg-green-400',
   };
 
-  /** The plain dot (grove characters off) takes the character's colour, so
-   *  both read the same. It moves only where the character does, and only
-   *  when the system allows motion. */
-  const DOT_MOTION: Partial<Record<AgentSpriteState, string>> = {
-    working: 'motion-safe:animate-pulse',
-    permission: 'motion-safe:animate-pulse',
-    starting: 'motion-safe:animate-pulse',
-    installing: 'motion-safe:animate-pulse',
-    removing: 'motion-safe:animate-pulse',
-    unread: 'needs-attention-flash',
-  };
-  /** Asleep states get a hollow dot, as the character shows closed eyes. */
-  const HOLLOW_DOT = new Set<AgentSpriteState>(['stopped', 'sleeping']);
-
   /** Branch groups folded in the Projects tree, by project and branch. Kept
    *  for this run only: groups come and go with their conversations. */
   let collapsedBranches = $state<Record<string, boolean>>({});
@@ -615,13 +623,9 @@
     collapsedBranches = { ...collapsedBranches, [key]: !collapsedBranches[key] };
   }
 
+  /** Which chip a conversation counts under: the one its status colour matches. */
   function triageOf(session: { id: string; status: string }): TriageState {
-    return triageState({
-      needsInput: messageStore.needsInput(session.id),
-      // Starting up counts as working, as its blue dot says.
-      running: messageStore.getIsRunning(session.id) || session.status === 'starting' || session.status === 'installing',
-      unread: !!store.needsAttention[session.id],
-    });
+    return triageForSprite(sessionSpriteState(session, destroying.has(session.id)));
   }
 
   function notHiddenCompleted(session: { completedAt?: number | null }): boolean {
@@ -704,13 +708,7 @@
           {#if settingsStore.current.groveCharacters}
             <AgentSprite state={spriteState} seed={session.id} projectColor={repoColor} />
           {:else}
-            {@const sprite = AGENT_SPRITES[spriteState]}
-            <span
-              class="w-2 h-2 shrink-0 {sprite.colorClass} {HOLLOW_DOT.has(spriteState) ? 'border border-current' : 'bg-current'} {DOT_MOTION[spriteState] ?? ''}"
-              role="img"
-              aria-label={sprite.label}
-              title={sprite.label}
-            ></span>
+            <StatusDot state={spriteState} />
           {/if}
           {#if session.direct}
             <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
@@ -754,7 +752,7 @@
             aria-label="Delete conversation {label}"
             onclick={() => requestDestroy(session.id)}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
-              hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 focus-visible:opacity-100"
+              hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
             <!-- A bin, not an ✕: ✕ reads as "close", and this deletes. -->
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
@@ -767,7 +765,7 @@
             aria-label="Stop agent in {label}"
             onclick={() => stopSession(session.id)}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
-              hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 focus-visible:opacity-100"
+              hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/></svg>
           </button>
@@ -1291,9 +1289,11 @@
 
 <!-- Remove project confirmation: deletes its conversations too, with the same checks as deleting one -->
 {#if confirmRemoveRepo}
-  {@const repoSessions = store.sessionsForRepo(confirmRemoveRepo)}
+  {@const repoSessions = store.sessions.filter((s) => removeRepoIds.includes(s.id))}
   {@const n = repoSessions.length}
   {@const hasWorktrees = repoSessions.some((s) => !s.direct)}
+  {@const running = repoSessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing')}
+  {@const midTurn = running.filter((s) => messageStore.getIsRunning(s.id)).length}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !removingRepo) confirmRemoveRepo = null; }}>
     <Dialog.Content class="max-w-sm">
       <Dialog.Header>
@@ -1306,6 +1306,14 @@
           The project folder itself isn't touched.
         </Dialog.Description>
       </Dialog.Header>
+      {#if removeRepoRechecked}
+        <p class="text-xs text-muted-foreground mt-3">New conversations started in this project, so it checked again.</p>
+      {/if}
+      {#if running.length}
+        <p class="text-xs text-yellow-500 mt-3" role="alert">
+          {running.length} {running.length === 1 ? 'conversation is' : 'conversations are'} running and will be stopped{midTurn ? `, ${midTurn} in the middle of a turn` : ''}.
+        </p>
+      {/if}
       {#if removeRepoDirty}
         <p class="text-xs text-yellow-500 mt-3" role="alert">
           {removeRepoDirty} {removeRepoDirty === 1 ? 'conversation has' : 'conversations have'} uncommitted changes that will be lost.
@@ -1334,17 +1342,3 @@
     </Dialog.Content>
   </Dialog.Root>
 {/if}
-
-<style>
-  /* Green flash on a session row when its agent finished a turn while not
-     focused. Steady instead when the system asks for reduced motion. */
-  @media (prefers-reduced-motion: no-preference) {
-    .needs-attention-flash {
-      animation: needs-attention-flash 0.8s ease-in-out infinite;
-    }
-  }
-  @keyframes needs-attention-flash {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.2; }
-  }
-</style>

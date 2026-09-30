@@ -8,7 +8,7 @@ Each project you have added appears as a group under **Projects**. Today a proje
 
 Conversations within a project are listed below the project name, including the ones that are also under **Conversations**; click either row to open it. If multiple conversations share the same branch, they are grouped together under that branch name. Click the branch name to fold the group.
 
-To remove a project, hover its header and click the bin. Grove Bench asks first and says what goes with it: every conversation in the project and its copy of the project (worktree), with a warning when any of them has uncommitted changes. You can also delete their branches, and it warns you when a branch has commits its base branch doesn't. The project folder itself is never touched.
+To remove a project, hover its header and click the bin. Grove Bench asks first and says what goes with it: every conversation in the project and its copy of the project (worktree). It warns you when any of them is still running (its agent will be stopped) or has uncommitted changes. You can also delete their branches, and it warns you when a branch has commits its base branch doesn't. The project folder itself is never touched.
 
 ## Conversation List
 

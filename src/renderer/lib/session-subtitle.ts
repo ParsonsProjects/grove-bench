@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import { approvalRequest, toolLabel } from './tool-names.js';
-import { stripMarkdown } from '../../shared/plain-text.js';
+import { oneLine, plainSnippet } from '../../shared/plain-text.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
 export type SubtitleTone = 'working' | 'waiting' | 'context';
@@ -12,14 +12,10 @@ export interface SessionSubtitle {
 
 const MAX_LEN = 90;
 
-function collapse(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > MAX_LEN ? `${normalized.slice(0, MAX_LEN)}…` : normalized;
-}
-
-/** A chat message as one line of plain text: markdown syntax dropped. */
-function snippet(text: string): string {
-  return collapse(stripMarkdown(text));
+/** A chat message as one line of plain text: markdown syntax dropped. Null
+ *  when nothing is left (a message that is only syntax), so the search goes on. */
+function snippet(text: string, maxLen = MAX_LEN): string | null {
+  return plainSnippet(text, maxLen) || null;
 }
 
 /** The tool name of the most recent unresolved permission request, if any. */
@@ -36,16 +32,18 @@ export function pendingPermissionTool(messages: ChatMessage[]): string | null {
 export function lastTextSnippet(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.kind === 'text' && m.text.trim()) return snippet(m.text);
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return snippet(m.text);
+    const text = m.kind === 'text' || (m.kind === 'user' && !m.text.trim().startsWith('/')) ? snippet(m.text) : null;
+    if (text) return text;
   }
   return null;
 }
 
-/** First real user prompt in the loaded messages (slash commands skipped). */
-export function firstPromptSnippet(messages: ChatMessage[]): string | null {
+/** First real user prompt in the loaded messages (slash commands skipped).
+ *  `maxLen` defaults to the sidebar row's length. */
+export function firstPromptSnippet(messages: ChatMessage[], maxLen = MAX_LEN): string | null {
   for (const m of messages) {
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return snippet(m.text);
+    const text = m.kind === 'user' && !m.text.trim().startsWith('/') ? snippet(m.text, maxLen) : null;
+    if (text) return text;
   }
   return null;
 }
@@ -80,14 +78,14 @@ export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
     const { activity, toolName, toolSummary } = input.activity;
     if (activity === 'tool_starting' && toolName) {
       const name = toolLabel(toolName);
-      return { text: collapse(toolSummary ? `${name}: ${toolSummary}` : `Running ${name}…`), tone: 'working' };
+      return { text: oneLine(toolSummary ? `${name}: ${toolSummary}` : `Running ${name}…`, MAX_LEN), tone: 'working' };
     }
     if (activity === 'thinking') return { text: 'Thinking…', tone: 'working' };
     return { text: 'Working…', tone: 'working' };
   }
 
   const context = input.lastText || input.firstPrompt;
-  return context ? { text: collapse(context), tone: 'context' } : null;
+  return context ? { text: oneLine(context, MAX_LEN), tone: 'context' } : null;
 }
 
 function capitalise(text: string): string {

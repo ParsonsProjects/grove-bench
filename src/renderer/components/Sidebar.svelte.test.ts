@@ -157,6 +157,14 @@ describe('Sidebar session rows', () => {
     expect(stop).toHaveAccessibleName('Stop agent in Sidebar revamp');
   });
 
+  it('swaps the age for the quick action on keyboard focus anywhere in the row', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp', createdAt: Date.now() }] as any;
+    render(Sidebar);
+    const focusRule = 'group-has-[:focus-visible]/session';
+    expect(screen.getByTitle('Stop agent')).toHaveClass(`${focusRule}:opacity-100`);
+    expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
+  });
+
   it('has no menu item that starts a second agent in the same worktree', async () => {
     render(Sidebar);
     await fireEvent.contextMenu(screen.getByText('Sidebar revamp'));
@@ -307,6 +315,15 @@ describe('Sidebar attention triage', () => {
     render(Sidebar);
     expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('Working 2');
     expect(screen.getByRole('img', { name: 'Starting' })).toHaveClass(AGENT_SPRITES.working.colorClass);
+  });
+
+  it('counts an errored conversation under no chip, even when it is also unread', async () => {
+    store.sessions = [...store.sessions, { id: 'broken', branch: 'feat-e', repoPath: '/repo-b', status: 'error', displayName: 'Broken one' }] as any;
+    store.needsAttention = { finished: true, broken: true };
+    render(Sidebar);
+    // Red, not green: it isn't counted as unread.
+    expect(screen.getByRole('img', { name: 'Error' })).toHaveClass(AGENT_SPRITES.error.colorClass);
+    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('Unread 1');
   });
 
   it('shows only dots and counts on the chips when the sidebar is narrow', async () => {
@@ -710,6 +727,44 @@ describe('Sidebar remove project', () => {
     expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
     finish({ entries: [] });
     expect(await screen.findByRole('button', { name: 'Remove' })).not.toBeDisabled();
+  });
+
+  it('says which conversations are running and will be stopped', async () => {
+    messageStore.setIsRunning('w1', true);
+    const dialog = await openRemoveDialog();
+    expect(dialog).toHaveTextContent('1 conversation is running and will be stopped, 1 in the middle of a turn.');
+  });
+
+  it('runs at most 3 git checks at once', async () => {
+    store.sessions = Array.from({ length: 8 }, (_, i) => ({ id: `w${i}`, branch: `b${i}`, repoPath: '/repo-a', status: 'stopped' })) as any;
+    let inFlight = 0;
+    let most = 0;
+    mockGroveBench.getGitStatus.mockImplementation((async () => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { entries: [] };
+    }) as any);
+    await openRemoveDialog();
+    await screen.findByRole('button', { name: 'Remove' });
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(8);
+    expect(most).toBe(3);
+  });
+
+  it('checks again, rather than delete it unchecked, when a conversation starts while the dialog is open', async () => {
+    await openRemoveDialog();
+    await fireEvent.click(screen.getByRole('checkbox'));
+    await screen.findByRole('button', { name: 'Remove' });
+    store.sessions = [...store.sessions, { id: 'late', branch: 'feat-late', repoPath: '/repo-a', status: 'running' }] as any;
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    expect(destroySession).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('New conversations started in this project, so it checked again.');
+    expect(dialog).toHaveTextContent('This also deletes its 4 conversations');
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('late'));
   });
 
   it("deletes each of the project's conversations, then the project", async () => {

@@ -103,6 +103,17 @@ describe('message helpers', () => {
     expect(lastTextSnippet(md)).toBe('Investigation summary The flakiness came from retry-helper.ts');
   });
 
+  it('skips a message that is only markdown syntax', () => {
+    const md: ChatMessage[] = [
+      { kind: 'user', id: 'u1', text: '***' },
+      { kind: 'user', id: 'u2', text: 'the real prompt' },
+      { kind: 'text', id: 'm1', text: 'the real answer', uuid: '' },
+      { kind: 'text', id: 'm2', text: '---', uuid: '' },
+    ];
+    expect(lastTextSnippet(md)).toBe('the real answer');
+    expect(firstPromptSnippet(md)).toBe('the real prompt');
+  });
+
   it('firstPromptSnippet drops markdown syntax', () => {
     const md: ChatMessage[] = [{ kind: 'user', id: 'u1', text: '# Task\n1. fix [the bug](https://x.test)' }];
     expect(firstPromptSnippet(md)).toBe('Task fix the bug');

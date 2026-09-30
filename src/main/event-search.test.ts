@@ -277,6 +277,16 @@ describe('extractSessionPreview', () => {
     expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'Plan fix the parser', lastText: 'Investigation summary Test · Rate e2e · 18%' });
   });
 
+  it('skips a message that is only markdown syntax', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '---' },
+      { type: 'user_message', text: 'real prompt' },
+      { type: 'assistant_text', text: 'real answer', uuid: '' },
+      { type: 'assistant_text', text: '|---|---|', uuid: '' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'real prompt', lastText: 'real answer' });
+  });
+
   it('uses tool_use_summary text when it is the latest', () => {
     const events: AgentEvent[] = [
       { type: 'user_message', text: 'do the thing' },
