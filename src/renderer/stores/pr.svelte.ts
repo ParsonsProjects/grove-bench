@@ -57,7 +57,8 @@ class PrStore {
   syncBySession = $state<Record<string, GitSyncStatus>>({});
   alertsBySession = $state<Record<string, PrAlert[]>>({});
   autoBySession = $state<Record<string, PrAutoConfig>>({});
-  /** True after a fetch fails — the displayed PR data may be stale. */
+  /** True after the gh fetch fails — the displayed PR data may be stale. A
+   *  local sync failure doesn't count: the PR data didn't come from it. */
   fetchFailedBySession = $state<Record<string, boolean>>({});
 
   private lastFetch = new Map<string, number>();
@@ -130,6 +131,14 @@ class PrStore {
     };
   }
 
+  /** The user has looked at the primary PR's alerts (closed its popover), so
+   *  CI failures and new comments are no longer "new". A needs-human note
+   *  stays until dismissed: it asks the user to act, not just to look. */
+  markAlertsSeen(sessionId: string): void {
+    this.clearAlerts(sessionId, 'ci_failed');
+    this.clearAlerts(sessionId, 'new_comments');
+  }
+
   async refresh(sessionId: string, force = false): Promise<void> {
     const now = Date.now();
     const last = this.lastFetch.get(sessionId) ?? 0;
@@ -154,7 +163,7 @@ class PrStore {
     if (pr.status === 'fulfilled') {
       this.prsBySession = { ...this.prsBySession, [sessionId]: pr.value };
     }
-    const failed = pr.status === 'rejected' || sync.status === 'rejected';
+    const failed = pr.status === 'rejected';
     if (failed !== (this.fetchFailedBySession[sessionId] ?? false)) {
       this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: failed };
     }

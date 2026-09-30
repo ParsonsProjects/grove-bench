@@ -12,6 +12,7 @@
   import { prHealth } from '../lib/pr-state.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
+  import { keepInViewport } from '../lib/keep-in-viewport.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
@@ -41,6 +42,12 @@
   const loadAddSkillDialog = lazyComponent(() => import('./AddSkillDialog.svelte'));
   let pushing = $state(false);
   let pushError = $state('');
+
+  // Nothing left to push (the agent or a terminal pushed it): an earlier
+  // failure no longer applies, and the ↑N button that would retry is gone.
+  $effect(() => {
+    if (gitSync.ahead === 0) pushError = '';
+  });
 
   async function doPush() {
     if (pushing) return;
@@ -72,9 +79,35 @@
   let commentsAlert = $derived(prAlerts.find((a) => a.kind === 'new_comments') as Extract<PrAlert, { kind: 'new_comments' }> | undefined);
   let humanAlert = $derived(prAlerts.find((a) => a.kind === 'needs_human') as Extract<PrAlert, { kind: 'needs_human' }> | undefined);
 
-  /** Worst-condition dot color for the collapsed PR badge. Shared with the
-   *  sidebar's branch icon so the two always agree. */
-  let prHealthDot = $derived(prHealth(prInfo).bgClass);
+  /** Worst condition on the PR, for the collapsed badge's dot and tooltip.
+   *  Shared with the sidebar's branch icon so the two always agree. */
+  let prHealthInfo = $derived(prHealth(prInfo));
+  /** Only an open PR is watched (see detectPrEvents), so only an open one
+   *  gets the agent actions and automation. */
+  let prOpen = $derived(prInfo?.state === 'OPEN');
+  /** Waiting on an approving review: the usual state of an open PR, so it
+   *  gets a Reviews row even with no review yet. */
+  let reviewRequired = $derived(prOpen && prInfo?.reviewDecision === 'REVIEW_REQUIRED');
+  /** Every PR here is merged or closed: more work on the branch needs a new one. */
+  let hasOpenPr = $derived(prStore.getPrs(sessionId).some((p) => p.state === 'OPEN'));
+  /** The pill's tooltip carries the health in words: the dot is colour only. */
+  let prPillTitle = $derived.by(() => {
+    if (!prInfo) return '';
+    const parts = [`PR #${prInfo.number}: ${prHealthInfo.label}`];
+    if (prAlerts.length > 0) parts.push('new activity');
+    if (prFetchFailed) parts.push('may be out of date, the last GitHub fetch failed');
+    if (otherPrs.length > 0) parts.push(`+${otherPrs.length} more in this conversation`);
+    return `${prInfo.title ? `${prInfo.title}\n` : ''}${parts.join(', ')}. Click for checks, reviews, and automation`;
+  });
+
+  // Closing the popover counts as having looked: its "new" chips, and the
+  // pill's pulse, clear (see markAlertsSeen).
+  let prPopoverWasOpen = false;
+  $effect(() => {
+    const open = prPopoverOpen;
+    if (prPopoverWasOpen && !open) untrack(() => prStore.markAlertsSeen(sessionId));
+    prPopoverWasOpen = open;
+  });
 
   function fixCi() {
     fixCiNotice = null;
@@ -302,6 +335,28 @@
       prPopoverOpen = false;
       createPrMenuOpen = false;
     }
+  }
+
+  /** Triggers that get focus back when Escape closes what they opened. */
+  let prPillRef = $state<HTMLButtonElement | null>(null);
+  let createPrMenuButtonRef = $state<HTMLButtonElement | null>(null);
+
+  /** Escape closes the PR popover or the Create PR menu. Capture phase, and
+   *  only while this bar is visible: every conversation's pane stays mounted,
+   *  and one left open in a hidden pane must not swallow Escape meant for
+   *  what is on screen (as in SessionControlsPopover). The branch picker
+   *  handles its own Escape. */
+  function handlePrEscape(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !(prPopoverOpen || createPrMenuOpen)) return;
+    if (!(branchStackRef?.checkVisibility?.() ?? true)) return;
+    e.stopPropagation();
+    // Focus goes back to the trigger only if it was in the stack: Escape
+    // pressed while typing elsewhere shouldn't move the caret.
+    const focusWasInStack = !!branchStackRef?.contains(document.activeElement);
+    const trigger = prPopoverOpen ? prPillRef : createPrMenuButtonRef;
+    prPopoverOpen = false;
+    createPrMenuOpen = false;
+    if (focusWasInStack) trigger?.focus();
   }
 
   // ─── MCP server control ───
@@ -646,6 +701,7 @@
 
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
+    window.addEventListener('keydown', handlePrEscape, true);
     window.addEventListener('click', handleClickOutside);
     // The MCP controls depend on what the agent supports (loaded once).
     agentsStore.load();
@@ -657,6 +713,7 @@
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
+    window.removeEventListener('keydown', handlePrEscape, true);
     window.removeEventListener('click', handleClickOutside);
     stopSignInPoll();
   });
@@ -1230,7 +1287,7 @@
     {/if}
 
     {#if branchPickerOpen && sessionBranch}
-      <div transition:fly={{ y: 6, duration: 140 }} class="absolute bottom-full left-0 mb-2 z-50">
+      <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class="absolute bottom-full left-0 mb-2 z-50">
         <BranchPicker
           {sessionId}
           repoPath={sessionRepoPath}
@@ -1271,12 +1328,15 @@
             : prInfo.isDraft ? 'text-muted-foreground hover:text-foreground'
             : 'text-blue-400 hover:text-blue-300'}
           <button
+            bind:this={prPillRef}
             onclick={() => { prPopoverOpen = !prPopoverOpen; if (prPopoverOpen) { branchPickerOpen = false; addressReviewsNotice = null; fixCiNotice = null; } }}
             class="flex items-center gap-1.5 {prColor} transition-colors"
-            title="{prInfo.title ? `${prInfo.title} — ` : ''}PR #{prInfo.number}{prAlerts.length > 0 ? ' (new activity)' : ''}{otherPrs.length > 0 ? ` (+${otherPrs.length} more in this session)` : ''}: click for checks, reviews, and automation"
+            title={prPillTitle}
+            aria-expanded={prPopoverOpen}
           >
-            <!-- One dot: color = worst condition, pulse = unseen activity -->
-            <span class="w-1.5 h-1.5 {prHealthDot} {prAlerts.length > 0 ? 'animate-pulse' : ''}"></span>
+            <!-- One dot: color = worst condition, pulse = unseen activity,
+                 faded = the last GitHub fetch failed, so it may be old -->
+            <span class="w-1.5 h-1.5 {prHealthInfo.bgClass} {prAlerts.length > 0 ? 'animate-pulse' : ''} {prFetchFailed ? 'opacity-50' : ''}"></span>
             PR #{prInfo.number}
             {#if otherPrs.length > 0}
               <span class="text-muted-foreground/60">+{otherPrs.length}</span>
@@ -1288,16 +1348,21 @@
               onclick={startCreatePr}
               disabled={isRunning || preparingPrTurn}
               class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
-              title={canAgentCreatePr
-                ? 'Ask the agent to commit, push, and create a pull request in this conversation'
-                : 'Push this branch and create a pull request'}
+              title={isRunning
+                ? 'Create a pull request once the agent finishes its turn'
+                : canAgentCreatePr
+                  ? 'Ask the agent to commit, push, and create a pull request in this conversation'
+                  : 'Push this branch and create a pull request'}
             >
               Create PR
             </button>
             <button
+              bind:this={createPrMenuButtonRef}
               onclick={() => { createPrMenuOpen = !createPrMenuOpen; if (createPrMenuOpen) branchPickerOpen = false; }}
               class="ml-0.5 text-blue-400/70 hover:text-blue-300 transition-colors"
               title="Create PR options"
+              aria-label="Create PR options"
+              aria-expanded={createPrMenuOpen}
             >
               <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m18 15-6-6-6 6" />
@@ -1312,6 +1377,7 @@
       {@const c = prInfo.checks}
       <div
         transition:fly={{ y: 6, duration: 140 }}
+        use:keepInViewport
         class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50"
       >
         <!-- Header -->
@@ -1336,6 +1402,36 @@
           </div>
         {/if}
 
+        <!-- Merged or closed, with no open PR in the conversation: the bar
+             has no "Create PR" link, so further work starts one here. -->
+        {#if !hasOpenPr && sessionBranch && ghAvailable}
+          <div class="border-t border-border pt-2 mt-2">
+            <div
+              class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors"
+              title="No open PR here: start a new one for more work on this branch"
+            >
+              <span class="text-muted-foreground w-14 shrink-0">New PR</span>
+              <span class="flex-1"></span>
+              <button
+                onclick={() => { prPopoverOpen = false; sendAgentPrTurn(); }}
+                disabled={!canAgentCreatePr || preparingPrTurn}
+                class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                title={canAgentCreatePr ? 'Send a turn asking the agent to commit, push, and open a new PR' : 'The agent must be idle and running'}
+              >
+                with agent →
+              </button>
+              <button
+                onclick={() => { prPopoverOpen = false; createPrOpen = true; }}
+                disabled={isRunning}
+                class="text-blue-400 hover:text-blue-300 hover:underline shrink-0 disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                title={isRunning ? 'Create a pull request once the agent finishes its turn' : 'Open the PR dialog: title and description prefilled from the branch\'s commits'}
+              >
+                manually…
+              </button>
+            </div>
+          </div>
+        {/if}
+
         <!-- Status: checks + reviews, alerts merged in as "new" pills -->
         <div class="border-t border-border pt-2 mt-2 space-y-1.5">
           {#if c}
@@ -1356,7 +1452,7 @@
                   </button>
                 {/if}
               </span>
-              {#if c.failed > 0}
+              {#if c.failed > 0 && prOpen}
                 <button
                   onclick={fixCi}
                   disabled={!canAgentCreatePr}
@@ -1379,7 +1475,7 @@
             {/if}
           {/if}
 
-          {#if prInfo.reviewDecision === 'APPROVED' || prInfo.reviewDecision === 'CHANGES_REQUESTED' || commentsAlert}
+          {#if prInfo.reviewDecision === 'APPROVED' || prInfo.reviewDecision === 'CHANGES_REQUESTED' || reviewRequired || commentsAlert}
             <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
               <span class="text-muted-foreground w-14 shrink-0">Reviews</span>
               <span class="flex items-center gap-2 flex-1 min-w-0">
@@ -1387,6 +1483,8 @@
                   <span class="text-green-400 whitespace-nowrap">approved</span>
                 {:else if prInfo.reviewDecision === 'CHANGES_REQUESTED'}
                   <span class="text-orange-400 whitespace-nowrap" title="Changes requested">changes</span>
+                {:else if reviewRequired}
+                  <span class="text-muted-foreground/70 whitespace-nowrap" title="Review required: the base branch needs an approving review before this PR can merge">required</span>
                 {:else}
                   <span class="text-muted-foreground/70">commented</span>
                 {/if}
@@ -1440,19 +1538,15 @@
              second branch. Only the primary is watched; "watch" swaps it. -->
         {#if otherPrs.length > 0}
           <div class="border-t border-border pt-2 mt-2 space-y-0.5">
-            <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this session</div>
+            <div class="text-muted-foreground px-1.5 -mx-1.5 mb-1">Other PRs in this conversation</div>
             {#each otherPrs as other (other.number)}
-              {@const otherDot =
-                other.state === 'MERGED' ? 'bg-purple-400'
-                : other.state === 'CLOSED' ? 'bg-red-500'
-                : (other.checks?.failed ?? 0) > 0 ? 'bg-red-500'
-                : (other.checks?.pending ?? 0) > 0 ? 'bg-yellow-400'
-                : 'bg-green-500'}
+              {@const otherHealth = prHealth(other)}
+              <!-- Same colours as the pill, so a PR reads the same in both places. -->
               <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
-                <span class="w-1.5 h-1.5 {otherDot} shrink-0"></span>
+                <span class="w-1.5 h-1.5 {otherHealth.bgClass} shrink-0"></span>
                 <span
                   class="flex-1 min-w-0 truncate"
-                  title="{other.title ? `${other.title} — ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'}"
+                  title="{other.title ? `${other.title} — ` : ''}{other.headRefName ?? '?'} → {other.baseRefName ?? '?'} ({otherHealth.label})"
                 >
                   <span class="text-foreground">#{other.number}</span>
                   <span class="text-muted-foreground/70">{other.isDraft ? 'draft' : (other.state ?? 'open').toLowerCase()}</span>
@@ -1480,7 +1574,8 @@
           </div>
         {/if}
 
-        <!-- Automation -->
+        <!-- Automation: only an open PR is watched, so only it offers any -->
+        {#if prOpen}
         <div class="border-t border-border pt-2 mt-2">
           <div class="flex items-center gap-2 px-1.5 py-0.5 -mx-1.5 hover:bg-accent/40 transition-colors">
             <span class="text-muted-foreground w-14 shrink-0">Auto</span>
@@ -1511,11 +1606,12 @@
             Auto turns run only while the conversation is idle; git push / gh may need to be allowed.
           </p>
         </div>
+        {/if}
       </div>
     {/if}
 
     {#if createPrMenuOpen}
-      <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl py-1 text-xs w-48 z-50">
+      <div use:keepInViewport class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl py-1 text-xs w-48 z-50">
         <button
           onclick={() => { createPrMenuOpen = false; sendAgentPrTurn(); }}
           disabled={!canAgentCreatePr}
@@ -1524,10 +1620,15 @@
         >
           Create with agent
         </button>
+        <!-- Waits for the turn like the Create PR link beside it, so the
+             push can't catch the agent part way through committing. -->
         <button
           onclick={() => { createPrMenuOpen = false; createPrOpen = true; }}
-          class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors"
-          title="Open the PR dialog — title and description prefilled from the branch's commits"
+          disabled={isRunning}
+          class="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title={isRunning
+            ? 'Create a pull request once the agent finishes its turn'
+            : 'Open the PR dialog — title and description prefilled from the branch\'s commits'}
         >
           Create manually…
         </button>

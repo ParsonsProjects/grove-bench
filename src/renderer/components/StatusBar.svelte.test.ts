@@ -7,7 +7,9 @@ import { messageStore } from '../stores/messages.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { rateLimitStore } from '../stores/rateLimit.svelte.js';
+import { prStore } from '../stores/pr.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
+import type { PrInfo } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
 const HIDDEN = 's-hidden';
@@ -208,5 +210,158 @@ describe('StatusBar context actions', () => {
     await openContext();
     await fireEvent.click(screen.getByRole('button', { name: 'Summarise to free space' }));
     expect(send).toHaveBeenCalledWith(ACTIVE, '/compact');
+  });
+});
+
+describe('StatusBar PR', () => {
+  function pr(over: Partial<PrInfo> = {}): PrInfo {
+    return {
+      number: 42,
+      url: 'https://github.com/o/r/pull/42',
+      state: 'OPEN',
+      title: 'Fix token refresh',
+      reviewDecision: '',
+      checks: { total: 2, passed: 2, failed: 0, pending: 0 },
+      failingChecks: [],
+      headSha: 'sha-1',
+      headRefName: 'feat-a',
+      baseRefName: 'main',
+      ...over,
+    };
+  }
+
+  // The PR popover flies in and out. jsdom has no Web Animations, so each
+  // animation here finishes at once.
+  const realAnimate = Element.prototype.animate;
+
+  beforeEach(() => {
+    prStore.clear(ACTIVE);
+    store.prerequisites = { gh: { available: true } } as any;
+    Element.prototype.animate = function () {
+      const animation = { onfinish: null as null | (() => void), cancel() {}, currentTime: 0 };
+      queueMicrotask(() => animation.onfinish?.());
+      return animation as unknown as Animation;
+    };
+  });
+
+  afterEach(() => {
+    // Unmount first: clearing the store closes an open popover, and its
+    // outro still needs the animate stub.
+    cleanup();
+    vi.mocked(window.groveBench.getPrs).mockReset();
+    vi.mocked(window.groveBench.getGitSyncStatus).mockReset();
+    vi.mocked(window.groveBench.push).mockReset();
+    prStore.clear(ACTIVE);
+    store.prerequisites = null;
+    messageStore.isRunning = {};
+    Element.prototype.animate = realAnimate;
+  });
+
+  /** Render the active conversation with these PRs (primary first) and
+   *  wait for the pill. */
+  async function renderWithPrs(...prs: PrInfo[]) {
+    vi.mocked(window.groveBench.getPrs).mockImplementation(async (id: string) => (id === ACTIVE ? prs : []));
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    return screen.findByRole('button', { name: new RegExp(`^PR #${prs[0].number}`) });
+  }
+
+  it('says the PR health in words, not just with the dot colour', async () => {
+    const pill = await renderWithPrs(pr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 }, failingChecks: ['e2e'] }));
+    expect(pill.getAttribute('title')).toContain('PR #42: CI failing');
+  });
+
+  it('closes the popover on Escape and hands focus back to the pill', async () => {
+    const pill = await renderWithPrs(pr());
+    await fireEvent.click(pill);
+    expect(pill.getAttribute('aria-expanded')).toBe('true');
+    screen.getByRole('button', { name: 'Open ↗' }).focus();
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Open ↗' })).toBeNull());
+    expect(pill.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(pill);
+  });
+
+  it('closes the Create PR menu on Escape', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create PR options' }));
+    expect(screen.getByRole('button', { name: 'Create manually…' })).toBeTruthy();
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('button', { name: 'Create manually…' })).toBeNull();
+  });
+
+  it('waits for the turn to end before creating a PR by hand, like the Create PR link', async () => {
+    messageStore.isRunning = { [ACTIVE]: true };
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect((await screen.findByRole('button', { name: 'Create PR' }) as HTMLButtonElement).disabled).toBe(true);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Create PR options' }));
+
+    const manual = screen.getByRole('button', { name: 'Create manually…' }) as HTMLButtonElement;
+    expect(manual.disabled).toBe(true);
+    expect(manual.getAttribute('title')).toMatch(/once the agent finishes its turn/);
+  });
+
+  it('clears the "new" chips once the popover is closed, but keeps a needs-human note', async () => {
+    const pill = await renderWithPrs(pr({ checks: { total: 1, passed: 0, failed: 1, pending: 0 }, reviewDecision: 'CHANGES_REQUESTED' }));
+    prStore.alertsBySession = {
+      [ACTIVE]: [
+        { kind: 'ci_failed', checks: ['e2e'], id: 1, prNumber: 42 },
+        { kind: 'new_comments', count: 2, id: 2, prNumber: 42 },
+        { kind: 'needs_human', reason: 'Auto-fix gave up', id: 3, prNumber: 42 },
+      ],
+    };
+    await fireEvent.click(pill);
+    expect(screen.getByText('2 new')).toBeTruthy();
+
+    await fireEvent.click(pill);
+
+    expect(prStore.getAlerts(ACTIVE)).toMatchObject([{ kind: 'needs_human' }]);
+  });
+
+  it('shows "review required" for an open PR waiting on reviewers', async () => {
+    await fireEvent.click(await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' })));
+    expect(screen.getByText('Reviews')).toBeTruthy();
+    expect(screen.getByText('required')).toBeTruthy();
+  });
+
+  it('offers no agent fixes or automation on a closed PR, and a way to start a new one', async () => {
+    await fireEvent.click(await renderWithPrs(pr({ state: 'CLOSED', checks: { total: 1, passed: 0, failed: 1, pending: 0 } })));
+
+    expect(screen.queryByRole('button', { name: /fix with agent/ })).toBeNull();
+    expect(screen.queryByText('Auto')).toBeNull();
+    expect(screen.getByText('New PR')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'manually…' })).toBeTruthy();
+  });
+
+  it('does not offer a new PR while one is open', async () => {
+    await fireEvent.click(await renderWithPrs(pr(), pr({ number: 38, state: 'MERGED' })));
+    expect(screen.queryByText('New PR')).toBeNull();
+  });
+
+  it('colours other PRs the same way as the pill', async () => {
+    await fireEvent.click(await renderWithPrs(
+      pr(),
+      pr({ number: 70, title: 'Stacked', reviewDecision: 'CHANGES_REQUESTED', checks: null, baseRefName: 'release' }),
+    ));
+    const row = screen.getByText('#70').closest('div')!;
+    expect(row.querySelector('span')!.className).toContain('bg-orange-400');
+    expect(screen.getByText('Other PRs in this conversation')).toBeTruthy();
+  });
+
+  it('drops a "push failed" note once nothing is left to push', async () => {
+    vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 2, behind: 0 });
+    vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(await screen.findByRole('button', { name: '↑2' }));
+    expect(await screen.findByText('push failed')).toBeTruthy();
+
+    // The agent (or a terminal) pushed it.
+    prStore.syncBySession = { ...prStore.syncBySession, [ACTIVE]: { upstream: 'origin/feat-a', ahead: 0, behind: 0 } };
+
+    await waitFor(() => expect(screen.queryByText('push failed')).toBeNull());
   });
 });

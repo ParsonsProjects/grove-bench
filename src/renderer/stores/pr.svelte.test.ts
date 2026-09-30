@@ -90,6 +90,22 @@ describe('PR alert gating by session status', () => {
     await refreshWith(info);
     expect(prStore.getPr(SID)).toEqual(info);
   });
+
+  it('markAlertsSeen drops what was only "new", but keeps a request to step in', async () => {
+    setStatus('running');
+    await refreshWith(pr({ commentSignature: ['c1'] }));
+    prStore.alertsBySession = {
+      [SID]: [
+        { kind: 'ci_failed', checks: ['build'], id: 1, prNumber: 7 },
+        { kind: 'new_comments', count: 1, id: 2, prNumber: 7 },
+        { kind: 'needs_human', reason: 'Auto-fix gave up', id: 3, prNumber: 7 },
+      ],
+    };
+
+    prStore.markAlertsSeen(SID);
+
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'needs_human' }]);
+  });
 });
 
 describe('refresh — partial failure', () => {
@@ -117,6 +133,15 @@ describe('refresh — partial failure', () => {
     await refreshWith(pr({ number: 8 }));
     expect(prStore.fetchFailedBySession[SID]).toBe(false);
     expect(prStore.getPr(SID)?.number).toBe(8);
+  });
+
+  it('does not flag the PR as stale when only the local sync check fails', async () => {
+    setStatus('running');
+    mockGroveBench.getGitSyncStatus.mockRejectedValueOnce(new Error('not a git repository'));
+    await refreshWith(pr({ number: 7 }));
+
+    expect(prStore.getPr(SID)?.number).toBe(7);
+    expect(prStore.fetchFailedBySession[SID]).toBeFalsy();
   });
 
   it('still records a "no PR" answer as null', async () => {
