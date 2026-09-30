@@ -23,11 +23,17 @@ class MemoryStore {
   saving = $state(false);
   error = $state<string | null>(null);
   compacting = $state(false);
+  /** Project the running manual compaction is for. The panel can switch
+   *  projects meanwhile; cancel, progress, the result and its Undo stay
+   *  with this one. */
+  compactingRepo = $state<string | null>(null);
   compactMessage = $state<string | null>(null);
   backups = $state<MemoryBackupInfo[]>([]);
   stats = $state<MemoryStatsResult | null>(null);
   /** Result of the last manual compaction — drives the change-summary dialog and its Undo. */
   lastCompaction = $state<MemoryCompactionStatus | null>(null);
+  /** Project lastCompaction belongs to, which its Undo restores. */
+  private lastCompactionRepo: string | null = null;
   undoing = $state(false);
   /** Preview of one backup snapshot's contents, keyed to backupPreviewId. */
   backupPreviewId = $state<string | null>(null);
@@ -60,7 +66,7 @@ class MemoryStore {
     if (e.kind === 'stage') {
       if (e.auto) {
         this.autoCompactingRepo = e.repoPath;
-      } else if (e.repoPath === this.activeRepo) {
+      } else if (e.repoPath === this.compactingRepo) {
         this.compactStage = e.stage;
       }
       return;
@@ -191,17 +197,20 @@ class MemoryStore {
   }
 
   async compact() {
-    if (!this.activeRepo || this.compacting) return;
+    const repo = this.activeRepo;
+    if (!repo || this.compacting) return;
     this.compacting = true;
+    this.compactingRepo = repo;
     this.error = null;
     this.compactMessage = null;
     this.lastCompaction = null;
     this.toast = null;
     this.startElapsedTimer();
     try {
-      const status = await window.groveBench.memoryCompact(this.activeRepo);
+      const status = await window.groveBench.memoryCompact(repo);
       if (status.compacted) {
         this.lastCompaction = status; // opens the change-summary dialog with Undo
+        this.lastCompactionRepo = repo;
       } else if (status.error) {
         const message = `Compaction failed: ${status.error}`;
         if (this.panelOpen) this.error = message;
@@ -214,23 +223,28 @@ class MemoryStore {
         if (this.panelOpen) this.compactMessage = message;
         else this.toast = { kind: 'info', message };
       }
-      this.selectedFile = null;
-      this.files = await window.groveBench.memoryList(this.activeRepo);
-      await this.loadStats();
+      // Refresh the view only if it still shows this project.
+      if (this.activeRepo === repo) {
+        this.selectedFile = null;
+        this.files = await window.groveBench.memoryList(repo);
+        await this.loadStats();
+      }
     } catch (e: any) {
       if (this.panelOpen) this.error = e.message || String(e);
       else this.toast = { kind: 'error', message: e.message || String(e) };
     } finally {
       this.stopElapsedTimer();
       this.compacting = false;
+      this.compactingRepo = null;
     }
   }
 
   /** Ask the main process to abort the running compaction pass. */
   async cancelCompact() {
-    if (!this.activeRepo || !this.compacting) return;
+    const repo = this.compactingRepo;
+    if (!repo || !this.compacting) return;
     try {
-      await window.groveBench.memoryCompactCancel(this.activeRepo);
+      await window.groveBench.memoryCompactCancel(repo);
       // compact()'s pending promise resolves with the cancelled status
     } catch (e: any) {
       this.error = e.message || String(e);
@@ -240,17 +254,20 @@ class MemoryStore {
   /** Roll back the last manual compaction via its pre-apply snapshot. */
   async undoCompaction() {
     const backupId = this.lastCompaction?.backupId;
-    if (!this.activeRepo || !backupId || this.undoing) return;
+    const repo = this.lastCompactionRepo;
+    if (!repo || !backupId || this.undoing) return;
     this.undoing = true;
     this.error = null;
     try {
-      const status = await window.groveBench.memoryRestoreBackup(this.activeRepo, backupId);
+      const status = await window.groveBench.memoryRestoreBackup(repo, backupId);
       if (status.restored) {
         this.lastCompaction = null;
         this.compactMessage = 'Compaction undone';
-        this.selectedFile = null;
-        this.files = await window.groveBench.memoryList(this.activeRepo);
-        await this.loadStats();
+        if (this.activeRepo === repo) {
+          this.selectedFile = null;
+          this.files = await window.groveBench.memoryList(repo);
+          await this.loadStats();
+        }
       } else {
         this.error = status.error ?? 'Undo failed';
       }

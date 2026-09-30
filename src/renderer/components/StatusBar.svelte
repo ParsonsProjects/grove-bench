@@ -245,7 +245,7 @@
   let memoryCompacting = $derived.by(() => {
     const repo = store.sessions.find((s) => s.id === sessionId)?.repoPath;
     if (!repo) return false;
-    return (memoryStore.compacting && memoryStore.activeRepo === repo)
+    return (memoryStore.compacting && memoryStore.compactingRepo === repo)
       || memoryStore.autoCompactingRepo === repo;
   });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
