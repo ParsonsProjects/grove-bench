@@ -15,6 +15,7 @@ import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
 import { installSpellcheckMenu } from './spellcheck.js';
 import { lockToAppPage } from './window-guard.js';
+import { runQuitCleanup } from './quit-cleanup.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -157,40 +158,22 @@ app.on('window-all-closed', () => {
 // checkpoints are left alone; conversations reopen on the next launch.
 app.on('before-quit', (event) => {
   if (isQuitting) return;
-
-  if (sessionManager.count > 0) {
-    event.preventDefault();
-    isQuitting = true;
-
-    // Notify renderer
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.APP_CLOSING);
-    }
-
-    (async () => {
-      try {
-        logger.info(`Closing ${sessionManager.count} sessions...`);
-        await terminalManager.killAll();
-        await sessionManager.closeAll();
-        logger.info('Cleanup complete');
-      } catch (e) {
-        logger.error('Cleanup error during quit:', e);
-      } finally {
-        logger.close();
-        app.quit();
-      }
-    })();
-  } else if (sessionManager.closingCount > 0 || terminalManager.count > 0) {
-    // No live sessions, but a conversation closed just before quitting or a
-    // terminal is still open: finish killing the processes they started so
-    // none outlive the app.
-    event.preventDefault();
-    isQuitting = true;
-    Promise.all([terminalManager.killAll(), sessionManager.waitForCloses()]).finally(() => {
-      logger.close();
-      app.quit();
-    });
-  } else {
+  // Nothing running: no live conversation, none still closing (one closed
+  // just before quitting), no terminal.
+  if (sessionManager.count === 0 && sessionManager.closingCount === 0 && terminalManager.count === 0) {
     logger.close();
+    return;
   }
+
+  event.preventDefault();
+  isQuitting = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.APP_CLOSING);
+  }
+  logger.info(`Closing ${sessionManager.count} sessions...`);
+  // closeAll() also waits for conversations already closing.
+  runQuitCleanup(() => Promise.all([terminalManager.killAll(), sessionManager.closeAll()])).finally(() => {
+    logger.close();
+    app.quit();
+  });
 });
