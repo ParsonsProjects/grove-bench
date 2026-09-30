@@ -119,6 +119,7 @@ describe('ChangesReviewPanel — live diff while the agent is running', () => {
 
 import { fireEvent } from '@testing-library/svelte';
 import { reviewStore } from '../stores/review.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
 
 function hunkPatch(): string {
   // One hunk starting at line 10 of a longer file, so context can be expanded above and below.
@@ -135,6 +136,7 @@ function hunkPatch(): string {
 
 describe('ChangesReviewPanel — review features', () => {
   beforeEach(() => {
+    panelStore.collapsed = {};
     reviewStore.clear(SID);
     localStorage.clear();
     gitStatusStore.scopeBySession = {};
@@ -233,6 +235,29 @@ describe('ChangesReviewPanel — review features', () => {
     await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/committed.ts', false, { base: 'main' }));
   });
 
+  it('folds the file list to a rail of status letters, remembered per tab', async () => {
+    const { container, getByLabelText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const sidebar = getByLabelText('Changed files');
+
+    await fireEvent.click(getByLabelText('Collapse file list'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ changesFiles: true });
+    expect(queryByPlaceholderText('Filter files...')).toBeNull();
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    const b = sidebar.querySelector('[data-file-key="src/b.ts:false"]') as HTMLButtonElement;
+    expect(b.textContent?.trim()).toBe('M');
+    expect(b.title).toBe('src/b.ts');
+
+    // Still a working file list: picking a letter opens that file, arrows walk the rail.
+    await fireEvent.click(b);
+    expect(b.className).toContain('border-primary');
+    await fireEvent.keyDown(sidebar, { key: 'ArrowUp' });
+    expect(sidebar.querySelector('[data-file-key="src/a.ts:false"]')!.className).toContain('border-primary');
+
+    await fireEvent.click(getByLabelText('Expand file list'));
+    expect(queryByPlaceholderText('Filter files...')).not.toBeNull();
+  });
+
   it('shows the scope toggle and a branch message in the empty state', async () => {
     gitStatusStore.statusBySession = { [SID]: { entries: [] } };
     mockGroveBench.getDefaultBranch.mockResolvedValue('main');
@@ -264,8 +289,28 @@ describe('ChangesReviewPanel with grove characters', () => {
     messageStore.setIsRunning(SID, true);
     expect(await findByRole('img', { name: 'Working' })).toBeInTheDocument();
     expect(getByText('Edits show up here as the agent makes them')).toBeInTheDocument();
-    // The scope toggle stays under the scene.
+    // The scope toggle stays in the sidebar.
     expect(getByText('Branch')).toBeInTheDocument();
+  });
+
+  it('keeps the file sidebar with nothing to list, so the first change does not move the layout', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('first') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    const { getByText, getByLabelText, queryByText, container } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const sidebar = getByLabelText('Changed files');
+    expect(getByText('0 changes')).toBeInTheDocument();
+    // The scene sits in the diff pane, next to the sidebar.
+    expect(sidebar.contains(getByText('Working tree clean'))).toBe(false);
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+    // Same sidebar element: it was not torn down and rebuilt.
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    expect(getByText('1 change')).toBeInTheDocument();
+    expect(queryByText('Working tree clean')).toBeNull();
+    expect(container.querySelector('[data-scenery="watering-can"]')).toBeNull();
   });
 
   it('shows only the message when grove characters are off', () => {

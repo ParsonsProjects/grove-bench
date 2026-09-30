@@ -3,7 +3,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
-import type { PrerequisiteStatus, SessionSortState, SkillSuggestion } from '../shared/types.js';
+import { COLLAPSIBLE_PANELS, type CollapsedPanels, type PrerequisiteStatus, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 
 export interface PrerequisiteCache {
@@ -29,6 +29,8 @@ export interface AppState {
   sessionSort: SessionSortState;
   /** Sidebar width in px (user-resizable). Null/absent = renderer default. */
   sidebarWidth?: number | null;
+  /** Sidebars folded down to a rail. Absent = all open. */
+  collapsedPanels?: CollapsedPanels;
   /** Skill names each repo's sessions have ever reported (union, per repo
    *  path). Lets the disabled-skills allowlist include plugin-provided skills
    *  that the on-disk scan can't discover, even on the first query after an
@@ -75,12 +77,24 @@ export const APP_STATE_MIGRATIONS: readonly Migration[] = [
 
 // ─── Validation ───
 
+/** Keeps the known panels' flags and drops anything else, so one bad entry
+ *  (or a panel a newer version added) doesn't reset the rest. */
+const collapsedPanelsSchema = z.record(z.string(), z.unknown()).transform((raw): CollapsedPanels => {
+  const panels: CollapsedPanels = {};
+  for (const key of COLLAPSIBLE_PANELS) {
+    const value = raw[key];
+    if (typeof value === 'boolean') panels[key] = value;
+  }
+  return panels;
+});
+
 /** Per-field fallback: a corrupt value resets that field only. */
 const appStateSchema = z.object({
   openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
   collapsedRepos: z.record(z.string(), z.boolean()).catch(DEFAULT_STATE.collapsedRepos),
   sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
   sidebarWidth: z.number().finite().nullable().optional().catch(null),
+  collapsedPanels: collapsedPanelsSchema.optional().catch(undefined),
   knownSkills: z.record(z.string(), z.array(z.string())).optional().catch(undefined),
   skillSuggestions: z.record(z.string(), z.object({
     suggestions: z.array(z.custom<SkillSuggestion>((v) => typeof v === 'object' && v !== null)),
@@ -191,6 +205,7 @@ const openTabsWriter = debouncedWriter<string[]>((s, v) => { s.openTabIds = v; }
 const collapsedReposWriter = debouncedWriter<Record<string, boolean>>((s, v) => { s.collapsedRepos = v; });
 const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessionSort = v; });
 const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
+const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.collapsedPanels = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
 
 export function saveOpenTabs(ids: string[]): void {
@@ -207,6 +222,11 @@ export function saveSessionSort(sort: SessionSortState): void {
 
 export function saveSidebarWidth(width: number): void {
   sidebarWidthWriter.save(width);
+}
+
+export function saveCollapsedPanels(panels: unknown): void {
+  const parsed = collapsedPanelsSchema.safeParse(panels);
+  if (parsed.success) collapsedPanelsWriter.save(parsed.data);
 }
 
 export function loadUnreadSessionIds(): string[] {

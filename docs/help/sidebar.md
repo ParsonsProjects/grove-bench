@@ -18,6 +18,10 @@ Each conversation in the sidebar shows:
 
 Click a conversation to switch to it. The workspace will show that conversation's activity, changes, and terminal.
 
+## Collapsing the sidebar
+
+Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open conversation, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. The rail also keeps search, **New conversation**, **Add a project**, bookmarks, memory, clean-up and settings. Projects and the filters are only in the full sidebar, so the rail always lists every open conversation. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
+
 ## Filters
 
 Above the conversation lists, four chips let you narrow the sidebar to what matters right now. Each shows a count, and a conversation belongs to exactly one:

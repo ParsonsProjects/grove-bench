@@ -32,7 +32,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
@@ -1705,6 +1705,15 @@ export function registerHandlers() {
     if (typeof width === 'number' && Number.isFinite(width)) {
       saveSidebarWidth(Math.round(width));
     }
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => {
+    flushPendingSaves();
+    return loadAppState().collapsedPanels ?? {};
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
+    saveCollapsedPanels(panels);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {
