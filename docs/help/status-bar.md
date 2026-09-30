@@ -91,16 +91,16 @@ Each server in the popover shows a status dot:
 | Gray | Disabled (disconnected) |
 | Red | Failed |
 
-## Context Window
+## Context
 
-A colored bar shows how much of the agent's context window has been used:
+**Context N%** and a colored bar show how much of the agent's context window has been used. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
 | 0–40% | Green | Plenty of room |
 | 40–70% | Yellow | Getting full |
 | 70–85% | Orange | Running low |
-| 85–100% | Red | Nearly full — the agent may start compacting older context |
+| 85–100% | Red | Nearly full: the agent may start summarising older context |
 
 A blue segment within the bar represents cached/reusable context.
 

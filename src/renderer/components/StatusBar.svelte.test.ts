@@ -178,8 +178,14 @@ describe('StatusBar context actions', () => {
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
     messageStore.usageBySession[ACTIVE] = { inputTokens: 150_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
     render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(screen.getByTitle('Context usage — click for details'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Context 75% used. Click for details.' }));
   }
+
+  it('labels the meter and says what context is', async () => {
+    await openContext();
+    expect(screen.getByText('Context 75%')).toBeTruthy();
+    expect(screen.getByText(/How much the agent can hold in mind at once/)).toBeTruthy();
+  });
 
   it('asks before clearing the conversation, and Cancel keeps it', async () => {
     const send = vi.spyOn(messageStore, 'sendCommand').mockImplementation(() => {});

@@ -1531,10 +1531,11 @@
       <button
         onclick={() => contextExpanded = !contextExpanded}
         class="flex flex-col items-end gap-1 leading-snug hover:text-foreground transition-colors"
-        title="Context usage — click for details"
+        title="Context: {formatTokens(usedTokens)} of {formatTokens(contextWindow)} tokens used. Click for details."
+        aria-label="Context {usedPercent.toFixed(0)}% used. Click for details."
       >
         <span style:color={textColor} class="font-medium transition-colors">
-          {formatTokens(usedTokens)}/{formatTokens(contextWindow)} ({usedPercent.toFixed(0)}%)
+          Context {usedPercent.toFixed(0)}%
         </span>
         <!-- Mini bar with color-coded fill -->
         <div class="w-24 h-1.5 bg-muted overflow-hidden flex">
@@ -1547,10 +1548,17 @@
 
       {#if contextExpanded}
         <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-4 text-xs w-72 z-50">
-          <div class="flex items-center justify-between mb-3">
-            <span class="font-medium text-foreground text-sm">Context Window</span>
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-medium text-foreground text-sm">Context</span>
             <span class="font-medium" style:color={textColor}>{usedPercent.toFixed(1)}%</span>
           </div>
+          <!-- What it is, for someone new to agents. Claude Code's own
+               behaviour near the limit: https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up -->
+          <p class="text-muted-foreground mb-3">
+            How much the agent can hold in mind at once: your messages, its replies, files it read and command
+            output. Near the limit it clears old tool output, then summarises the conversation, so early details
+            can be lost.
+          </p>
 
           <!-- Large segmented bar -->
           <div class="w-full h-3 bg-muted overflow-hidden flex mb-1">
