@@ -3,6 +3,7 @@
   import Fuse from 'fuse.js';
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { userMessageLabel } from '../lib/message-label.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { sortSessions } from '../lib/session-sort.js';
   import HighlightedText from './HighlightedText.svelte';
@@ -41,7 +42,7 @@
       const msgs = messageStore.getMessages(s.id);
       const firstUser = msgs.find((m) => m.kind === 'user');
       const firstPrompt =
-        (firstUser && 'text' in firstUser ? firstUser.text.slice(0, 120) : '') ||
+        (firstUser?.kind === 'user' ? userMessageLabel(firstUser).slice(0, 120) : '') ||
         sessionPreviewStore.get(s.id)?.firstPrompt ||
         '';
       return {

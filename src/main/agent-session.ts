@@ -3,6 +3,7 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
@@ -875,11 +876,16 @@ class AgentSessionManager {
 
     // Process event stream from the adapter
     try {
-      for await (const event of handle.events) {
-        if (!TRANSIENT_EVENT_TYPES.has(event.type)) {
-          logger.debug(`[runQuery] session=${id} event type=${event.type}`);
+      for await (const adapterEvent of handle.events) {
+        if (!TRANSIENT_EVENT_TYPES.has(adapterEvent.type)) {
+          logger.debug(`[runQuery] session=${id} event type=${adapterEvent.type}`);
         }
         if (abortController.signal.aborted) break;
+
+        // Save the images a tool returned; the event passes on references.
+        const event: AgentEvent = adapterEvent.type === 'tool_result' && adapterEvent.imageData
+          ? await storeToolImages(id, adapterEvent)
+          : adapterEvent;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
@@ -1154,8 +1160,14 @@ class AgentSessionManager {
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
+    // Attached images are saved to disk and the event refers to them, so the
+    // thread can show them again when the conversation is reopened.
     const uuid = crypto.randomUUID();
-    const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
+    const storedImages = images?.length ? await saveImages(id, images) : [];
+    const userEvent: AgentEvent = {
+      type: 'user_message', text: content, uuid,
+      ...(storedImages.length > 0 && { images: storedImages }),
+    };
     session.emit?.(userEvent);
 
     // Snapshot the working tree before the agent gets the prompt. The capture
@@ -1165,7 +1177,7 @@ class AgentSessionManager {
     // throws; a false result means there is no checkpoint for this message,
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
-    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content));
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content, images));
     // Without git there are no checkpoints to capture, so nothing failed.
     if (captured) {
       session.checkpointFailing = false;
@@ -2191,6 +2203,10 @@ class AgentSessionManager {
     // runQuery(), which picks up pendingResumeAt (truncated fork resume) or —
     // with providerSessionId null — starts a fresh conversation.
     await this.stopQuery(id);
+
+    // After the stop, so a tool result from the old query can't save an image
+    // after the check. The rewound turns' images are no longer shown.
+    void pruneImages(id, session.eventHistory);
   }
 
   /** Dry-run rewind to get the diff of what would change. */
@@ -2319,6 +2335,8 @@ class AgentSessionManager {
       this.historyCache.delete(id);
       this.searchIndexes.delete(id);
     }
+    // No event refers to the thread's images any more.
+    void removeImages(id);
   }
 
   /** Session ids that were running when the system suspended. Captured on

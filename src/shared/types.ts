@@ -179,7 +179,7 @@ export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[] }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string }
@@ -189,7 +189,7 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string }
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number }
@@ -817,11 +817,22 @@ export interface SpellcheckMenuRequest {
 
 // ─── Image Attachment ───
 
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */
   data: string;
-  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  mediaType: ImageMediaType;
   name: string;
+}
+
+/** An image saved in a conversation's attachments folder (main/attachments.ts).
+ *  Events carry this instead of the image data so the event log stays small. */
+export interface StoredImage {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. Absent for images a tool returned. */
+  name?: string;
 }
 
 // ─── Plugins ───

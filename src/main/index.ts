@@ -14,6 +14,7 @@ import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
 import { installSpellcheckMenu } from './spellcheck.js';
+import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolders } from './attachments.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -28,6 +29,9 @@ app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
 // Register built-in agent adapters before anything else uses them
 initAdapters();
+
+// Custom schemes can only be registered before the app is ready.
+registerAttachmentScheme();
 
 registerHandlers();
 
@@ -108,6 +112,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  handleAttachmentProtocol();
+  void removeDeletedFolders();
   createWindow();
 
   // Background worktree sweep. The first run waits until the renderer has
