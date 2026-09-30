@@ -222,6 +222,9 @@ interface ManagedSession {
   /** The conversation's folder is a git repository. Without git there are no
    *  checkpoints and no commits, so neither is attempted. */
   gitBacked: boolean;
+  /** The last checkpoint capture failed. The thread is told once per run of
+   *  failures (git missing, a broken repository), not on every message. */
+  checkpointFailing?: boolean;
   /** Status to go back to when a sleeping session wakes: 'running', or
    *  'starting' when its query had not reported system_init yet. */
   statusBeforeSleep: SessionStatus | null;
@@ -1163,12 +1166,17 @@ class AgentSessionManager {
     // Label the checkpoint with what the chat shows, not attached file content.
     const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content));
     // Without git there are no checkpoints to capture, so nothing failed.
-    if (!captured && session.gitBacked) {
+    if (captured) {
+      session.checkpointFailing = false;
+    } else if (session.gitBacked) {
       logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
-      session.emit?.({
-        type: 'error',
-        message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. See the log for the git error.',
-      });
+      if (!session.checkpointFailing) {
+        session.checkpointFailing = true;
+        session.emit?.({
+          type: 'error',
+          message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. Later messages won\'t get one either until git works again. See the log for the git error.',
+        });
+      }
     }
     // The query may have been torn down while the snapshot ran (stop, model
     // switch); if a replacement is starting, hand the prompt to that one.

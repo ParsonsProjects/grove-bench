@@ -905,6 +905,9 @@ export interface GroveBenchAPI {
   addRepo(): Promise<PickedProject | null>;
   /** Whether a project path is a git repository, a plain folder, or gone. */
   repoKind(path: string): Promise<ProjectKind>;
+  /** Keep a project in the remembered list (one found some other way than
+   *  the folder picker, such as the old localStorage list). */
+  rememberRepo(path: string): Promise<void>;
   /** Whether git has a user.name and user.email for commits in this folder. */
   hasGitIdentity(path: string): Promise<boolean>;
   removeRepo(repoPath: string): Promise<void>;
@@ -1528,6 +1531,7 @@ export const IPC = {
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
   REPO_KIND: 'repo:kind',
+  REPO_REMEMBER: 'repo:remember',
   GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',

@@ -491,3 +491,18 @@ describe('createAttachedSession', () => {
     store.sessions = [];
   });
 });
+
+describe('loadRepos', () => {
+  it('moves projects from the old localStorage list into the remembered list', async () => {
+    localStorage.setItem('grove-bench:repos', JSON.stringify(['/repo/known', '/repo/legacy']));
+    mockGroveBench.listRepos.mockResolvedValueOnce(['/repo/known']);
+
+    await store.loadRepos();
+
+    expect(store.repos).toEqual(['/repo/known', '/repo/legacy']);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledWith('/repo/legacy');
+    expect(localStorage.getItem('grove-bench:repos')).toBeNull();
+    store.repos = [];
+  });
+});

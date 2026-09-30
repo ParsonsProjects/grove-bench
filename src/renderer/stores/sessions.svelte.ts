@@ -143,6 +143,9 @@ class SessionStore {
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
             this.repos = [...this.repos, r];
+            // Main keeps the list now; without this a project with no
+            // conversations would be gone at the next launch.
+            await window.groveBench.rememberRepo(r).catch(() => {});
           }
         }
         localStorage.removeItem('grove-bench:repos');

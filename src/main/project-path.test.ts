@@ -74,6 +74,13 @@ describe('projectKind', () => {
     expect(await projectKind(path.join(root, 'gone'))).toBe('missing');
   });
 
+  it('treats a broken .git as a plain folder, as when it was added', async () => {
+    // A leftover .git file from a deleted worktree.
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /nowhere/.git/worktrees/gone\n');
+    expect((await inspectProjectFolder(root)).kind).toBe('folder');
+    expect(await projectKind(root)).toBe('folder');
+  });
+
   it('keeps a repository git refuses as a git project, so its error shows instead of editing in place', async () => {
     await execa('git', ['init', '-q'], { cwd: root });
     process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';

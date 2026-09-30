@@ -21,6 +21,16 @@ describe('Help', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
+  it('opens with F1 even when a focused element (the terminal) stops the key', async () => {
+    render(TitleBar);
+    const input = document.createElement('textarea');
+    input.addEventListener('keydown', (e) => e.stopPropagation());
+    document.body.appendChild(input);
+    await fireEvent.keyDown(input, { key: 'F1' });
+    expect(helpStore.open).toBe(true);
+    input.remove();
+  });
+
   it('ignores F1 with a modifier', async () => {
     render(TitleBar);
     await fireEvent.keyDown(window, { key: 'F1', ctrlKey: true });

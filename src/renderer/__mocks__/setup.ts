@@ -52,6 +52,7 @@ const mockGroveBench = {
   gitSquash: vi.fn(() => Promise.resolve({ success: true } as import('../../shared/types.js').GitOpResult)),
   getDefaultBranch: vi.fn(() => Promise.resolve('main')),
   addRepo: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').PickedProject | null)),
+  rememberRepo: vi.fn(() => Promise.resolve()),
   repoKind: vi.fn(() => Promise.resolve('git' as import('../../shared/types.js').ProjectKind)),
   hasGitIdentity: vi.fn(() => Promise.resolve(true)),
   onUpdateStatus: vi.fn(() => () => {}),

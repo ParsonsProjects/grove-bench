@@ -140,7 +140,8 @@ A minimal version, without the `Project` record:
   returns it. A folder with a `.git` that git refuses stays `git` when git is
   installed, so git's error shows instead of the agent editing in place.
 - **Conversations.** A folder project's draft only offers the project folder.
-  `SESSION_CREATE` checks `isGitRepo()` itself, refuses a worktree in a folder,
+  `SESSION_CREATE` decides `noGit` itself, from `projectKind()` or from the
+  conversation it is attached to, refuses a worktree in a folder,
   and registers a direct entry with `noGit: true` and an empty branch.
   `AgentSessionManager` uses `noGitCheckpoints` for such a folder.
 - **What the UI hides.** Changes and Checkpoints show why they need git; the

@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { git, gitVersion, isGitRepo } from './git.js';
+import { git } from './git.js';
 import type { PickedProject, ProjectKind } from '../shared/types.js';
+
+/** Git's message when it refuses a real repository, such as one on a drive
+ *  owned by another user ("dubious ownership"). */
+const GIT_REFUSAL = /dubious ownership|safe\.directory/i;
 
 /** A `git rev-parse` answer in `dir`, or null when git fails there. */
 async function revParse(dir: string, flag: string): Promise<string | null> {
@@ -40,7 +44,7 @@ export async function inspectProjectFolder(picked: string): Promise<PickedProjec
 
   // Git refuses some real repositories, such as one on a drive owned by
   // another user ("dubious ownership"). Its own message says how to allow it.
-  if (/dubious ownership|safe\.directory/i.test(refusal)) {
+  if (GIT_REFUSAL.test(refusal)) {
     const reason = refusal.replace(/^fatal:\s*/i, '');
     throw new Error(`Git won't open this repository. ${reason.charAt(0).toUpperCase()}${reason.slice(1)}`);
   }
@@ -56,11 +60,12 @@ export async function inspectProjectFolder(picked: string): Promise<PickedProjec
 }
 
 /**
- * Whether a project path is a git repository, a plain folder, or gone.
- * Without git installed every folder is a plain folder. With git installed,
- * a folder with a `.git` that git refuses (for example "dubious ownership")
- * stays a git project, so git's own error shows when a conversation starts
- * rather than the agent quietly editing the checkout in place.
+ * Whether a project path is a git repository, a plain folder, or gone. It
+ * agrees with inspectProjectFolder(): a repository git refuses (for example
+ * "dubious ownership") is still a git project, so git's own error shows when
+ * a conversation starts rather than the agent quietly editing the checkout in
+ * place. Anything else git can't open, including a broken `.git` or any
+ * folder when git isn't installed, is a plain folder.
  */
 export async function projectKind(dir: string): Promise<ProjectKind> {
   try {
@@ -68,8 +73,10 @@ export async function projectKind(dir: string): Promise<ProjectKind> {
   } catch {
     return 'missing';
   }
-  if (await isGitRepo(dir)) return 'git';
-  const hasDotGit = await fs.stat(path.join(dir, '.git')).then(() => true, () => false);
-  if (hasDotGit && (await gitVersion())) return 'git';
-  return 'folder';
+  try {
+    await git(['rev-parse', '--git-dir'], dir);
+    return 'git';
+  } catch (e: any) {
+    return GIT_REFUSAL.test(String(e?.stderr ?? '')) ? 'git' : 'folder';
+  }
 }

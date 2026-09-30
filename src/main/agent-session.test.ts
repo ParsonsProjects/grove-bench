@@ -2469,6 +2469,29 @@ describe('AgentSessionManager checkpoint capture', () => {
 
     await sessionManager.destroySession('test-cp-fail');
   });
+
+  it('says so once while captures keep failing, and again after one succeeds', async () => {
+    await sessionManager.createSession({
+      id: 'test-cp-repeat', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-cp-repeat')!;
+    const errorCount = () => session.eventHistory.filter((e) => e.type === 'error').length;
+
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+    await sessionManager.sendMessage('test-cp-repeat', 'one');
+    await sessionManager.sendMessage('test-cp-repeat', 'two');
+    expect(errorCount()).toBe(1);
+
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await sessionManager.sendMessage('test-cp-repeat', 'three');
+    await sessionManager.sendMessage('test-cp-repeat', 'four');
+    expect(errorCount()).toBe(2);
+
+    await sessionManager.destroySession('test-cp-repeat');
+  });
 });
 
 describe('AgentSessionManager model handling', () => {

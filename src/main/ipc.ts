@@ -194,6 +194,11 @@ export function registerHandlers() {
     return worktreeManager.validateRepo(repoPath);
   });
 
+  ipcMain.handle(IPC.REPO_REMEMBER, async (_event, repoPath: string) => {
+    if (typeof repoPath !== 'string' || !path.isAbsolute(repoPath)) return;
+    rememberProject(repoPath);
+  });
+
   ipcMain.handle(IPC.REPO_KIND, async (_event, repoPath: string) => {
     if (typeof repoPath !== 'string' || !repoPath) return 'missing';
     return projectKind(repoPath);
@@ -209,7 +214,6 @@ export function registerHandlers() {
     if (activeSessions.length > 0) {
       throw new Error('Cannot remove a project while it has active conversations');
     }
-    forgetProject(repoPath);
 
     if (await projectKind(repoPath) === 'git') {
       const orphans = await worktreeManager.cleanupOrphans(repoPath);
@@ -217,6 +221,8 @@ export function registerHandlers() {
         logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
       }
     }
+    // Last, so a failed cleanup leaves the project both shown and remembered.
+    forgetProject(repoPath);
   });
 
   // ─── Sessions ───

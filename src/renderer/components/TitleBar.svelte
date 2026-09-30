@@ -4,12 +4,19 @@
   import HelpPanel from './HelpPanel.svelte';
   import { helpStore } from '../stores/help.svelte.js';
 
-  /** F1 opens Help from anywhere in the app. */
+  /** F1 opens Help from anywhere in the app. It listens in the capture
+   *  phase because the terminal (xterm) stops the keys it handles from
+   *  bubbling, and stops F1 there so the shell doesn't get it too. */
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== 'F1' || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
     e.preventDefault();
+    e.stopPropagation();
     helpStore.show();
   }
+  $effect(() => {
+    window.addEventListener('keydown', onKeydown, true);
+    return () => window.removeEventListener('keydown', onKeydown, true);
+  });
 
   let isMaximized = $state(false);
 
@@ -182,7 +189,6 @@
   </div>
 </div>
 
-<svelte:window onkeydown={onKeydown} />
 <HelpPanel open={helpStore.open} topicId={helpStore.topicId} onclose={() => helpStore.close()} />
 
 <style>
