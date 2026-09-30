@@ -449,7 +449,26 @@ export class WorktreeManager {
   }
 
 
+  /**
+   * Throw when removing `id` would take its worktree from other conversations
+   * (ones started on it with New Conversation, which run in it without owning
+   * it). Removal runs `git worktree remove --force` and can delete the branch,
+   * so they'd lose their checkout and commits. Callers check before tearing
+   * anything down; remove() checks again.
+   */
+  async assertRemovable(id: string): Promise<void> {
+    const info = this.worktrees.get(id) ?? await this.getWorktreeOrManifest(id).catch(() => undefined);
+    if (!info || info.direct) return;
+    const others = (await this.sharersOfPath(id, info.path)).filter((other) => other !== id);
+    if (others.length === 0) return;
+    throw new Error(
+      `${others.length === 1 ? 'Another conversation is' : `${others.length} other conversations are`} still working in this conversation's worktree. `
+      + 'Delete them first; deleting this one would remove their checkout too.',
+    );
+  }
+
   async remove(id: string, deleteBranch = false): Promise<void> {
+    await this.assertRemovable(id);
     let info = this.worktrees.get(id);
     const createdBranches = deleteBranch ? (await this.loadManifest())[id]?.createdBranches : undefined;
 
@@ -772,15 +791,20 @@ export class WorktreeManager {
   async checkoutSharers(id: string): Promise<string[]> {
     const info = this.worktrees.get(id);
     if (!info) return [];
+    return this.sharersOfPath(id, info.path);
+  }
+
+  /** `id` plus every conversation, loaded or not, whose checkout is `checkoutPath`. */
+  private async sharersOfPath(id: string, checkoutPath: string): Promise<string[]> {
     const ids = new Set<string>([id]);
     for (const w of this.worktrees.values()) {
-      if (samePath(w.path, info.path)) ids.add(w.id);
+      if (samePath(w.path, checkoutPath)) ids.add(w.id);
     }
     const manifest = await this.loadManifest();
     for (const [otherId, entry] of Object.entries(manifest)) {
       if (entry.pendingRemoval) continue;
       const entryPath = entry.path ?? (entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), this.repoHash(entry.repoPath), otherId));
-      if (samePath(entryPath, info.path)) ids.add(otherId);
+      if (samePath(entryPath, checkoutPath)) ids.add(otherId);
     }
     return [...ids];
   }

@@ -187,8 +187,11 @@
    *  one burst (the status bar's poll is sequential for the same reason). */
   const CLEANUP_PR_CONCURRENCY = 3;
 
-  /** sessionId → has uncommitted changes in its worktree. Absent = still checking / unknown. */
+  /** sessionId → has uncommitted changes in its worktree (or its status
+   *  couldn't be read, so it may have). Absent = still checking. */
   let cleanupDirty = $state<Record<string, boolean>>({});
+  /** sessionId → true when git couldn't read its status. */
+  let cleanupStatusUnknown = $state<Record<string, boolean>>({});
   /** sessionId → the session's primary PR (list head: open before merged or
    *  closed, newest first), null when it has none, 'unknown' when gh couldn't
    *  answer (offline, not logged in). Absent = still checking, or gh isn't
@@ -200,8 +203,16 @@
   /** Bumped each time the dialog opens so results from a previous open are dropped. */
   let cleanupGeneration = 0;
 
-  const cleanupDaysNum = $derived(Math.max(0, Math.floor(Number(cleanupDays)) || 0));
-  const cleanupCandidates = $derived(store.stoppedSessionsOlderThan(cleanupDaysNum));
+  /** Days from the field, or null while it's empty or not a number (a
+   *  number input binds null when cleared, which would otherwise read as 0
+   *  days and list every stopped conversation). */
+  const cleanupDaysNum = $derived.by(() => {
+    const raw = cleanupDays as unknown;
+    if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) ? Math.max(0, n) : null;
+  });
+  const cleanupCandidates = $derived(cleanupDaysNum === null ? [] : store.stoppedSessionsOlderThan(cleanupDaysNum));
   /** Identity of the candidate set. The check effect keys off this rather
    *  than the array, so an unrelated store update (another session's status
    *  changing, a rename) doesn't reset the user's ticks or re-run the checks. */
@@ -220,16 +231,19 @@
     cleanupGeneration++;
     cleanupCheckedIds.clear();
     cleanupDirty = {};
+    cleanupStatusUnknown = {};
     cleanupPr = {};
     cleanupSelection = {};
     showCleanup = true;
   }
 
   // When the dialog opens or the candidate set changes (cutoff edited, a
-  // session removed): preselect the newly listed candidates, then check each
-  // one's git status and PR state. Dirty ones are deselected: removing those
-  // loses work, so they must be opted into explicitly. Candidates already
-  // checked keep their results and whatever the user ticked.
+  // session removed): check each newly listed candidate's git status and PR
+  // state, and tick it once it is known to be clean. Dirty ones, and ones
+  // whose status couldn't be read, stay unticked: removing those can lose
+  // work (removal falls back to --force), so they must be opted into
+  // explicitly. Candidates already checked keep their results and whatever
+  // the user ticked.
   // Direct conversations skip the git status check: removing one deletes no
   // files and keeps the branch, so there is nothing to lose.
   $effect(() => {
@@ -241,37 +255,29 @@
     const generation = cleanupGeneration;
     const ghAvailable = untrack(() => cleanupGhAvailable);
 
-    // Preselect the new rows; the async status check below deselects dirty ones.
-    // (Reads are untracked so writing the same state here can't loop.)
-    untrack(() => {
-      const sel = { ...cleanupSelection };
-      for (const s of fresh) sel[s.id] = true;
-      cleanupSelection = sel;
-    });
-
-    (async () => {
-      const dirty: Record<string, boolean> = {};
-      await Promise.all(fresh.map(async (s) => {
-        if (s.direct) {
-          dirty[s.id] = false;
-          return;
+    // Each row is settled as its own check comes back, so one slow worktree
+    // doesn't hold up the rest.
+    for (const s of fresh) {
+      void (async () => {
+        let dirty = false;
+        let unknown = false;
+        if (!s.direct) {
+          try {
+            const status = await window.groveBench.getGitStatus(s.id);
+            // A status git couldn't read may hide changes: treat it as dirty.
+            unknown = !!status.error;
+            dirty = status.entries.length > 0 || unknown;
+          } catch {
+            dirty = unknown = true;
+          }
         }
-        try {
-          const status = await window.groveBench.getGitStatus(s.id);
-          dirty[s.id] = status.entries.length > 0;
-        } catch {
-          dirty[s.id] = false; // unreadable worktree — nothing to lose
-        }
-      }));
-      if (generation !== cleanupGeneration) return;
-      cleanupDirty = { ...cleanupDirty, ...dirty };
-      // Deselect dirty sessions without re-checking ones the user unticked
-      const next = { ...cleanupSelection };
-      for (const s of fresh) {
-        if (dirty[s.id]) next[s.id] = false;
-      }
-      cleanupSelection = next;
-    })();
+        if (generation !== cleanupGeneration) return;
+        cleanupDirty = { ...cleanupDirty, [s.id]: dirty };
+        if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [s.id]: true };
+        // Tick it when clean, unless the user already decided about it.
+        if (cleanupSelection[s.id] === undefined) cleanupSelection = { ...cleanupSelection, [s.id]: !dirty };
+      })();
+    }
 
     // PR state is looked up separately so a slow gh never delays the dirty
     // check, and skipped entirely when gh isn't installed (every call would fail).
@@ -293,10 +299,14 @@
     }
   });
 
-  /** Tick every candidate without uncommitted changes (the initial state). */
+  /** Tick every candidate known to have no uncommitted changes (the initial
+   *  state). Ones still being checked are left undecided, so they are
+   *  ticked if their check comes back clean. */
   function cleanupSelectAllClean() {
     const sel: Record<string, boolean> = {};
-    for (const s of cleanupCandidates) sel[s.id] = !cleanupDirty[s.id];
+    for (const s of cleanupCandidates) {
+      if (cleanupDirty[s.id] !== undefined) sel[s.id] = !cleanupDirty[s.id];
+    }
     cleanupSelection = sel;
   }
 
@@ -305,7 +315,12 @@
    *  initial preselection. */
   function cleanupSelectMerged() {
     const sel: Record<string, boolean> = {};
-    for (const s of cleanupCandidates) sel[s.id] = isPrMerged(cleanupPrOf(s.id)) && !cleanupDirty[s.id];
+    for (const s of cleanupCandidates) {
+      const merged = isPrMerged(cleanupPrOf(s.id));
+      // A merged one still being checked is ticked once it comes back clean.
+      if (merged && cleanupDirty[s.id] === undefined) continue;
+      sel[s.id] = merged && cleanupDirty[s.id] === false;
+    }
     cleanupSelection = sel;
   }
 
@@ -1038,7 +1053,9 @@
                   {:else if cleanupPr[session.id] === 'unknown'}
                     <span class="text-muted-foreground/60" title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
                   {/if}
-                  {#if cleanupDirty[session.id]}
+                  {#if cleanupStatusUnknown[session.id]}
+                    <span class="text-amber-500 font-medium" title="Git couldn't read this worktree's status, so it may have uncommitted changes">· changes unknown</span>
+                  {:else if cleanupDirty[session.id]}
                     <span class="text-amber-500 font-medium">· uncommitted changes</span>
                   {/if}
                 </div>

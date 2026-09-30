@@ -721,6 +721,43 @@ describe('create: git identity', () => {
   });
 });
 
+describe('remove with conversations attached to the worktree', () => {
+  const WT = '/worktrees/abc/wt-a';
+
+  beforeEach(() => {
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+    savedManifest = { 'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000, path: WT } };
+    manager.register({ id: 'wt-a', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 1000 });
+  });
+
+  it('refuses to remove the worktree, or delete its branch, while another conversation uses it', async () => {
+    const attached = await manager.registerDirect('/repo', 'feat-a', WT);
+    mockGit.mockClear();
+
+    await expect(manager.remove('wt-a', true)).rejects.toThrow(/Another conversation is still working in this conversation's worktree/);
+    await expect(manager.assertRemovable('wt-a')).rejects.toThrow();
+    expect(mockGit).not.toHaveBeenCalled();
+    expect(savedManifest).toHaveProperty('wt-a');
+
+    // Once the attached one is gone, it can go.
+    await manager.remove(attached.id);
+    await expect(manager.assertRemovable('wt-a')).resolves.toBeUndefined();
+  });
+
+  it('sees an attached conversation that is only in the manifest (not loaded this run)', async () => {
+    savedManifest = {
+      ...savedManifest,
+      'att-1': { repoPath: '/repo', branch: 'feat-a', createdAt: 2000, direct: true, path: WT },
+    };
+    await expect(manager.assertRemovable('wt-a')).rejects.toThrow();
+  });
+
+  it('lets an attached conversation go without touching the shared worktree', async () => {
+    const attached = await manager.registerDirect('/repo', 'feat-a', WT);
+    await expect(manager.assertRemovable(attached.id)).resolves.toBeUndefined();
+  });
+});
+
 describe('switchBranch', () => {
   const WT = '/worktrees/abc/wt-a';
 

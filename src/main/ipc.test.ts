@@ -28,7 +28,7 @@ const m = vi.hoisted(() => {
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'saveCompleted', 'renameBranch', 'switchBranch',
-      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree',
+      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
@@ -421,6 +421,17 @@ describe('conversation lifecycle', () => {
     m.sessionManager.sleepSession.mockResolvedValue(false);
     await expect(invoke(IPC.SESSION_SLEEP, 's1')).resolves.toBe(false);
     expect(m.previewManager.closeAgentPage).not.toHaveBeenCalled();
+  });
+
+  it('SESSION_DESTROY stops nothing when other conversations share the worktree', async () => {
+    m.worktreeManager.assertRemovable.mockRejectedValue(new Error('Another conversation is still working in this worktree.'));
+
+    await expect(invoke(IPC.SESSION_DESTROY, 's1', true)).rejects.toThrow('Another conversation');
+
+    expect(m.previewManager.close).not.toHaveBeenCalled();
+    expect(m.terminalManager.killAllForSession).not.toHaveBeenCalled();
+    expect(m.sessionManager.destroySession).not.toHaveBeenCalled();
+    expect(m.worktreeManager.remove).not.toHaveBeenCalled();
   });
 
   it('SESSION_DESTROY stops everything before removing the worktree, then drops bookmarks', async () => {
@@ -817,9 +828,9 @@ describe('git handlers', () => {
     );
   });
 
-  it('GIT_STATUS returns no entries when git fails', async () => {
+  it('GIT_STATUS says so when git fails, rather than reading as a clean tree', async () => {
     vi.mocked(git.git).mockRejectedValue(new Error('not a git repository'));
-    expect(await invoke(IPC.GIT_STATUS, 's1')).toEqual({ entries: [] });
+    expect(await invoke(IPC.GIT_STATUS, 's1')).toEqual({ entries: [], error: 'not a git repository' });
   });
 
   it('GIT_SYNC_STATUS reads as no upstream when git fails', async () => {

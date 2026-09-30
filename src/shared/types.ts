@@ -284,6 +284,9 @@ export interface GitStatusResult {
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
   scopeError?: string;
+  /** Set when git could not read the status: `entries` being empty then
+   *  does not mean the tree is clean. */
+  error?: string;
 }
 
 export interface FileDiffOptions {

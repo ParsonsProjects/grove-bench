@@ -407,6 +407,39 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
   });
 
+  it('does not tick a conversation until its status check comes back clean', async () => {
+    let finish!: (v: unknown) => void;
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
+      id === 'open' ? new Promise((r) => { finish = r; }) : { entries: [] }) as any);
+    await openDialog();
+    await waitFor(() => expect(screen.getByLabelText(/Merged one/)).toBeChecked());
+
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+
+    finish({ entries: [] });
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+  });
+
+  it('leaves one whose status git could not read unticked, and says so', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
+      id === 'nopr' ? { entries: [], error: 'fatal: index file corrupt' } : { entries: [] }) as any);
+    await openDialog();
+    await screen.findByText('· changes unknown');
+
+    expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+    expect(screen.getByLabelText(/Open one/)).toBeChecked();
+  });
+
+  it('lists nothing while the day field is empty', async () => {
+    await openDialog();
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeInTheDocument());
+    const days = screen.getByRole('spinbutton');
+    await fireEvent.input(days, { target: { value: '' } });
+    await waitFor(() => expect(screen.queryByLabelText(/Open one/)).not.toBeInTheDocument());
+  });
+
   it('does not run a git status check for direct conversations', async () => {
     store.sessions = [
       ...store.sessions,

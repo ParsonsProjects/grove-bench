@@ -472,6 +472,8 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
+    // Refuse before stopping anything if other conversations share its worktree.
+    await worktreeManager.assertRemovable(id);
     previewManager.close(id);
     await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
@@ -1264,7 +1266,7 @@ export function registerHandlers() {
       return result;
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
-      return { entries: [] };
+      return { entries: [], error: e instanceof Error ? e.message : String(e) };
     }
   });
 
