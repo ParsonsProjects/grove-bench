@@ -100,8 +100,8 @@ export interface ManagedSession {
   autoSaveInProgress: boolean;
   /** Emit function for sending events to the renderer — set by createEmitter. */
   emit: Emit | null;
-  /** Monotonic counter for permission request IDs — persists across stopQuery restarts
-   *  to avoid ID collisions with resolved permissions from previous query loops. */
+  /** Counter for permission request IDs; persists across stopQuery restarts
+   *  but not a new ManagedSession, so the ids also carry a random part. */
   permRequestCounter: number;
   /** Guard against concurrent runQuery calls (e.g. rapid double-stop). */
   isStartingQuery: boolean;

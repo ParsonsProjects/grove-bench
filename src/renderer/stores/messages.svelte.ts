@@ -10,6 +10,7 @@ import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
+import type { AttachedFile } from '../lib/file-attachments.js';
 
 // ─── Chat message types ───
 
@@ -152,6 +153,13 @@ export type ChatMessage =
 let msgCounter = 0;
 /** A prompt the user submitted while the agent was busy (connecting or mid-turn).
  *  Held in the renderer until the session is idle so it can still be removed. */
+export interface PromptInsert {
+  text: string;
+  nonce: number;
+  replace?: boolean;
+  attachments?: AttachedFile[];
+}
+
 export interface QueuedMessage {
   id: string;
   /** Text shown in the thread once sent (includes attachment names). */
@@ -161,6 +169,9 @@ export interface QueuedMessage {
   images?: ImageAttachment[];
   /** Slash command — dispatched through sendCommand rather than as a prompt. */
   isCommand?: boolean;
+  /** The prompt as typed and attached, so Edit can put it back as it was
+   *  (displayText carries the attachment names, outgoing their contents). */
+  typed?: { text: string; attachments: AttachedFile[] };
 }
 
 function nextId(): string {
@@ -744,7 +755,7 @@ class MessageStore {
   }
 
   /** Submit a prompt: send it now if the agent is idle, otherwise queue it. */
-  submitMessage(sessionId: string, msg: { displayText: string; outgoing: string; images?: ImageAttachment[] }): 'sent' | 'queued' {
+  submitMessage(sessionId: string, msg: Pick<QueuedMessage, 'displayText' | 'outgoing' | 'images' | 'typed'>): 'sent' | 'queued' {
     return this.submitOrQueue(sessionId, { ...msg, isCommand: false });
   }
 
@@ -789,7 +800,7 @@ class MessageStore {
     const item = this.getQueue(sessionId).find((m) => m.id === id);
     if (!item) return false;
     this.removeQueuedMessage(sessionId, id);
-    this.appendToPrompt(sessionId, item.displayText);
+    this.appendToPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments);
     return true;
   }
 
@@ -1062,14 +1073,16 @@ class MessageStore {
 
   /** One-shot "insert this text into the prompt" requests (e.g. the activity
    *  thread's "copy selection to prompt" action). The mounted PromptEditor
-   *  appends `text` to its input whenever `nonce` increments. */
-  promptInsertBySession = $state<Record<string, { text: string; nonce: number }>>({});
+   *  appends `text` to its input whenever `nonce` increments, or puts it in
+   *  place of the input when `replace` is set. `attachments` join the
+   *  editor's own. */
+  promptInsertBySession = $state<Record<string, PromptInsert>>({});
 
-  requestPromptInsert(sessionId: string, text: string) {
+  requestPromptInsert(sessionId: string, text: string, opts: Omit<PromptInsert, 'text' | 'nonce'> = {}) {
     const prev = this.promptInsertBySession[sessionId]?.nonce ?? 0;
     this.promptInsertBySession = {
       ...this.promptInsertBySession,
-      [sessionId]: { text, nonce: prev + 1 },
+      [sessionId]: { text, nonce: prev + 1, ...opts },
     };
   }
 
@@ -1079,10 +1092,17 @@ class MessageStore {
    *  is raised for one that is already showing; the mounted editor's own
    *  draft sync then writes the same combined text back, so the two paths
    *  never double up. */
-  appendToPrompt(sessionId: string, text: string) {
+  appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
     const draft = this.getDraft(sessionId);
     this.setDraft(sessionId, draft ? `${draft}\n${text}` : text);
-    this.requestPromptInsert(sessionId, text);
+    // Attachments live only in a mounted editor; the draft can't carry them.
+    this.requestPromptInsert(sessionId, text, attachments?.length ? { attachments } : {});
+  }
+
+  /** Like appendToPrompt, but `text` takes the place of the prompt. */
+  replacePrompt(sessionId: string, text: string) {
+    this.setDraft(sessionId, text);
+    this.requestPromptInsert(sessionId, text, { replace: true });
   }
 
   private flushStreamingText(sessionId: string) {
@@ -1902,14 +1922,17 @@ class MessageStore {
       // Remove the rewind target message and place its text into the input
       const rewindMsg = msgs[rewindIdx] as ChatUserMessage;
       this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
-      this.setDraft(sessionId, rewindMsg.text);
+      // Live, the prompt box may be showing: it keeps its own copy of the
+      // text, so tell it too. A replayed rewind is old news: only the draft.
+      if (this._replayBuffer === null && this.sideEffects) this.replacePrompt(sessionId, rewindMsg.text);
+      else this.setDraft(sessionId, rewindMsg.text);
       this.setActiveTab(sessionId, 'activity');
     } else if (this._replayBuffer === null && this.sideEffects) {
       // A live rewind to a message in a history page not loaded yet: every
       // loaded message comes after it, and main has cut them all. Show the
       // now shorter history from its end instead.
       const text = checkpointStore.getCheckpoints(sessionId).find((c) => c.uuid === event.toMessageId)?.text;
-      if (text) this.setDraft(sessionId, text);
+      if (text) this.replacePrompt(sessionId, text);
       this.setActiveTab(sessionId, 'activity');
       void this.reloadHistoryTail(sessionId);
     }
@@ -1975,8 +1998,10 @@ class MessageStore {
    *  tool error output, which is how it receives the user's answer. */
   resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
     const msgs = this.messagesBySession[sessionId] ?? [];
-    const idx = msgs.findIndex(
-      (m) => m.kind === 'question' && m.requestId === requestId,
+    // The open one: older history can hold an answered question with the
+    // same id (ids once restarted with the conversation's process).
+    const idx = msgs.findLastIndex(
+      (m) => m.kind === 'question' && m.requestId === requestId && !m.resolved,
     );
     if (idx >= 0) {
       const updated = { ...(msgs[idx] as ChatQuestionMessage) };

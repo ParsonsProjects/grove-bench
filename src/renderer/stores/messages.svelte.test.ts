@@ -1568,6 +1568,37 @@ describe('ingestEvent — rewind', () => {
     expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'first')).toBeUndefined();
     expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'second')).toBeUndefined();
   });
+
+  it('asks a showing prompt box to take the rewound text live, but not on replay', () => {
+    messageStore.promptInsertBySession = {};
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: 'first', uuid: 'cp-1' },
+      { type: 'rewind', toMessageId: 'cp-1' },
+    ] as AgentEvent[]);
+    expect(messageStore.getDraft(SID)).toBe('first');
+    expect(messageStore.promptInsertBySession[SID]).toBeUndefined();
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'second', uuid: 'cp-2' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-2' } as AgentEvent);
+    expect(messageStore.getDraft(SID)).toBe('second');
+    expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'second', replace: true });
+  });
+});
+
+describe('resolveQuestion', () => {
+  it('answers the open question when an older one has the same id', () => {
+    const q = { kind: 'question', toolUseId: 't', questions: [], requestId: 'perm_s_1' };
+    messageStore.messagesBySession[SID] = [
+      { ...q, id: 'old', resolved: true, response: 'blue' },
+      { ...q, id: 'new', resolved: false },
+    ] as any;
+
+    messageStore.resolveQuestion(SID, 'perm_s_1', 'green');
+
+    const [older, newer] = messageStore.getMessages(SID) as any[];
+    expect(older.response).toBe('blue');
+    expect(newer).toMatchObject({ resolved: true, response: 'green' });
+  });
 });
 
 describe('getRewindPoints', () => {
@@ -1988,6 +2019,23 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID)).toEqual([]);
     expect(messageStore.promptInsertBySession[SID]?.text).toBe('fix it');
     expect(messageStore.editQueuedMessage(SID, 'nope')).toBe(false);
+  });
+
+  it('editQueuedMessage hands back the prompt as typed, with its attachments', () => {
+    messageStore.draftBySession = {};
+    messageStore.setIsRunning(SID, true);
+    const attachments = [{ type: 'image' as const, name: 'a.png', dataUrl: 'data:image/png;base64,AAAA' }];
+    messageStore.submitMessage(SID, {
+      displayText: '[a.png] look',
+      outgoing: 'look',
+      images: [{ data: 'AAAA', mediaType: 'image/png', name: 'a.png' }],
+      typed: { text: 'look', attachments },
+    });
+
+    messageStore.editQueuedMessage(SID, messageStore.getQueue(SID)[0].id);
+
+    expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'look', attachments });
+    expect(messageStore.getDraft(SID)).toBe('look');
   });
 
   it('Stop pauses the queue; the restarted query does not fire the next item until Resume', () => {

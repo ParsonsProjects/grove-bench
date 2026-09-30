@@ -3,6 +3,7 @@
  * MCP elicitations. Each waits in the session's pending map until the user
  * answers, the turn stops, or it times out.
  */
+import { randomUUID } from 'node:crypto';
 import type { McpElicitationRequest, McpElicitationResponse, PermissionDecision } from '../shared/types.js';
 import type { PermissionRequest, PermissionResponse } from './adapters/types.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
@@ -10,6 +11,13 @@ import type { Emit, ManagedSession } from './session-types.js';
 
 const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
 const ELICITATION_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** The counter starts again at 0 whenever the conversation's process does
+ *  (app restart, wake from sleep), while its history keeps the old ids: the
+ *  random part keeps a new id from matching an old question in the thread. */
+function newRequestId(kind: 'perm' | 'elicit', session: ManagedSession): string {
+  return `${kind}_${session.id}_${++session.permRequestCounter}_${randomUUID().slice(0, 8)}`;
+}
 
 /**
  * Decide a tool call the agent asks about. Read-safe mode lets read-only
@@ -25,7 +33,7 @@ export function requestPermission(session: ManagedSession, request: PermissionRe
     return Promise.resolve({ behavior: 'allow', updatedInput: request.toolInput });
   }
   const pendingPermissions = session.pendingPermissions;
-  const requestId = `perm_${session.id}_${++session.permRequestCounter}`;
+  const requestId = newRequestId('perm', session);
   return new Promise<PermissionResponse>((resolve) => {
     const timer = setTimeout(() => {
       pendingPermissions.delete(requestId);
@@ -145,7 +153,7 @@ export function awaitElicitation(
   request: McpElicitationRequest,
   signal: AbortSignal,
 ): Promise<McpElicitationResponse> {
-  const requestId = `elicit_${session.id}_${++session.permRequestCounter}`;
+  const requestId = newRequestId('elicit', session);
   return new Promise<McpElicitationResponse>((resolve) => {
     const onAbort = () => finish({ action: 'cancel' });
     const timer = setTimeout(onAbort, ELICITATION_TIMEOUT_MS);
