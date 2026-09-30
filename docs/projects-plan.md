@@ -1,8 +1,10 @@
 # Projects, Workspaces and Scratch Conversations
 
-> **Status: Proposal.** Nothing here is implemented yet. The UI, help and docs
-> already say "conversation" and "project"; the code still says "session" and
-> "repo" on purpose (see `CLAUDE.md`, Terminology).
+> **Status: Proposal, Goal 1 partly built.** A minimal Goal 1 is in: a folder
+> without git can be added as a project (see "Goal 1: what was built"). There is
+> still no `Project` record or workspace list. The UI, help and docs already say
+> "conversation" and "project"; the code still says "session" and "repo" on
+> purpose (see `CLAUDE.md`, Terminology).
 
 ## Goals
 
@@ -20,9 +22,10 @@ Everything below is what the code does now, so the plan can be checked against i
   collects the distinct `repoPath` values of manifest entries. A repository with
   no conversations disappears on restart; the renderer only keeps it in memory
   (`addRepo` in `src/renderer/stores/sessions.svelte.ts`).
-- **Adding a project requires git.** `validateRepo()` is `isGitRepo()`
-  (`src/main/worktree-manager.ts`), and the folder picker in `src/main/ipc.ts`
-  rejects anything else.
+- **Adding a project no longer requires git.** The folder picker in
+  `src/main/ipc.ts` calls `inspectProjectFolder()` (`src/main/project-path.ts`),
+  which returns a git repository's top level or a plain `folder`. The renderer
+  then offers to set git up there or to use the folder as it is.
 - **A conversation has exactly one checkout.** `SessionInfo` and
   `CreateSessionOpts` in `src/shared/types.ts` carry a single `repoPath`,
   `branch` and `worktreePath`. The adapter gets one `cwd`.
@@ -114,11 +117,36 @@ The manifest already has a precedent for this kind of migration
   Create PR, sync status and the PR watcher all need git. For a folder
   workspace each shows one line: "This workspace is not a git repository." The
   Terminal, Activity, Memory and Skills panels work as they do now.
-- **What still works without git.** Rewind is driven by the SDK's file
-  checkpoints, not by git, so it keeps working. Dependency install, memory,
-  skills and MCP config all key off the folder.
+- **What still works without git.** Dependency install, memory, skills and MCP
+  config all key off the folder. Rewinding files does not: checkpoints are git
+  commits under `refs/grove/checkpoints/<sessionId>/` (`src/main/checkpoints.ts`),
+  not the SDK's file checkpoints, so without git only the conversation can be
+  rewound. (An earlier draft of this plan said otherwise.)
 - **Orphan sweep.** `cleanupOrphans()` runs `git worktree` commands per
   repository. It skips `folder` workspaces.
+
+### Goal 1: what was built
+
+A minimal version, without the `Project` record:
+
+- **Adding.** `REPO_SELECT` returns `{ kind: 'git' | 'folder', ... }`.
+  `FolderProjectDialog` offers **Set up git** (`initGitRepo()`: `git init` and
+  an "Initial commit" of the folder, refused with a clear message when git has
+  no name and email) or **Use without git**.
+- **Knowing the kind.** The renderer keeps `folderRepos` in memory and rebuilds
+  it at launch from `repoKind()` (`git`, `folder` or `missing`).
+- **Conversations.** A folder project's draft only offers the project folder.
+  `SESSION_CREATE` checks `isGitRepo()` itself, refuses a worktree in a folder,
+  and registers a direct entry with `noGit: true` and an empty branch.
+  `AgentSessionManager` uses `noGitCheckpoints` for such a folder.
+- **What the UI hides.** Changes and Checkpoints show why they need git; the
+  rewind dialog resets only the conversation; git status, sync and PR lookups
+  return empty for `noGit` conversations.
+- **Orphan sweep.** Phase 3 of the startup sweep keeps a `noGit` entry while its
+  folder exists, instead of dropping it for not being a repository.
+- **Not done.** No `Project` record, so a folder project with no conversations
+  is still forgotten at restart, like a git one. Git projects also get a
+  heads-up on the draft screen when git has no name and email.
 
 ## Goal 2: one conversation, several repositories
 

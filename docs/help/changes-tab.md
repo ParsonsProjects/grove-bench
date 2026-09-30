@@ -2,6 +2,8 @@
 
 The Changes tab (`Alt+2`) shows the git status of your conversation's worktree, letting you review all file modifications the agent has made.
 
+In a project used without git there is nothing to compare against, so the tab only says it needs git. Check the agent's edits in your editor or file explorer.
+
 ## File Categories
 
 Files are organized into three groups:

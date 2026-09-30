@@ -4,7 +4,14 @@ Grove Bench is a multi-agent git worktree orchestrator for Claude Code. It lets 
 
 ## Adding a Project
 
-Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to the folder containing your git repository and select it. The project will appear in the sidebar, ready for new conversations. A project must be a git repository for now: pick a folder that isn't in one and Grove Bench says so. Pick a folder inside a repository and the repository's top-level folder is added.
+Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to your project's folder and select it. The project will appear in the sidebar, ready for new conversations. Pick a folder inside a git repository and the repository's top-level folder is added.
+
+If the folder isn't a git repository, Grove Bench asks what to do:
+
+- **Set up git** (recommended) — Runs `git init` and commits the folder's files as a first commit. Files listed in a `.gitignore` are left out, so check the folder has nothing you wouldn't commit, such as passwords or keys. Git needs your name and email for that commit; if it has none, Grove Bench tells you the two `git config` commands to run. The project then works like any other git project.
+- **Use without git** — The folder is added as it is. Each conversation works in the folder itself: there is no separate copy and no branch, the agent edits your files in place, and its edits can't be rewound. The **Changes** and **Checkpoints** tabs say they need git, and rewinding a message only resets the conversation.
+
+If git isn't installed, only **Use without git** is offered, with a link to download git.
 
 ## Starting a Conversation
 
@@ -50,4 +57,6 @@ When the agent is done, its work sits on the conversation's own branch, in a sep
    - To merge without a pull request, run `git merge <branch>` in your project folder. The branch name is shown in the status bar.
 4. **Tidy up**: right-click the conversation and choose **Mark Completed** to hide it, or **Delete Conversation** to remove its copy of the project.
 
-A conversation that works in the **Project folder** changes your files in place, so there is nothing to merge.
+A conversation that works in the **Project folder** changes your files in place, so there is nothing to merge. The same goes for every conversation in a project used without git.
+
+If git has no name and email for the project, the new conversation screen says so before you send, since the agent's commits would fail without them.

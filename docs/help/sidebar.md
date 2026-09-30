@@ -1,10 +1,10 @@
 # Sidebar & Projects
 
-The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a git repository) with all of its conversations, where stopped conversations can be resumed, deleted, or cleaned up.
+The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a folder, usually a git repository) with all of its conversations, where stopped conversations can be resumed, deleted, or cleaned up.
 
 ## Projects
 
-Each project you have added appears as a group under **Projects**. Today a project is a single git repository. Its name is shown with a colored accent unique to that project.
+Each project you have added appears as a group under **Projects**. Today a project is a single folder: a git repository, or a plain folder used without git (see Getting Started). Its name is shown with a colored accent unique to that project.
 
 Conversations within a project are listed below the project name. If multiple conversations share the same branch, they are grouped together under that branch name.
 
