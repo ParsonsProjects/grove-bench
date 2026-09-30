@@ -1,9 +1,13 @@
 <script lang="ts">
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
   import UpdateNotification from './UpdateNotification.svelte';
-  import HelpPanel from './HelpPanel.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
 
   let showHelp = $state(false);
+  // Help (with every help page) loads when first opened, then stays mounted.
+  const loadHelpPanel = lazyComponent(() => import('./HelpPanel.svelte'));
+  let helpOpened = $state(false);
+  $effect(() => { if (showHelp) helpOpened = true; });
 
   let isMaximized = $state(false);
 
@@ -188,7 +192,11 @@
   </div>
 </div>
 
-<HelpPanel open={showHelp} onclose={() => showHelp = false} />
+{#if helpOpened}
+  {#await loadHelpPanel() then HelpPanel}
+    <HelpPanel open={showHelp} onclose={() => showHelp = false} />
+  {/await}
+{/if}
 
 <style>
   .app-drag {

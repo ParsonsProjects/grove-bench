@@ -14,8 +14,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import SettingsPanel from './SettingsPanel.svelte';
-  import MemoryPanel from './MemoryPanel.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
@@ -166,6 +165,14 @@
   }
 
   let showSettings = $state(false);
+
+  // Settings and Memory load when first opened, then stay mounted.
+  const loadSettingsPanel = lazyComponent(() => import('./SettingsPanel.svelte'));
+  const loadMemoryPanel = lazyComponent(() => import('./MemoryPanel.svelte'));
+  let settingsOpened = $state(false);
+  let memoryOpened = $state(false);
+  $effect(() => { if (showSettings) settingsOpened = true; });
+  $effect(() => { if (memoryStore.panelOpen) memoryOpened = true; });
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
@@ -950,8 +957,16 @@
 </aside>
 
 
-<SettingsPanel open={showSettings} onclose={() => showSettings = false} />
-<MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />
+{#if settingsOpened}
+  {#await loadSettingsPanel() then SettingsPanel}
+    <SettingsPanel open={showSettings} onclose={() => showSettings = false} />
+  {/await}
+{/if}
+{#if memoryOpened}
+  {#await loadMemoryPanel() then MemoryPanel}
+    <MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />
+  {/await}
+{/if}
 
 {#if contextMenu}
   <ContextMenu

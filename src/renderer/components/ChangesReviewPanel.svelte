@@ -6,7 +6,7 @@
   import { store as sessionStore } from '../stores/sessions.svelte.js';
   import type { GitStatusEntry, DiffScope } from '../../shared/types.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
-  import GitOpsDialog from './GitOpsDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -20,6 +20,7 @@
 
   /** Rebase / squash / cherry-pick dialog (branch operations between agent branches). */
   let gitOpsOpen = $state(false);
+  const loadGitOpsDialog = lazyComponent(() => import('./GitOpsDialog.svelte'));
 
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
@@ -291,7 +292,9 @@
   </Dialog.Root>
 
   {#if gitOpsOpen}
-    <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
+    {#await loadGitOpsDialog() then GitOpsDialog}
+      <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
+    {/await}
   {/if}
 {/snippet}
 

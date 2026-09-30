@@ -6,13 +6,9 @@
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import OutputPanel from './OutputPanel.svelte';
-  import ChangesReviewPanel from './ChangesReviewPanel.svelte';
-  import CheckpointsPanel from './CheckpointsPanel.svelte';
-  import TerminalPanel from './TerminalPanel.svelte';
-  import PreviewPanel from './PreviewPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
-  import RewindDialog from './RewindDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -41,9 +37,29 @@
     if (activeTab === 'terminal') terminalMounted = true;
   });
 
+  // The terminal (and xterm, its largest library) loads on first visit.
+  const loadTerminalPanel = lazyComponent(() => import('./TerminalPanel.svelte'));
+
+  // The Changes and Checkpoints tabs load and mount on first visit too: their
+  // data lives in stores, so nothing is lost before then, and until visited
+  // their code stays out of startup.
+  const loadChangesPanel = lazyComponent(() => import('./ChangesReviewPanel.svelte'));
+  const loadCheckpointsPanel = lazyComponent(() => import('./CheckpointsPanel.svelte'));
+  let changesMounted = $state(false);
+  let checkpointsMounted = $state(false);
+  $effect(() => {
+    if (activeTab === 'changes') changesMounted = true;
+    if (activeTab === 'checkpoints') checkpointsMounted = true;
+  });
+
   // The Preview panel mounts on first open too. Its pages live in the main
   // process, so nothing is lost before then.
   let previewMounted = $state(false);
+  // Loaded when first needed: the Preview tab's first visit, the first rewind.
+  const loadPreviewPanel = lazyComponent(() => import('./PreviewPanel.svelte'));
+  const loadRewindDialog = lazyComponent(() => import('./RewindDialog.svelte'));
+  let rewindOpened = $state(false);
+  $effect(() => { if (messageStore.rewindDialogOpen[sessionId]) rewindOpened = true; });
   $effect(() => {
     if (activeTab === 'preview') previewMounted = true;
   });
@@ -257,19 +273,31 @@
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
-    <ChangesReviewPanel {sessionId} />
+    {#if changesMounted}
+      {#await loadChangesPanel() then ChangesReviewPanel}
+        <ChangesReviewPanel {sessionId} />
+      {/await}
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
-    <CheckpointsPanel {sessionId} />
+    {#if checkpointsMounted}
+      {#await loadCheckpointsPanel() then CheckpointsPanel}
+        <CheckpointsPanel {sessionId} />
+      {/await}
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     {#if terminalMounted}
-      <TerminalPanel {sessionId} />
+      {#await loadTerminalPanel() then TerminalPanel}
+        <TerminalPanel {sessionId} />
+      {/await}
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
     {#if previewMounted}
-      <PreviewPanel {sessionId} active={previewVisible} />
+      {#await loadPreviewPanel() then PreviewPanel}
+        <PreviewPanel {sessionId} active={previewVisible} />
+      {/await}
     {/if}
   </div>
 
@@ -290,5 +318,9 @@
       </button>
     </div>
   {/if}
-  <RewindDialog {sessionId} />
+  {#if rewindOpened}
+    {#await loadRewindDialog() then RewindDialog}
+      <RewindDialog {sessionId} />
+    {/await}
+  {/if}
 </div>

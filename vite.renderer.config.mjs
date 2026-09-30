@@ -60,6 +60,11 @@ export default defineConfig({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    // Panels and tabs that open on demand load on first use (lazyComponent),
+    // so the main chunk is the code that draws the first screen. It sits near
+    // 660 kB; splitting it further only moves that code between files, which
+    // an app loading from disk gains nothing from. Warn if it grows past this.
+    chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {
         // Split the heavy vendor libraries out of the app chunk so the

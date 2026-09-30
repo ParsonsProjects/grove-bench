@@ -22,7 +22,7 @@
   import { memoryStore } from './stores/memory.svelte.js';
   import GitNotice from './components/GitNotice.svelte';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
-  import SessionFinder from './components/SessionFinder.svelte';
+  import { lazyComponent } from './lib/lazy-component.js';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
@@ -38,6 +38,8 @@
   import DraftPane from './components/DraftPane.svelte';
 
   let showAnalyticsConsent = $state(false);
+  // Loaded the first time it opens (Ctrl+R or the search button).
+  const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -557,7 +559,9 @@
 </div>
 
 {#if store.finderOpen}
-  <SessionFinder onclose={() => store.finderOpen = false} />
+  {#await loadSessionFinder() then SessionFinder}
+    <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
 {/if}
 
 <ErrorToast />

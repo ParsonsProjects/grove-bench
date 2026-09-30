@@ -289,6 +289,18 @@ describe('Sidebar bottom buttons', () => {
   });
 });
 
+describe('Sidebar settings', () => {
+  it('loads the Settings panel when first opened', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(Sidebar);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    await fireEvent.click(screen.getByTitle('Settings'));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+});
+
 describe('Sidebar rename', () => {
   it('shows a saved name even if the dialog closed before the save returned', async () => {
     let finish!: () => void;

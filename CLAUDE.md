@@ -96,6 +96,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
+- Panels, dialogs and tabs that open on demand load on first use via
+  `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
+  (and libraries only they use, such as xterm) out of the startup bundle
 
 ## Key Dependencies
 

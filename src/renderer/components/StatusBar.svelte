@@ -11,8 +11,7 @@
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { prHealth } from '../lib/pr-state.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
-  import CreatePrDialog from './CreatePrDialog.svelte';
-  import AddSkillDialog from './AddSkillDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
@@ -37,6 +36,9 @@
   let gitSync = $derived(prStore.getSync(sessionId));
   let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
   let createPrOpen = $state(false);
+  // Dialogs load when first opened.
+  const loadCreatePrDialog = lazyComponent(() => import('./CreatePrDialog.svelte'));
+  const loadAddSkillDialog = lazyComponent(() => import('./AddSkillDialog.svelte'));
   let pushing = $state(false);
   let pushError = $state('');
 
@@ -1742,20 +1744,24 @@
 </div>
 
 {#if createPrOpen}
-  <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+  {#await loadCreatePrDialog() then CreatePrDialog}
+    <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+  {/await}
 {/if}
 
 {#if addSkillOpen}
-  <AddSkillDialog
-    {sessionId}
-    initial={addSkillInitial}
-    onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
-    oncreated={(skill) => {
-      refreshSkills();
-      skillsExpanded = true;
-      // A created suggestion is resolved — drop it from the list for good.
-      const created = suggestions.find((s) => s.name === skill.name);
-      if (created) dismissSkillSuggestion(created.id);
-    }}
-  />
+  {#await loadAddSkillDialog() then AddSkillDialog}
+    <AddSkillDialog
+      {sessionId}
+      initial={addSkillInitial}
+      onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
+      oncreated={(skill) => {
+        refreshSkills();
+        skillsExpanded = true;
+        // A created suggestion is resolved — drop it from the list for good.
+        const created = suggestions.find((s) => s.name === skill.name);
+        if (created) dismissSkillSuggestion(created.id);
+      }}
+    />
+  {/await}
 {/if}
