@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
@@ -2175,5 +2175,98 @@ describe('/clear that never happened', () => {
     expect(mockGroveBench.clearEventHistory).not.toHaveBeenCalled();
     expect(mockGroveBench.sendMessage).not.toHaveBeenCalledWith(id, 'then do this');
     messageStore.destroySession(id);
+  });
+});
+
+describe('loadOlderEvents replays only messages', () => {
+  const ID = 'older-page';
+  const ev = (e: Record<string, unknown>) => e as unknown as AgentEvent;
+  const init = (model: string) => ev({ type: 'system_init', sessionId: 'p', model, tools: [] });
+  const user = (uuid: string, text: string) => ev({ type: 'user_message', text, uuid });
+  const toolUse = (toolUseId: string) => ev({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId, uuid: `a-${toolUseId}` });
+  const toolResult = (toolUseId: string, content: string) => ev({ type: 'tool_result', toolUseId, content });
+  const result = () => ev({ type: 'result', subtype: 'success', isError: false });
+
+  function newerPage(events: AgentEvent[], startIndex: number) {
+    messageStore.replayEvents(ID, events, undefined, startIndex);
+    messageStore.setPagination(ID, startIndex + events.length, startIndex);
+  }
+  function olderPage(events: AgentEvent[], startIndex = 0) {
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events, totalCount: 999, startIndex } as never);
+  }
+  const toolCall = (toolUseId: string) => messageStore.getMessages(ID).find((m) => m.kind === 'tool_call' && m.toolUseId === toolUseId) as
+    { pending?: boolean; result?: string } | undefined;
+
+  afterEach(() => messageStore.destroySession(ID));
+
+  it('leaves an idle conversation idle, on its current mode and model', async () => {
+    newerPage([init('opus-new'), ev({ type: 'mode_sync', mode: 'acceptEdits', source: 'session' }), user('u2', 'latest'), result()], 200);
+    // The older page ends mid-turn, on an earlier mode and model.
+    olderPage([init('old-model'), ev({ type: 'mode_sync', mode: 'plan', source: 'session' }), user('u1', 'earlier'), toolUse('t9')]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    expect(messageStore.getIsRunning(ID)).toBe(false);
+    expect(messageStore.getMode(ID)).toBe('acceptEdits');
+    expect(messageStore.getModel(ID)).toBe('opus-new');
+    const texts = messageStore.getMessages(ID).filter((m) => m.kind === 'user').map((m) => (m as { text: string }).text);
+    expect(texts).toEqual(['earlier', 'latest']);
+    // Cut off before the newer page began: not still running.
+    expect(toolCall('t9')?.pending).toBe(false);
+  });
+
+  it('keeps a live permission prompt open', async () => {
+    newerPage([init('opus'), user('u2', 'do it'), toolUse('t5')], 200);
+    messageStore.ingestEvent(ID, ev({ type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't5', requestId: 'r5' }));
+    expect(messageStore.needsInput(ID)).toBe(true);
+    // The older page ends with a finished turn.
+    olderPage([user('u1', 'before'), result()]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    expect(messageStore.getIsRunning(ID)).toBe(true);
+    expect(messageStore.needsInput(ID)).toBe(true);
+  });
+
+  it('gives a tool call in the older page its result from the newer page', async () => {
+    // The newer page starts with the result of a call made just before it.
+    newerPage([toolResult('t1', 'file-a\nfile-b'), result(), user('u2', 'next')], 200);
+    olderPage([user('u1', 'list files'), toolUse('t1')]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    expect(toolCall('t1')).toMatchObject({ pending: false, result: 'file-a\nfile-b' });
+  });
+
+  it('carries an unmatched result on to the page that holds its call', async () => {
+    newerPage([toolResult('t1', 'done'), user('u3', 'next')], 400);
+    olderPage([user('u2', 'middle')], 200);
+    await messageStore.loadOlderEvents(ID, 200);
+    olderPage([user('u1', 'first'), toolUse('t1')], 0);
+    await messageStore.loadOlderEvents(ID, 200);
+
+    expect(toolCall('t1')).toMatchObject({ result: 'done' });
+  });
+
+  it('answers a permission prompt in the older page as the newer page did', async () => {
+    newerPage([ev({ type: 'permission_resolved', requestId: 'r1', toolUseId: 't1', decision: 'allow' }), toolResult('t1', 'ok'), result(), user('u2', 'next')], 200);
+    olderPage([user('u1', 'go'), toolUse('t1'), ev({ type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1' })]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    const perm = messageStore.getMessages(ID).find((m) => m.kind === 'permission') as { resolved?: boolean; decision?: string };
+    expect(perm).toMatchObject({ resolved: true, decision: 'allow' });
+  });
+
+  it('drops a page that lands after the conversation was cleared', async () => {
+    newerPage([user('u2', 'latest')], 200);
+    let finish!: (v: unknown) => void;
+    mockGroveBench.getEventHistoryPage.mockReturnValueOnce(new Promise((r) => { finish = r; }) as never);
+    const loading = messageStore.loadOlderEvents(ID);
+    messageStore.clearSession(ID);
+    finish({ events: [user('u1', 'old')], totalCount: 999, startIndex: 0 });
+    await loading;
+
+    expect(messageStore.getMessages(ID)).toEqual([]);
   });
 });

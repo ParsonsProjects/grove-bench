@@ -168,6 +168,12 @@ function nextId(): string {
 }
 
 class MessageStore {
+  /** False for the scratch store an older history page is built in (see
+   *  loadOlderEvents): it only makes messages, so it must not touch other
+   *  stores (background tasks, rate limits, usage, git status, checkpoints,
+   *  the Preview tab). This store's own state is the scratch instance's. */
+  constructor(private readonly sideEffects = true) {}
+
   /** All finalized messages per session */
   messagesBySession = $state<Record<string, ChatMessage[]>>({});
 
@@ -272,6 +278,10 @@ class MessageStore {
 
   /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
   private _replayBuffer: ChatMessage[] | null = null;
+  /** Replayed tool results and permission answers whose tool call or prompt
+   *  was not loaded (it sits in an older history page). Applied when that
+   *  page is loaded; cleared once the whole history is. */
+  private orphanReplayEvents = new Map<string, AgentEvent[]>();
   private _replaySessionId: string | null = null;
 
   /** Absolute (prelaunch-prefixed) index of the event currently being replayed,
@@ -310,7 +320,13 @@ class MessageStore {
     this.paginationBySession[sessionId] = { totalCount, loadedFromIndex, loading: false };
   }
 
-  /** Load an older page of events and prepend them to the message list. */
+  /**
+   * Load an older page of events and prepend its messages. The page is
+   * replayed in a scratch store, so only its messages come back: replaying
+   * old events here would set this conversation's running state, mode, model,
+   * usage and background tasks back to what they were then. Tool results and
+   * answers from newer events whose calls are in this page are applied to it.
+   */
   async loadOlderEvents(sessionId: string, pageSize = 200) {
     const p = this.paginationBySession[sessionId];
     if (!p || p.loadedFromIndex <= 0 || p.loading) return;
@@ -321,33 +337,43 @@ class MessageStore {
         'partial_text', 'activity', 'tool_progress', 'usage',
       ]);
       const page = await window.groveBench.getEventHistoryPage(sessionId, pageSize, p.loadedFromIndex);
+      // Cleared (/clear, delete, a fresh replay) while this loaded: the page
+      // no longer fits. (State reads come back as proxies, so compare fields.)
+      const now = this.paginationBySession[sessionId];
+      if (!now?.loading || now.loadedFromIndex !== p.loadedFromIndex) return;
 
-      // Process the older events in batch mode to build messages
-      this._replayBuffer = [];
-      this._replaySessionId = sessionId;
-      try {
-        for (let i = 0; i < page.events.length; i++) {
-          const event = page.events[i];
-          if (skipDuringReplay.has(event.type)) continue;
-          this._currentEventIndex = page.startIndex + i;
-          this.ingestEvent(sessionId, event);
-        }
-      } finally {
-        this._currentEventIndex = null;
-        const buffer = this._replayBuffer;
-        this._replayBuffer = null;
-        this._replaySessionId = null;
-        if (buffer && buffer.length > 0) {
-          // Prepend older messages before existing ones
-          const existing = this.messagesBySession[sessionId] ?? [];
-          this.messagesBySession[sessionId] = [...buffer, ...existing];
-        }
+      const scratch = new MessageStore(false);
+      scratch._replayBuffer = [];
+      scratch._replaySessionId = sessionId;
+      for (let i = 0; i < page.events.length; i++) {
+        const event = page.events[i];
+        if (skipDuringReplay.has(event.type)) continue;
+        scratch._currentEventIndex = page.startIndex + i;
+        scratch.ingestEvent(sessionId, event);
+      }
+      scratch._currentEventIndex = null;
+      // Newer results and answers, in order, after this page's own events.
+      for (const event of this.orphanReplayEvents.get(sessionId) ?? []) {
+        scratch.ingestEvent(sessionId, event);
+      }
+      const older = scratch._replayBuffer;
+
+      // What still has no match waits for the next page.
+      const stillOrphaned = page.startIndex > 0 ? scratch.orphanReplayEvents.get(sessionId) : undefined;
+      if (stillOrphaned?.length) this.orphanReplayEvents.set(sessionId, stillOrphaned);
+      else this.orphanReplayEvents.delete(sessionId);
+
+      const stamps = scratch.sourceIndexBySession.get(sessionId);
+      if (stamps) {
+        let own = this.sourceIndexBySession.get(sessionId);
+        if (!own) { own = new Map(); this.sourceIndexBySession.set(sessionId, own); }
+        for (const [id, index] of stamps) own.set(id, index);
       }
 
-      // Resolve stale tool calls/permissions in the prepended messages
-      this.resolveStaleToolCalls(sessionId);
-      this.resolveReplayedPermissions(sessionId);
-
+      const existing = this.messagesBySession[sessionId] ?? [];
+      if (older.length > 0) {
+        this.messagesBySession[sessionId] = [...this.settleOlderPage(sessionId, older, existing), ...existing];
+      }
       this.paginationBySession[sessionId] = { totalCount: p.totalCount, loadedFromIndex: page.startIndex, loading: false };
     } finally {
       // Ensure loading is cleared even on error
@@ -356,6 +382,31 @@ class MessageStore {
         this.paginationBySession[sessionId] = { ...cur, loading: false };
       }
     }
+  }
+
+  /**
+   * Tool calls, prompts and questions in an older page that nothing answered
+   * are over: they were stopped, timed out or cut off. The exception is a
+   * page that may hold the start of a turn that is still running, which is
+   * when no user message has been loaded after it yet.
+   */
+  private settleOlderPage(sessionId: string, older: ChatMessage[], newer: ChatMessage[]): ChatMessage[] {
+    const liveTurnMayBeHere = this.getIsRunning(sessionId) && !newer.some((m) => m.kind === 'user');
+    if (liveTurnMayBeHere) return older;
+    return older.map((m) => {
+      if (m.kind === 'tool_call' && (m.pending || m.awaitingPermission)) return { ...m, pending: false, awaitingPermission: false };
+      if (m.kind === 'permission' && !m.resolved) return { ...m, resolved: true as const, decision: 'deny' as const };
+      if (m.kind === 'question' && !m.resolved) return { ...m, resolved: true as const };
+      if (m.kind === 'elicitation' && !m.resolved) return { ...m, resolved: true as const, action: 'cancel' as const };
+      return m;
+    });
+  }
+
+  /** Remember a replayed result or answer that matched nothing loaded. */
+  private noteOrphan(sessionId: string, event: AgentEvent) {
+    const list = this.orphanReplayEvents.get(sessionId);
+    if (list) list.push(event);
+    else this.orphanReplayEvents.set(sessionId, [event]);
   }
 
   /** Page older events until the given absolute event index is loaded into the
@@ -1215,7 +1266,7 @@ class MessageStore {
       case 'tool_result':
         this.onToolResult(sessionId, event);
         // Dev servers print their URL; offer it in the Preview tab.
-        previewStore.noteText(sessionId, event.content);
+        if (this.sideEffects) previewStore.noteText(sessionId, event.content);
         break;
 
       case 'permission_request':
@@ -1240,7 +1291,7 @@ class MessageStore {
         this.onResult(sessionId, event);
         // A finished turn is the cheapest moment to learn what it cost the
         // plan; the store throttles so back-to-back turns don't spam the SDK.
-        usageStore.refresh(sessionId).catch(() => {});
+        if (this.sideEffects) usageStore.refresh(sessionId).catch(() => {});
         break;
 
       case 'error':
@@ -1333,18 +1384,22 @@ class MessageStore {
           this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
-        backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
-        gitStatusStore.scheduleRefresh(sessionId, 100);
+        if (this.sideEffects) {
+          backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
+          gitStatusStore.scheduleRefresh(sessionId, 100);
+        }
         break;
 
       case 'rate_limit':
-        rateLimitStore.set(sessionId, {
-          status: event.status,
-          resetsAt: event.resetsAt,
-          utilization: event.utilization,
-          rateLimitType: event.rateLimitType,
-        });
-        usageStore.applyRateLimitEvent(sessionId, event);
+        if (this.sideEffects) {
+          rateLimitStore.set(sessionId, {
+            status: event.status,
+            resetsAt: event.resetsAt,
+            utilization: event.utilization,
+            rateLimitType: event.rateLimitType,
+          });
+          usageStore.applyRateLimitEvent(sessionId, event);
+        }
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {
             kind: 'system',
@@ -1362,7 +1417,7 @@ class MessageStore {
         break;
 
       case 'task_started':
-        backgroundTaskStore.start(sessionId, event);
+        if (this.sideEffects) backgroundTaskStore.start(sessionId, event);
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),
@@ -1371,11 +1426,11 @@ class MessageStore {
         break;
 
       case 'task_progress':
-        backgroundTaskStore.progress(sessionId, event);
+        if (this.sideEffects) backgroundTaskStore.progress(sessionId, event);
         break;
 
       case 'background_tasks_changed':
-        backgroundTaskStore.reconcile(sessionId, event);
+        if (this.sideEffects) backgroundTaskStore.reconcile(sessionId, event);
         break;
 
       case 'task_notification':
@@ -1474,6 +1529,7 @@ class MessageStore {
       delete this.usageBySession[sessionId];
       delete this.turnsBySession[sessionId];
       delete this.paginationBySession[sessionId];
+      this.orphanReplayEvents.delete(sessionId);
       delete this.pendingClear[sessionId];
       // Drop the checkpoint selection (its message is gone) but keep the
       // list: main keeps the git refs and flags earlier turns as
@@ -1551,6 +1607,8 @@ class MessageStore {
     });
     if (changed) {
       this.setMessagesForMutation(sessionId, updated);
+    } else if (this._replayBuffer !== null) {
+      this.noteOrphan(sessionId, event);
     }
     // Clear tool progress for this tool
     const prog = this.toolProgressBySession[sessionId];
@@ -1559,7 +1617,7 @@ class MessageStore {
       this.toolProgressBySession[sessionId] = { ...prog };
     }
     // Refresh git status after file-modifying tool calls
-    if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit'].includes(matchedToolName)) {
+    if (this.sideEffects && matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit'].includes(matchedToolName)) {
       gitStatusStore.scheduleRefresh(sessionId, 300);
     }
   }
@@ -1678,6 +1736,8 @@ class MessageStore {
     });
     if (changed) {
       this.setMessagesForMutation(sessionId, updated);
+    } else if (this._replayBuffer !== null) {
+      this.noteOrphan(sessionId, event);
     }
   }
 
@@ -1718,7 +1778,7 @@ class MessageStore {
     // Background tasks are not resolved here: they outlive the turn (and an
     // interrupt), and the SDK reports their end via task_notification /
     // background_tasks_changed. Only process_exit drops them as stale.
-    gitStatusStore.scheduleRefresh(sessionId, 100);
+    if (this.sideEffects) gitStatusStore.scheduleRefresh(sessionId, 100);
 
     // Turn finished — the agent is free for the next queued prompt.
     this.flushQueue(sessionId);
@@ -1741,7 +1801,7 @@ class MessageStore {
         updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
         this.setMessagesForMutation(sessionId, updated);
         // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
-        checkpointStore.scheduleRefresh(sessionId);
+        if (this.sideEffects) checkpointStore.scheduleRefresh(sessionId);
         return;
       }
     }
@@ -1754,13 +1814,17 @@ class MessageStore {
       uuid: event.uuid,
     });
     // Schedule checkpoint list refresh so the Checkpoints tab updates
-    if (event.uuid) {
+    if (event.uuid && this.sideEffects) {
       checkpointStore.scheduleRefresh(sessionId);
     }
   }
 
   private onTaskNotification(sessionId: string, event: Extract<AgentEvent, { type: 'task_notification' }>) {
-    const { label, text } = backgroundTaskStore.notify(sessionId, event);
+    // The scratch store for an older page only needs the wording, not to
+    // mark a long-finished task done again.
+    const { label, text } = this.sideEffects
+      ? backgroundTaskStore.notify(sessionId, event)
+      : { label: event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped', text: event.summary || event.taskId };
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -1796,8 +1860,10 @@ class MessageStore {
     // Files-only restore (a checkpoint from before /clear): the conversation
     // is untouched, only the working tree moved.
     if (event.filesOnly) {
-      gitStatusStore.refresh(sessionId);
-      checkpointStore.scheduleRefresh(sessionId);
+      if (this.sideEffects) {
+        gitStatusStore.refresh(sessionId);
+        checkpointStore.scheduleRefresh(sessionId);
+      }
       return;
     }
     // Snapshot edit history before truncation if conversation-only rewind
@@ -1828,7 +1894,7 @@ class MessageStore {
     // A rewind rewrites history; queued follow-ups may no longer make sense.
     this.pauseQueue(sessionId);
     // Refresh git status since files may have changed on disk
-    gitStatusStore.refresh(sessionId);
+    if (this.sideEffects) gitStatusStore.refresh(sessionId);
   }
 
   /** Send a slash command (e.g. /compact, /clear, /rewind) */
@@ -2076,6 +2142,10 @@ class MessageStore {
     this.toolProgressBySession[sessionId] = {};
     backgroundTaskStore.clear(sessionId);
     this.sourceIndexBySession.delete(sessionId);
+    this.orphanReplayEvents.delete(sessionId);
+    // The replay that follows sets it again; an older page still loading
+    // for the old history sees it gone and is dropped.
+    delete this.paginationBySession[sessionId];
     delete this.stoppingSession[sessionId];
     delete this.awaitingResponse[sessionId];
     delete this.userExplicitMode[sessionId];
@@ -2108,6 +2178,7 @@ class MessageStore {
     }
 
     this.sourceIndexBySession.delete(sessionId);
+    this.orphanReplayEvents.delete(sessionId);
     this.streamBuf.delete(sessionId);
 
     // Extracted stores own their own per-session teardown.
