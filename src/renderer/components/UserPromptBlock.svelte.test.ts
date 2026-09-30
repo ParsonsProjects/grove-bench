@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent } from '@testing-library/svelte';
-import { mockGroveBench } from '../__mocks__/setup.js';
 
 import UserPromptBlock from './UserPromptBlock.svelte';
 
@@ -10,8 +9,6 @@ const DATA_URL = 'data:image/png;base64,iVBOR';
 
 afterEach(() => {
   cleanup();
-  mockGroveBench.getAttachmentImage.mockReset();
-  mockGroveBench.getAttachmentImage.mockResolvedValue(null);
 });
 
 describe('UserPromptBlock attachments', () => {
@@ -40,18 +37,20 @@ describe('UserPromptBlock attachments', () => {
     expect(dialog.querySelector('img')).toHaveAttribute('src', DATA_URL);
   });
 
-  it('loads a saved image from the conversation', async () => {
+  it('loads a saved image from the conversation, lazily', () => {
     const file = `${'a'.repeat(32)}.png`;
-    mockGroveBench.getAttachmentImage.mockResolvedValue(DATA_URL);
     render(UserPromptBlock, { sessionId: SID, text: 'look', images: [{ file, name: 'shot.png' }] });
 
-    expect(await screen.findByRole('img', { name: 'shot.png' })).toHaveAttribute('src', DATA_URL);
-    expect(mockGroveBench.getAttachmentImage).toHaveBeenCalledWith(SID, file);
+    const img = screen.getByRole('img', { name: 'shot.png' });
+    expect(img).toHaveAttribute('src', `grove-attachment://image/${SID}/${file}`);
+    expect(img).toHaveAttribute('loading', 'lazy');
   });
 
   it('says so when a saved image is gone', async () => {
     render(UserPromptBlock, { sessionId: SID, text: 'look', images: [{ file: `${'b'.repeat(32)}.png`, name: 'shot.png' }] });
-    expect(await screen.findByText('Image not available')).toBeInTheDocument();
+    await fireEvent.error(screen.getByRole('img', { name: 'shot.png' }));
+    expect(screen.getByText('Image not available')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View shot.png' })).toBeNull();
   });
 
   it('shows an image sent without text', () => {

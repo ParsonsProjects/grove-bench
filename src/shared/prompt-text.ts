@@ -88,8 +88,19 @@ export function stripFileContext(sent: string): string {
 export function attachedFilesFromSent(sent: string): { files: SentBlock[]; typed: string } {
   const { blocks, typed } = splitSentPrompt(sent);
   if (blocks.length === 0) return { files: [], typed };
-  const refs = new Set(extractAtRefs(typed));
-  return { files: blocks.filter((b) => !refs.has(b.path)), typed };
+  // The editor adds one block per @-reference after the attached files. Take
+  // them off the end by count, so an attached file with the same name as a
+  // reference stays.
+  const refs = new Map<string, number>();
+  for (const ref of extractAtRefs(typed)) refs.set(ref, (refs.get(ref) ?? 0) + 1);
+  let end = blocks.length;
+  while (end > 0) {
+    const left = refs.get(blocks[end - 1].path) ?? 0;
+    if (left === 0) break;
+    refs.set(blocks[end - 1].path, left - 1);
+    end--;
+  }
+  return { files: blocks.slice(0, end), typed };
 }
 
 /** A typed prompt with its attachment names as a leading "[a.ts, b.png] " label. */
@@ -98,11 +109,12 @@ export function withAttachmentLabel(names: string[], typed: string): string {
 }
 
 /**
- * A sent message as one line of text: attached files as a leading
- * "[a.ts, b.ts] " label, @-references left in the text. Image attachments
- * aren't part of the sent text, so they can't be listed.
+ * A sent message as one line of text: attached files, then `images`, as a
+ * leading "[a.ts, shot.png] " label, @-references left in the text. Images
+ * aren't part of the sent text, so they are passed in (from the event).
  */
-export function displayTextFromSent(sent: string): string {
+export function displayTextFromSent(sent: string, images: { name?: string }[] = []): string {
   const { files, typed } = attachedFilesFromSent(sent);
-  return withAttachmentLabel(files.map((f) => f.path), typed);
+  const imageNames = images.flatMap((img) => (img.name ? [img.name] : []));
+  return withAttachmentLabel([...files.map((f) => f.path), ...imageNames], typed);
 }

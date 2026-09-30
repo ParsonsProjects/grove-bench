@@ -245,6 +245,14 @@ describe('findEventIndexByUuid', () => {
 });
 
 describe('extractSessionPreview', () => {
+  it('lists attached images with the prompt, as the thread labels it', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'fix it', images: [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }] },
+    ];
+    expect(extractSessionPreview(events).firstPrompt).toBe('[shot.png] fix it');
+    expect(searchableEventText(events[0])).toBe('[shot.png] fix it');
+  });
+
   it('returns the first real user prompt and the latest text', () => {
     const events: AgentEvent[] = [
       { type: 'status', message: 'creating worktree' },

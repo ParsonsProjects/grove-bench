@@ -47,7 +47,7 @@ export function searchableEventText(event: AgentEvent): string {
   switch (event.type) {
     case 'user_message':
       // As the chat shows it, so a hit never lands in attached file content.
-      return displayTextFromSent(event.text);
+      return displayTextFromSent(event.text, event.images);
     case 'assistant_text':
     case 'tool_use_summary':
       return 'text' in event ? event.text : event.summary;
@@ -122,7 +122,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
   let firstPrompt = '';
   for (const e of events) {
     if (e.type !== 'user_message') continue;
-    const text = displayTextFromSent(e.text).trim();
+    const text = displayTextFromSent(e.text, e.images).trim();
     if (!text || text.startsWith('/')) continue;
     firstPrompt = collapse(text);
     break;
@@ -132,7 +132,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === 'assistant_text' || e.type === 'user_message') {
-      const text = (e.type === 'user_message' ? displayTextFromSent(e.text) : e.text).trim();
+      const text = (e.type === 'user_message' ? displayTextFromSent(e.text, e.images) : e.text).trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
       lastText = collapse(text);
       break;

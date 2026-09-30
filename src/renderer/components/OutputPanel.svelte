@@ -315,6 +315,19 @@
     return () => observer.disconnect();
   });
 
+  // Thread images (attachments, tool screenshots) load after the scroll
+  // above and make the content taller without resizing the container, so
+  // the observer doesn't see them. Stay at the bottom when following. A
+  // frame later, so a failed image's placeholder has replaced it by then.
+  function followImageLoad(e: Event) {
+    if (!(e.target instanceof HTMLImageElement)) return;
+    requestAnimationFrame(() => {
+      if (shouldAutoScroll && scrollContainer && scrollContainer.clientHeight > 0) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+  }
+
   function handleScroll() {
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
@@ -343,6 +356,8 @@
   class:flex-col={arrival !== null}
   bind:this={scrollContainer}
   onscroll={handleScroll}
+  onloadcapture={followImageLoad}
+  onerrorcapture={followImageLoad}
   onmousedown={maybeClearHighlight}
   onwheel={maybeClearHighlight}
 >

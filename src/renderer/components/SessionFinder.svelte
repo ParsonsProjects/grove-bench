@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import Fuse from 'fuse.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { messageStore, userMessageLabel } from '../stores/messages.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { userMessageLabel } from '../lib/message-label.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { sortSessions } from '../lib/session-sort.js';
   import HighlightedText from './HighlightedText.svelte';

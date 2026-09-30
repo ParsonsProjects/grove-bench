@@ -1,6 +1,7 @@
 import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredImage } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
-import { attachedFilesFromSent, withAttachmentLabel, type SentBlock } from '../../shared/prompt-text.js';
+import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
@@ -53,15 +54,6 @@ export interface ChatUserMessage {
   images?: ThreadImage[];
   /** SDK user message UUID — used as checkpoint ID for /rewind */
   uuid?: string;
-}
-
-/** A user message as one line, attachment names first: "[a.ts, b.png] fix it". */
-export function userMessageLabel(m: ChatUserMessage): string {
-  const names = [
-    ...(m.files ?? []).map((f) => f.path),
-    ...(m.images ?? []).flatMap((i) => (i.name ? [i.name] : [])),
-  ];
-  return withAttachmentLabel(names, m.text);
 }
 
 export interface ChatSystemMessage {
@@ -1744,7 +1736,11 @@ class MessageStore {
       );
       if (existingIdx >= 0) {
         const updated = [...msgs];
-        updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
+        const msg = updated[existingIdx] as ChatUserMessage;
+        // Main has saved the images: show them from disk and let go of the
+        // inline data. Only when every one was saved, so the two lists line up.
+        const saved = event.images?.length && event.images.length === msg.images?.length ? { images: event.images } : {};
+        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved };
         this.setMessagesForMutation(sessionId, updated);
         // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
         checkpointStore.scheduleRefresh(sessionId);

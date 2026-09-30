@@ -66,6 +66,11 @@ export const shell = {
   openExternal: vi.fn(),
 };
 
+export const protocol = {
+  registerSchemesAsPrivileged: vi.fn(),
+  handle: vi.fn(),
+};
+
 // Reversible stand-in for OS encryption so tests can check nothing is stored
 // in plain text.
 export const safeStorage = {

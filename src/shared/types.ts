@@ -976,9 +976,6 @@ export interface GroveBenchAPI {
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
-  /** An image from the conversation's attachments folder as a data URL, or
-   *  null when it's gone. */
-  getAttachmentImage(sessionId: string, file: string): Promise<string | null>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
@@ -1576,7 +1573,6 @@ export const IPC = {
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
-  AGENT_ATTACHMENT_IMAGE: 'agent:attachmentImage',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',

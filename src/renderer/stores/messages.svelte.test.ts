@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
-import { messageStore, userMessageLabel, type ChatUserMessage } from './messages.svelte.js';
+import { messageStore, type ChatUserMessage } from './messages.svelte.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
@@ -1421,6 +1422,31 @@ describe('updateMcpServers', () => {
 });
 
 describe('ingestEvent — user_message UUID stamping', () => {
+  it('swaps just-sent images for the saved copies once main has saved them', () => {
+    messageStore.addUserMessage(SID, 'look', [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }]);
+    const saved = [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }];
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'look', uuid: 'u-img', images: saved } as AgentEvent);
+
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.uuid).toBe('u-img');
+    expect(msg.images).toEqual(saved);
+  });
+
+  it('keeps the inline images when not all of them were saved', () => {
+    const inline = [
+      { name: 'a.png', dataUrl: 'data:image/png;base64,AA' },
+      { name: 'b.png', dataUrl: 'data:image/png;base64,BB' },
+    ];
+    messageStore.addUserMessage(SID, 'look', inline);
+
+    messageStore.ingestEvent(SID, {
+      type: 'user_message', text: 'look', uuid: 'u-img', images: [{ file: `${'a'.repeat(32)}.png`, name: 'a.png' }],
+    } as AgentEvent);
+
+    expect((messageStore.getMessages(SID)[0] as ChatUserMessage).images).toEqual(inline);
+  });
+
   it('stamps UUID onto the most recent UUID-less user message', () => {
     messageStore.addUserMessage(SID, 'first prompt');
     messageStore.addUserMessage(SID, 'second prompt');

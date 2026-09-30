@@ -112,9 +112,9 @@ vi.mock('./skill-suggestions.js', () => ({
 const attachments = vi.hoisted(() => ({
   saveImages: vi.fn(async (_id: string, images: { name?: string }[]) =>
     images.map((img, i) => ({ file: `img${i}.png`, ...(img.name ? { name: img.name } : {}) }))),
-  removeImages: vi.fn(),
+  removeImages: vi.fn(async () => {}),
+  pruneImages: vi.fn(async () => {}),
   storeToolImages: vi.fn(async (_id: string, event: any) => {
-    if (event.type !== 'tool_result' || !event.imageData) return event;
     const { imageData, ...rest } = event;
     return { ...rest, images: imageData.map((_: unknown, i: number) => ({ file: `tool${i}.png` })) };
   }),
@@ -1961,6 +1961,10 @@ describe('AgentSessionManager.sendMessage()', () => {
       const results = sessionManager.getEventHistory('test-tool-images').filter((e) => e.type === 'tool_result');
       expect(results).toEqual([{ type: 'tool_result', toolUseId: 'tu1', content: '', images: [{ file: 'tool0.png' }] }]);
     });
+    // Only tool results with images go through the save.
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Looks fine', uuid: 'a1' });
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-tool-images').some((e) => e.type === 'assistant_text')).toBe(true));
+    expect(attachments.storeToolImages).toHaveBeenCalledTimes(1);
 
     await sessionManager.destroySession('test-tool-images');
   });
@@ -2212,6 +2216,11 @@ describe('AgentSessionManager.rewindFiles()', () => {
     const remainingUserMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
     expect(remainingUserMsgs).toHaveLength(1);
     expect((remainingUserMsgs[0] as any).text).toBe('First message');
+
+    // Images only the rewound turns showed are deleted: pruned against what's left.
+    const [prunedId, keptEvents] = attachments.pruneImages.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
+    expect(prunedId).toBe('test-rewind-history');
+    expect(keptEvents.filter((e) => e.type === 'user_message').map((e: any) => e.text)).toEqual(['First message']);
 
     await sessionManager.destroySession('test-rewind-history');
   });

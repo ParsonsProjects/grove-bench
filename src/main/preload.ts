@@ -55,8 +55,6 @@ const api: GroveBenchAPI = {
   // Agent I/O
   sendMessage: (sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) =>
     ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images),
-  getAttachmentImage: (sessionId: string, file: string) =>
-    ipcRenderer.invoke(IPC.AGENT_ATTACHMENT_IMAGE, sessionId, file),
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>

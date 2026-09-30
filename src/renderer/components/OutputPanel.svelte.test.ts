@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 // MarkdownBlock (pulled in transitively) calls DOMPurify.addHook at module load.
@@ -134,6 +134,37 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
     el.dispatchEvent(new Event('scroll'));
     await findByTitle('Scroll to bottom');
     resized();
+    expect(el.scrollTop).toBe(0);
+  });
+
+  it('stays at the bottom when a thread image loads after the scroll', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'user', id: 'u1', text: 'look', images: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }] }],
+    };
+    const { container, getByRole } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    // Let the scroll the first render queued happen first.
+    await new Promise((r) => requestAnimationFrame(r));
+    measure(el, { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 });
+    // The image loads and the content grows; the container's size doesn't change.
+    measure(el, { scrollHeight: 2128 } as never);
+    await fireEvent.load(getByRole('img', { name: 'shot.png' }));
+    await vi.waitFor(() => expect(el.scrollTop).toBe(2128));
+  });
+
+  it('leaves a reader who scrolled up where they are when an image loads', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'user', id: 'u1', text: 'look', images: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }] }],
+    };
+    const { container, getByRole, findByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    // Let the scroll the first render queued happen before the reader moves.
+    await new Promise((r) => requestAnimationFrame(r));
+    measure(el, { scrollTop: 0, scrollHeight: 2000, clientHeight: 500 });
+    el.dispatchEvent(new Event('scroll'));
+    await findByTitle('Scroll to bottom');
+    await fireEvent.load(getByRole('img', { name: 'shot.png' }));
+    await new Promise((r) => requestAnimationFrame(r));
     expect(el.scrollTop).toBe(0);
   });
 

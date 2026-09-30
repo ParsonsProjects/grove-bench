@@ -78,7 +78,30 @@ describe('attachedFilesFromSent', () => {
     });
   });
 
+  it('keeps an attached file that has the same name as an @-reference', () => {
+    const sent = `${buildContentBlock('file', 'README.md', 'dropped copy')}\n${buildContentBlock('file', 'README.md', 'worktree copy')}\n\ncompare with @README.md`;
+    expect(attachedFilesFromSent(sent).files).toEqual([{ path: 'README.md', content: 'dropped copy' }]);
+  });
+
+  it('takes one block off per @-reference, repeated references included', () => {
+    const sent = `${buildContentBlock('file', 'a.ts', '1')}\n${buildContentBlock('file', 'a.ts', '1')}\n\n@a.ts and again @a.ts`;
+    expect(attachedFilesFromSent(sent).files).toEqual([]);
+  });
+
+  it('still takes @-reference blocks off when one reference has no block', () => {
+    // Messages from before unreadable references got a "(could not read)" block.
+    const sent = `${buildContentBlock('file', 'notes.md', 'n')}\n${buildContentBlock('file', 'src/a.ts', 'a')}\n\n@src/a.ts and @missing.ts`;
+    expect(attachedFilesFromSent(sent).files).toEqual([{ path: 'notes.md', content: 'n' }]);
+  });
+
   it('returns no files for a plain prompt', () => {
     expect(attachedFilesFromSent('plain prompt')).toEqual({ files: [], typed: 'plain prompt' });
+  });
+});
+
+describe('displayTextFromSent with images', () => {
+  it('lists attached files, then images, before the typed text', () => {
+    const sent = `${buildContentBlock('file', 'a.ts', 'x')}\n\nfix it`;
+    expect(displayTextFromSent(sent, [{ name: 'shot.png' }, {}])).toBe('[a.ts, shot.png] fix it');
   });
 });

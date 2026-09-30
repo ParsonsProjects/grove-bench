@@ -1,4 +1,5 @@
-import { userMessageLabel, type ChatMessage } from '../stores/messages.svelte.js';
+import type { ChatMessage } from '../stores/messages.svelte.js';
+import { userMessageLabel } from './message-label.js';
 import { approvalRequest, toolLabel } from './tool-names.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */

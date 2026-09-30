@@ -90,7 +90,6 @@ const mockGroveBench = {
   openInEditor: vi.fn(() => Promise.resolve()),
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
-  getAttachmentImage: vi.fn().mockResolvedValue(null),
   notify: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
