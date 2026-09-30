@@ -801,8 +801,9 @@ export class PreviewManager {
   }
 
   /** Real (trusted) input goes through the DevTools protocol, which works on
-   *  an offscreen page without focus. Attached only for the action, so it
-   *  doesn't hold on to the page if the user opens DevTools on it. */
+   *  an offscreen page without focus. The dialog handler normally keeps the
+   *  debugger attached (see answerDialogs); if that attach failed, this one
+   *  lasts only for the action. */
   private async withDebugger<T>(wc: WebContents, fn: (send: (method: string, params?: object) => Promise<unknown>) => Promise<T>): Promise<T> {
     const dbg = wc.debugger;
     const attachedHere = !dbg.isAttached();
