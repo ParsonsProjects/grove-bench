@@ -571,28 +571,37 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
 };
 
 /**
- * How thinking text is returned. Opus 4.7+, Opus 5/5.5, Fable 5/5.1 and
- * Sonnet 5/5.5 default to 'omitted' (thinking blocks with empty text), and
- * Claude Code doesn't ask for anything else in SDK mode, so we ask for
- * summaries. Claude Code drops the field for models that don't take it.
+ * How thinking text is returned: a readable summary, or none. Opus 4.7+,
+ * Opus 5/5.5, Fable 5/5.1 and Sonnet 5/5.5 default to 'omitted' (thinking
+ * blocks with empty text), and Claude Code doesn't ask for anything else in
+ * SDK mode, so we always send one. Claude Code drops the field for models
+ * that don't take it (Haiku 4.5, Claude 3).
  */
-export const THINKING_DISPLAY = 'summarized' as const;
+export type ThinkingDisplay = 'summarized' | 'omitted';
+
+/** The display the showThinkingSummaries setting asks for (unset = on). */
+export function thinkingDisplayFor(summaries: boolean | undefined): ThinkingDisplay {
+  return summaries === false ? 'omitted' : 'summarized';
+}
 
 type ThinkingConfig =
-  | { type: 'adaptive'; display: typeof THINKING_DISPLAY }
+  | { type: 'adaptive'; display: ThinkingDisplay }
   | { type: 'disabled' }
-  | { type: 'enabled'; budgetTokens: number; display: typeof THINKING_DISPLAY };
+  | { type: 'enabled'; budgetTokens: number; display: ThinkingDisplay };
 
 /**
  * Thinking level → the SDK's query-start `thinking` config, which (unlike the
  * deprecated runtime token control) can express adaptive thinking explicitly.
  * Returns null for 'high' (and unset) so the provider default applies.
  */
-export function thinkingConfigFor(level: ThinkingLevel | null | undefined): ThinkingConfig | null {
+export function thinkingConfigFor(
+  level: ThinkingLevel | null | undefined,
+  display: ThinkingDisplay = 'summarized',
+): ThinkingConfig | null {
   if (!level || level === 'high') return null;
-  if (level === 'adaptive') return { type: 'adaptive', display: THINKING_DISPLAY };
+  if (level === 'adaptive') return { type: 'adaptive', display };
   if (level === 'off') return { type: 'disabled' };
-  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]!, display: THINKING_DISPLAY };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]!, display };
 }
 
 // ─── Session controls ───
@@ -787,11 +796,12 @@ export function reasoningOptionsFor(
   model: string | null | undefined,
   controls: Record<string, string> | null | undefined,
   learned?: LearnedModel,
+  display: ThinkingDisplay = 'summarized',
 ): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
   const caps = claudeModelCaps(model, learned);
   const thinking = caps.thinkingOff
-    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
-    : caps.adaptiveThinking ? thinkingConfigFor('adaptive') : null;
+    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined, display)
+    : caps.adaptiveThinking ? thinkingConfigFor('adaptive', display) : null;
   return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort], learned) };
 }
 
@@ -1250,6 +1260,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     resume: true,
     modelSwitching: true,
     thinking: true,
+    thinkingSummaries: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1543,7 +1554,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
     const learned = this.learnedFor(config.model);
-    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned);
+    const thinkingDisplay = thinkingDisplayFor(config.thinkingSummaries);
+    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned, thinkingDisplay);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
 
     const q: Query = queryFn({
@@ -1711,10 +1723,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             // the limit so the provider default (adaptive on capable models)
             // applies until the next query start passes the full config.
             // A session that started with thinking off has no display set,
-            // so turning it on must ask for summaries again.
+            // so turning it on must send it again.
             await q.setMaxThinkingTokens(
               THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null,
-              value === 'off' ? undefined : THINKING_DISPLAY,
+              value === 'off' ? undefined : thinkingDisplay,
             );
             return;
           case CONTROL_IDS.effort:

@@ -1264,6 +1264,10 @@ export interface GroveBenchSettings {
    *  ids the adapter actually offers for the session's model are applied;
    *  anything else is ignored, so a stale entry never breaks a session. */
   adapterDefaults: Record<string, Record<string, string>>;
+  /** Ask agents that support it (the `thinkingSummaries` capability) for a
+   *  readable summary of the model's thinking. Off asks for none. Applies
+   *  when a conversation's agent next starts. Default true. */
+  showThinkingSummaries: boolean;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];

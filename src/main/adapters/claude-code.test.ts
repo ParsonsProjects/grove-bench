@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, thinkingDisplayFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -130,6 +130,15 @@ describe('getControls()', () => {
     expect(reasoningOptionsFor('claude-opus-5', undefined)).toEqual({ thinking: null, effort: undefined });
   });
 
+  it('asks for no thinking text when summaries are turned off', () => {
+    expect(reasoningOptionsFor('claude-opus-5-5', {}, undefined, 'omitted').thinking)
+      .toEqual({ type: 'adaptive', display: 'omitted' });
+    expect(reasoningOptionsFor('claude-opus-5', { thinking: 'adaptive' }, undefined, 'omitted').thinking)
+      .toEqual({ type: 'adaptive', display: 'omitted' });
+    expect(reasoningOptionsFor('claude-opus-5', { thinking: 'off' }, undefined, 'omitted').thinking)
+      .toEqual({ type: 'disabled' });
+  });
+
   it('only sends effort levels the model accepts', () => {
     expect(effortFor('claude-opus-5-5', 'max')).toBe('max');
     expect(effortFor('claude-opus-4-6', 'xhigh')).toBeUndefined();
@@ -247,9 +256,22 @@ describe('thinkingConfigFor()', () => {
     expect(thinkingConfigFor('off')).toEqual({ type: 'disabled' });
   });
 
+  it('passes the display it is given', () => {
+    expect(thinkingConfigFor('adaptive', 'omitted')).toEqual({ type: 'adaptive', display: 'omitted' });
+    expect(thinkingConfigFor('low', 'omitted')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'omitted' });
+  });
+
   it('maps low/medium to fixed budgets', () => {
     expect(thinkingConfigFor('low')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'summarized' });
     expect(thinkingConfigFor('medium')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.medium, display: 'summarized' });
+  });
+});
+
+describe('thinkingDisplayFor()', () => {
+  it('shows summaries unless the setting is turned off', () => {
+    expect(thinkingDisplayFor(true)).toBe('summarized');
+    expect(thinkingDisplayFor(undefined)).toBe('summarized');
+    expect(thinkingDisplayFor(false)).toBe('omitted');
   });
 });
 
