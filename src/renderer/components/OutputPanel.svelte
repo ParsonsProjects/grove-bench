@@ -301,7 +301,7 @@
     if (len > prevMsgCount) {
       const last = filteredMessages[len - 1];
       if (last?.kind === 'user') {
-        shouldAutoScroll = true;
+        untrack(followLatest);
       } else if (!untrack(() => shouldAutoScroll) && untrack(() => hasOlderMessages)) {
         // Scrolled up to read: grow the window instead of sliding it, so the
         // oldest rendered message (maybe the one being read) stays put.
@@ -351,9 +351,19 @@
 
   function scrollToBottom() {
     if (scrollContainer) {
+      followLatest();
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      shouldAutoScroll = true;
     }
+  }
+
+  /** Back to the live end: follow new output and render only the latest page
+   *  again, so a window grown by reading back (loading older messages, or
+   *  output arriving while scrolled up) doesn't stay large for the rest of
+   *  the session. Only on a deliberate return (sending, Scroll to bottom):
+   *  a jump's smooth scroll passes near the bottom and would lose its target. */
+  function followLatest() {
+    shouldAutoScroll = true;
+    visibleCount = PAGE_SIZE;
   }
 </script>
 

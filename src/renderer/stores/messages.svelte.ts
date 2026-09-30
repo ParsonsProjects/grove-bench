@@ -153,6 +153,8 @@ export type ChatMessage =
 let msgCounter = 0;
 /** A prompt the user submitted while the agent was busy (connecting or mid-turn).
  *  Held in the renderer until the session is idle so it can still be removed. */
+const NOTHING_PENDING = Object.freeze({ permission: false, question: false });
+
 export interface PromptInsert {
   text: string;
   nonce: number;
@@ -572,18 +574,39 @@ class MessageStore {
     this.historyLoaded = { ...this.historyLoaded, [sessionId]: value };
   }
 
+  /** What a message list is waiting on, per list. A list is replaced on
+   *  every change, never edited in place, so each is scanned once however
+   *  often it's asked: the taskbar badge and the sidebar ask for every
+   *  conversation each time any of them gets a message. */
+  private pendingInputByList = new WeakMap<ChatMessage[], { permission: boolean; question: boolean }>();
+
+  private pendingInput(sessionId: string): { permission: boolean; question: boolean } {
+    const msgs = this.messagesBySession[sessionId];
+    if (!msgs) return NOTHING_PENDING;
+    let pending = this.pendingInputByList.get(msgs);
+    if (!pending) {
+      pending = { permission: false, question: false };
+      for (const m of msgs) {
+        if (m.kind === 'permission') {
+          if (!(m as ChatPermissionMessage).resolved) pending.permission = true;
+        } else if (m.kind === 'question' || m.kind === 'elicitation') {
+          if (!m.resolved) pending.question = true;
+        }
+        if (pending.permission && pending.question) break;
+      }
+      this.pendingInputByList.set(msgs, pending);
+    }
+    return pending;
+  }
+
   /** Whether a session has any unresolved permission requests */
   hasPendingPermission(sessionId: string): boolean {
-    return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => m.kind === 'permission' && !(m as ChatPermissionMessage).resolved,
-    );
+    return this.pendingInput(sessionId).permission;
   }
 
   /** Whether the agent is blocked on an unanswered question or MCP elicitation */
   hasPendingQuestion(sessionId: string): boolean {
-    return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => (m.kind === 'question' || m.kind === 'elicitation') && !(m as { resolved?: boolean }).resolved,
-    );
+    return this.pendingInput(sessionId).question;
   }
 
   /** Whether the session is waiting on the user for anything (permission or question) */

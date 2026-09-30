@@ -7,7 +7,20 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
-import type { CrossSessionSearchHit } from '../../shared/types.js';
+import type { AgentEvent, CrossSessionSearchHit } from '../../shared/types.js';
+
+// Counts search index builds; otherwise the real Fuse.
+const fuseBuilds = vi.hoisted(() => ({ count: 0 }));
+vi.mock('fuse.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fuse.js')>();
+  class CountingFuse<T> extends actual.default<T> {
+    constructor(...args: ConstructorParameters<typeof actual.default<T>>) {
+      super(...args);
+      fuseBuilds.count++;
+    }
+  }
+  return { ...actual, default: CountingFuse };
+});
 
 const HITS: CrossSessionSearchHit[] = [
   { sessionId: 's2', eventIndex: 12, kind: 'assistant', snippet: 'fixed the parser edge case' },
@@ -49,6 +62,43 @@ function snippetMark(text: string): HTMLElement {
   if (!mark) throw new Error(`no <mark>${text}</mark> in snippet`);
   return mark;
 }
+
+describe('SessionFinder: search index', () => {
+  afterEach(() => {
+    messageStore.messagesBySession = {};
+    messageStore.isRunning = {};
+  });
+
+  it('is not rebuilt when a conversation gets a message or starts running, only when its text changes', async () => {
+    messageStore.messagesBySession = { s1: [{ kind: 'user', id: 'u1', text: 'revamp the sidebar' }] } as any;
+    render(SessionFinder, { onclose: vi.fn() });
+    await screen.findByText('fix the parser bug');
+    // The index is only used (and built) while there is a query.
+    await typeQuery('parser');
+    const builds = fuseBuilds.count;
+
+    messageStore.ingestEvent('s1', { type: 'assistant_text', text: 'working on it', uuid: 'a1' } as AgentEvent);
+    messageStore.setIsRunning('s2', true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fuseBuilds.count).toBe(builds);
+
+    store.updateDisplayName('s2', 'Parser fix');
+    await typeQuery('Parser fix');
+    expect(fuseBuilds.count).toBe(builds + 1);
+    expect(screen.getByText('Parser fix', { exact: false })).toBeInTheDocument();
+  });
+
+  it('shows a conversation as running as soon as it starts', async () => {
+    render(SessionFinder, { onclose: vi.fn() });
+    const row = (await screen.findByText('fix-parser')).closest('button')!;
+    expect(row.querySelector('.bg-primary')).toBeNull();
+
+    messageStore.setIsRunning('s2', true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(row.querySelector('.bg-primary')).not.toBeNull();
+  });
+});
 
 describe('SessionFinder', () => {
   it('lists sessions with display names and preview prompts', async () => {

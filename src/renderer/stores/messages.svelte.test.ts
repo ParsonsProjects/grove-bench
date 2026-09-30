@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { flushSync } from 'svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { messageStore } from './messages.svelte.js';
@@ -1582,6 +1583,43 @@ describe('ingestEvent — rewind', () => {
     messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-2' } as AgentEvent);
     expect(messageStore.getDraft(SID)).toBe('second');
     expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'second', replace: true });
+  });
+});
+
+describe('needsInput', () => {
+  const ask = (type: 'permission' | 'question', requestId: string) => type === 'permission'
+    ? { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: `t-${requestId}`, requestId } as AgentEvent
+    : { type: 'permission_request', toolName: 'AskUserQuestion', toolInput: { questions: [] }, toolUseId: `t-${requestId}`, requestId, toolCategory: 'question' } as AgentEvent;
+
+  it('follows the conversation as prompts arrive and are answered', () => {
+    expect(messageStore.needsInput(SID)).toBe(false);
+    messageStore.ingestEvent(SID, ask('permission', 'r1'));
+    expect(messageStore.hasPendingPermission(SID)).toBe(true);
+    expect(messageStore.needsInput(SID)).toBe(true);
+
+    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r1', toolUseId: 't-r1', decision: 'allow' } as AgentEvent);
+    expect(messageStore.hasPendingPermission(SID)).toBe(false);
+    expect(messageStore.needsInput(SID)).toBe(false);
+
+    messageStore.ingestEvent(SID, ask('question', 'q1'));
+    expect(messageStore.hasPendingQuestion(SID)).toBe(true);
+    expect(messageStore.hasPendingPermission(SID)).toBe(false);
+    messageStore.resolveQuestion(SID, 'q1', 'yes');
+    expect(messageStore.needsInput(SID)).toBe(false);
+  });
+
+  it('updates a derived value that reads it', () => {
+    const seen: boolean[] = [];
+    const stop = $effect.root(() => {
+      $effect(() => { seen.push(messageStore.needsInput(SID)); });
+    });
+    flushSync();
+    messageStore.ingestEvent(SID, ask('permission', 'r2'));
+    flushSync();
+    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r2', toolUseId: 't-r2', decision: 'deny' } as AgentEvent);
+    flushSync();
+    stop();
+    expect(seen).toEqual([false, true, false]);
   });
 });
 

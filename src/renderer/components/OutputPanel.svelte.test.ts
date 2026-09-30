@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 // MarkdownBlock (pulled in transitively) calls DOMPurify.addHook at module load.
@@ -214,6 +214,24 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
     await tick();
 
     expect(container.querySelector('[data-msg-id="m10"]')).not.toBeNull();
+  });
+
+  it('renders only the latest page again after reading back, once the user sends', async () => {
+    messageStore.messagesBySession = {
+      [SID]: Array.from({ length: 60 }, (_, i) => ({ kind: 'text', id: `m${i}`, text: `reply ${i}`, uuid: `a${i}` })),
+    };
+    messageStore.setViewMode(SID, 'detailed');
+    const { container, getByText } = render(OutputPanel, { sessionId: SID });
+    await fireEvent.click(getByText(/older messages/));
+    await tick();
+    expect(container.querySelector('[data-msg-id="m0"]')).not.toBeNull();
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'next', uuid: 'u-next' } as never);
+    await tick();
+
+    // The latest 50 of 61: m11 to m59 and the new prompt.
+    expect(container.querySelector('[data-msg-id="m10"]')).toBeNull();
+    expect(container.querySelector('[data-msg-id="m11"]')).not.toBeNull();
   });
 
   it('stops following the stream after a jump to an older message', async () => {

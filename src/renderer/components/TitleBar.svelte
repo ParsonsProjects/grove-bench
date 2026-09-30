@@ -7,15 +7,28 @@
 
   let isMaximized = $state(false);
 
+  let checkSeq = 0;
   async function checkMaximized() {
-    isMaximized = await window.groveBench.winIsMaximized();
+    const seq = ++checkSeq;
+    const maximized = await window.groveBench.winIsMaximized();
+    if (seq === checkSeq) isMaximized = maximized;
   }
 
+  // Dragging a window edge fires resize many times a second: ask main once
+  // it settles (maximizing fires resize too), not once per event.
+  const RESIZE_SETTLE_MS = 150;
   $effect(() => {
     checkMaximized();
-    const onResize = () => checkMaximized();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(checkMaximized, RESIZE_SETTLE_MS);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+    };
   });
 
   // Match pixel-bg: 4px rects on a 6px grid (4px pixel + 2px gap).

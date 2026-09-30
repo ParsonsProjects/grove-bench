@@ -18,16 +18,15 @@
   const HITS_PER_CONVERSATION = 3;
   const MAX_CONTENT_HITS = 30;
 
+  /** What the search looks at. Live state (status, running) is read per row
+   *  instead, so it can change without rebuilding the search index. */
   interface SessionEntry {
     id: string;
     label: string;
     branch: string;
     repoName: string;
     repoPath: string;
-    status: string;
     firstPrompt: string;
-    isRunning: boolean;
-    hasPending: boolean;
   }
 
   onMount(() => {
@@ -36,27 +35,30 @@
     sessionPreviewStore.ensure(store.sessions.map((s) => s.id));
   });
 
-  let entries = $derived.by((): SessionEntry[] => {
-    return store.sessions.map((s) => {
-      const msgs = messageStore.getMessages(s.id);
-      const firstUser = msgs.find((m) => m.kind === 'user');
-      const firstPrompt =
-        (firstUser && 'text' in firstUser ? firstUser.text.slice(0, 120) : '') ||
-        sessionPreviewStore.get(s.id)?.firstPrompt ||
-        '';
-      return {
-        id: s.id,
-        label: s.displayName || s.branch,
-        branch: s.branch,
-        repoName: store.repoDisplayName(s.repoPath),
-        repoPath: s.repoPath,
-        status: s.status,
-        firstPrompt,
-        isRunning: messageStore.getIsRunning(s.id),
-        hasPending: messageStore.hasPendingPermission(s.id),
-      };
-    });
-  });
+  // Re-read on every message (the first prompt comes from the messages), but
+  // kept as a string: the index below is only rebuilt when the searchable
+  // text changes, not each time any conversation gets a message.
+  let entriesKey = $derived(JSON.stringify(store.sessions.map((s): SessionEntry => {
+    const msgs = messageStore.getMessages(s.id);
+    const firstUser = msgs.find((m) => m.kind === 'user');
+    const firstPrompt =
+      (firstUser && 'text' in firstUser ? firstUser.text.slice(0, 120) : '') ||
+      sessionPreviewStore.get(s.id)?.firstPrompt ||
+      '';
+    return {
+      id: s.id,
+      label: s.displayName || s.branch,
+      branch: s.branch,
+      repoName: store.repoDisplayName(s.repoPath),
+      repoPath: s.repoPath,
+      firstPrompt,
+    };
+  })));
+  let entries = $derived(JSON.parse(entriesKey) as SessionEntry[]);
+
+  function statusOf(id: string): string {
+    return store.sessions.find((s) => s.id === id)?.status ?? '';
+  }
 
   let fuse = $derived(
     new Fuse(entries, {
@@ -210,6 +212,7 @@
           <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Conversations</div>
           {#each sessionResults as entry, i}
             {@const isActive = store.activeSessionId === entry.id}
+            {@const status = statusOf(entry.id)}
             <button
               class="w-full text-left px-3 py-2 text-xs flex flex-col gap-0.5 transition-colors
                 {i === selectedIndex ? 'bg-accent text-accent-foreground' : 'text-popover-foreground/80 hover:bg-accent/50'}"
@@ -217,17 +220,17 @@
               onmouseenter={() => selectedIndex = i}
             >
               <div class="flex items-center gap-2">
-                {#if entry.status === 'error'}
+                {#if status === 'error'}
                   <span class="w-2 h-2 bg-red-500 shrink-0"></span>
-                {:else if entry.status === 'starting' || entry.status === 'installing'}
+                {:else if status === 'starting' || status === 'installing'}
                   <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
-                {:else if entry.isRunning}
+                {:else if messageStore.getIsRunning(entry.id)}
                   <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
-                {:else if entry.hasPending}
+                {:else if messageStore.hasPendingPermission(entry.id)}
                   <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
-                {:else if entry.status === 'stopped'}
+                {:else if status === 'stopped'}
                   <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
-                {:else if entry.status === 'sleeping'}
+                {:else if status === 'sleeping'}
                   <span class="w-2 h-2 bg-green-500/40 shrink-0"></span>
                 {:else}
                   <span class="w-2 h-2 bg-green-500 shrink-0"></span>
