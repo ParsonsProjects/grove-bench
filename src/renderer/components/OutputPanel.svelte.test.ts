@@ -155,6 +155,22 @@ describe('OutputPanel — bookmark jumps', () => {
   });
 });
 
+describe('OutputPanel — live reply', () => {
+  afterEach(() => { messageStore.streamingText = {}; });
+
+  it('draws the live reply only while its conversation is showing', async () => {
+    store.activeSessionId = 'another';
+    messageStore.streamingText = { [SID]: 'Half a **reply**' };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('.markdown-content')).toBeNull();
+
+    store.activeSessionId = SID;
+    await tick();
+
+    expect(container.querySelector('.markdown-content strong')).toHaveTextContent('reply');
+  });
+});
+
 describe('OutputPanel: follows the conversation after being hidden', () => {
   // jsdom has no layout or ResizeObserver: stub both. A hidden element
   // measures 0; showing it resizes the container, which fires the observer.

@@ -31,6 +31,10 @@
 
   let allMessages = $derived(messageStore.getMessages(sessionId));
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  // Every conversation's pane stays mounted, hidden but for the open one.
+  // A hidden one skips drawing its live reply (re-parsed on every flush);
+  // shown again, it draws what has arrived so far.
+  let paneShown = $derived(store.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'activity');
   let streamingThinking = $derived(messageStore.getStreamingThinking(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
@@ -543,7 +547,7 @@
   <!-- Streaming text (live) -->
   {#if streamingText}
     <div class="py-1 text-sm text-foreground">
-      <MarkdownBlock content={streamingText} streaming />
+      {#if paneShown}<MarkdownBlock content={streamingText} streaming />{/if}
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
   {:else if arrival !== null}

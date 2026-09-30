@@ -3,6 +3,7 @@
   import DOMPurify from 'dompurify';
   import hljs from '../lib/hljs.js';
   import { openLink } from '$lib/preview-links.js';
+  import { splitStreamingMarkdown } from '$lib/markdown-stream.js';
 
   /** Marks the copy buttons this renderer adds. Chat content can include raw
    *  HTML, and a button it writes must not work as one: it could show one
@@ -53,67 +54,70 @@
 
 <script lang="ts">
   /** `streaming`: the content is a live preview that re-renders on every
-   *  flush, so skip syntax highlighting; the finalized message gets it. */
+   *  flush, so skip syntax highlighting; the finalized message gets it. It
+   *  is also rendered a block at a time: blocks that are done keep their
+   *  HTML, and each flush re-parses only the block still growing. */
   let { content, streaming = false }: { content: string; streaming?: boolean } = $props();
 
-  let html = $derived.by(() => renderMarkdown(content, { highlight: !streaming }));
+  let html = $derived(streaming ? '' : renderMarkdown(content));
+  let streamParts = $derived(streaming ? splitStreamingMarkdown(content) : null);
   let container: HTMLDivElement;
 
   const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
   const copySvg = COPY_SVG;
 
-  $effect(() => {
-    const _html = html; // track re-renders
-    if (!container) return;
+  async function copyCode(btn: HTMLButtonElement) {
+    // The code the block shows. Its content was escaped by the renderer, so
+    // it holds no markup that could hide part of it.
+    const code = btn.closest('.code-block-wrapper')?.querySelector('pre > code');
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code.textContent ?? '');
+      btn.innerHTML = checkSvg;
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.innerHTML = copySvg;
+        btn.classList.remove('copied');
+      }, 1500);
+    } catch { /* ignore */ }
+  }
 
-    // Intercept link clicks: localhost opens in the Preview tab, the rest in
-    // the system browser. Every other link (relative, `?x`, `#x`, mailto:)
-    // does nothing: followed, it would navigate or reload the app window.
-    const linkHandler = (e: MouseEvent) => {
-      const anchor = (e.target as HTMLElement).closest('a');
+  // One listener for the whole block, so content that re-renders (or grows
+  // while streaming) needs nothing re-attached.
+  $effect(() => {
+    if (!container) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Only buttons this renderer made: chat content can hold its own.
+      const btn = target.closest<HTMLButtonElement>('button.code-copy-btn');
+      if (btn && btn.dataset.copy === COPY_MARK) {
+        void copyCode(btn);
+        return;
+      }
+      // Links: localhost opens in the Preview tab, the rest in the system
+      // browser. Every other link (relative, `?x`, `#x`, mailto:) does
+      // nothing: followed, it would navigate or reload the app window.
+      const anchor = target.closest('a');
       if (!anchor) return;
       e.preventDefault();
       const href = anchor.getAttribute('href');
       if (href && /^https?:\/\//i.test(href)) openLink(href, e);
     };
-    container.addEventListener('click', linkHandler);
-
-    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button.code-copy-btn')]
-      .filter((btn) => btn.dataset.copy === COPY_MARK);
-    const handlers: Array<[HTMLButtonElement, () => void]> = [];
-
-    for (const btn of buttons) {
-      const handler = async () => {
-        // The code the block shows. Its content was escaped by the renderer,
-        // so it holds no markup that could hide part of it.
-        const code = btn.closest('.code-block-wrapper')?.querySelector('pre > code');
-        if (!code) return;
-        try {
-          const text = code.textContent ?? '';
-          await navigator.clipboard.writeText(text);
-          btn.innerHTML = checkSvg;
-          btn.classList.add('copied');
-          setTimeout(() => {
-            btn.innerHTML = copySvg;
-            btn.classList.remove('copied');
-          }, 1500);
-        } catch { /* ignore */ }
-      };
-      btn.addEventListener('click', handler);
-      handlers.push([btn, handler]);
-    }
-
-    return () => {
-      container.removeEventListener('click', linkHandler);
-      for (const [btn, handler] of handlers) {
-        btn.removeEventListener('click', handler);
-      }
-    };
+    container.addEventListener('click', onClick);
+    return () => container.removeEventListener('click', onClick);
   });
 </script>
 
 <div class="markdown-content" bind:this={container}>
-  {@html html}
+  {#if streamParts}
+    <!-- A block's string never changes once cut, so its HTML is made once. -->
+    {#each streamParts.settled as block, i (i)}
+      {@html renderMarkdown(block, { highlight: false })}
+    {/each}
+    {@html renderMarkdown(streamParts.tail, { highlight: false })}
+  {:else}
+    {@html html}
+  {/if}
 </div>
 
 <style>

@@ -8,6 +8,8 @@ vi.mock('dompurify', async () => {
   const actual = await vi.importActual<{ default: (w: Window) => unknown }>('dompurify');
   return { default: actual.default(window) };
 });
+import DOMPurify from 'dompurify';
+import { tick } from 'svelte';
 
 import MarkdownBlock from './MarkdownBlock.svelte';
 
@@ -53,5 +55,31 @@ describe('MarkdownBlock links', () => {
   it('drops forms from raw HTML', () => {
     const { container } = render(MarkdownBlock, { content: '<form action="?x"><button>Go</button></form>' });
     expect(container.querySelector('form')).toBeNull();
+  });
+});
+
+describe('MarkdownBlock while streaming', () => {
+  it('renders each finished block once and re-renders only the growing tail', async () => {
+    const sanitize = vi.spyOn(DOMPurify, 'sanitize');
+    const first = 'First paragraph with **bold**.\n\n';
+    const { container, rerender } = render(MarkdownBlock, { content: `${first}Sec`, streaming: true });
+    expect(container.querySelector('strong')).toHaveTextContent('bold');
+    const rendered = () => sanitize.mock.calls.map((c) => String(c[0]));
+
+    sanitize.mockClear();
+    await rerender({ content: `${first}Second paragraph`, streaming: true });
+    await tick();
+
+    expect(rendered()).toEqual(['<p>Second paragraph</p>\n']);
+    expect(container.textContent).toContain('First paragraph with bold.');
+    expect(container.textContent).toContain('Second paragraph');
+    sanitize.mockRestore();
+  });
+
+  it('keeps a code block whole while it streams, and its copy button works', async () => {
+    const content = 'Run:\n\n```\nnpm install\n\nnpm test\n```\n\nDone';
+    const { container } = render(MarkdownBlock, { content, streaming: true });
+    await fireEvent.click(container.querySelector('button.code-copy-btn')!);
+    expect(writeText).toHaveBeenCalledWith('npm install\n\nnpm test');
   });
 });
