@@ -470,7 +470,9 @@ export function registerHandlers() {
     await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
-    bookmarks.removeBookmarksForSession(id); // cascade: no orphan bookmarks
+    // Cascade: no orphan bookmarks. The conversation is already gone, so a
+    // bookmarks file that can't be read right now doesn't fail the delete.
+    try { bookmarks.removeBookmarksForSession(id); } catch (err) { logger.warn(`Could not remove bookmarks for ${id}:`, err); }
     logger.info(`Session destroyed: id=${id}`);
   });
 

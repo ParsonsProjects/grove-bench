@@ -1,10 +1,10 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
 import type { PrerequisiteStatus, SessionSortState, SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
+import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -115,27 +115,33 @@ function getStatePath(): string {
 }
 
 function writeAppState(state: AppState): void {
-  fs.writeFileSync(getStatePath(), JSON.stringify(stampSchemaVersion(state, APP_STATE_SCHEMA_VERSION)));
+  writeFileAtomicSync(getStatePath(), JSON.stringify(stampSchemaVersion(state, APP_STATE_SCHEMA_VERSION)));
+}
+
+/** The saved state (defaults when missing or damaged), or null when the file
+ *  exists but can't be read right now. */
+function readAppState(): AppState | null {
+  const read = readJsonFile(getStatePath());
+  if (read.kind === 'unreadable') return null;
+  if (read.kind !== 'ok') return { ...DEFAULT_STATE };
+  const { state, migrated } = upgradeAppState(read.value);
+  if (migrated) {
+    try { writeAppState(state); } catch { /* ignore */ }
+  }
+  return state;
 }
 
 export function loadAppState(): AppState {
-  try {
-    const data = fs.readFileSync(getStatePath(), 'utf-8');
-    const { state, migrated } = upgradeAppState(JSON.parse(data));
-    if (migrated) {
-      try { writeAppState(state); } catch { /* ignore */ }
-    }
-    return state;
-  } catch {
-    return { ...DEFAULT_STATE };
-  }
+  return readAppState() ?? { ...DEFAULT_STATE };
 }
 
-/** Read-modify-write the state file. Write errors are ignored (best-effort
- *  persistence, same as before versioning). */
+/** Read-modify-write the state file. Skipped when the file can't be read, so
+ *  a passing lock doesn't replace everything in it with defaults. Write
+ *  errors are ignored (best-effort persistence, same as before versioning). */
 function updateAppState(mutate: (state: AppState) => void): void {
   try {
-    const state = loadAppState();
+    const state = readAppState();
+    if (!state) return;
     mutate(state);
     writeAppState(state);
   } catch { /* ignore */ }
