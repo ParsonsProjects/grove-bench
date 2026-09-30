@@ -16,6 +16,9 @@ vi.mock('./logger.js', () => ({
 import { logger } from './logger.js';
 import { CheckpointManager } from './checkpoints.js';
 
+// Real git is slow to start on Windows, and each test runs a dozen commands.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 let tmp: string;
 let wt: string;
 
@@ -25,6 +28,15 @@ const run = (args: string[], cwd: string, env: Record<string, string> = {}) =>
     encoding: 'utf8',
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', ...env },
   }).trim();
+/** A new repo whose own config has an identity and no line-ending
+ *  conversion: a CI machine has no identity, and Git for Windows turns on
+ *  autocrlf, which would change what a rewind writes back. */
+const initRepo = (dir: string) => {
+  run(['init', '-q', '-b', 'main'], dir);
+  run(['config', 'user.name', 't'], dir);
+  run(['config', 'user.email', 't@t'], dir);
+  run(['config', 'core.autocrlf', 'false'], dir);
+};
 const write = (rel: string, content: string) => {
   fs.mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true });
   fs.writeFileSync(path.join(wt, rel), content);
@@ -37,7 +49,7 @@ beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-ckpt-'));
   const repo = path.join(tmp, 'repo');
   fs.mkdirSync(repo);
-  run(['init', '-q', '-b', 'main'], repo);
+  initRepo(repo);
   fs.writeFileSync(path.join(repo, '.gitignore'), '*.log\n');
   fs.writeFileSync(path.join(repo, 'a.ts'), 'one\n');
   run(['add', '.'], repo);
@@ -47,7 +59,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // Retried: on Windows a git process that just exited can still hold the folder.
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 describe('checkpoints with real git', () => {
@@ -98,7 +111,7 @@ describe('checkpoints with real git', () => {
   it('captures on a branch with no commits yet', async () => {
     const empty = path.join(tmp, 'empty');
     fs.mkdirSync(empty);
-    run(['init', '-q', '-b', 'main'], empty);
+    initRepo(empty);
     fs.writeFileSync(path.join(empty, 'first.ts'), 'x\n');
 
     const mgr = new CheckpointManager();

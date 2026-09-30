@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 
 const mockFs = vi.hoisted(() => ({
   readFile: vi.fn(),
@@ -1123,8 +1124,9 @@ describe('remove: default branch guard', () => {
 
 describe('manifest safety', () => {
   const crypto = require('node:crypto') as typeof import('node:crypto');
+  // Built as the manager builds them, so they use the platform's separator.
   const wtPathFor = (repo: string, id: string) =>
-    `/mock/userData/worktrees/${crypto.createHash('sha256').update(repo).digest('hex').slice(0, 8)}/${id}`;
+    path.join('/mock/userData/worktrees', crypto.createHash('sha256').update(repo).digest('hex').slice(0, 8), id);
   const errno = (code: string) => Object.assign(new Error(code), { code });
 
   it('refuses to write over a corrupt manifest', async () => {
@@ -1154,7 +1156,7 @@ describe('manifest safety', () => {
 
   it('writes the manifest atomically', async () => {
     await manager.registerDirect('/repo', 'main');
-    expect(mockFsUtils.writeFileAtomic).toHaveBeenCalledWith('/mock/userData/worktrees/manifest.json', expect.any(String));
+    expect(mockFsUtils.writeFileAtomic).toHaveBeenCalledWith(path.join('/mock/userData/worktrees', 'manifest.json'), expect.any(String));
   });
 
   it('keeps an entry whose directory can\'t be checked, rather than calling it an orphan', async () => {
@@ -1185,14 +1187,14 @@ describe('manifest safety', () => {
 
   it('the sweep leaves a worktree that is still being created', async () => {
     const wtPath = wtPathFor('/repo', 'newid001');
-    const hashDir = wtPath.slice(0, wtPath.lastIndexOf('/'));
+    const hashDir = path.dirname(wtPath);
     let finishAdd!: () => void;
     mockGit.mockImplementation(async (args: string[]) => {
       if (args[0] === 'worktree' && args[1] === 'add') await new Promise<void>((r) => { finishAdd = r; });
       return '';
     });
     mockFs.access.mockResolvedValue(undefined);
-    mockFs.readdir.mockImplementation(async (p: string) => (p === hashDir ? ['newid001'] : [hashDir.split('/').pop()]));
+    mockFs.readdir.mockImplementation(async (p: string) => (p === hashDir ? ['newid001'] : [path.basename(hashDir)]));
     mockFs.stat.mockResolvedValue({ isDirectory: () => true });
 
     const creating = manager.create({ repoPath: '/repo', branchName: 'feat', id: 'newid001' });
@@ -1223,7 +1225,9 @@ describe('manifest safety', () => {
 
 describe('worktree trash', () => {
   const crypto = require('node:crypto') as typeof import('node:crypto');
-  const root = '/mock/userData/worktrees';
+  const root = path.join('/mock/userData/worktrees');
+  const trash = path.join(root, '.trash');
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const hash = crypto.createHash('sha256').update('/repo').digest('hex').slice(0, 8);
   const DAY = 86_400_000;
 
@@ -1235,19 +1239,19 @@ describe('worktree trash', () => {
   });
 
   it('the sweep moves a folder missing from the manifest to the trash instead of deleting it', async () => {
-    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? [hash] : p === `${root}/${hash}` ? ['lost0001'] : []));
+    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? [hash] : p === path.join(root, hash) ? ['lost0001'] : []));
 
     await manager.sweepStaleWorktrees();
 
     expect(mockFs.rename).toHaveBeenCalledWith(
-      `${root}/${hash}/lost0001`, expect.stringMatching(new RegExp(`^${root}/\\.trash/\\d+-${hash}-lost0001$`)),
+      path.join(root, hash, 'lost0001'), expect.stringMatching(new RegExp(`^${escape(trash + path.sep)}\\d+-${hash}-lost0001$`)),
     );
     expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
   });
 
   it('the sweep leaves the trash itself alone', async () => {
     const recent = `${Date.now() - DAY}-${hash}-old00001`;
-    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? ['.trash'] : p === `${root}/.trash` ? [recent] : []));
+    mockFs.readdir.mockImplementation(async (p: string) => (p === root ? ['.trash'] : p === trash ? [recent] : []));
 
     await manager.sweepStaleWorktrees();
 
@@ -1264,14 +1268,14 @@ describe('worktree trash', () => {
 
     expect(await manager.purgeTrash(now)).toBe(1);
     expect(mockFsUtils.removeDirectory).toHaveBeenCalledTimes(1);
-    expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(`${root}/.trash/${expired}`);
+    expect(mockFsUtils.removeDirectory).toHaveBeenCalledWith(path.join(trash, expired));
   });
 
   it('an orphan whose folder git no longer lists goes to the trash', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'b', createdAt: 1 } }));
 
     expect(await manager.cleanupOrphans('/repo')).toBe(1);
-    expect(mockFs.rename).toHaveBeenCalledWith(`${root}/${hash}/wt-1`, expect.stringContaining(`${root}/.trash/`));
+    expect(mockFs.rename).toHaveBeenCalledWith(path.join(root, hash, 'wt-1'), expect.stringContaining(trash + path.sep));
     expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
     expect(savedManifest).not.toHaveProperty('wt-1');
   });

@@ -2,21 +2,19 @@
  * git.ts helpers against real git, for behaviour that depends on history
  * shape. git.test.ts covers the same functions with scripted output.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveMergeBase, squashSince, branchCommits } from './git.js';
 
+// Real git is slow to start on Windows, and each test runs a dozen commands.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 let repo: string;
 
-const run = (...args: string[]) =>
-  execFileSync('git', args, {
-    cwd: repo,
-    encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
-  }).trim();
+const run = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
 const commit = (file: string, message: string) => {
   fs.writeFileSync(path.join(repo, file), `${message}\n`);
   run('add', file);
@@ -27,11 +25,17 @@ const commit = (file: string, message: string) => {
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-git-'));
   run('init', '-q', '-b', 'main');
+  // In the repo's own config, so the app's git calls see them too: a CI
+  // machine has no identity, and Git for Windows turns on autocrlf.
+  run('config', 'user.name', 't');
+  run('config', 'user.email', 't@t');
+  run('config', 'core.autocrlf', 'false');
   commit('base.txt', 'base');
 });
 
 afterEach(() => {
-  fs.rmSync(repo, { recursive: true, force: true });
+  // Retried: on Windows a git process that just exited can still hold the folder.
+  fs.rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 /**
