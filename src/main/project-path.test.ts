@@ -20,6 +20,19 @@ beforeEach(async () => {
   process.env.GIT_CEILING_DIRECTORIES = path.dirname(root);
 });
 
+/** Turn on git's ownership check for `root`, whatever this machine's git
+ *  config says. The Windows CI image sets `safe.directory = *` system-wide,
+ *  which switches the check off, so skip system config and use an empty
+ *  global one. */
+function assumeDifferentOwner() {
+  const config = path.join(root, '.test-gitconfig');
+  fs.writeFileSync(config, '');
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  process.env.GIT_CONFIG_GLOBAL = config;
+  // git's own switch for testing its ownership check.
+  process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+}
+
 afterEach(() => {
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v === undefined) delete process.env[k];
@@ -60,8 +73,7 @@ describe('inspectProjectFolder', () => {
 
   it('passes on git\'s own words when it refuses a real repository', async () => {
     await execa('git', ['init', '-q'], { cwd: root });
-    // git's own switch for testing its ownership check.
-    process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+    assumeDifferentOwner();
     await expect(inspectProjectFolder(root)).rejects.toThrow(/Git won't open this repository\. Detected dubious ownership.*safe\.directory/s);
   });
 });
@@ -83,7 +95,9 @@ describe('projectKind', () => {
 
   it('keeps a repository git refuses as a git project, so its error shows instead of editing in place', async () => {
     await execa('git', ['init', '-q'], { cwd: root });
-    process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+    assumeDifferentOwner();
+    // Refused, not opened: the check above must be what makes this 'git'.
+    await expect(execa('git', ['rev-parse', '--git-dir'], { cwd: root })).rejects.toThrow(/dubious ownership/);
     expect(await projectKind(root)).toBe('git');
   });
 });
