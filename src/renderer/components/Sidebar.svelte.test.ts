@@ -63,7 +63,7 @@ describe('Sidebar session rows', () => {
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
     render(Sidebar);
-    expect(await screen.findByText('Waiting for approval — Write')).toBeInTheDocument();
+    expect(await screen.findByText('Wants to edit a file')).toBeInTheDocument();
   });
 
   it('uses the main-process preview for sessions with no loaded messages', async () => {

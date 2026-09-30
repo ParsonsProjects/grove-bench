@@ -10,6 +10,7 @@ import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
+import { approvalRequest } from '../lib/tool-names.js';
 
 // ─── Chat message types ───
 
@@ -2161,7 +2162,7 @@ class MessageStore {
 function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
   if (event.isPlanExecution) return 'A plan is ready for review';
   if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
-  return `${event.toolName} is waiting for permission`;
+  return `The agent ${approvalRequest(event.toolName)}`;
 }
 
 export const messageStore = new MessageStore();

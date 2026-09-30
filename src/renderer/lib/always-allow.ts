@@ -1,4 +1,5 @@
 import type { ToolCategory } from '../../shared/types.js';
+import { parseMcpToolName } from './tool-names.js';
 
 const LASTS = 'Lasts until you stop the conversation or restart Grove Bench.';
 
@@ -33,14 +34,7 @@ function scope(toolName: string, category?: ToolCategory): { label: string; cove
   if (toolName === 'NotebookEdit') {
     return { label: 'Allow all notebook edits', covers: 'Applies every notebook edit in this conversation without asking.' };
   }
-  const name = mcpToolName(toolName) ?? toolName;
+  const name = parseMcpToolName(toolName)?.tool ?? toolName;
   return { label: `Always allow ${name}`, covers: `Runs every ${name} call in this conversation without asking.` };
 }
 
-/** `mcp__<server>__<tool_name>` → `tool name`, the part a person recognises. */
-function mcpToolName(toolName: string): string | null {
-  if (!toolName.startsWith('mcp__')) return null;
-  const rest = toolName.slice('mcp__'.length);
-  const sep = rest.indexOf('__');
-  return sep >= 0 && sep + 2 < rest.length ? rest.slice(sep + 2).replace(/_/g, ' ') : null;
-}

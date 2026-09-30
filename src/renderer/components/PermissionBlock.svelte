@@ -2,6 +2,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import { toolLabel } from '$lib/tool-names.js';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -201,7 +202,7 @@
       <AgentSprite state={spriteState} seed={sessionId} projectColor={sessionRepoColor(sessionId)} scale={isResolved ? 2 : 3} />
     {/if}
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
-    <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolName}</span>
+    <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolLabel(toolName)}</span>
     {#if isExitPlanMode && planText}
       <button
         onclick={() => markdownPreviewStore.show(planText, 'Proposed plan')}

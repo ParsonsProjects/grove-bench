@@ -427,7 +427,7 @@ describe('OS notification triggers', () => {
       type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
     } as AgentEvent);
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'permission_request', body: 'Bash is waiting for permission' }),
+      expect.objectContaining({ kind: 'permission_request', body: 'The agent wants to run a command' }),
     );
   });
 
