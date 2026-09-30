@@ -192,6 +192,16 @@
     padding: 0.4em 0.8em;
     text-align: left;
   }
+  /* marked writes `:---:` and `---:` columns as an align attribute, which the
+     rule above would override. */
+  .markdown-content :global(th[align='center']),
+  .markdown-content :global(td[align='center']) {
+    text-align: center;
+  }
+  .markdown-content :global(th[align='right']),
+  .markdown-content :global(td[align='right']) {
+    text-align: right;
+  }
   .markdown-content :global(th) {
     background: #1a1a1a;
     font-weight: 600;

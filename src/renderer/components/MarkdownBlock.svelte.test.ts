@@ -28,6 +28,12 @@ describe('MarkdownBlock tables', () => {
     expect(screen.getAllByRole('button', { name: 'Copy table' })).toHaveLength(2);
   });
 
+  it('keeps column alignment through sanitizing', () => {
+    render(MarkdownBlock, { content: '| a | b | c |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |' });
+    const aligns = screen.getAllByRole('cell').map((td) => td.getAttribute('align'));
+    expect(aligns).toEqual(['left', 'center', 'right']);
+  });
+
   it('keeps the copy button while streaming', () => {
     render(MarkdownBlock, { content: TABLE, streaming: true });
     expect(screen.getByRole('button', { name: 'Copy table' })).toBeInTheDocument();
