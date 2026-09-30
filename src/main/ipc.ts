@@ -1567,22 +1567,6 @@ export function registerHandlers() {
     bookmarks.updateBookmark(id, patch);
   });
 
-  // ─── Shell / Terminal ───
-
-  ipcMain.handle(IPC.SHELL_RUN, (event, sessionId: string, command: string) => {
-    const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    return terminalManager.spawnCommand(sessionId, command, worktree.path, event.sender);
-  });
-
-  ipcMain.handle(IPC.SHELL_KILL, (_event, execId: string) => {
-    terminalManager.killExecution(execId);
-  });
-
-  ipcMain.on(IPC.SHELL_INPUT, (_event, execId: string, data: string) => {
-    terminalManager.sendInput(execId, data);
-  });
-
   // ─── Settings ───
 
   ipcMain.handle(IPC.SETTINGS_GET, () => {

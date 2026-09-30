@@ -30,7 +30,7 @@ const m = vi.hoisted(() => {
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'saveCompleted', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree',
     ),
-    terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive', 'spawnCommand', 'killExecution', 'sendInput'),
+    terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
     adapterRegistry: fns('get', 'getDefault', 'list'),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),

@@ -242,13 +242,6 @@ export interface SessionPreview {
 // ─── PTY / Terminal ───
 
 /** @deprecated Legacy shell output event — replaced by PTY data stream. */
-export interface ShellOutputEvent {
-  execId: string;
-  stream: 'stdout' | 'stderr' | 'exit';
-  data?: string;
-  exitCode?: number;
-}
-
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
@@ -1119,12 +1112,6 @@ export interface GroveBenchAPI {
   memoryBackupPreview(repoPath: string, backupId: string): Promise<MemoryBackupFile[]>;
   memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
 
-  // Shell / Terminal (legacy)
-  shellRun(sessionId: string, command: string): Promise<string>;
-  shellKill(execId: string): Promise<void>;
-  shellInput(execId: string, data: string): void;
-  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
-
   // PTY Terminal (per-session persistent shell)
   ptySpawn(sessionId: string): Promise<boolean>;
   ptyWrite(sessionId: string, data: string): void;
@@ -1626,10 +1613,6 @@ export const IPC = {
   MEMORY_STATS: 'memory:stats',
   MEMORY_BACKUP_PREVIEW: 'memory:backupPreview',
   MEMORY_BACKUP_READ_FILE: 'memory:backupReadFile',
-  SHELL_RUN: 'shell:run',
-  SHELL_KILL: 'shell:kill',
-  SHELL_INPUT: 'shell:input',
-  SHELL_OUTPUT: 'shell:output',
   // PTY channels (per-session persistent terminal)
   PTY_SPAWN: 'pty:spawn',
   PTY_WRITE: 'pty:write',
