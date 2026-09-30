@@ -15,6 +15,7 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import ActivityContextMenu from './ActivityContextMenu.svelte';
   import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
@@ -345,6 +346,19 @@
     return () => observer.disconnect();
   });
 
+  // Thread images (attachments, tool screenshots) load after the scroll
+  // above and make the content taller without resizing the container, so
+  // the observer doesn't see them. Stay at the bottom when following. A
+  // frame later, so a failed image's placeholder has replaced it by then.
+  function followImageLoad(e: Event) {
+    if (!(e.target instanceof HTMLImageElement)) return;
+    requestAnimationFrame(() => {
+      if (shouldAutoScroll && scrollContainer && scrollContainer.clientHeight > 0) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+  }
+
   function handleScroll() {
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
@@ -383,6 +397,8 @@
   class:flex-col={arrival !== null}
   bind:this={scrollContainer}
   onscroll={handleScroll}
+  onloadcapture={followImageLoad}
+  onerrorcapture={followImageLoad}
   onmousedown={maybeClearHighlight}
   onwheel={maybeClearHighlight}
 >
@@ -450,7 +466,10 @@
     >
       {#if msg.kind === 'user'}
         <UserPromptBlock
+          {sessionId}
           text={msg.text}
+          files={msg.files}
+          images={msg.images}
           onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
         />
 
@@ -465,6 +484,7 @@
           result={msg.result}
           isError={msg.isError}
           pending={msg.pending}
+          images={msg.images}
           {summaryMode}
         />
 
@@ -476,8 +496,8 @@
           toolInput={msg.toolInput}
           resolved={msg.resolved}
           decision={msg.decision}
+          timedOut={msg.timedOut}
           decisionReason={msg.decisionReason}
-          suggestions={msg.suggestions}
           isPlanExecution={msg.isPlanExecution}
           toolCategory={msg.toolCategory}
           planText={msg.planText}
@@ -491,6 +511,7 @@
           resolved={msg.resolved}
           response={msg.response}
           selectedLabels={msg.selectedLabels}
+          timedOut={msg.timedOut}
         />
 
       {:else if msg.kind === 'elicitation'}
@@ -622,3 +643,4 @@
 </div>
 
 <SelectionMenu {sessionId} container={scrollContainer} />
+<ActivityContextMenu {sessionId} container={scrollContainer} />

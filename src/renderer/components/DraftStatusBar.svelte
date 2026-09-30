@@ -28,7 +28,9 @@
 
   const whereDetail = $derived.by(() => {
     if (!start) return '';
-    if (start.kind === 'folder') return 'no separate copy · its current branch';
+    if (start.kind === 'folder') {
+      return draft && store.isFolderProject(draft.repoPath) ? 'no separate copy · no git' : 'no separate copy · its current branch';
+    }
     if (start.kind === 'existing') return start.pr ? start.pr.title : 'existing branch · separate copy';
     const from = start.baseBranch.trim() ? `from ${start.baseBranch.trim()}` : 'from the default branch';
     return start.branchName.trim() ? from : `${from} · named after the first reply`;

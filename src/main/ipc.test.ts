@@ -35,6 +35,7 @@ const m = vi.hoisted(() => {
     adapterRegistry: fns('get', 'getDefault', 'list'),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
+      'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels',
       'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
       'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
@@ -43,6 +44,7 @@ const m = vi.hoisted(() => {
     bookmarks: fns('getBookmarks', 'addBookmark', 'removeBookmark', 'updateBookmark', 'removeBookmarksForSession'),
     memoryCompact: fns('compactMemory', 'cancelCompaction', 'onCompactionEvent', 'listBackups', 'restoreBackup', 'getCompactionInfo', 'previewBackup', 'readBackupFile'),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    projectPath: fns('inspectProjectFolder', 'projectKind'),
   };
 });
 
@@ -54,6 +56,7 @@ vi.mock('./preview.js', () => ({ previewManager: m.previewManager }));
 vi.mock('./adapters/index.js', () => ({ adapterRegistry: m.adapterRegistry }));
 vi.mock('./settings.js', () => m.settings);
 vi.mock('./app-state.js', () => m.appState);
+vi.mock('./project-path.js', () => m.projectPath);
 vi.mock('./prerequisites.js', () => m.prerequisites);
 vi.mock('./credentials.js', () => m.credentials);
 vi.mock('./bookmarks.js', () => m.bookmarks);
@@ -168,6 +171,7 @@ beforeEach(() => {
   m.sessionManager.getSession.mockReturnValue(undefined);
   m.sessionManager.isMidTurn.mockReturnValue(false);
   m.sessionManager.beginSearch.mockReturnValue(vi.fn());
+  m.projectPath.projectKind.mockResolvedValue('git');
   m.sessionManager.createSession.mockImplementation(async (o: { id: string; branch: string }) => ({ id: o.id, branch: o.branch, agentType: 'claude' }));
 
   m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? wtInfo() : undefined));
@@ -188,20 +192,21 @@ beforeEach(() => {
 describe('repos', () => {
   it('REPO_SELECT returns a picked git repo after clearing its orphan worktrees', async () => {
     vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ['/repo'] });
-    m.worktreeManager.validateRepo.mockResolvedValue(true);
+    m.projectPath.inspectProjectFolder.mockResolvedValue({ kind: 'git', path: '/repo' });
     m.worktreeManager.cleanupOrphans.mockResolvedValue(2);
 
-    expect(await invoke(IPC.REPO_SELECT)).toBe('/repo');
+    expect(await invoke(IPC.REPO_SELECT)).toEqual({ kind: 'git', path: '/repo' });
     expect(m.worktreeManager.cleanupOrphans).toHaveBeenCalledWith('/repo');
+    expect(m.appState.rememberProject).toHaveBeenCalledWith('/repo');
   });
 
-  it('REPO_SELECT returns null for a cancelled pick and says why a folder that is not a repo was refused', async () => {
+  it('REPO_SELECT returns null for a cancelled pick, and adds a plain folder without git work', async () => {
     vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] });
     expect(await invoke(IPC.REPO_SELECT)).toBeNull();
 
-    vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ['/not-a-repo'] });
-    m.worktreeManager.validateRepo.mockResolvedValue(false);
-    await expect(invoke(IPC.REPO_SELECT)).rejects.toThrow('/not-a-repo is not a git repository');
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ['/notes'] });
+    m.projectPath.inspectProjectFolder.mockResolvedValue({ kind: 'folder', path: '/notes' });
+    expect(await invoke(IPC.REPO_SELECT)).toEqual({ kind: 'folder', path: '/notes' });
     expect(m.worktreeManager.cleanupOrphans).not.toHaveBeenCalled();
   });
 
@@ -334,19 +339,8 @@ describe('SESSION_CREATE', () => {
     m.worktreeManager.registerDirect.mockResolvedValue({ id: 'd1', branch: 'main', path: '/repo' });
 
     expect(await create({ direct: true })).toEqual({ id: 'd1', branch: 'main', agentType: 'claude' });
-    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'main', '/repo');
+    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'main', { noGit: false });
     expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'd1', cwd: '/repo' }));
-  });
-
-  it('attaching shares another conversation\'s worktree and branch', async () => {
-    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue({ id: 'src', path: '/wt/src', branch: 'feat-x' });
-    m.worktreeManager.registerDirect.mockResolvedValue({ id: 'd2', branch: 'feat-x', path: '/wt/src' });
-
-    await create({ attachToSessionId: 'src' });
-    expect(m.worktreeManager.registerDirect).toHaveBeenCalledWith('/repo', 'feat-x', '/wt/src');
-
-    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(undefined);
-    await expect(create({ attachToSessionId: 'gone' })).rejects.toThrow('Conversation gone not found');
   });
 });
 
@@ -1025,13 +1019,12 @@ describe('adapters, skills and MCP config', () => {
   it('MCP_CONFIG_APPROVE approves a server for the project and all its worktrees', async () => {
     const approveProjectMcpServer = vi.fn();
     m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude', approveProjectMcpServer });
-    m.worktreeManager.validateRepo.mockResolvedValue(true);
     m.worktreeManager.list.mockResolvedValue([{ path: '/wt/a' }, { path: '/wt/b' }]);
 
     await invoke(IPC.MCP_CONFIG_APPROVE, 'srv', '/repo');
     expect(approveProjectMcpServer).toHaveBeenCalledWith('srv', ['/repo', '/wt/a', '/wt/b']);
 
-    m.worktreeManager.validateRepo.mockResolvedValue(false);
-    await expect(invoke(IPC.MCP_CONFIG_APPROVE, 'srv', '/nowhere')).rejects.toThrow('not a git repository');
+    m.projectPath.projectKind.mockResolvedValue('missing');
+    await expect(invoke(IPC.MCP_CONFIG_APPROVE, 'srv', '/nowhere')).rejects.toThrow("The project folder /nowhere wasn't found");
   });
 });

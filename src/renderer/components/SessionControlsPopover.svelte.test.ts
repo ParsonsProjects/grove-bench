@@ -13,7 +13,7 @@ const SID = 's1';
 
 const DESCRIPTORS = [
   { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-    { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
+    { value: 'default', label: 'Ask', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
     { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
   ] },
   { id: 'thinking', label: 'Thinking', default: 'high', options: [
@@ -66,7 +66,7 @@ describe('SessionControlsPopover', () => {
     const trigger = screen.getByTitle(/Agent settings/);
     expect(trigger).toHaveTextContent('Claude Agent');
     expect(trigger).toHaveTextContent('Opus 5');
-    expect(trigger).toHaveTextContent('Code');
+    expect(trigger).toHaveTextContent('Ask');
     expect(trigger).not.toHaveTextContent('High');
     expect(trigger).not.toHaveTextContent('Standard');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -110,8 +110,8 @@ describe('SessionControlsPopover', () => {
     const heading = within(dialog).getByText('Grove Bench');
     expect(heading).toHaveAttribute('title', 'Not a Claude Agent option');
     // The heading sits between the provider's modes and the grouped one.
-    const modeButtons = within(dialog).getAllByRole('button', { name: /^(Code|Plan|Read-safe)$/ });
-    expect(modeButtons.map((b) => b.textContent?.trim())).toEqual(['Code', 'Plan', 'Read-safe']);
+    const modeButtons = within(dialog).getAllByRole('button', { name: /^(Ask|Plan|Read-safe)$/ });
+    expect(modeButtons.map((b) => b.textContent?.trim())).toEqual(['Ask', 'Plan', 'Read-safe']);
     expect(heading.compareDocumentPosition(modeButtons[1]) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(heading.compareDocumentPosition(modeButtons[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Only one divider: ungrouped options never get one.

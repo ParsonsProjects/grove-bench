@@ -7,6 +7,9 @@ const api: GroveBenchAPI = {
   addRepo: () => ipcRenderer.invoke(IPC.REPO_SELECT),
   removeRepo: (repoPath: string) => ipcRenderer.invoke(IPC.REPO_REMOVE, repoPath),
   validateRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_VALIDATE, path),
+  repoKind: (path: string) => ipcRenderer.invoke(IPC.REPO_KIND, path),
+  rememberRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_REMEMBER, path),
+  hasGitIdentity: (path: string) => ipcRenderer.invoke(IPC.GIT_HAS_IDENTITY, path),
 
   // Session operations
   createSession: (opts: CreateSessionOpts) =>
@@ -360,6 +363,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SIDEBAR_WIDTH, width),
+  getCollapsedPanels: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_PANELS) as Promise<import('../shared/types.js').CollapsedPanels>,
+  setCollapsedPanels: (panels: import('../shared/types.js').CollapsedPanels) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_PANELS, panels),
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();

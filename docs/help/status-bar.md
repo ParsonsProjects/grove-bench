@@ -4,7 +4,7 @@ The status bar sits at the top of the workspace area and displays real-time info
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Code` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. **Done**, `Esc`, or clicking outside closes the popup. A conversation keeps the agent it started with, because its history is stored by that agent and only that agent can pick it up again. Picking another agent starts a new conversation with it in the same project, as a draft, and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.
+The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Ask` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. **Done**, `Esc`, or clicking outside closes the popup. A conversation keeps the agent it started with, because its history is stored by that agent and only that agent can pick it up again. Picking another agent starts a new conversation with it in the same project, as a draft, and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.
 
 ### Usage
 
@@ -16,7 +16,7 @@ The operating mode controls how much the agent may do without asking:
 
 | Mode | Color | Description |
 |------|-------|-------------|
-| **Code** | Blue | Default mode — the agent asks before edits and non-trivial commands |
+| **Ask** | Blue | Default mode: the agent checks with you before each edit or command. Reading files and read-only commands run without asking |
 | **Plan** | Yellow | Planning mode — the agent explores and plans but doesn't edit files |
 | **Edit** | Purple | Accept-edits mode — file edits inside the worktree are applied without asking; commands still prompt |
 | **Auto** | Cyan | Claude Code's native auto mode — a classifier model reviews each action instead of you. Read-only actions and in-worktree edits are approved; risky or out-of-scope actions (force push, `curl \| bash`, secrets, mass deletion) are blocked and shown as a status line rather than prompted. Not offered on models that don't support it (Haiku) |
@@ -91,18 +91,23 @@ Each server in the popover shows a status dot:
 | Gray | Disabled (disconnected) |
 | Red | Failed |
 
-## Context Window
+## Context
 
-A colored bar shows how much of the agent's context window has been used:
+**Context N%** and a colored bar show how much of the agent's context window has been used. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
 | 0–40% | Green | Plenty of room |
 | 40–70% | Yellow | Getting full |
 | 70–85% | Orange | Running low |
-| 85–100% | Red | Nearly full — the agent may start compacting older context |
+| 85–100% | Red | Nearly full: the agent may start summarising older context |
 
 A blue segment within the bar represents cached/reusable context.
+
+Click the bar for details and two actions:
+
+- **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail.
+- **Start fresh…** (`/clear`): clears the conversation and the agent's memory of it. It asks you to confirm first. Your files are not changed.
 
 With **Show grove characters** on (Settings > General), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 

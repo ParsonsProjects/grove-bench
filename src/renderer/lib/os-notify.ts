@@ -1,10 +1,12 @@
 import type { OsNotificationRequest } from '../../shared/types.js';
 import { store as sessionStore } from '../stores/sessions.svelte.js';
 
-/** Human-readable label for a session: display name, else branch, else id. */
+/** Human-readable label for a session: display name, else branch (a
+ *  conversation in a folder without git has none), else id. */
 export function sessionLabel(sessionId: string): string {
   const session = sessionStore.sessions.find((s) => s.id === sessionId);
-  return session?.displayName || session?.branch || sessionId;
+  if (!session) return sessionId;
+  return session.displayName || session.branch || 'New conversation';
 }
 
 /** Fire-and-forget desktop notification request. Main gates on window focus
@@ -14,6 +16,6 @@ export function notifyOs(kind: OsNotificationRequest['kind'], sessionId: string,
   const session = sessionStore.sessions.find((s) => s.id === sessionId);
   if (!session || session.status === 'stopped') return;
   try {
-    window.groveBench.notify({ kind, sessionId, title: session.displayName || session.branch || sessionId, body });
+    window.groveBench.notify({ kind, sessionId, title: sessionLabel(sessionId), body });
   } catch { /* notifications are best-effort */ }
 }

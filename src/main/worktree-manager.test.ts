@@ -512,7 +512,7 @@ describe('pending removals', () => {
   });
 });
 
-describe('registerDirect (direct + attached sessions)', () => {
+describe('registerDirect (direct sessions, and older attached ones)', () => {
   it('runs on the repo checkout and persists no explicit path for a plain direct session', async () => {
     const info = await manager.registerDirect('/repo', 'main');
 
@@ -527,32 +527,40 @@ describe('registerDirect (direct + attached sessions)', () => {
     });
   });
 
-  it('persists the shared worktree path for an attached session', async () => {
-    const wtPath = '/worktrees/abc/wt-src';
-    const info = await manager.registerDirect('/repo', 'feature-x', wtPath);
-
-    expect(info.direct).toBe(true);
-    expect(info.path).toBe(wtPath);
-    expect(savedManifest[info.id]).toEqual({
-      repoPath: '/repo',
-      branch: 'feature-x',
-      createdAt: info.createdAt,
-      direct: true,
-      path: wtPath,
-    });
-  });
-
-  it('does not touch git when an attached session is destroyed (shared worktree is preserved)', async () => {
-    const wtPath = '/worktrees/abc/wt-src';
-    const info = await manager.registerDirect('/repo', 'feature-x', wtPath);
+  it('does not touch git when an older attached session is destroyed (shared worktree is preserved)', async () => {
+    // New conversations can no longer attach, but older manifests still hold some.
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-attached': { repoPath: '/repo', branch: 'feature-x', createdAt: 1000, direct: true, path: '/worktrees/abc/wt-src' },
+    }));
     mockGit.mockClear();
 
-    await manager.remove(info.id);
+    await manager.remove('wt-attached');
 
     // No worktree remove / branch delete / prune — the worktree belongs to the
     // source session, not this attached one.
     expect(mockGit).not.toHaveBeenCalled();
-    expect(savedManifest).not.toHaveProperty(info.id);
+    expect(savedManifest).not.toHaveProperty('wt-attached');
+  });
+
+  it('records a conversation in a folder without git, and keeps that after restart', async () => {
+    const info = await manager.registerDirect('/notes', '', { noGit: true });
+    expect(info.noGit).toBe(true);
+    expect(savedManifest[info.id]).toMatchObject({ repoPath: '/notes', branch: '', direct: true, noGit: true });
+
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    const restarted = new WorktreeManager();
+    expect((await restarted.getWorktreeOrManifest(info.id))?.noGit).toBe(true);
+  });
+
+  it('lists a folder project\'s conversations even though git fails there', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-folder': { repoPath: '/notes', branch: '', createdAt: 1000, direct: true, noGit: true },
+    }));
+    mockGit.mockRejectedValue(new Error('fatal: not a git repository'));
+
+    const listed = await manager.list('/notes');
+
+    expect(listed).toEqual([expect.objectContaining({ id: 'wt-folder', path: '/notes', direct: true, noGit: true })]);
   });
 
   it('reconstructs the shared worktree path from the manifest after restart', async () => {
@@ -731,7 +739,11 @@ describe('remove with conversations attached to the worktree', () => {
   });
 
   it('refuses to remove the worktree, or delete its branch, while another conversation uses it', async () => {
-    const attached = await manager.registerDirect('/repo', 'feat-a', WT);
+    // Older versions could attach a second conversation to a worktree; one
+    // loaded from such a manifest shares its path.
+    const attached = { id: 'att-1', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 2000, direct: true };
+    savedManifest = { ...savedManifest, 'att-1': { repoPath: '/repo', branch: 'feat-a', createdAt: 2000, direct: true, path: WT } };
+    manager.register(attached);
     mockGit.mockClear();
 
     await expect(manager.remove('wt-a', true)).rejects.toThrow(/Another conversation is still working in this conversation's worktree/);
@@ -753,7 +765,8 @@ describe('remove with conversations attached to the worktree', () => {
   });
 
   it('lets an attached conversation go without touching the shared worktree', async () => {
-    const attached = await manager.registerDirect('/repo', 'feat-a', WT);
+    const attached = { id: 'att-1', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 2000, direct: true };
+    manager.register(attached);
     await expect(manager.assertRemovable(attached.id)).resolves.toBeUndefined();
   });
 });
@@ -1269,5 +1282,47 @@ describe('worktree trash', () => {
 
     expect(await manager.cleanupOrphans('/repo')).toBe(0);
     expect(savedManifest).toHaveProperty('wt-1');
+  });
+});
+
+describe('sweepStaleWorktrees: direct entries', () => {
+  it('keeps a folder conversation while its folder exists, and drops git ones whose repo is gone', async () => {
+    const { isGitRepo } = await import('./git.js');
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue([]);
+    mockFs.stat.mockImplementation(async (p: string) => {
+      if (p === '/notes') return { isDirectory: () => true };
+      throw new Error('ENOENT');
+    });
+    savedManifest = {
+      'wt-folder': { repoPath: '/notes', branch: '', createdAt: 1, direct: true, noGit: true },
+      'wt-gone-folder': { repoPath: '/deleted', branch: '', createdAt: 1, direct: true, noGit: true },
+      'wt-git-gone': { repoPath: '/old-repo', branch: 'main', createdAt: 1, direct: true },
+    };
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(Object.keys(savedManifest)).toEqual(['wt-folder']);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
+  });
+
+  it('keeps a git conversation whose folder exists even when git fails at launch', async () => {
+    const { isGitRepo } = await import('./git.js');
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue([]);
+    mockFs.stat.mockImplementation(async (p: string) => {
+      if (p === '/repo') return { isDirectory: () => true };
+      throw new Error('ENOENT');
+    });
+    savedManifest = { 'wt-direct': { repoPath: '/repo', branch: 'main', createdAt: 1, direct: true } };
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(Object.keys(savedManifest)).toEqual(['wt-direct']);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
   });
 });

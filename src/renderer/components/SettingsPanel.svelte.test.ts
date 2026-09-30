@@ -15,7 +15,7 @@ const MODE: ControlDescriptor = {
   label: 'Mode',
   default: 'default',
   options: [
-    { value: 'default', label: 'Code', description: 'Ask before edits and non-trivial commands' },
+    { value: 'default', label: 'Ask', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
     { value: 'plan', label: 'Plan' },
     { value: 'acceptEdits', label: 'Edit', description: 'Auto-accept file edits inside the worktree' },
     { value: 'auto', label: 'Auto' },
@@ -26,7 +26,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false,
-    defaultModels: {}, adapterDefaults, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '',
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '',
     memoryAutoSave: true, memoryAutoCompact: false, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -42,7 +42,7 @@ async function openModeSelect() {
   const trigger = await screen.findByRole('button', { name: 'Claude Agent default mode' });
   trigger.focus();
   await fireEvent.keyDown(trigger, { key: 'Enter' });
-  await screen.findByRole('option', { name: 'Code' });
+  await screen.findByRole('option', { name: 'Ask' });
   return trigger;
 }
 
@@ -94,7 +94,7 @@ describe('SettingsPanel default permission mode', () => {
     await openAgentTab();
     await openModeSelect();
 
-    for (const name of ['Code', 'Plan', 'Edit', 'Auto', 'Read-safe']) {
+    for (const name of ['Ask', 'Plan', 'Edit', 'Auto', 'Read-safe']) {
       expect(screen.getByRole('option', { name })).toBeInTheDocument();
     }
     expect(screen.getByText('Grove Bench')).toBeInTheDocument();
@@ -111,9 +111,9 @@ describe('SettingsPanel default permission mode', () => {
 
     trigger.focus();
     await fireEvent.keyDown(trigger, { key: 'Enter' });
-    await screen.findByRole('option', { name: 'Code' });
-    await pick('Code');
-    await waitFor(() => expect(trigger).toHaveTextContent('Code'));
+    await screen.findByRole('option', { name: 'Ask' });
+    await pick('Ask');
+    await waitFor(() => expect(trigger).toHaveTextContent('Ask'));
     expect(settingsStore.draft.adapterDefaults).toEqual({});
   });
 
@@ -169,5 +169,23 @@ describe('SettingsPanel loading', () => {
 
     expect(mockGroveBench.mcpConfigList).toHaveBeenCalledTimes(1);
     mockGroveBench.mcpConfigList.mockResolvedValue([]);
+  });
+});
+
+describe('SettingsPanel thinking summaries', () => {
+  it('is offered only for agents that can show thinking summaries', async () => {
+    await openAgentTab();
+    await screen.findByRole('button', { name: 'Claude Agent default mode' });
+    expect(screen.queryByText('Show thinking summaries')).not.toBeInTheDocument();
+  });
+
+  it('is on by default and turns off from the checkbox', async () => {
+    agentsStore.list = [{ ...claude, capabilities: { thinkingSummaries: true } }];
+    await openAgentTab();
+
+    const box = await screen.findByRole('checkbox', { name: 'Claude Agent show thinking summaries' });
+    expect(box).toBeChecked();
+    await fireEvent.click(box);
+    expect(settingsStore.draft.showThinkingSummaries).toBe(false);
   });
 });

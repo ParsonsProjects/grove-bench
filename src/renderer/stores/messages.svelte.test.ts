@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { flushSync } from 'svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
-import { messageStore } from './messages.svelte.js';
+import { messageStore, type ChatUserMessage } from './messages.svelte.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
@@ -302,6 +303,14 @@ describe('ingestEvent — thinking', () => {
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('thinking');
   });
+
+  it('skips thinking that arrived without text', () => {
+    messageStore.streamingThinking[SID] = 'preview';
+    messageStore.ingestEvent(SID, { type: 'thinking', thinking: '', uuid: 'uuid-t' } as AgentEvent);
+
+    expect(messageStore.getStreamingThinking(SID)).toBe('');
+    expect(messageStore.getMessages(SID)).toHaveLength(0);
+  });
 });
 
 describe('ingestEvent — tool_use and tool_result', () => {
@@ -360,6 +369,22 @@ describe('ingestEvent — tool_use and tool_result', () => {
     expect(tc.pending).toBe(false);
     expect(tc.result).toBe('file1.ts\nfile2.ts');
     expect(tc.isError).toBe(false);
+  });
+
+  it('tool_result keeps the images the tool returned', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'mcp__grove-preview__screenshot',
+      toolInput: {},
+      toolUseId: 'tu-shot',
+      uuid: 'uuid-shot',
+    } as AgentEvent);
+    const images = [{ file: 'b'.repeat(32) + '.png' }];
+    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 'tu-shot', content: '', images } as AgentEvent);
+
+    const tc = messageStore.getMessages(SID)[0] as any;
+    expect(tc.pending).toBe(false);
+    expect(tc.images).toEqual(images);
   });
 
   it('mode-changing tool_use does NOT sync mode (mode_sync events handle it)', () => {
@@ -452,7 +477,7 @@ describe('OS notification triggers', () => {
       type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
     } as AgentEvent);
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'permission_request', body: 'Bash is waiting for permission' }),
+      expect.objectContaining({ kind: 'permission_request', body: 'The agent wants to run a command' }),
     );
   });
 
@@ -876,6 +901,48 @@ describe('ingestEvent — permission_resolved', () => {
     expect(perm.decision).toBe('allow');
   });
 
+  it('marks a permission denied by the timeout as timed out', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-to',
+      requestId: 'req-to',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-to',
+      toolUseId: 'tu-to',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const perm = messageStore.getMessages(SID).find((m) => m.kind === 'permission' && m.requestId === 'req-to') as any;
+    expect(perm).toMatchObject({ resolved: true, decision: 'deny', timedOut: true });
+  });
+
+  it('marks a question closed by the timeout as timed out, with no answer', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }] },
+      toolUseId: 'tu-qt',
+      requestId: 'req-qt',
+      toolCategory: 'question',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-qt',
+      toolUseId: 'tu-qt',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question' && m.requestId === 'req-qt') as any;
+    expect(q).toMatchObject({ resolved: true, timedOut: true });
+    expect(q.response).toBeUndefined();
+  });
+
   it('stores the answer from a replayed question resolution', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',
@@ -1268,7 +1335,7 @@ describe('getters with defaults', () => {
 
 describe('session controls', () => {
   const descriptors = [
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }] },
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }] },
     { id: 'thinking', label: 'Thinking', default: 'high', options: [{ value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] },
   ];
 
@@ -1393,6 +1460,31 @@ describe('updateMcpServers', () => {
 });
 
 describe('ingestEvent — user_message UUID stamping', () => {
+  it('swaps just-sent images for the saved copies once main has saved them', () => {
+    messageStore.addUserMessage(SID, 'look', [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }]);
+    const saved = [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }];
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'look', uuid: 'u-img', images: saved } as AgentEvent);
+
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.uuid).toBe('u-img');
+    expect(msg.images).toEqual(saved);
+  });
+
+  it('keeps the inline images when not all of them were saved', () => {
+    const inline = [
+      { name: 'a.png', dataUrl: 'data:image/png;base64,AA' },
+      { name: 'b.png', dataUrl: 'data:image/png;base64,BB' },
+    ];
+    messageStore.addUserMessage(SID, 'look', inline);
+
+    messageStore.ingestEvent(SID, {
+      type: 'user_message', text: 'look', uuid: 'u-img', images: [{ file: `${'a'.repeat(32)}.png`, name: 'a.png' }],
+    } as AgentEvent);
+
+    expect((messageStore.getMessages(SID)[0] as ChatUserMessage).images).toEqual(inline);
+  });
+
   it('stamps UUID onto the most recent UUID-less user message', () => {
     messageStore.addUserMessage(SID, 'first prompt');
     messageStore.addUserMessage(SID, 'second prompt');
@@ -1448,15 +1540,30 @@ describe('ingestEvent — user_message UUID stamping', () => {
     expect((msgs[0] as any).uuid).toBe('uuid-new');
   });
 
-  it('shows a replayed message as it was displayed, not with attached file content', () => {
+  it('shows a replayed message as it was displayed, with attached files split out of the text', () => {
     messageStore.replayEvents(SID, [
       { type: 'user_message', text: '<file path="notes.md">\nlong notes\n</file>\n<file path="src/a.ts">\nconst secret = 1;\n</file>\n\nfollow the notes for @src/a.ts', uuid: 'uuid-files' },
     ] as AgentEvent[]);
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs).toHaveLength(1);
-    expect((msgs[0] as any).text).toBe('[notes.md] follow the notes for @src/a.ts');
-    expect((msgs[0] as any).uuid).toBe('uuid-files');
+    const msg = msgs[0] as ChatUserMessage;
+    expect(msg.text).toBe('follow the notes for @src/a.ts');
+    // The @-referenced file stays a reference in the text, not an attachment.
+    expect(msg.files).toEqual([{ path: 'notes.md', content: 'long notes' }]);
+    expect(msg.uuid).toBe('uuid-files');
+    expect(userMessageLabel(msg)).toBe('[notes.md] follow the notes for @src/a.ts');
+  });
+
+  it('shows the images a replayed message was sent with', () => {
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: 'what is wrong here?', uuid: 'uuid-img', images: [{ file: 'a'.repeat(32) + '.png', name: 'shot.png' }] },
+    ] as AgentEvent[]);
+
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.text).toBe('what is wrong here?');
+    expect(msg.images).toEqual([{ file: 'a'.repeat(32) + '.png', name: 'shot.png' }]);
+    expect(userMessageLabel(msg)).toBe('[shot.png] what is wrong here?');
   });
 });
 
@@ -1668,6 +1775,14 @@ describe('getRewindPoints', () => {
     const points = messageStore.getRewindPoints(SID);
     expect(points).toHaveLength(1);
     expect(points[0].uuid).toBe('cp-1');
+  });
+
+  it('lists attachment names before the text, as the thread used to show them', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'fix it', uuid: 'cp-1', files: [{ path: 'a.ts', content: 'x' }], images: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }] },
+    ] as any;
+
+    expect(messageStore.getRewindPoints(SID)[0].text).toBe('[a.ts, shot.png] fix it');
   });
 
   it('returns empty for unknown session', () => {
@@ -1946,6 +2061,21 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID)).toEqual([]);
     expect(messageStore.getIsRunning(SID)).toBe(true);
     expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['user']);
+  });
+
+  it('shows attached files as files and images as images, and sends the images', () => {
+    const images = [{ data: 'iVBOR', mediaType: 'image/png' as const, name: 'shot.png' }];
+    messageStore.submitMessage(SID, {
+      displayText: '[notes.md, shot.png] look at this',
+      outgoing: '<file path="notes.md" length="5">\nnotes\n</file>\n\nlook at this',
+      images,
+    });
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '<file path="notes.md" length="5">\nnotes\n</file>\n\nlook at this', images);
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.text).toBe('look at this');
+    expect(msg.files).toEqual([{ path: 'notes.md', content: 'notes' }]);
+    expect(msg.images).toEqual([{ name: 'shot.png', dataUrl: 'data:image/png;base64,iVBOR' }]);
   });
 
   it('queues (and does not send) while a turn is running', () => {

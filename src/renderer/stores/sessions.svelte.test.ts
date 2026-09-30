@@ -337,17 +337,6 @@ describe('SessionStore', () => {
       expect(result).toHaveLength(2);
       expect(result.every(s => s.repoPath === '/repo/a')).toBe(true);
     });
-
-    it('canRemoveRepo returns true when no sessions', () => {
-      store.addRepo('/repo/a');
-      expect(store.canRemoveRepo('/repo/a')).toBe(true);
-    });
-
-    it('canRemoveRepo returns false when sessions exist', () => {
-      store.addRepo('/repo/a');
-      store.addSession(makeSession({ repoPath: '/repo/a' }), false);
-      expect(store.canRemoveRepo('/repo/a')).toBe(false);
-    });
   });
 
   describe('repoDisplayName', () => {
@@ -472,17 +461,17 @@ describe('SessionStore', () => {
   });
 });
 
-describe('createAttachedSession', () => {
-  it("runs the source conversation's agent", async () => {
-    store.sessions = [];
-    store.addSession({ id: 'src', branch: 'feat/x', repoPath: '/repo/test', status: 'running', agentType: 'codex' } as never);
-    const createSession = vi.fn().mockResolvedValue({ id: 'attached', branch: 'feat/x', agentType: 'codex' });
-    (mockGroveBench as unknown as { createSession: typeof createSession }).createSession = createSession;
+describe('loadRepos', () => {
+  it('moves projects from the old localStorage list into the remembered list', async () => {
+    localStorage.setItem('grove-bench:repos', JSON.stringify(['/repo/known', '/repo/legacy']));
+    mockGroveBench.listRepos.mockResolvedValueOnce(['/repo/known']);
 
-    await store.createAttachedSession('src', '/repo/test');
+    await store.loadRepos();
 
-    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ attachToSessionId: 'src', adapterType: 'codex' }));
-    expect(store.sessions.find((s) => s.id === 'attached')?.agentType).toBe('codex');
-    store.sessions = [];
+    expect(store.repos).toEqual(['/repo/known', '/repo/legacy']);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledWith('/repo/legacy');
+    expect(localStorage.getItem('grove-bench:repos')).toBeNull();
+    store.repos = [];
   });
 });

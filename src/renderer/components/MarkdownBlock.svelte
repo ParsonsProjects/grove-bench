@@ -1,14 +1,11 @@
 <script lang="ts" module>
-  import { Marked } from 'marked';
+  import { Marked, Renderer, type Tokens } from 'marked';
   import DOMPurify from 'dompurify';
   import hljs from '../lib/hljs.js';
   import { openLink } from '$lib/preview-links.js';
   import { splitStreamingMarkdown } from '$lib/markdown-stream.js';
-
-  /** Marks the copy buttons this renderer adds. Chat content can include raw
-   *  HTML, and a button it writes must not work as one: it could show one
-   *  command and copy another. Random per launch, so content can't guess it. */
-  const COPY_MARK = crypto.randomUUID();
+  import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
+  import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -33,12 +30,22 @@
     };
   }
 
-  // One-time setup: configured marked instances with custom code renderers
+  /** Table renderer: marked's default table plus a copy button that holds the
+   *  Markdown source. The click handler adds the rendered table as HTML. */
+  const tableRenderer = {
+    table(this: Renderer, token: Tokens.Table) {
+      const encoded = encodeCopyText(token.raw.trim());
+      const copyBtn = `<button class="table-copy-btn" data-copy="${COPY_MARK}" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
+      return `<div class="table-wrapper">${Renderer.prototype.table.call(this, token)}${copyBtn}</div>`;
+    },
+  };
+
+  // One-time setup: configured marked instances with custom code and table renderers
   const markedInstance = new Marked({ gfm: true, breaks: true });
-  markedInstance.use({ renderer: codeRenderer(true) });
+  markedInstance.use({ renderer: { ...codeRenderer(true), ...tableRenderer } });
 
   const markedStreaming = new Marked({ gfm: true, breaks: true });
-  markedStreaming.use({ renderer: codeRenderer(false) });
+  markedStreaming.use({ renderer: { ...codeRenderer(false), ...tableRenderer } });
 
   export function renderMarkdown(content: string, opts: { highlight?: boolean } = {}): string {
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
@@ -66,13 +73,17 @@
   const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
   const copySvg = COPY_SVG;
 
-  async function copyCode(btn: HTMLButtonElement) {
-    // The code the block shows. Its content was escaped by the renderer, so
-    // it holds no markup that could hide part of it.
-    const code = btn.closest('.code-block-wrapper')?.querySelector('pre > code');
-    if (!code) return;
+  async function copy(btn: HTMLElement) {
     try {
-      await navigator.clipboard.writeText(code.textContent ?? '');
+      if (btn.classList.contains('table-copy-btn')) {
+        const table = renderedTable(btn);
+        if (!table) return;
+        await writeRichText(table.markdown, table.html);
+      } else {
+        const code = renderedCode(btn);
+        if (code === null) return;
+        await navigator.clipboard.writeText(code);
+      }
       btn.innerHTML = checkSvg;
       btn.classList.add('copied');
       setTimeout(() => {
@@ -89,9 +100,9 @@
     const onClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       // Only buttons this renderer made: chat content can hold its own.
-      const btn = target.closest<HTMLButtonElement>('button.code-copy-btn');
-      if (btn && btn.dataset.copy === COPY_MARK) {
-        void copyCode(btn);
+      const btn = target.closest('button.code-copy-btn, button.table-copy-btn');
+      if (isRenderedCopyButton(btn)) {
+        void copy(btn);
         return;
       }
       // Links: localhost opens in the Preview tab, the rest in the system
@@ -180,6 +191,16 @@
     padding: 0.4em 0.8em;
     text-align: left;
   }
+  /* marked writes `:---:` and `---:` columns as an align attribute, which the
+     rule above would override. */
+  .markdown-content :global(th[align='center']),
+  .markdown-content :global(td[align='center']) {
+    text-align: center;
+  }
+  .markdown-content :global(th[align='right']),
+  .markdown-content :global(td[align='right']) {
+    text-align: right;
+  }
   .markdown-content :global(th) {
     background: #1a1a1a;
     font-weight: 600;
@@ -196,7 +217,16 @@
   .markdown-content :global(.code-block-wrapper) {
     position: relative;
   }
-  .markdown-content :global(.code-copy-btn) {
+  .markdown-content :global(.table-wrapper) {
+    position: relative;
+    margin: 0.5em 0;
+    padding-top: 1.6em;
+  }
+  .markdown-content :global(.table-wrapper > table) {
+    margin: 0;
+  }
+  .markdown-content :global(.code-copy-btn),
+  .markdown-content :global(.table-copy-btn) {
     position: absolute;
     top: 0.4em;
     right: 0.4em;
@@ -211,13 +241,21 @@
     align-items: center;
     justify-content: center;
   }
-  .markdown-content :global(.code-block-wrapper:hover .code-copy-btn) {
+  /* Sits in a strip above the table so it never covers header text. */
+  .markdown-content :global(.table-copy-btn) {
+    top: 0;
+    right: 0;
+  }
+  .markdown-content :global(.code-block-wrapper:hover .code-copy-btn),
+  .markdown-content :global(.table-wrapper:hover .table-copy-btn) {
     opacity: 1;
   }
-  .markdown-content :global(.code-copy-btn:hover) {
+  .markdown-content :global(.code-copy-btn:hover),
+  .markdown-content :global(.table-copy-btn:hover) {
     color: #ccc;
   }
-  .markdown-content :global(.code-copy-btn.copied) {
+  .markdown-content :global(.code-copy-btn.copied),
+  .markdown-content :global(.table-copy-btn.copied) {
     color: #4ade80;
     opacity: 1;
   }

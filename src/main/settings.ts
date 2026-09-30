@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Agent Defaults
   defaultModels: {},
   adapterDefaults: {},
+  showThinkingSummaries: true,
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -208,6 +209,7 @@ const settingsSchema = z.object({
 
   defaultModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.defaultModels),
   adapterDefaults: z.record(z.string(), z.record(z.string(), z.string())).catch(DEFAULT_SETTINGS.adapterDefaults),
+  showThinkingSummaries: z.boolean().catch(DEFAULT_SETTINGS.showThinkingSummaries),
   cavemanMode: z.enum(['off', 'lite', 'full', 'ultra']).catch(DEFAULT_SETTINGS.cavemanMode),
   workingDirectories: z.array(z.string()).catch(DEFAULT_SETTINGS.workingDirectories),
   defaultSystemPromptAppend: z.string().catch(DEFAULT_SETTINGS.defaultSystemPromptAppend),

@@ -12,6 +12,8 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
+  import { unsavedFileCount } from '../lib/unsaved-files.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { lazyComponent } from '../lib/lazy-component.js';
@@ -20,7 +22,7 @@
   import { formatAge } from '../lib/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
-  import { triageState, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
+  import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageState } from '../lib/session-triage.js';
   import { sessionSubtitle, pendingPermissionTool, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
@@ -28,6 +30,10 @@
   import { forgetConversation } from '$lib/forget-conversation.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import AgentSprite from './AgentSprite.svelte';
+  import StatusDot from './StatusDot.svelte';
+  import { mapLimit } from '../lib/map-limit.js';
+  import PanelToggle from './PanelToggle.svelte';
+  import { panelStore } from '../stores/panels.svelte.js';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
   import { limitedQueue } from '../lib/limited-queue.js';
   import { onMount, untrack } from 'svelte';
@@ -48,6 +54,11 @@
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
   let resizing = $state(false);
+  // Folded down to a rail: the open conversations' status marks and the
+  // footer's buttons. The full sidebar stays mounted (hidden) so its scroll
+  // position and filters are still there when it opens again.
+  const RAIL_WIDTH = 48;
+  let collapsed = $derived(panelStore.isCollapsed('sidebar'));
 
   onMount(async () => {
     let savedWidth: number | null;
@@ -95,13 +106,14 @@
     const msgs = messageStore.getMessages(session.id);
     const loaded = msgs.length > 0;
     const preview = sessionPreviewStore.get(session.id);
-    return sessionSubtitle({
-      isRunning: messageStore.getIsRunning(session.id),
-      activity: messageStore.getActivity(session.id),
-      pendingTool: loaded ? pendingPermissionTool(msgs) : null,
-      lastText: (loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null),
-      firstPrompt: (loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null),
-    });
+    const isRunning = messageStore.getIsRunning(session.id);
+    const pendingTool = loaded ? pendingPermissionTool(msgs) : null;
+    // Past messages only show when nothing live does, so skip that work while
+    // the agent runs (its reply grows with every update) or waits on you.
+    const quiet = !isRunning && !pendingTool;
+    const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
+    const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
+    return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, lastText, firstPrompt });
   }
 
   const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
@@ -135,7 +147,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'add' | 'rename' | 'folder' | 'stop' | 'destroy' | 'check';
+    icon: 'rename' | 'folder' | 'stop' | 'destroy' | 'check';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -145,7 +157,6 @@
     const session = store.sessions.find(s => s.id === sessionId);
     if (!session) return [];
     const items: MenuItem[] = [
-      { label: 'New Conversation', icon: 'add', action: () => store.createAttachedSession(session.id, session.repoPath) },
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
       // Completed sessions leave the working set (hidden unless "Show completed")
@@ -160,7 +171,7 @@
     if (store.isOpenTab(session)) {
       items.push({ label: 'Stop', icon: 'stop', action: () => stopSession(sessionId) });
     }
-    items.push({ label: 'Destroy Agent', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
     return items;
   }
 
@@ -239,6 +250,8 @@
   const cleanupCandidateKey = $derived(cleanupCandidates.map((s) => s.id).join('\n'));
   const cleanupSelectedIds = $derived(cleanupCandidates.map((s) => s.id).filter((id) => cleanupSelection[id]));
   const cleanupSelectedDirtyCount = $derived(cleanupSelectedIds.filter((id) => cleanupDirty[id]).length);
+  /** Listed candidates known to have uncommitted changes: "Select all" leaves these out. */
+  const cleanupDirtyCount = $derived(cleanupCandidates.filter((s) => cleanupDirty[s.id]).length);
   const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
   const cleanupGhAvailable = $derived(store.prerequisites?.gh?.available === true);
 
@@ -296,7 +309,7 @@
             const status = await window.groveBench.getGitStatus(s.id);
             // A status git couldn't read may hide changes: treat it as dirty.
             unknown = !!status.error;
-            dirty = status.entries.length > 0 || unknown;
+            dirty = unsavedFileCount(status.entries) > 0 || unknown;
           } catch {
             dirty = unknown = true;
           }
@@ -399,9 +412,35 @@
     draftStore.open(repo);
   }
 
+  /** What deleting the conversation in the confirm dialog would lose: files
+   *  with uncommitted changes in its worktree, and commits on its branch
+   *  that its base branch doesn't have. Null while unknown. */
+  let destroyUncommitted = $state<number | null>(null);
+  let destroyUnmerged = $state<{ count: number; base: string } | null>(null);
+  /** Delete waits for both checks, so a quick click can't skip a warning. */
+  let destroyChecking = $state(false);
+
   function requestDestroy(id: string) {
     confirmDestroyId = id;
     deleteBranchOnDestroy = false;
+    destroyUncommitted = null;
+    destroyUnmerged = null;
+    destroyChecking = false;
+    const session = store.sessions.find((s) => s.id === id);
+    if (!session || session.direct) return;
+    destroyChecking = true;
+    // Best effort: a failed check leaves its warning out rather than
+    // blocking the delete.
+    const uncommitted = window.groveBench.getGitStatus(id)
+      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = unsavedFileCount(status.entries); })
+      .catch(() => {});
+    const unmerged = resolveBaseBranch(session.repoPath)
+      .then(async (base) => {
+        const commits = await window.groveBench.getBranchCommits(id, base);
+        if (confirmDestroyId === id) destroyUnmerged = { count: commits.length, base };
+      })
+      .catch(() => {});
+    void Promise.all([uncommitted, unmerged]).then(() => { if (confirmDestroyId === id) destroyChecking = false; });
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
@@ -440,6 +479,93 @@
     await destroySessionById(id, deleteBranch);
   }
 
+  /** The conversations the remove-project dialog checked and will delete.
+   *  Fixed when it opens, so nothing is deleted without its checks. */
+  let removeRepoIds = $state<string[]>([]);
+  /** What removing the project in the confirm dialog would lose, over all of
+   *  its conversations: how many have uncommitted changes, and how many of
+   *  their branches have commits the base branch doesn't. Null while unknown. */
+  let removeRepoDirty = $state<number | null>(null);
+  let removeRepoUnmerged = $state<{ count: number; base: string } | null>(null);
+  /** Remove waits for both checks, as Delete does for one conversation. */
+  let removeRepoChecking = $state(false);
+  let removeRepoDeleteBranches = $state(false);
+  let removingRepo = $state(false);
+  /** Set when conversations appeared while the dialog was open, so it checked again. */
+  let removeRepoRechecked = $state(false);
+  /** Bumped per request so a slow check from an earlier open is dropped. */
+  let removeRepoGeneration = 0;
+  /** git calls the checks run at once, so a big project doesn't start one
+   *  process per conversation in a burst (as the clean-up limits gh). */
+  const REMOVE_CHECK_CONCURRENCY = 3;
+
+  function requestRemoveRepo(repo: string) {
+    const generation = ++removeRepoGeneration;
+    const sessions = store.sessionsForRepo(repo);
+    confirmRemoveRepo = repo;
+    removeRepoIds = sessions.map((s) => s.id);
+    removeRepoDeleteBranches = false;
+    removeRepoRechecked = false;
+    removeRepoDirty = null;
+    removeRepoUnmerged = null;
+    removingRepo = false;
+    // Direct conversations work in the project folder itself: removing one
+    // deletes no files and keeps the branch, so there is nothing to check.
+    const worktreeSessions = sessions.filter((s) => !s.direct);
+    removeRepoChecking = worktreeSessions.length > 0;
+    if (!removeRepoChecking) return;
+    const current = () => generation === removeRepoGeneration && confirmRemoveRepo === repo;
+    // Best effort, like the single delete: a failed check leaves its warning
+    // out. Uncommitted changes first, then unmerged commits (one per branch:
+    // conversations sharing a branch share its commits).
+    void (async () => {
+      const dirty = await mapLimit(worktreeSessions, REMOVE_CHECK_CONCURRENCY, (s) =>
+        window.groveBench.getGitStatus(s.id)
+          .then((status) => unsavedFileCount(status.entries) > 0)
+          .catch(() => false),
+      );
+      if (!current()) return;
+      removeRepoDirty = dirty.filter(Boolean).length;
+      const base = await resolveBaseBranch(repo);
+      const oneSessionPerBranch = [...new Map(worktreeSessions.map((s) => [s.branch, s])).values()];
+      const commits = await mapLimit(oneSessionPerBranch, REMOVE_CHECK_CONCURRENCY, (s) =>
+        window.groveBench.getBranchCommits(s.id, base).then((c) => c.length).catch(() => 0),
+      );
+      if (!current()) return;
+      removeRepoUnmerged = { count: commits.filter((n) => n > 0).length, base };
+      removeRepoChecking = false;
+    })();
+  }
+
+  /** Delete the project's checked conversations, then remove the project. */
+  async function confirmRemoveProject() {
+    const repo = confirmRemoveRepo;
+    if (!repo) return;
+    // A conversation started or restored since the dialog opened hasn't been
+    // checked: check again, keeping the branch choice, rather than delete it blind.
+    if (store.sessionsForRepo(repo).some((s) => !removeRepoIds.includes(s.id))) {
+      const deleteBranches = removeRepoDeleteBranches;
+      requestRemoveRepo(repo);
+      removeRepoDeleteBranches = deleteBranches;
+      removeRepoRechecked = true;
+      return;
+    }
+    const deleteBranches = removeRepoDeleteBranches;
+    removingRepo = true;
+    // One at a time, as the clean-up does. Stop at the first failure (its
+    // error is shown) so the project stays listed with what is left.
+    for (const id of removeRepoIds) {
+      if (!store.sessions.some((s) => s.id === id)) continue; // already gone
+      if (!(await destroySessionById(id, deleteBranches))) {
+        removingRepo = false;
+        confirmRemoveRepo = null;
+        return;
+      }
+    }
+    await handleRemoveRepo(repo);
+    removingRepo = false;
+  }
+
   async function handleRemoveRepo(repoPath: string) {
     try {
       await window.groveBench.removeRepo(repoPath);
@@ -467,10 +593,13 @@
   }
 
   /** Visible row label: a user/auto name when set, else the branch with a '#n'
-   *  prefix when shared. Kept separate from sessionLabel so rename prefill and
-   *  no-op detection use the plain name without the index. */
+   *  prefix when shared. A conversation in a folder without git has no branch
+   *  and is named after its first turn, so until then it's "New conversation".
+   *  Kept separate from sessionLabel so rename prefill and no-op detection use
+   *  the plain name without the index. */
   function sessionRowLabel(s: { id: string; repoPath: string; displayName?: string | null; branch: string }): string {
-    return s.displayName || (branchIndex(s) + s.branch);
+    if (s.displayName) return s.displayName;
+    return s.branch ? branchIndex(s) + s.branch : 'New conversation';
   }
 
   function startRename(sessionId: string, currentLabel: string) {
@@ -506,13 +635,17 @@
     if (e.key === 'Enter') { e.preventDefault(); confirmRename(); }
   }
 
-  function getSessionHasPending(sessionId: string): boolean {
-    return messageStore.needsInput(sessionId);
-  }
-
   // ── Attention triage: filter chips, per-repo counts, completed sessions ──
 
   let triageFilter = $state<TriageFilter>('all');
+
+  /** The chips shown. There is no "All" chip: clicking the active chip
+   *  again goes back to all, which keeps the row to one line. */
+  const CHIP_FILTERS = TRIAGE_FILTERS.filter((f): f is Exclude<TriageFilter, 'all'> => f !== 'all');
+
+  function toggleFilter(f: TriageFilter) {
+    triageFilter = triageFilter === f ? 'all' : f;
+  }
 
   const TRIAGE_DOT: Record<Exclude<TriageFilter, 'all'>, string> = {
     'needs-you': 'bg-amber-500',
@@ -520,12 +653,19 @@
     unread: 'bg-green-400',
   };
 
-  function triageOf(session: { id: string }): TriageState {
-    return triageState({
-      needsInput: messageStore.needsInput(session.id),
-      running: messageStore.getIsRunning(session.id),
-      unread: !!store.needsAttention[session.id],
-    });
+  /** Branch groups folded in the Projects tree, by project and branch. Kept
+   *  for this run only: groups come and go with their conversations. */
+  let collapsedBranches = $state<Record<string, boolean>>({});
+  const branchKey = (repo: string, branch: string) => `${repo}\n${branch}`;
+
+  function toggleBranchCollapsed(repo: string, branch: string) {
+    const key = branchKey(repo, branch);
+    collapsedBranches = { ...collapsedBranches, [key]: !collapsedBranches[key] };
+  }
+
+  /** Which chip a conversation counts under: the one its status colour matches. */
+  function triageOf(session: { id: string; status: string }): TriageState {
+    return triageForSprite(sessionSpriteState(session, destroying.has(session.id)));
   }
 
   function notHiddenCompleted(session: { completedAt?: number | null }): boolean {
@@ -538,7 +678,7 @@
   /** Counts for the filter chips, over active and stopped sessions alike. */
   let counts = $derived(triageCounts(visibleSessions.map(triageOf)));
 
-  function rowVisible(session: { id: string; completedAt?: number | null }): boolean {
+  function rowVisible(session: { id: string; status: string; completedAt?: number | null }): boolean {
     return notHiddenCompleted(session) && matchesTriageFilter(triageFilter, triageOf(session));
   }
 
@@ -556,11 +696,10 @@
   }
 
   /** All sessions for a repo that pass the filter, grouped by branch (for the
-   *  INACTIVE tree), with each group's sessions ordered by the active sort.
-   *  Open tabs are kept here too — the rows render
-   *  greyed-out and non-clickable (they remain fully interactive in the ACTIVE
-   *  list above). */
-  function getInactiveBranchGroups(repo: string): [string, typeof store.sessions][] {
+   *  Projects tree), with each group's sessions ordered by the active sort.
+   *  Open conversations are listed here too, and work the same as in the
+   *  Conversations list above. */
+  function getBranchGroups(repo: string): [string, typeof store.sessions][] {
     const groups: Record<string, typeof store.sessions> = {};
     for (const s of store.sessionsForRepo(repo)) {
       if (!rowVisible(s)) continue;
@@ -575,113 +714,148 @@
 
 <aside
   class="relative border-r border-sidebar-border flex flex-col bg-sidebar shrink-0"
-  style="width: {sidebarWidth}px"
+  style="width: {collapsed ? RAIL_WIDTH : sidebarWidth}px"
 >
+  <!-- Bookmarks, memory, clean-up and settings: in the footer, or down the rail -->
+  {#snippet footerTools()}
+    <Button
+      onclick={() => bookmarkStore.toggleDrawer()}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Bookmarks (Ctrl+B)"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+    </Button>
+    <Button
+      onclick={() => memoryStore.panelOpen = true}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Project Memory"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+    </Button>
+    <Button
+      onclick={openCleanup}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Clean up old conversations"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
+    </Button>
+    <Button
+      onclick={() => showSettings = true}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Settings"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </Button>
+  {/snippet}
+
+  <!-- A conversation's status: its grove character, or a dot in the same colour -->
+  {#snippet statusMark(session: (typeof store.sessions)[number], isDestroying: boolean, repoColor: string | null)}
+    {#if settingsStore.current.groveCharacters}
+      <AgentSprite state={sessionSpriteState(session, isDestroying)} seed={session.id} projectColor={repoColor} />
+    {:else}
+      <StatusDot state={sessionSpriteState(session, isDestroying)} />
+    {/if}
+  {/snippet}
+
   <!-- Reusable session row, shared by the Conversations list and the Projects tree -->
-  {#snippet sessionRow(session: (typeof store.sessions)[number], showRepoPrefix: boolean, labelOverride: string | null, greyedOut: boolean = false)}
+  {#snippet sessionRow(session: (typeof store.sessions)[number], showProject: boolean, labelOverride: string | null)}
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
     {@const changedCount = isStopped ? 0 : gitStatusStore.getStatus(session.id).entries.length}
+    {@const label = labelOverride ?? sessionRowLabel(session)}
     <!-- PR data is only polled for open tabs; anything else would be stale, so it stays neutral. -->
     {@const pr = store.isOpenTab(session) ? prStore.getPr(session.id) : null}
     {@const health = prHealth(pr)}
-    {@const branchIconLabel = (session.direct ? 'Direct (no worktree)' : 'Worktree') + (pr ? `, PR #${pr.number}: ${health.label}` : '')}
-    <button
-      onclick={() => { if (!isDestroying && !greyedOut) focusSession(session.id); }}
-      oncontextmenu={(e) => { if (isDestroying || greyedOut) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
-      disabled={isDestroying || greyedOut}
-      title={greyedOut ? `${sessionRowLabel(session)} — live; manage it under Conversations above` : subtitle ? `${sessionRowLabel(session)}\n${subtitle.text}` : sessionRowLabel(session)}
-      class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left group/session transition-colors
-        {greyedOut ? 'cursor-not-allowed' : isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+    {@const branchIconLabel = (session.noGit ? 'In the project folder (no git)' : session.direct ? 'Direct (no worktree)' : 'Worktree') + (pr ? `, PR #${pr.number}: ${health.label}` : '')}
+    <!-- The quick action is a sibling of the row button, not inside it: a button can't hold another. -->
+    <div
+      class="relative group/session"
+      oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
+      role="presentation"
     >
-      <div class="w-full flex items-center justify-between">
-      <div class="flex items-center gap-2 min-w-0">
-        {#if settingsStore.current.groveCharacters}
-          <AgentSprite state={sessionSpriteState(session, isDestroying)} seed={session.id} projectColor={repoColor} />
-        {:else if isDestroying}
-          <span class="w-2 h-2 bg-muted-foreground animate-pulse shrink-0"></span>
-        {:else if session.status === 'error'}
-          <span class="w-2 h-2 bg-red-500 shrink-0"></span>
-        {:else if session.status === 'starting' || session.status === 'installing'}
-          <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
-        {:else if getSessionHasPending(session.id)}
-          <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
-        {:else if messageStore.getIsRunning(session.id)}
-          <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
-        {:else if store.needsAttention[session.id]}
-          <span class="w-2 h-2 bg-green-400 shrink-0 needs-attention-flash"></span>
-        {:else if session.status === 'stopped'}
-          <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
-        {:else if session.status === 'sleeping'}
-          <span class="w-2 h-2 bg-green-500/40 shrink-0" title="Sleeping: wakes when opened"></span>
-        {:else}
-          <span class="w-2 h-2 bg-green-500 shrink-0"></span>
-        {/if}
-        {#if session.direct}
-          <svg class="w-3.5 h-3.5 shrink-0 {health.textClass} {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
-        {:else}
-          <svg class="w-3.5 h-3.5 shrink-0 {health.textClass} {greyedOut ? 'opacity-40' : ''}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
-        {/if}
-        {#if session.completedAt}
-          <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed" title="Completed"><path d="M20 6 9 17l-5-5"/></svg>
-        {/if}
-        <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
-        <span class="text-sm truncate min-w-0 {greyedOut ? 'opacity-40' : ''} {session.completedAt ? 'text-muted-foreground' : ''}">
-          {#if showRepoPrefix}{#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span><span class="text-muted-foreground/40"> / </span>{/if}{labelOverride ?? sessionRowLabel(session)}
-        </span>
-      </div>
-      <div class="flex items-center gap-1 shrink-0">
-        {#if ts}
-          <span class="text-[10px] text-muted-foreground/50 {greyedOut ? 'opacity-40' : 'group-hover/session:hidden'}" title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}">{formatAge(ts)}</span>
-        {/if}
-        {#if greyedOut}
-          <!-- Active session shown here for context only; manage it under Conversations. -->
-        {:else if isStopped}
-          <!-- Stopped session: destroy (removes the worktree). -->
-          <span
-            role="button"
-            tabindex="-1"
-            title="Destroy agent"
-            onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
-            onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
-            class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
-              {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </span>
-        {:else}
-          <!-- Live session: stop (disconnect but keep it resumable). -->
-          <span
-            role="button"
-            tabindex="-1"
-            title="Stop agent"
-            onclick={(e) => { e.stopPropagation(); if (!isDestroying) stopSession(session.id); }}
-            onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) stopSession(session.id); }}
-            class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
-              {isDestroying ? 'hidden' : 'hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/></svg>
-          </span>
-        {/if}
-      </div>
-      </div>
-      {#if subtitle || changedCount > 0}
-        <div class="w-full flex items-center gap-1.5 pl-4 pr-1 mt-0.5 min-w-0 {greyedOut ? 'opacity-40' : ''}">
-          {#if subtitle}
-            <span class="text-[11px] truncate min-w-0 {SUBTITLE_TONE_CLASS[subtitle.tone]}">{subtitle.text}</span>
+      <button
+        onclick={() => { if (!isDestroying) focusSession(session.id); }}
+        disabled={isDestroying}
+        title={subtitle ? `${label}\n${subtitle.text}` : label}
+        class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
+          {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+      >
+        <!-- Line 1 is the conversation's name, so it gets the width; the project goes on line 2. -->
+        <div class="w-full flex items-center gap-2 min-w-0">
+          {@render statusMark(session, isDestroying, repoColor)}
+          {#if session.direct}
+            <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
+          {:else}
+            <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
           {/if}
-          {#if changedCount > 0}
+          {#if session.completedAt}
+            <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed" title="Completed"><path d="M20 6 9 17l-5-5"/></svg>
+          {/if}
+          <span class="text-sm truncate min-w-0 flex-1 {session.completedAt ? 'text-muted-foreground' : ''}">{label}</span>
+          {#if ts}
+            <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
-              class="ml-auto shrink-0 text-[10px] text-muted-foreground/60 border border-border/60 px-1 leading-4"
-              title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
-            >±{changedCount}</span>
+              class="shrink-0 text-[10px] text-muted-foreground/50 {isDestroying ? '' : 'group-hover/session:invisible group-has-[:focus-visible]/session:invisible'}"
+              title="{session.lastActiveAt ? 'Last active' : 'Created'} {new Date(ts).toLocaleString()}"
+            >{formatAge(ts)}</span>
           {/if}
         </div>
+        {#if showProject || subtitle || changedCount > 0}
+          <div class="w-full flex items-center gap-1.5 pl-4 pr-1 mt-0.5 min-w-0">
+            <span class="text-[11px] truncate min-w-0">
+              {#if showProject}
+                <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
+                {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
+            </span>
+            {#if changedCount > 0}
+              <span
+                class="ml-auto shrink-0 text-[10px] text-muted-foreground/60 border border-border/60 px-1 leading-4"
+                title="{changedCount} changed file{changedCount === 1 ? '' : 's'} in the worktree"
+              >±{changedCount}</span>
+            {/if}
+          </div>
+        {/if}
+      </button>
+      {#if !isDestroying}
+        {#if isStopped}
+          <!-- Stopped session: delete (removes the worktree, after asking). -->
+          <button
+            type="button"
+            title="Delete conversation"
+            aria-label="Delete conversation {label}"
+            onclick={() => requestDestroy(session.id)}
+            class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
+              hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
+          >
+            <!-- A bin, not an ✕: ✕ reads as "close", and this deletes. -->
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
+        {:else}
+          <!-- Live session: stop (disconnect but keep it resumable). -->
+          <button
+            type="button"
+            title="Stop agent"
+            aria-label="Stop agent in {label}"
+            onclick={() => stopSession(session.id)}
+            class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
+              hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/></svg>
+          </button>
+        {/if}
       {/if}
-    </button>
+    </div>
   {/snippet}
 
   <!-- Sort toggle, shared by the Conversations list and the Projects tree -->
@@ -702,51 +876,113 @@
     </button>
   {/snippet}
 
+  {#if collapsed}
+    <!-- Rail: expand, search, the open conversations, the footer's buttons -->
+    <div class="flex flex-col items-center gap-1 pt-3 pb-2 shrink-0 border-b border-sidebar-border" data-rail>
+      <PanelToggle panel="sidebar" label="sidebar" />
+      <button
+        onclick={() => store.finderOpen = true}
+        class="p-1.5 text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
+        title="Search conversations (Ctrl+R)"
+        aria-label="Search conversations"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto overflow-x-hidden py-2">
+      {#if draftStore.draft}
+        <button
+          type="button"
+          onclick={() => draftStore.show()}
+          class="w-full flex justify-center py-2 transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          title="New conversation, not started yet"
+          aria-label="New conversation, not started yet"
+        >
+          <span class="w-2 h-2 border border-dashed border-muted-foreground"></span>
+        </button>
+      {/if}
+      <!-- Every open conversation: the triage filter isn't on the rail to explain a shorter list. -->
+      {#each store.openConversations as session (session.id)}
+        {@const isDestroying = destroying.has(session.id)}
+        {@const subtitle = rowSubtitle(session)}
+        {@const name = `${store.repoDisplayName(session.repoPath)} / ${sessionRowLabel(session)}`}
+        <button
+          onclick={() => { if (!isDestroying) focusSession(session.id); }}
+          oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
+          disabled={isDestroying}
+          title={subtitle ? `${name}\n${subtitle.text}` : name}
+          aria-label={name}
+          data-rail-session={session.id}
+          class="w-full flex justify-center py-2 transition-colors
+            {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+        >
+          {@render statusMark(session, isDestroying, getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors))}
+        </button>
+      {/each}
+    </div>
+    <div class="py-3 border-t border-sidebar-border flex flex-col items-center gap-1 shrink-0">
+      <Button
+        onclick={() => openNewAgent()}
+        disabled={!store.canCreate}
+        size="sm"
+        class="px-2"
+        title="New conversation (Ctrl+N)"
+        aria-label="New conversation"
+      >
+        <MessageSquarePlusIcon aria-hidden="true" />
+      </Button>
+      <div class="w-8"><AddRepoButton compact /></div>
+      {@render footerTools()}
+    </div>
+  {/if}
+
   <!-- Search: opens the session finder (titles + full conversation content) -->
-  <div class="px-3 pt-3">
+  <div class="px-3 pt-3 {collapsed ? 'hidden' : 'flex'} items-center gap-1">
     <button
       onclick={() => store.finderOpen = true}
-      class="w-full flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
+      class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
       title="Search conversations (Ctrl+R)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <span class="text-xs truncate">Search conversations…</span>
       <span class="ml-auto text-[10px] text-muted-foreground/40 shrink-0">Ctrl+R</span>
     </button>
+    <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
 
-  <div class="flex-1 overflow-auto px-3 py-3">
-    <!-- Sort control (applies to active list + inactive sessions) -->
-    <div class="flex items-center mb-2 px-1">
-      <span class="text-[10px] text-muted-foreground/40 uppercase tracking-wide mr-auto">Sort</span>
-      {@render sortButton('name', 'Name')}
-      {@render sortButton('age', 'Age')}
-    </div>
-
-    <!-- Triage filter: what needs me, what is working, what finished while I was away -->
-    <div class="flex items-center gap-1 mb-2 px-1 flex-wrap" role="group" aria-label="Filter conversations">
-      {#each TRIAGE_FILTERS as f (f)}
+  <div class="flex-1 overflow-auto px-3 py-3 {collapsed ? 'hidden' : ''}">
+    <!-- Triage filter: what needs me, what is working, what finished while I was away.
+         Click a chip to show only those; click it again to show all. -->
+    <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter conversations">
+      {#each CHIP_FILTERS as f (f)}
         {@const n = counts[f]}
         {@const active = triageFilter === f}
         <button
           type="button"
-          onclick={() => triageFilter = f}
+          onclick={() => toggleFilter(f)}
           aria-pressed={active}
+          aria-label="{TRIAGE_FILTER_LABELS[f]} {n}"
           class="flex items-center gap-1 px-1.5 py-0.5 text-[10px] border transition-colors
             {active ? 'border-border bg-sidebar-accent text-foreground' : 'border-transparent text-muted-foreground/60 hover:text-foreground hover:bg-sidebar-accent/50'}
-            {n === 0 && f !== 'all' ? 'opacity-50' : ''}"
-          title="{TRIAGE_FILTER_LABELS[f]}: {n}"
+            {n === 0 ? 'opacity-50' : ''}"
+          title="{TRIAGE_FILTER_LABELS[f]}: {n}{active ? '. Click again to show all' : ''}"
         >
-          {#if f !== 'all'}<span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>{/if}
-          {TRIAGE_FILTER_LABELS[f]}
+          <span class="w-1.5 h-1.5 shrink-0 {TRIAGE_DOT[f]}"></span>
+          <!-- Narrow sidebar: dot and count only, the label is in the tooltip. -->
+          {#if !compact}{TRIAGE_FILTER_LABELS[f]}{/if}
           <span class="text-muted-foreground/50">{n}</span>
         </button>
       {/each}
     </div>
 
-    <!-- CONVERSATIONS: the live working set, always visible at the top -->
+    <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
+         applies to the Projects tree too. -->
     <div class="flex items-center justify-between mb-1 px-1">
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
+      <div class="flex items-center" role="group" aria-label="Sort conversations">
+        {@render sortButton('name', 'Name')}
+        {@render sortButton('age', 'Age')}
+      </div>
     </div>
 
     {#if draftStore.draft}
@@ -755,18 +991,22 @@
       <button
         type="button"
         onclick={() => draftStore.show()}
-        class="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+        class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
         title="New conversation, not started yet"
       >
-        <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
-        <span class="text-sm truncate min-w-0">
-          <span class="text-muted-foreground/70">{store.repoDisplayName(draft.repoPath)}</span><span class="text-muted-foreground/40"> / </span><span class="italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
+        <span class="w-full flex items-center gap-2 min-w-0">
+          <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
+          <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
+          <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
         </span>
-        <span class="ml-auto text-[10px] text-muted-foreground/50 shrink-0">draft</span>
+        {#if store.repos.length > 1}
+          <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{store.repoDisplayName(draft.repoPath)}</span>
+        {/if}
       </button>
     {/if}
     {#each activeSessions as session (session.id)}
-      {@render sessionRow(session, true, null)}
+      <!-- The project name only helps when there is more than one. -->
+      {@render sessionRow(session, store.repos.length > 1, null)}
     {/each}
     {#if activeSessions.length === 0 && !draftStore.draft}
       <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
@@ -797,30 +1037,30 @@
     </div>
 
     {#each store.repos as repo (repo)}
-      {@const canRemove = store.canRemoveRepo(repo)}
       {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
-      {@const inactiveGroups = getInactiveBranchGroups(repo)}
-      {@const inactiveCount = inactiveGroups.reduce((n, [, s]) => n + s.length, 0)}
+      {@const branchGroups = getBranchGroups(repo)}
+      {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
       {@const rc = repoCounts(repo)}
-      {@const collapsed = isRepoCollapsed(collapsedRepos, repo)}
+      {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
       <div class="mb-3">
-        <!-- Repo header (click to collapse/expand the repo's inactive tree) -->
+        <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
         <div class="flex items-center justify-between group px-1 py-1">
           <button
             type="button"
             onclick={() => toggleRepoCollapsed(repo)}
+            aria-expanded={!repoCollapsed}
             class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
-            title={collapsed ? 'Expand project' : 'Collapse project'}
+            title={repoCollapsed ? 'Expand project' : 'Collapse project'}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={collapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={repoCollapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
             {#if repoColor}
               <span class="w-2 h-2 shrink-0" style="background-color: {repoColor}"></span>
             {/if}
             <span class="text-xs font-medium text-muted-foreground truncate" title={repo}>
               {store.repoDisplayName(repo)}
             </span>
-            {#if inactiveCount}
-              <span class="text-xs text-muted-foreground/40 shrink-0">{inactiveCount}</span>
+            {#if rowCount}
+              <span class="text-xs text-muted-foreground/40 shrink-0">{rowCount}</span>
             {/if}
             <!-- Per-repo attention counts, same dots as the filter chips -->
             {#if rc['needs-you']}
@@ -843,37 +1083,46 @@
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
             </button>
+            <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first). -->
             <button
-              onclick={() => canRemove ? confirmRemoveRepo = repo : null}
-              disabled={!canRemove}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-              title={canRemove ? 'Remove project' : 'Destroy all conversations first'}
+              onclick={() => requestRemoveRepo(repo)}
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              title="Remove project"
+              aria-label="Remove project {store.repoDisplayName(repo)}"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
             </button>
           </div>
         </div>
 
-        <!-- Stopped sessions grouped by branch -->
-        {#if !collapsed}
-          {#each inactiveGroups as [branch, sessions] (branch)}
+        <!-- The project's conversations, grouped by branch -->
+        {#if !repoCollapsed}
+          {#each branchGroups as [branch, sessions] (branch)}
             {#if sessions.length === 1}
-              {@render sessionRow(sessions[0], false, null, store.isOpenTab(sessions[0]))}
+              {@render sessionRow(sessions[0], false, null)}
             {:else}
+              {@const branchCollapsed = !!collapsedBranches[branchKey(repo, branch)]}
               <div class="pl-3 mt-0.5">
-                <div class="flex items-center gap-1.5 px-1 py-0.5 text-xs text-muted-foreground/70">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                <button
+                  type="button"
+                  onclick={() => toggleBranchCollapsed(repo, branch)}
+                  aria-expanded={!branchCollapsed}
+                  class="w-full flex items-center gap-1.5 px-1 py-0.5 text-left text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 transition-transform" style={branchCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
                   <span class="truncate" title={branch}>{branch}</span>
                   <span class="text-muted-foreground/40">({sessions.length})</span>
-                </div>
-                {#each sessions as session, i (session.id)}
-                  {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, store.isOpenTab(session))}
-                {/each}
+                </button>
+                {#if !branchCollapsed}
+                  {#each sessions as session, i (session.id)}
+                    {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`)}
+                  {/each}
+                {/if}
               </div>
             {/if}
           {/each}
 
-          {#if inactiveGroups.length === 0}
+          {#if branchGroups.length === 0}
             <p class="text-xs text-muted-foreground/40 pl-4 py-1">{triageFilter === 'all' ? 'No conversations in this project' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
           {/if}
         {/if}
@@ -886,7 +1135,7 @@
   </div>
 
   <!-- Bottom controls -->
-  <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
+  <div class="px-3 py-3 border-t border-sidebar-border {collapsed ? 'hidden' : 'flex'} flex-col gap-2">
     <div class="flex gap-2">
       <div class="flex-1 min-w-0">
         <AddRepoButton {compact} />
@@ -907,42 +1156,7 @@
       </Button>
     </div>
     <div class="flex justify-between px-1">
-      <Button
-        onclick={() => bookmarkStore.toggleDrawer()}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Bookmarks (Ctrl+B)"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
-      </Button>
-      <Button
-        onclick={() => memoryStore.panelOpen = true}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Project Memory"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
-      </Button>
-      <Button
-        onclick={openCleanup}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Clean up old conversations"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
-      </Button>
-      <Button
-        onclick={() => showSettings = true}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Settings"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-      </Button>
+      {@render footerTools()}
     </div>
   </div>
 
@@ -950,7 +1164,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     onpointerdown={startResize}
-    class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-10 -mr-0.5
+    class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-10 -mr-0.5 {collapsed ? 'hidden' : ''}
       {resizing ? 'bg-primary/40' : 'hover:bg-primary/25'} transition-colors"
     title="Drag to resize sidebar"
   ></div>
@@ -1048,7 +1262,8 @@
               class="hover:text-foreground hover:underline"
               title="Tick every listed conversation without uncommitted changes"
             >
-              Select all
+              <!-- Says what it leaves out, so "all" never means less than all. -->
+              {cleanupDirtyCount > 0 ? `Select all except ${cleanupDirtyCount} with changes` : 'Select all'}
             </button>
             {#if cleanupGhAvailable}
               <span class="text-muted-foreground/40" aria-hidden="true">·</span>
@@ -1142,72 +1357,108 @@
   </Dialog.Root>
 {/if}
 
-<!-- Destroy session confirmation dialog -->
+<!-- Delete conversation confirmation dialog -->
 {#if confirmDestroyId}
   {@const session = store.sessions.find(s => s.id === confirmDestroyId)}
+  {@const branch = session?.branch ?? 'unknown'}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmDestroyId = null; }}>
-    <Dialog.Content class="max-w-xs">
+    <Dialog.Content class="max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>Destroy Agent?</Dialog.Title>
+        <Dialog.Title>Delete conversation?</Dialog.Title>
         <Dialog.Description>
-          {#if session?.direct}
-            This will stop the conversation on branch
-            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
-            No files will be deleted.
+          {#if session?.noGit}
+            This stops the conversation and removes it. It worked in the project folder itself, so no files are deleted.
+          {:else if session?.direct}
+            This stops the conversation and removes it. It worked in the project folder on
+            <span class="text-foreground font-medium">{branch}</span>, so no files are deleted.
           {:else}
-            This will kill the shell process and remove the worktree for branch
-            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+            This removes the conversation and its copy of the project (the worktree for
+            <span class="text-foreground font-medium">{branch}</span>).
           {/if}
         </Dialog.Description>
       </Dialog.Header>
       {#if !session?.direct}
+        {#if destroyUncommitted}
+          <p class="text-xs text-yellow-500 mt-3" role="alert">
+            {destroyUncommitted} {destroyUncommitted === 1 ? 'file has' : 'files have'} uncommitted changes that will be lost.
+          </p>
+        {/if}
         <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
           <Checkbox bind:checked={deleteBranchOnDestroy} />
           Also delete the branch
         </label>
+        {#if deleteBranchOnDestroy && destroyUnmerged?.count}
+          <p class="text-xs text-yellow-500 mt-2" role="alert">
+            {destroyUnmerged.count} {destroyUnmerged.count === 1 ? 'commit' : 'commits'} on {branch}
+            {destroyUnmerged.count === 1 ? "isn't" : "aren't"} on {destroyUnmerged.base} yet. Unless you've pushed
+            {destroyUnmerged.count === 1 ? 'it' : 'them'}, deleting the branch can lose {destroyUnmerged.count === 1 ? 'it' : 'them'}.
+          </p>
+        {/if}
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel
         </Button>
-        <Button variant="destructive" onclick={confirmDestroy}>
-          Destroy
+        <Button variant="destructive" onclick={confirmDestroy} disabled={destroyChecking}>
+          {destroyChecking ? 'Checking…' : 'Delete'}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
 {/if}
 
-<!-- Remove repo confirmation dialog -->
+<!-- Remove project confirmation: deletes its conversations too, with the same checks as deleting one -->
 {#if confirmRemoveRepo}
-  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmRemoveRepo = null; }}>
-    <Dialog.Content class="max-w-xs">
+  {@const repoSessions = store.sessions.filter((s) => removeRepoIds.includes(s.id))}
+  {@const n = repoSessions.length}
+  {@const hasWorktrees = repoSessions.some((s) => !s.direct)}
+  {@const running = repoSessions.filter((s) => s.status === 'running' || s.status === 'starting' || s.status === 'installing')}
+  {@const midTurn = running.filter((s) => messageStore.getIsRunning(s.id)).length}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !removingRepo) confirmRemoveRepo = null; }}>
+    <Dialog.Content class="max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>Remove Project?</Dialog.Title>
+        <Dialog.Title>Remove project?</Dialog.Title>
         <Dialog.Description>
           Remove <span class="text-foreground font-medium">{store.repoDisplayName(confirmRemoveRepo)}</span> from Grove Bench?
-          This won't delete any files on disk.
+          {#if n > 0}
+            This also deletes its {n} {n === 1 ? 'conversation' : 'conversations'}{hasWorktrees ? ' and their copies of the project (worktrees)' : ''}.
+          {/if}
+          The project folder itself isn't touched.
         </Dialog.Description>
       </Dialog.Header>
+      {#if removeRepoRechecked}
+        <p class="text-xs text-muted-foreground mt-3">New conversations started in this project, so it checked again.</p>
+      {/if}
+      {#if running.length}
+        <p class="text-xs text-yellow-500 mt-3" role="alert">
+          {running.length} {running.length === 1 ? 'conversation is' : 'conversations are'} running and will be stopped{midTurn ? `, ${midTurn} in the middle of a turn` : ''}.
+        </p>
+      {/if}
+      {#if removeRepoDirty}
+        <p class="text-xs text-yellow-500 mt-3" role="alert">
+          {removeRepoDirty} {removeRepoDirty === 1 ? 'conversation has' : 'conversations have'} uncommitted changes that will be lost.
+        </p>
+      {/if}
+      {#if hasWorktrees}
+        <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
+          <Checkbox bind:checked={removeRepoDeleteBranches} disabled={removingRepo} />
+          Also delete their branches
+        </label>
+        {#if removeRepoDeleteBranches && removeRepoUnmerged?.count}
+          <p class="text-xs text-yellow-500 mt-2" role="alert">
+            {removeRepoUnmerged.count} {removeRepoUnmerged.count === 1 ? "branch has commits that aren't" : "branches have commits that aren't"} on {removeRepoUnmerged.base} yet.
+            Unless you've pushed them, deleting the branches can lose them.
+          </p>
+        {/if}
+      {/if}
       <Dialog.Footer>
-        <Button variant="secondary" onclick={() => confirmRemoveRepo = null}>
+        <Button variant="secondary" onclick={() => confirmRemoveRepo = null} disabled={removingRepo}>
           Cancel
         </Button>
-        <Button variant="destructive" onclick={() => confirmRemoveRepo && handleRemoveRepo(confirmRemoveRepo)}>
-          Remove
+        <Button variant="destructive" onclick={confirmRemoveProject} disabled={removeRepoChecking || removingRepo}>
+          {removingRepo ? 'Removing…' : removeRepoChecking ? 'Checking…' : 'Remove'}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
 {/if}
-
-<style>
-  /* Green flash on a session row when its agent finished a turn while not focused */
-  .needs-attention-flash {
-    animation: needs-attention-flash 0.8s ease-in-out infinite;
-  }
-  @keyframes needs-attention-flash {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.2; }
-  }
-</style>

@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -19,6 +19,9 @@ export interface AgentCapabilities {
   modelSwitching: boolean;
   /** Supports adjusting the thinking/reasoning level at runtime */
   thinking: boolean;
+  /** Can return a readable summary of the model's thinking, switched by the
+   *  showThinkingSummaries setting (see AdapterConfig.thinkingSummaries). */
+  thinkingSummaries?: boolean;
   /** Supports plugins/extensions */
   plugins: boolean;
   /** Supports packaged skill instructions (discovery via listSkills, authoring
@@ -142,6 +145,10 @@ export interface AdapterConfig {
    *  the session with, keyed by control id. permissionMode is passed
    *  separately. Missing ids mean the provider default applies. */
   controls?: Record<string, string> | null;
+  /** Show a readable summary of the model's thinking (false: show none).
+   *  Unset means true. Only adapters with the thinkingSummaries capability
+   *  read it. */
+  thinkingSummaries?: boolean;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
@@ -164,10 +171,24 @@ export interface AdapterConfig {
 
 // ─── Running Query Handle ───
 
+/** Image data a tool returned, before the session manager saves it. */
+export interface ToolImageData {
+  /** base64-encoded image data (no data: prefix) */
+  data: string;
+  mediaType: ImageMediaType;
+}
+
+/** An event as an adapter yields it: an AgentEvent, except that a tool_result
+ *  carries the image data its tool returned. The session manager saves those
+ *  images and passes the event on with references instead (attachments.ts). */
+export type AdapterEvent =
+  | Exclude<AgentEvent, { type: 'tool_result' }>
+  | (Omit<Extract<AgentEvent, { type: 'tool_result' }>, 'images'> & { imageData?: ToolImageData[] });
+
 /** Represents a running agent query. Returned by adapter.start(). */
 export interface AgentQueryHandle {
   /** Async iterable of events from the agent */
-  events: AsyncIterable<AgentEvent>;
+  events: AsyncIterable<AdapterEvent>;
   /** Send a follow-up user message into the conversation */
   sendMessage(message: UserMessage): void;
   /** Abort the current query */
@@ -242,6 +263,25 @@ export interface ApiKeyDescriptor {
   label: string;
   /** Page where the user can create a key. */
   helpUrl: string;
+  /** How using a key is paid for, shown under the field, e.g. that it is
+   *  billed separately from a subscription. */
+  billingNote?: string;
+}
+
+/** Signing in through the provider's own CLI instead of an API key: the
+ *  user runs the CLI in a terminal and its own sign-in flow stores the
+ *  credentials. Grove never handles them. */
+export interface CliSignInDescriptor {
+  /** What the sign-in uses, for a heading such as "Use your Claude plan". */
+  accountLabel: string;
+  /** Who can sign in this way, e.g. "Pro, Max, Team or Enterprise". */
+  accountDetail?: string;
+  /** The CLI's product name, e.g. "Claude Code". */
+  cliName: string;
+  /** The command that starts it and asks the user to sign in. */
+  command: string;
+  /** The provider's install and setup page. */
+  setupUrl: string;
 }
 
 // ─── The Adapter Interface ───
@@ -285,6 +325,9 @@ export interface AgentAdapter {
 
   /** Set when the provider accepts an API key entered in the app. */
   readonly apiKey?: ApiKeyDescriptor;
+
+  /** Set when the user can sign in with the provider's CLI instead. */
+  readonly cliSignIn?: CliSignInDescriptor;
 
   /** Cheap model for background tasks run on this agent: memory notes and
    *  compaction, commit messages, skill suggestions. Used unless the user

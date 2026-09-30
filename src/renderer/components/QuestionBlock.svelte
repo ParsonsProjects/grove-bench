@@ -4,6 +4,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
+  import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
   let {
     sessionId,
@@ -12,6 +13,7 @@
     resolved,
     response,
     selectedLabels,
+    timedOut = false,
   }: {
     sessionId: string;
     requestId: string;
@@ -19,6 +21,8 @@
     resolved: boolean;
     response?: string;
     selectedLabels?: string[];
+    /** Closed because nobody answered in time. */
+    timedOut?: boolean;
   } = $props();
 
   // Track selections per question (index in questions array → selected option indices)
@@ -140,7 +144,11 @@
     </div>
   {/each}
 
-  {#if resolved}
+  {#if resolved && timedOut}
+    <div class="text-xs mt-2 text-muted-foreground">
+      no answer after {PERMISSION_TIMEOUT_MINUTES} minutes, so the question was closed
+    </div>
+  {:else if resolved}
     <div class="text-xs mt-2 text-blue-400">
       answered{#if response}: <span class="text-foreground">{response}</span>{/if}
     </div>

@@ -273,6 +273,9 @@
   }
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
   let contextExpanded = $state(false);
+  /** "Start fresh" asks once before clearing; closing the popover cancels. */
+  let confirmClear = $state(false);
+  $effect(() => { if (!contextExpanded) confirmClear = false; });
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
   let shortcutsOpen = $state(false);
@@ -611,7 +614,9 @@
     if (bgTasksExpanded && bgTasksRef && !bgTasksRef.contains(target)) {
       bgTasksExpanded = false;
     }
-    if (contextExpanded && contextRef && !contextRef.contains(target)) {
+    // isConnected: "Start fresh…" swaps itself for the confirm buttons before
+    // the click bubbles here (see the skills popover below).
+    if (contextExpanded && contextRef && target.isConnected && !contextRef.contains(target)) {
       contextExpanded = false;
     }
     if (shortcutsOpen && shortcutsRef && !shortcutsRef.contains(target)) {
@@ -668,15 +673,15 @@
   <span class="w-px self-stretch bg-border"></span>
 
   <!-- Activity view toggle (cycles Summary → Focus → Detailed). Per session;
-       the default for new sessions is set in Settings → Default Activity View.
+       the default for new sessions is set in Settings → Default Thread View.
        The rate-limit warning sits underneath. -->
   <div class="flex flex-col gap-px leading-snug">
   <button
     onclick={() => messageStore.setViewMode(sessionId, NEXT_VIEW_MODE[viewMode])}
     class="flex items-center gap-1 transition-colors
       {viewMode === 'detailed' ? 'text-muted-foreground hover:text-foreground' : 'text-primary hover:text-primary/80'}"
-    title="Activity view: {VIEW_MODE_LABELS[viewMode]}. {VIEW_MODE_HINTS[viewMode]}"
-    aria-label="Activity view: {VIEW_MODE_LABELS[viewMode]}"
+    title="Thread view: {VIEW_MODE_LABELS[viewMode]}. {VIEW_MODE_HINTS[viewMode]}"
+    aria-label="Thread view: {VIEW_MODE_LABELS[viewMode]}"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
       {#if viewMode === 'detailed'}
@@ -1536,10 +1541,11 @@
       <button
         onclick={() => contextExpanded = !contextExpanded}
         class="flex flex-col items-end gap-1 leading-snug hover:text-foreground transition-colors"
-        title="Context usage — click for details"
+        title="Context: {formatTokens(usedTokens)} of {formatTokens(contextWindow)} tokens used. Click for details."
+        aria-label="Context {usedPercent.toFixed(0)}% used. Click for details."
       >
         <span style:color={textColor} class="font-medium transition-colors">
-          {formatTokens(usedTokens)}/{formatTokens(contextWindow)} ({usedPercent.toFixed(0)}%)
+          Context {usedPercent.toFixed(0)}%
         </span>
         <!-- Mini bar with color-coded fill -->
         <div class="w-24 h-1.5 bg-muted overflow-hidden flex">
@@ -1552,10 +1558,17 @@
 
       {#if contextExpanded}
         <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-4 text-xs w-72 z-50">
-          <div class="flex items-center justify-between mb-3">
-            <span class="font-medium text-foreground text-sm">Context Window</span>
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-medium text-foreground text-sm">Context</span>
             <span class="font-medium" style:color={textColor}>{usedPercent.toFixed(1)}%</span>
           </div>
+          <!-- What it is, for someone new to agents. Claude Code's own
+               behaviour near the limit: https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up -->
+          <p class="text-muted-foreground mb-3">
+            How much the agent can hold in mind at once: your messages, its replies, files it read and command
+            output. Near the limit it clears old tool output, then summarises the conversation, so early details
+            can be lost.
+          </p>
 
           <!-- Large segmented bar -->
           <div class="w-full h-3 bg-muted overflow-hidden flex mb-1">
@@ -1690,24 +1703,48 @@
           <!-- Per-server MCP status and connect/disconnect controls live in the
                status bar's dedicated MCP popover, not here. -->
 
-          <!-- Quick actions -->
-          <div class="border-t border-border pt-2.5 mt-2.5 flex gap-2">
-            <button
-              onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
-              disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Compact conversation to free context"
-            >
-              /compact
-            </button>
-            <button
-              onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
-              disabled={isRunning}
-              class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Clear conversation and start fresh"
-            >
-              /clear
-            </button>
+          <!-- Quick actions. Clearing drops the conversation, so it asks first. -->
+          <div class="border-t border-border pt-2.5 mt-2.5">
+            {#if confirmClear}
+              <p class="text-xs text-foreground mb-2" role="alert">
+                Clear this conversation? Its messages, and the agent's memory of them, are removed. Your files stay as they are.
+              </p>
+              <div class="flex gap-2">
+                <button
+                  onclick={() => confirmClear = false}
+                  class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onclick={() => { messageStore.sendCommand(sessionId, '/clear'); contextExpanded = false; }}
+                  disabled={isRunning}
+                  class="flex-1 px-2 py-1.5 text-xs border border-destructive/60 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Clear
+                </button>
+              </div>
+            {:else}
+              <!-- Stacked: side by side, the labels wrapped onto two lines. -->
+              <div class="flex flex-col gap-2">
+                <button
+                  onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
+                  disabled={isRunning}
+                  class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Replace the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. (/compact)"
+                >
+                  Summarise to free space
+                </button>
+                <button
+                  onclick={() => confirmClear = true}
+                  disabled={isRunning}
+                  class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Clear the conversation and start again with an empty context. Asks first. (/clear)"
+                >
+                  Start fresh…
+                </button>
+              </div>
+            {/if}
           </div>
         </div>
       {/if}
@@ -1734,7 +1771,7 @@
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
           <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
           <div class="flex justify-between"><span>Cycle effort level</span><kbd class="text-foreground">Alt+E</kbd></div>
-          <div class="flex justify-between"><span>Activity tab</span><kbd class="text-foreground">Alt+1</kbd></div>
+          <div class="flex justify-between"><span>Thread tab</span><kbd class="text-foreground">Alt+1</kbd></div>
           <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
           <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>
         </div>

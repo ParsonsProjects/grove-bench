@@ -5,7 +5,7 @@
 import type { BrowserWindow } from 'electron';
 import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
-import type { CheckpointManager } from './checkpoints.js';
+import type { Checkpoints } from './no-git-checkpoints.js';
 
 export type Emit = (event: AgentEvent) => void;
 
@@ -115,7 +115,13 @@ export interface ManagedSession {
   /** Resolver for queryReady — called in runQuery after queryHandle is set. */
   resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
-  checkpoints: CheckpointManager;
+  checkpoints: Checkpoints;
+  /** The conversation's folder is a git repository. Without git there are no
+   *  checkpoints and no commits, so neither is attempted. */
+  gitBacked: boolean;
+  /** The last checkpoint capture failed. The thread is told once per run of
+   *  failures (git missing, a broken repository), not on every message. */
+  checkpointFailing?: boolean;
   /** Status to go back to when a sleeping session wakes: 'running', or
    *  'starting' when its query had not reported system_init yet. */
   statusBeforeSleep: SessionStatus | null;

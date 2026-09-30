@@ -22,8 +22,9 @@ vi.mock('./logger.js', () => ({
 
 import {
   loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
-  saveKnownSkills, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
+  saveKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog,
+  mergeProjects, listProjects, rememberProject, forgetProject,
 } from './app-state.js';
 
 /** The file as the last write left it, so read-modify-write chains see their own updates. */
@@ -93,6 +94,12 @@ describe('validateAppState', () => {
     expect(s.unreadSessionIds).toEqual(['u1']);
   });
 
+  it('keeps known collapsed-panel flags and drops the rest', () => {
+    const s = validateAppState({ collapsedPanels: { sidebar: true, changesFiles: 'yes', later: true } });
+    expect(s.collapsedPanels).toEqual({ sidebar: true });
+    expect(validateAppState({ collapsedPanels: 'all' }).collapsedPanels).toBeUndefined();
+  });
+
   it('drops activeTabId, which older versions saved', () => {
     expect(validateAppState({ activeTabId: 'a', openTabIds: ['a'] })).not.toHaveProperty('activeTabId');
   });
@@ -148,6 +155,18 @@ describe('debounced writers', () => {
     expect(loadUnreadSessionIds()).toEqual(['s1', 's2']);
   });
 
+  it('saves collapsed panels, cleaned, and ignores junk from the renderer', () => {
+    useDisk(undefined);
+    saveCollapsedPanels({ sidebar: true, bogus: true });
+    flushPendingSaves();
+    expect(loadAppState().collapsedPanels).toEqual({ sidebar: true });
+
+    mockWriteFileSync.mockClear();
+    saveCollapsedPanels('everything');
+    flushPendingSaves();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
   it('write-through helpers merge into the existing file', () => {
     const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, knownSkills: { '/a': ['x'] } });
     saveKnownSkills('/b', ['y']);
@@ -194,3 +213,39 @@ describe('model catalogs', () => {
     expect(loadModelCatalog('missing')).toBeNull();
   });
 });
+
+describe('projects', () => {
+  it('keeps a project with no conversations across a restart', () => {
+    const disk = useDisk({ projects: [] });
+    rememberProject('C:\\notes');
+    // At the next launch the manifest knows nothing about it.
+    expect(listProjects([])).toEqual(['C:\\notes']);
+    expect(disk.get().projects).toEqual(['C:\\notes']);
+  });
+
+  it('adds projects the manifest knows once, after the remembered ones, in order', () => {
+    expect(mergeProjects(['/b'], ['/a', '/b', '/c'])).toEqual(['/b', '/a', '/c']);
+    expect(mergeProjects(undefined, ['/a', '/b'])).toEqual(['/a', '/b']);
+  });
+
+  it('starts the list from the manifest the first time, keeping its order', () => {
+    const disk = useDisk({});
+    expect(listProjects(['/a', '/b'])).toEqual(['/a', '/b']);
+    expect(disk.get().projects).toEqual(['/a', '/b']);
+    rememberProject('/c');
+    rememberProject('/a');
+    expect(disk.get().projects).toEqual(['/a', '/b', '/c']);
+  });
+
+  it('forgets a removed project', () => {
+    const disk = useDisk({ projects: ['/a', '/b'] });
+    forgetProject('/a');
+    expect(disk.get().projects).toEqual(['/b']);
+    expect(listProjects([])).toEqual(['/b']);
+  });
+
+  it('drops a malformed project list', () => {
+    expect(validateAppState({ projects: 'nope' }).projects).toBeUndefined();
+  });
+});
+

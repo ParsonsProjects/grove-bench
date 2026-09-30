@@ -3,6 +3,7 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_MODES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
@@ -14,6 +15,7 @@ import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure } from './agent-utils.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
+import { noGitCheckpoints } from './no-git-checkpoints.js';
 import { killTree } from './process-tree.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
@@ -125,6 +127,9 @@ class AgentSessionManager {
      *  conversation. Laid over the saved defaults; a value the model doesn't
      *  offer is ignored. */
     controls?: Record<string, string> | null;
+    /** Runs in a folder without git (the worktree entry's `noGit`): no
+     *  checkpoints and no commit identity. */
+    noGit?: boolean;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -161,6 +166,9 @@ class AgentSessionManager {
 
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
+
+    // A folder project isn't a git repository: no checkpoints, no commits.
+    const gitBacked = !opts.noGit;
 
     const session: ManagedSession = {
       id,
@@ -206,7 +214,8 @@ class AgentSessionManager {
       restartRequested: false,
       queryReady: null,
       resolveQueryReady: null,
-      checkpoints: new CheckpointManager(),
+      checkpoints: gitBacked ? new CheckpointManager() : noGitCheckpoints,
+      gitBacked,
       statusBeforeSleep: null,
       sleepSettled: null,
       turnHandle: null,
@@ -309,7 +318,7 @@ class AgentSessionManager {
     // the vars stay unset and git's own rules apply (usually it refuses to
     // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
-    try {
+    if (session.gitBacked) try {
       const identity = await getGitIdentity(session.worktreePath);
       if (identity) {
         gitIdentityEnv = {
@@ -347,7 +356,7 @@ class AgentSessionManager {
     // manager skips it if the session already has turns (rewind restart).
     // Resumed sessions rebuild their checkpoint state on system_init instead.
     const resumingProviderSession = !!session.providerSessionId;
-    if (!resumingProviderSession) {
+    if (!resumingProviderSession && session.gitBacked) {
       session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
         if (!written) logger.warn(`Checkpoint baseline not captured for ${id}`);
       });
@@ -383,6 +392,7 @@ class AgentSessionManager {
         : null,
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,
+      thinkingSummaries: currentSettings.showThinkingSummaries,
       resumeSessionId: session.providerSessionId,
       resumeAtUuid,
       toolAllowRules: currentSettings.toolAllowRules,
@@ -458,15 +468,20 @@ class AgentSessionManager {
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
-    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch} · ${session.permissionMode}` });
+    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
 
     // Process event stream from the adapter
     try {
-      for await (const event of handle.events) {
-        if (!TRANSIENT_EVENT_TYPES.has(event.type)) {
-          logger.debug(`[runQuery] session=${id} event type=${event.type}`);
+      for await (const adapterEvent of handle.events) {
+        if (!TRANSIENT_EVENT_TYPES.has(adapterEvent.type)) {
+          logger.debug(`[runQuery] session=${id} event type=${adapterEvent.type}`);
         }
         if (abortController.signal.aborted) break;
+
+        // Save the images a tool returned; the event passes on references.
+        const event: AgentEvent = adapterEvent.type === 'tool_result' && adapterEvent.imageData
+          ? await storeToolImages(id, adapterEvent)
+          : adapterEvent;
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
@@ -746,8 +761,14 @@ class AgentSessionManager {
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
+    // Attached images are saved to disk and the event refers to them, so the
+    // thread can show them again when the conversation is reopened.
     const uuid = crypto.randomUUID();
-    const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
+    const storedImages = images?.length ? await saveImages(id, images) : [];
+    const userEvent: AgentEvent = {
+      type: 'user_message', text: content, uuid,
+      ...(storedImages.length > 0 && { images: storedImages }),
+    };
     session.emit?.(userEvent);
 
     // Snapshot the working tree before the agent gets the prompt. The capture
@@ -757,13 +778,19 @@ class AgentSessionManager {
     // throws; a false result means there is no checkpoint for this message,
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
-    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content));
-    if (!captured) {
+    const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content, images));
+    // Without git there are no checkpoints to capture, so nothing failed.
+    if (captured) {
+      session.checkpointFailing = false;
+    } else if (session.gitBacked) {
       logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
-      session.emit?.({
-        type: 'error',
-        message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. See the log for the git error.',
-      });
+      if (!session.checkpointFailing) {
+        session.checkpointFailing = true;
+        session.emit?.({
+          type: 'error',
+          message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. Later messages won\'t get one either until git works again. See the log for the git error.',
+        });
+      }
     }
     // The query may have been torn down while the snapshot ran (stop, model
     // switch); if a replacement is starting, hand the prompt to that one.
@@ -1329,7 +1356,7 @@ class AgentSessionManager {
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
       if (worktree) {
         memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
-        await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+        if (!worktree.noGit) await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }
@@ -1579,6 +1606,10 @@ class AgentSessionManager {
     // runQuery(), which picks up pendingResumeAt (truncated fork resume) or —
     // with providerSessionId null — starts a fresh conversation.
     await this.stopQuery(id);
+
+    // After the stop, so a tool result from the old query can't save an image
+    // after the check. The rewound turns' images are no longer shown.
+    void pruneImages(id, session.eventHistory);
   }
 
   /** Dry-run rewind to get the diff of what would change. */
@@ -1697,6 +1728,8 @@ class AgentSessionManager {
       // Session not running — clear disk log directly
       this.events.clearStored(id);
     }
+    // No event refers to the thread's images any more.
+    void removeImages(id);
   }
 
   /** Session ids that were running when the system suspended. Captured on

@@ -2,11 +2,14 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import { toolLabel } from '$lib/tool-names.js';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import AgentSprite from './AgentSprite.svelte';
   import { sessionRepoColor } from '../lib/session-repo-color.js';
+  import { alwaysAllowLabel } from '../lib/always-allow.js';
+  import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
   let {
     sessionId,
@@ -15,8 +18,8 @@
     toolInput,
     resolved,
     decision,
+    timedOut = false,
     decisionReason,
-    suggestions,
     isPlanExecution = false,
     toolCategory,
     planText: planTextProp,
@@ -27,8 +30,9 @@
     toolInput: unknown;
     resolved: boolean;
     decision?: 'allow' | 'deny';
+    /** Denied because nobody answered in time. */
+    timedOut?: boolean;
     decisionReason?: string;
-    suggestions?: unknown[];
     isPlanExecution?: boolean;
     toolCategory?: import('../../shared/types.js').ToolCategory;
     planText?: string;
@@ -51,6 +55,9 @@
   let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
   let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
   let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
+  let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
+  /** "Approve and start fresh…" clears the conversation, so it asks first. */
+  let confirmFresh = $state(false);
 
   async function approve() {
     if (submitting) return;
@@ -73,22 +80,6 @@
       await messageStore.resolvePermission(sessionId, requestId, 'allowAlways');
     } catch (e) {
       console.error('[PermissionBlock] approveAlways failed:', e);
-      submitting = false;
-      pendingDecision = null;
-    }
-  }
-
-  /** Execute and clear — allow with SDK suggestions to exit plan mode */
-  async function approveAndClear() {
-    if (submitting) return;
-    submitting = true;
-    pendingDecision = 'allow';
-    try {
-      await messageStore.resolvePermission(sessionId, requestId, 'allow', {
-        updatedPermissions: suggestions,
-      });
-    } catch (e) {
-      console.error('[PermissionBlock] approveAndClear failed:', e);
       submitting = false;
       pendingDecision = null;
     }
@@ -211,7 +202,7 @@
       <AgentSprite state={spriteState} seed={sessionId} projectColor={sessionRepoColor(sessionId)} scale={isResolved ? 2 : 3} />
     {/if}
     <span class="{labelColor} font-bold">{isExitPlanMode ? 'plan ready' : 'permission'}</span>
-    <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolName}</span>
+    <span class="text-foreground">{isExitPlanMode ? 'Agent wants to execute the plan' : toolLabel(toolName)}</span>
     {#if isExitPlanMode && planText}
       <button
         onclick={() => markdownPreviewStore.show(planText, 'Proposed plan')}
@@ -290,8 +281,10 @@
 
   {#if isResolved}
     <div class="text-xs mt-1 {effectiveDecision === 'allow' ? 'text-green-400' : 'text-destructive'}">
-      {#if isExitPlanMode}
-        {effectiveDecision === 'allow' ? 'plan executed' : 'kept planning'}
+      {#if timedOut}
+        <span class="text-muted-foreground">no answer after {PERMISSION_TIMEOUT_MINUTES} minutes, so it was denied</span>
+      {:else if isExitPlanMode}
+        {effectiveDecision === 'allow' ? 'plan approved' : 'kept planning'}
       {:else}
         {effectiveDecision === 'allow' ? 'allowed' : 'denied'}
       {/if}
@@ -299,20 +292,28 @@
   {:else}
     {#if isExitPlanMode}
       <div class="flex gap-2 mt-2 flex-wrap">
-        {#if suggestions && suggestions.length > 0}
-          <Button variant="outline" size="sm" onclick={approveAndClear} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
-            Execute and clear
+        {#if confirmFresh}
+          <p class="basis-full text-xs text-foreground" role="alert">
+            Clear this conversation's messages and start again with only the plan? Your files stay as they are.
+          </p>
+          <Button variant="outline" size="sm" onclick={() => confirmFresh = false} disabled={submitting}>
+            Cancel
           </Button>
-        {/if}
-        <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
-          Execute
-        </Button>
-        <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
-          No
-        </Button>
-        {#if planText}
           <Button variant="outline" size="sm" onclick={clearAndExecute} disabled={submitting} class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
-            Clear &amp; Execute
+            Clear and start
+          </Button>
+        {:else}
+          <!-- Approving always switches to Edit mode (messageStore.resolvePermission). -->
+          <Button variant="outline" size="sm" onclick={approve} disabled={submitting} title="Approve the plan. The conversation switches to Edit mode so the plan's file edits don't each ask; commands still ask." class="text-green-400 border-green-600 hover:bg-green-900/30">
+            Approve
+          </Button>
+          {#if planText}
+            <Button variant="outline" size="sm" onclick={() => confirmFresh = true} disabled={submitting} title="Clear this conversation's messages and send the plan as a new first message, so the agent starts with a clean context. Asks first." class="text-blue-400 border-blue-600 hover:bg-blue-900/30">
+              Approve and start fresh…
+            </Button>
+          {/if}
+          <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} title="Don't start yet. Type below to say what to change in the plan." class="text-destructive border-destructive hover:bg-destructive/10">
+            Keep planning
           </Button>
         {/if}
       </div>
@@ -339,8 +340,8 @@
         <Button variant="outline" size="sm" onclick={approve} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
           Allow
         </Button>
-        <Button variant="outline" size="sm" onclick={approveAlways} disabled={submitting} class="text-green-400 border-green-600 hover:bg-green-900/30">
-          Always Allow
+        <Button variant="outline" size="sm" onclick={approveAlways} disabled={submitting} title={alwaysAllow.title} class="text-green-400 border-green-600 hover:bg-green-900/30">
+          {alwaysAllow.label}
         </Button>
         <Button variant="outline" size="sm" onclick={() => deny()} disabled={submitting} class="text-destructive border-destructive hover:bg-destructive/10">
           Deny

@@ -1,7 +1,7 @@
 import gettingStarted from '../../../docs/help/getting-started.md?raw';
 import sidebar from '../../../docs/help/sidebar.md?raw';
 import sessionStates from '../../../docs/help/session-states.md?raw';
-import activityTab from '../../../docs/help/activity-tab.md?raw';
+import threadTab from '../../../docs/help/thread-tab.md?raw';
 import changesTab from '../../../docs/help/changes-tab.md?raw';
 import checkpointsTab from '../../../docs/help/checkpoints-tab.md?raw';
 import terminalTab from '../../../docs/help/terminal-tab.md?raw';
@@ -23,7 +23,7 @@ export const topics: HelpTopic[] = [
   { id: 'getting-started', title: 'Getting Started', section: 'Getting Started', content: gettingStarted },
   { id: 'sidebar', title: 'Sidebar & Projects', section: 'Interface', content: sidebar },
   { id: 'session-states', title: 'Conversation States & Colors', section: 'Interface', content: sessionStates },
-  { id: 'activity-tab', title: 'Activity Tab', section: 'Interface', content: activityTab },
+  { id: 'thread-tab', title: 'Thread Tab', section: 'Interface', content: threadTab },
   { id: 'changes-tab', title: 'Changes Tab', section: 'Interface', content: changesTab },
   { id: 'checkpoints-tab', title: 'Checkpoints Tab', section: 'Interface', content: checkpointsTab },
   { id: 'terminal-tab', title: 'Terminal Tab', section: 'Interface', content: terminalTab },

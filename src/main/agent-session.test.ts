@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import { IPC, type AgentEvent } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
 import * as fs from 'node:fs';
 
 // ─── Mock infrastructure ───
@@ -70,6 +70,7 @@ vi.mock('./memory-autosave.js', () => ({
 
 vi.mock('./git.js', () => ({
   getGitIdentity: vi.fn().mockResolvedValue({ name: 'Test User', email: 'test@example.com' }),
+  isGitRepo: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('./checkpoints.js', () => {
@@ -106,6 +107,19 @@ vi.mock('./skill-suggestions.js', () => ({
   analyzeRepo: vi.fn(async () => [{ id: 'analyzed' }]),
   getCachedSuggestions: vi.fn(() => [{ id: 'cached' }]),
 }));
+
+// Images are saved by content hash in real use; here each gets a fixed name.
+const attachments = vi.hoisted(() => ({
+  saveImages: vi.fn(async (_id: string, images: { name?: string }[]) =>
+    images.map((img, i) => ({ file: `img${i}.png`, ...(img.name ? { name: img.name } : {}) }))),
+  removeImages: vi.fn(async () => {}),
+  pruneImages: vi.fn(async () => {}),
+  storeToolImages: vi.fn(async (_id: string, event: any) => {
+    const { imageData, ...rest } = event;
+    return { ...rest, images: imageData.map((_: unknown, i: number) => ({ file: `tool${i}.png` })) };
+  }),
+}));
+vi.mock('./attachments.js', () => attachments);
 
 // ─── Mock Adapter ───
 
@@ -152,7 +166,7 @@ class MockAdapter implements AgentAdapter {
   getControls(model?: string | null) {
     // Like Claude's Haiku, the lite model does not offer native auto mode.
     const modeOptions = [
-      { value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
+      { value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
       { value: 'auto', label: 'Auto' }, { value: 'readSafe', label: 'Read-safe', group: 'Grove Bench' },
     ].filter((o) => o.value !== 'auto' || model !== 'mock-lite');
     const controls = [
@@ -265,7 +279,8 @@ const { sessionManager } = await import('./agent-session.js');
 const { sanitizeElicitationResponse } = await import('./session-permissions.js');
 const { READ_SAFE_SANDBOX_WARNING } = await import('./session-config.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
-const { getGitIdentity } = await import('./git.js');
+const { getGitIdentity, isGitRepo } = await import('./git.js');
+const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
 const { logger } = await import('./logger.js');
 
 beforeEach(() => {
@@ -327,6 +342,53 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager in a folder without git', () => {
+  it('skips checkpoints and the identity check, and says files can\'t be restored', async () => {
+    vi.mocked(getGitIdentity).mockClear();
+    const before = CheckpointManager.instances.length;
+
+    await sessionManager.createSession({
+      id: 'test-folder', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock', noGit: true,
+    });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+
+    expect(CheckpointManager.instances.length).toBe(before);
+    expect(getGitIdentity).not.toHaveBeenCalled();
+    expect(sessionManager.getEventHistory('test-folder').some((e) => e.type === 'git_identity_missing')).toBe(false);
+    await expect(sessionManager.rewindFiles('test-folder', 'u1', { filesOnly: true }))
+      .rejects.toThrow(/isn't a git repository/);
+
+    await sessionManager.destroySession('test-folder');
+  });
+
+  it('sends messages without a "checkpoint could not be captured" error', async () => {
+    await sessionManager.createSession({
+      id: 'test-folder-send', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock', noGit: true,
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-folder-send')!;
+
+    expect(await sessionManager.sendMessage('test-folder-send', 'Tidy my notes')).toBe(true);
+    expect(session.queryHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Tidy my notes' }));
+    expect(session.eventHistory.filter((e) => e.type === 'error')).toHaveLength(0);
+
+    await sessionManager.destroySession('test-folder-send');
+  });
+
+  it('keeps checkpoints for a git conversation even if git is briefly unavailable', async () => {
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    const before = CheckpointManager.instances.length;
+    await sessionManager.createSession({
+      id: 'test-git-flaky', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    expect(CheckpointManager.instances.length).toBe(before + 1);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
+    await sessionManager.destroySession('test-git-flaky');
   });
 });
 
@@ -734,6 +796,8 @@ describe('AgentSessionManager event processing', () => {
 
     expect(session.checkpoints.markCleared).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
     expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
+    // No event refers to the thread's images any more.
+    expect(attachments.removeImages).toHaveBeenCalledWith('test-clear-cp');
 
     await sessionManager.destroySession('test-clear-cp');
   });
@@ -842,6 +906,38 @@ describe('AgentSessionManager.respondToPermission()', () => {
     });
 
     await sessionManager.destroySession('test-perm-msg');
+  });
+
+  it('denies an unanswered request after the timeout and says it timed out', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-perm-timeout',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    vi.useFakeTimers();
+    try {
+      const permPromise = mockAdapter.control!.permissionHandler!({
+        requestId: 't1',
+        toolName: 'Bash',
+        toolUseId: 'tu_timeout',
+        toolInput: { command: 'npm test' },
+      });
+      await vi.advanceTimersByTimeAsync(PERMISSION_TIMEOUT_MINUTES * 60 * 1000);
+      await expect(permPromise).resolves.toMatchObject({ behavior: 'deny' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const resolved = sessionManager.getEventHistory('test-perm-timeout').filter((e) => e.type === 'permission_resolved');
+    expect(resolved[resolved.length - 1]).toMatchObject({ decision: 'deny', reason: 'timeout' });
+
+    await sessionManager.destroySession('test-perm-timeout');
   });
 
   it('adds tool to alwaysAllowedTools on allowAlways', async () => {
@@ -1985,6 +2081,60 @@ describe('AgentSessionManager.sendMessage()', () => {
     await sessionManager.destroySession('test-send');
   });
 
+  it('saves attached images and records references to them, not the image data', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-images',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const images = [{ data: 'iVBOR', mediaType: 'image/png' as const, name: 'shot.png' }];
+    expect(await sessionManager.sendMessage('test-send-images', 'What is this?', images)).toBe(true);
+
+    expect(attachments.saveImages).toHaveBeenCalledWith('test-send-images', images);
+    const userMsgs = sessionManager.getEventHistory('test-send-images').filter((e) => e.type === 'user_message');
+    expect(userMsgs[0]).toMatchObject({ text: 'What is this?', images: [{ file: 'img0.png', name: 'shot.png' }] });
+    // The agent still gets the image data itself.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'What is this?', images });
+
+    await sessionManager.destroySession('test-send-images');
+  });
+
+  it('records a tool result with references to the images the tool returned', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-tool-images',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({
+      type: 'tool_result', toolUseId: 'tu1', content: '', imageData: [{ data: 'iVBOR', mediaType: 'image/png' }],
+    } as any);
+
+    await vi.waitFor(() => {
+      const results = sessionManager.getEventHistory('test-tool-images').filter((e) => e.type === 'tool_result');
+      expect(results).toEqual([{ type: 'tool_result', toolUseId: 'tu1', content: '', images: [{ file: 'tool0.png' }] }]);
+    });
+    // Only tool results with images go through the save.
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Looks fine', uuid: 'a1' });
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-tool-images').some((e) => e.type === 'assistant_text')).toBe(true));
+    expect(attachments.storeToolImages).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('test-tool-images');
+  });
+
   it('returns false for non-existent session', async () => {
     expect(await sessionManager.sendMessage('nonexistent', 'hello')).toBe(false);
   });
@@ -2265,6 +2415,11 @@ describe('AgentSessionManager.rewindFiles()', () => {
     const remainingUserMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
     expect(remainingUserMsgs).toHaveLength(1);
     expect((remainingUserMsgs[0] as any).text).toBe('First message');
+
+    // Images only the rewound turns showed are deleted: pruned against what's left.
+    const [prunedId, keptEvents] = attachments.pruneImages.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
+    expect(prunedId).toBe('test-rewind-history');
+    expect(keptEvents.filter((e) => e.type === 'user_message').map((e: any) => e.text)).toEqual(['First message']);
 
     await sessionManager.destroySession('test-rewind-history');
   });
@@ -2588,6 +2743,29 @@ describe('AgentSessionManager checkpoint capture', () => {
     expect((errors[0] as any).message).toMatch(/Checkpoint could not be captured/);
 
     await sessionManager.destroySession('test-cp-fail');
+  });
+
+  it('says so once while captures keep failing, and again after one succeeds', async () => {
+    await sessionManager.createSession({
+      id: 'test-cp-repeat', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-cp-repeat')!;
+    const errorCount = () => session.eventHistory.filter((e) => e.type === 'error').length;
+
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+    await sessionManager.sendMessage('test-cp-repeat', 'one');
+    await sessionManager.sendMessage('test-cp-repeat', 'two');
+    expect(errorCount()).toBe(1);
+
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await sessionManager.sendMessage('test-cp-repeat', 'three');
+    await sessionManager.sendMessage('test-cp-repeat', 'four');
+    expect(errorCount()).toBe(2);
+
+    await sessionManager.destroySession('test-cp-repeat');
   });
 });
 

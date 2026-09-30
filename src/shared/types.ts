@@ -11,6 +11,16 @@ export interface WorktreeConfig {
   adapterType?: string;
 }
 
+/** A folder the user picked to add as a project. A folder outside any git
+ *  repository comes back as `folder` and is added as a plain folder. */
+export type PickedProject =
+  | { kind: 'git'; path: string }
+  | { kind: 'folder'; path: string };
+
+/** What a project path is now: a git repository, a plain folder (projects
+ *  without git), or gone. */
+export type ProjectKind = 'git' | 'folder' | 'missing';
+
 export interface WorktreeInfo {
   id: string;
   path: string;
@@ -21,6 +31,9 @@ export interface WorktreeInfo {
   lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
+  /** The conversation runs in a folder that isn't a git repository (always
+   *  direct). Checkpoints, branches and the Changes tab don't apply. */
+  noGit?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
   /** Epoch ms when the user marked the session completed; null/absent when
@@ -44,10 +57,6 @@ export interface CreateSessionOpts {
   useExisting?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
-  /** Attach a new (direct) session to an existing session's checkout + branch,
-   *  sharing its worktree instead of running on the repo's default branch.
-   *  Implies direct mode; the branch/path are resolved from the source session. */
-  attachToSessionId?: string;
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
   /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
@@ -108,10 +117,21 @@ export interface AgentPrerequisiteStatus {
   apiKey?: {
     label: string;
     helpUrl: string;
+    /** How using a key is paid for, shown under the field. */
+    billingNote?: string;
     /** A key is saved. While saved it is used instead of any CLI sign-in. */
     saved: boolean;
     /** The OS can encrypt a key. Without it no key can be saved. */
     canStore: boolean;
+  };
+  /** Present when the user can sign in with the provider's CLI instead of a
+   *  key. `available` above says whether that CLI is installed. */
+  cliSignIn?: {
+    accountLabel: string;
+    accountDetail?: string;
+    cliName: string;
+    command: string;
+    setupUrl: string;
   };
 }
 
@@ -140,6 +160,10 @@ export interface PrerequisiteStatus {
  */
 export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
 
+/** How long a permission request waits for an answer before it is denied,
+ *  so a query can't hang forever on a prompt nobody sees. */
+export const PERMISSION_TIMEOUT_MINUTES = 30;
+
 // ─── Agent Events (renderer-side, serializable) ───
 
 /**
@@ -151,7 +175,7 @@ export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[] }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string }
@@ -161,7 +185,7 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string }
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox). */
   | { type: 'status'; message: string; level?: 'warning' }
   | { type: 'error'; message: string }
@@ -204,6 +228,9 @@ export type AgentEvent =
       /** The user's typed reply for a question (AskUserQuestion) or deny
        *  reason, so replayed history can still show what was answered. */
       message?: string;
+      /** Set when nobody answered: the request waited
+       *  PERMISSION_TIMEOUT_MINUTES and was denied. */
+      reason?: 'timeout';
     }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
@@ -783,11 +810,22 @@ export interface SpellcheckMenuRequest {
 
 // ─── Image Attachment ───
 
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */
   data: string;
-  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  mediaType: ImageMediaType;
   name: string;
+}
+
+/** An image saved in a conversation's attachments folder (main/attachments.ts).
+ *  Events carry this instead of the image data so the event log stays small. */
+export interface StoredImage {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. Absent for images a tool returned. */
+  name?: string;
 }
 
 // ─── Plugins ───
@@ -823,6 +861,13 @@ export interface SessionSortState {
   key: 'name' | 'age';
   dir: 'asc' | 'desc';
 }
+
+/** Sidebars that fold down to a thin rail. The Changes and Checkpoints file
+ *  lists are separate so each tab keeps its own. */
+export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles'] as const;
+export type CollapsiblePanel = (typeof COLLAPSIBLE_PANELS)[number];
+/** Which panels are collapsed (persisted via app-state). Absent = open. */
+export type CollapsedPanels = Partial<Record<CollapsiblePanel, boolean>>;
 
 // ─── IPC API (exposed via contextBridge) ───
 
@@ -867,12 +912,21 @@ export type PreviewKeyForward =
 
 export interface GroveBenchAPI {
   // Repo operations
-  addRepo(): Promise<string | null>;
+  /** Pick a folder to add as a project. Null when cancelled. */
+  addRepo(): Promise<PickedProject | null>;
+  /** Whether a project path is a git repository, a plain folder, or gone. */
+  repoKind(path: string): Promise<ProjectKind>;
+  /** Keep a project in the remembered list (one found some other way than
+   *  the folder picker, such as the old localStorage list). */
+  rememberRepo(path: string): Promise<void>;
+  /** Whether git has a user.name and user.email for commits in this folder. */
+  hasGitIdentity(path: string): Promise<boolean>;
   removeRepo(repoPath: string): Promise<void>;
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
-  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
+  /** `noGit` when the conversation runs in a folder without git. */
+  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string; noGit?: boolean }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   /** Stop the current turn; the agent process stays up for the next message. */
   stopSession(id: string): Promise<void>;
@@ -1140,6 +1194,8 @@ export interface GroveBenchAPI {
   setSessionSort(sort: SessionSortState): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
+  getCollapsedPanels(): Promise<CollapsedPanels>;
+  setCollapsedPanels(panels: CollapsedPanels): void;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
@@ -1258,6 +1314,10 @@ export interface GroveBenchSettings {
    *  ids the adapter actually offers for the session's model are applied;
    *  anything else is ignored, so a stale entry never breaks a session. */
   adapterDefaults: Record<string, Record<string, string>>;
+  /** Ask agents that support it (the `thinkingSummaries` capability) for a
+   *  readable summary of the model's thinking. Off asks for none. Applies
+   *  when a conversation's agent next starts. Default true. */
+  showThinkingSummaries: boolean;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
@@ -1484,6 +1544,9 @@ export const IPC = {
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
+  REPO_KIND: 'repo:kind',
+  REPO_REMEMBER: 'repo:remember',
+  GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
@@ -1589,6 +1652,8 @@ export const IPC = {
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
+  APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   /** Main → renderer: an uncaught main-process error. */

@@ -5,6 +5,7 @@
 import path from 'node:path';
 import { TOOL_RULE_KEYWORDS } from '../shared/types.js';
 import type { ToolCategory, ToolRule } from '../shared/types.js';
+import { POWERSHELL_ALIASES } from './powershell-aliases.js';
 
 /**
  * True if `child` resolves to a location inside (or equal to) `parent`.
@@ -45,10 +46,10 @@ export function parseToolRule(pattern: string): { tool: string; specifier: strin
   return { tool: match[1].trim(), specifier: match[2] };
 }
 
-function globToRegExp(glob: string): RegExp | null {
+function globToRegExp(glob: string, ignoreCase = false): RegExp | null {
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   try {
-    return new RegExp(`^${escaped}$`, 's');
+    return new RegExp(`^${escaped}$`, ignoreCase ? 'is' : 's');
   } catch {
     return null;
   }
@@ -109,9 +110,15 @@ function isToolWideRule(rule: { specifier: string | null }): boolean {
  *
  * This matches the whole specifier as one string. To decide whether a call
  * is allowed or denied, use checkToolRules, which splits chained shell
- * commands first.
+ * commands first. `ignoreCase` applies to the glob only, not the `<tool>`.
  */
-export function matchToolRule(pattern: string, toolName: string, toolCall: string, category?: ToolCategory): boolean {
+export function matchToolRule(
+  pattern: string,
+  toolName: string,
+  toolCall: string,
+  category?: ToolCategory,
+  ignoreCase = false,
+): boolean {
   const rule = parseToolRule(pattern);
   if (!rule) return false;
   const isMcpKeyword = rule.tool.toLowerCase() === 'mcp';
@@ -125,7 +132,7 @@ export function matchToolRule(pattern: string, toolName: string, toolCall: strin
     : (toolCall.startsWith(toolName + '(') && toolCall.endsWith(')')
       ? toolCall.slice(toolName.length + 1, -1)
       : '');
-  const re = globToRegExp(rule.specifier);
+  const re = globToRegExp(rule.specifier, ignoreCase);
   return re ? re.test(subject) : false;
 }
 
@@ -344,6 +351,19 @@ export function splitPowerShellCommand(command: string): string[] | null {
 }
 
 /**
+ * A PowerShell command with its first word swapped for the command it
+ * stands for, when that word is one of PowerShell's built-in aliases (in
+ * any case): `rm -r ~` becomes `Remove-Item -r ~`. Null when it isn't one.
+ * Only the command name changes; parameters such as `-r` stay as written.
+ */
+export function canonicalizePowerShellCommand(command: string): string | null {
+  const match = /^(\s*)(\S+)/.exec(command);
+  if (!match) return null;
+  const target = POWERSHELL_ALIASES.get(match[2].toLowerCase());
+  return target ? match[1] + target + command.slice(match[0].length) : null;
+}
+
+/**
  * The commands in a split shell command, or null when an operator has
  * nothing on one side. Newline separators must be passed as '\n'.
  */
@@ -380,6 +400,15 @@ export type ShellSyntax = 'bash' | 'powershell';
  * (`shell` or `shell(*)`) approves it, and only when no deny rule has a glob
  * for shell, because we can't see which commands a deny rule might hit.
  *
+ * PowerShell deny rules, like Claude Code's own, ignore case and also match
+ * a command written with a built-in alias, so `shell(Remove-Item *)` denies
+ * `rm ~` and `DEL ~`. Allow rules stay exact, unlike Claude Code's: a
+ * missed allow only costs a prompt, but a loose one approves commands the
+ * user never wrote. Native programs read their arguments case-sensitively
+ * (`git checkout -B` resets a branch, `-b` doesn't), and some aliases only
+ * exist in Windows PowerShell 5.1: in PowerShell 7, `sc` runs sc.exe, not
+ * Set-Content.
+ *
  * Returns null when no rule decides, so the call falls through to the normal
  * permission prompt.
  */
@@ -391,8 +420,8 @@ export function checkToolRules(
   category?: ToolCategory,
   shellSyntax: ShellSyntax = 'bash',
 ): { behavior: 'deny'; pattern: string } | { behavior: 'allow' } | null {
-  const matches = (rule: ToolRule, subject: string) =>
-    matchToolRule(rule.pattern, toolName, subject ? `${toolName}(${subject})` : toolName, category);
+  const matches = (rule: ToolRule, subject: string, ignoreCase = false) =>
+    matchToolRule(rule.pattern, toolName, subject ? `${toolName}(${subject})` : toolName, category, ignoreCase);
 
   if (category !== 'bash') {
     const denied = denyRules.find((rule) => matches(rule, specifier));
@@ -401,8 +430,14 @@ export function checkToolRules(
   }
 
   const commands = shellSyntax === 'powershell' ? splitPowerShellCommand(specifier) : splitShellCommand(specifier);
+  const denies = shellSyntax === 'powershell'
+    ? (rule: ToolRule, cmd: string) => {
+      const canonical = canonicalizePowerShellCommand(cmd);
+      return matches(rule, cmd, true) || (canonical !== null && matches(rule, canonical, true));
+    }
+    : matches;
   const denied = denyRules.find(
-    (rule) => matches(rule, specifier) || (commands?.some((cmd) => matches(rule, cmd)) ?? false),
+    (rule) => denies(rule, specifier) || (commands?.some((cmd) => denies(rule, cmd)) ?? false),
   );
   if (denied) return { behavior: 'deny', pattern: denied.pattern };
 

@@ -1,17 +1,20 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
   AgentQueryHandle,
   AdapterConfig,
+  AdapterEvent,
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
+  CliSignInDescriptor,
   ModelInfo,
   PermissionResponse,
+  ToolImageData,
   UserMessage,
 } from './types.js';
 import { getApiKey } from '../credentials.js';
@@ -187,6 +190,23 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
   return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
+const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/** The base64 images in a tool result's content: API image blocks (Read on an
+ *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
+export function toolResultImages(content: unknown[]): ToolImageData[] {
+  const images: ToolImageData[] = [];
+  for (const c of content as any[]) {
+    if (c?.type !== 'image') continue;
+    const data = c.source?.type === 'base64' ? c.source.data : c.data;
+    const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
+    if (typeof data === 'string' && data && IMAGE_MEDIA_TYPES.has(mediaType)) {
+      images.push({ data, mediaType: mediaType as ImageMediaType });
+    }
+  }
+  return images;
+}
+
 /**
  * Transform a single SDKMessage into zero or more AgentEvents.
  * This is a pure function (given a context bag) extracted from the former
@@ -195,8 +215,8 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 export function transformMessage(
   message: SDKMessage,
   ctx: MessageContext,
-): AgentEvent[] {
-  const events: AgentEvent[] = [];
+): AdapterEvent[] {
+  const events: AdapterEvent[] = [];
 
   switch (message.type) {
     case 'system': {
@@ -412,11 +432,13 @@ export function transformMessage(
             const resultContent = Array.isArray(block.content)
               ? block.content.map((c: any) => c.text || '').join('')
               : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+            const imageData = Array.isArray(block.content) ? toolResultImages(block.content) : [];
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
               content: capToolResult(resultContent),
               isError: block.is_error,
+              ...(imageData.length > 0 && { imageData }),
             });
           }
         }
@@ -585,17 +607,37 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
 };
 
 /**
+ * How thinking text is returned: a readable summary, or none. Opus 4.7+,
+ * Opus 5/5.5, Fable 5/5.1 and Sonnet 5/5.5 default to 'omitted' (thinking
+ * blocks with empty text), and Claude Code doesn't ask for anything else in
+ * SDK mode, so we always send one. Claude Code drops the field for models
+ * that don't take it (Haiku 4.5, Claude 3).
+ */
+export type ThinkingDisplay = 'summarized' | 'omitted';
+
+/** The display the showThinkingSummaries setting asks for (unset = on). */
+export function thinkingDisplayFor(summaries: boolean | undefined): ThinkingDisplay {
+  return summaries === false ? 'omitted' : 'summarized';
+}
+
+type ThinkingConfig =
+  | { type: 'adaptive'; display: ThinkingDisplay }
+  | { type: 'disabled' }
+  | { type: 'enabled'; budgetTokens: number; display: ThinkingDisplay };
+
+/**
  * Thinking level → the SDK's query-start `thinking` config, which (unlike the
  * deprecated runtime token control) can express adaptive thinking explicitly.
  * Returns null for 'high' (and unset) so the provider default applies.
  */
 export function thinkingConfigFor(
   level: ThinkingLevel | null | undefined,
-): { type: 'adaptive' } | { type: 'disabled' } | { type: 'enabled'; budgetTokens: number } | null {
+  display: ThinkingDisplay = 'summarized',
+): ThinkingConfig | null {
   if (!level || level === 'high') return null;
-  if (level === 'adaptive') return { type: 'adaptive' };
+  if (level === 'adaptive') return { type: 'adaptive', display };
   if (level === 'off') return { type: 'disabled' };
-  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]!, display };
 }
 
 // ─── Session controls ───
@@ -693,9 +735,9 @@ export function supportsFastMode(model: string | null | undefined, learned?: Lea
 }
 
 const PERMISSION_MODE_OPTIONS: ControlOption[] = [
-  { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
   { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
   // Grove's own mode, listed after Claude's so the divider shows it isn't one
   // of the CLI's.
@@ -783,16 +825,19 @@ export function claudeControlsFor(model?: string | null, learned?: LearnedModel)
 /**
  * The query-start `thinking` and `effort` options for recorded control values.
  * Models that reject disabled thinking get no Thinking control, so a stale
- * recorded value (e.g. 'off' carried over from another model) is not sent.
+ * recorded value (e.g. 'off' carried over from another model) is not sent;
+ * they always think adaptively, and we send that only to set the display.
  */
 export function reasoningOptionsFor(
   model: string | null | undefined,
   controls: Record<string, string> | null | undefined,
   learned?: LearnedModel,
+  display: ThinkingDisplay = 'summarized',
 ): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
-  const thinking = claudeModelCaps(model, learned).thinkingOff
-    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
-    : null;
+  const caps = claudeModelCaps(model, learned);
+  const thinking = caps.thinkingOff
+    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined, display)
+    : caps.adaptiveThinking ? thinkingConfigFor('adaptive', display) : null;
   return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort], learned) };
 }
 
@@ -1260,11 +1305,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude" in a terminal and sign in, then try again.';
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
     helpUrl: 'https://platform.claude.com/',
+    // https://support.claude.com/en/articles/9876003
+    billingNote: 'Billed per use by Anthropic, separately from any Claude plan.',
+  };
+  // Anthropic's own sign-in in its own CLI; Grove only reads `claude auth
+  // status` (DESIGN.md, "Allowed: the user's own Claude subscription").
+  readonly cliSignIn: CliSignInDescriptor = {
+    accountLabel: 'Claude plan',
+    accountDetail: 'Pro, Max, Team or Enterprise',
+    cliName: 'Claude Code',
+    command: 'claude',
+    setupUrl: 'https://code.claude.com/docs/en/setup',
   };
   readonly mcp = CLAUDE_MCP_SUPPORT;
   readonly capabilities: AgentCapabilities = {
@@ -1273,6 +1329,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     resume: true,
     modelSwitching: true,
     thinking: true,
+    thinkingSummaries: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1414,7 +1471,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         authenticated: envMethod !== null,
         ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
-        installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
+        installInstructions: 'Install Claude Code: https://code.claude.com/docs/en/setup',
       };
     }
 
@@ -1566,7 +1623,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
     const learned = this.learnedFor(config.model);
-    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned);
+    const thinkingDisplay = thinkingDisplayFor(config.thinkingSummaries);
+    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned, thinkingDisplay);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
 
     const q: Query = queryFn({
@@ -1632,7 +1690,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     // Create the async event generator
-    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+    async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       for await (const message of q) {
         if (abortController.signal.aborted) break;
 
@@ -1733,7 +1791,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             // The runtime token control can't express 'adaptive'; null clears
             // the limit so the provider default (adaptive on capable models)
             // applies until the next query start passes the full config.
-            await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null);
+            // A session that started with thinking off has no display set,
+            // so turning it on must send it again.
+            await q.setMaxThinkingTokens(
+              THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null,
+              value === 'off' ? undefined : thinkingDisplay,
+            );
             return;
           case CONTROL_IDS.effort:
             // Session-scoped; 'max' is accepted here though never persisted

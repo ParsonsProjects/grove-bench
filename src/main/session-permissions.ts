@@ -4,12 +4,13 @@
  * answers, the turn stops, or it times out.
  */
 import { randomUUID } from 'node:crypto';
+import { PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import type { McpElicitationRequest, McpElicitationResponse, PermissionDecision } from '../shared/types.js';
 import type { PermissionRequest, PermissionResponse } from './adapters/types.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import type { Emit, ManagedSession } from './session-types.js';
 
-const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
+const PERMISSION_TIMEOUT_MS = PERMISSION_TIMEOUT_MINUTES * 60 * 1000;
 const ELICITATION_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** The counter starts again at 0 whenever the conversation's process does
@@ -42,6 +43,7 @@ export function requestPermission(session: ManagedSession, request: PermissionRe
         requestId,
         toolUseId: request.toolUseId,
         decision: 'deny',
+        reason: 'timeout',
       });
       resolve({ behavior: 'deny', message: 'Permission request timed out' });
     }, PERMISSION_TIMEOUT_MS);

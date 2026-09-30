@@ -14,12 +14,12 @@ afterEach(() => {
 describe('AddRepoButton', () => {
   it('says why a picked folder was refused', async () => {
     mockGroveBench.addRepo.mockRejectedValueOnce(
-      new Error("Error invoking remote method 'repo:select': Error: C:\\notes is not a git repository, so it can't be added as a project."),
+      new Error("Error invoking remote method 'repo:select': Error: The project folder C:\\notes wasn't found."),
     );
     render(AddRepoButton);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
 
-    await waitFor(() => expect(store.error).toBe("C:\\notes is not a git repository, so it can't be added as a project."));
+    await waitFor(() => expect(store.error).toBe("The project folder C:\\notes wasn't found."));
   });
 });

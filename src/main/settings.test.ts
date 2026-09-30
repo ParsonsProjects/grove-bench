@@ -336,6 +336,12 @@ describe('validateSettings', () => {
     expect(s.defaultActivityView).toBe('summary');
   });
 
+  it('shows thinking summaries unless turned off', () => {
+    expect(validateSettings({}).showThinkingSummaries).toBe(true);
+    expect(validateSettings({ showThinkingSummaries: false }).showThinkingSummaries).toBe(false);
+    expect(validateSettings({ showThinkingSummaries: 'no' }).showThinkingSummaries).toBe(true);
+  });
+
   it('keeps a valid defaultActivityView', () => {
     expect(validateSettings({ defaultActivityView: 'focus' }).defaultActivityView).toBe('focus');
   });

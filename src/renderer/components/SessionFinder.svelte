@@ -5,7 +5,11 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { sortSessions } from '../lib/session-sort.js';
+  import { firstPromptSnippet } from '../lib/session-subtitle.js';
+  import { sessionSpriteState } from '../lib/session-sprite-state.js';
+  import type { AgentSpriteState } from '../lib/agent-sprite.js';
   import HighlightedText from './HighlightedText.svelte';
+  import StatusDot from './StatusDot.svelte';
   import type { CrossSessionSearchHit } from '../../shared/types.js';
 
   let { onclose }: { onclose: (selectedId?: string) => void } = $props();
@@ -17,6 +21,8 @@
   /** Message hits kept per conversation, and in total. */
   const HITS_PER_CONVERSATION = 3;
   const MAX_CONTENT_HITS = 30;
+  /** A first prompt's length, matching the main-process preview (PREVIEW_MAX_LEN). */
+  const PROMPT_MAX_LEN = 160;
 
   /** What the search looks at. Live state (status, running) is read per row
    *  instead, so it can change without rebuilding the search index. */
@@ -39,15 +45,15 @@
   // kept as a string: the index below is only rebuilt when the searchable
   // text changes, not each time any conversation gets a message.
   let entriesKey = $derived(JSON.stringify(store.sessions.map((s): SessionEntry => {
-    const msgs = messageStore.getMessages(s.id);
-    const firstUser = msgs.find((m) => m.kind === 'user');
+    // The same plain text (and length) as the main-process preview, so a
+    // conversation reads the same whether or not its messages are loaded.
     const firstPrompt =
-      (firstUser && 'text' in firstUser ? firstUser.text.slice(0, 120) : '') ||
+      firstPromptSnippet(messageStore.getMessages(s.id), PROMPT_MAX_LEN) ||
       sessionPreviewStore.get(s.id)?.firstPrompt ||
       '';
     return {
       id: s.id,
-      label: s.displayName || s.branch,
+      label: s.displayName || s.branch || 'New conversation',
       branch: s.branch,
       repoName: store.repoDisplayName(s.repoPath),
       repoPath: s.repoPath,
@@ -56,8 +62,9 @@
   })));
   let entries = $derived(JSON.parse(entriesKey) as SessionEntry[]);
 
-  function statusOf(id: string): string {
-    return store.sessions.find((s) => s.id === id)?.status ?? '';
+  /** Same state, so the same dot, as the conversation's sidebar row. */
+  function spriteStateOf(id: string): AgentSpriteState {
+    return sessionSpriteState(store.sessions.find((s) => s.id === id) ?? { id, status: 'stopped' });
   }
 
   let fuse = $derived(
@@ -127,7 +134,7 @@
   function sessionLabelFor(sessionId: string): { repoName: string; label: string } {
     const s = store.sessions.find((x) => x.id === sessionId);
     if (!s) return { repoName: '?', label: sessionId };
-    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch };
+    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch || 'New conversation' };
   }
 
   function selectSession(entry: SessionEntry) {
@@ -212,7 +219,6 @@
           <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground/50">Conversations</div>
           {#each sessionResults as entry, i}
             {@const isActive = store.activeSessionId === entry.id}
-            {@const status = statusOf(entry.id)}
             <button
               class="w-full text-left px-3 py-2 text-xs flex flex-col gap-0.5 transition-colors
                 {i === selectedIndex ? 'bg-accent text-accent-foreground' : 'text-popover-foreground/80 hover:bg-accent/50'}"
@@ -220,21 +226,7 @@
               onmouseenter={() => selectedIndex = i}
             >
               <div class="flex items-center gap-2">
-                {#if status === 'error'}
-                  <span class="w-2 h-2 bg-red-500 shrink-0"></span>
-                {:else if status === 'starting' || status === 'installing'}
-                  <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
-                {:else if messageStore.getIsRunning(entry.id)}
-                  <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
-                {:else if messageStore.hasPendingPermission(entry.id)}
-                  <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
-                {:else if status === 'stopped'}
-                  <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
-                {:else if status === 'sleeping'}
-                  <span class="w-2 h-2 bg-green-500/40 shrink-0"></span>
-                {:else}
-                  <span class="w-2 h-2 bg-green-500 shrink-0"></span>
-                {/if}
+                <StatusDot state={spriteStateOf(entry.id)} />
                 <span class="text-muted-foreground shrink-0"><HighlightedText text={entry.repoName} {query} words /></span>
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0"><HighlightedText text={entry.label} {query} words /></span>

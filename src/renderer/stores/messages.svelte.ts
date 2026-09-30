@@ -1,6 +1,7 @@
-import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredImage } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
-import { displayTextFromSent } from '../../shared/prompt-text.js';
+import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
@@ -11,6 +12,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import type { AttachedFile } from '../lib/file-attachments.js';
+import { approvalRequest } from '../lib/tool-names.js';
 
 // ─── Chat message types ───
 
@@ -35,12 +37,22 @@ export interface ChatToolCallMessage {
   awaitingPermission?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** Images the tool returned (a screenshot, an image file it read). */
+  images?: StoredImage[];
 }
+
+/** An image shown in the thread: inline while the app still has its data
+ *  (just sent), otherwise a file in the conversation's attachments folder. */
+export type ThreadImage = { name: string; dataUrl: string } | StoredImage;
 
 export interface ChatUserMessage {
   kind: 'user';
   id: string;
+  /** What the user typed. Attachments are in `files` and `images`. */
   text: string;
+  /** Text files attached to the message, with their content. */
+  files?: SentBlock[];
+  images?: ThreadImage[];
   /** SDK user message UUID — used as checkpoint ID for /rewind */
   uuid?: string;
 }
@@ -84,6 +96,8 @@ export interface ChatPermissionMessage {
   toolUseId: string;
   resolved: boolean;
   decision?: 'allow' | 'deny';
+  /** Denied because nobody answered in time, not by the user. */
+  timedOut?: boolean;
   decisionReason?: string;
   suggestions?: unknown[];
   /** Set by the adapter when this permission is for executing a plan. */
@@ -122,6 +136,8 @@ export interface ChatQuestionMessage {
   response?: string;
   /** Exact labels that were selected, for accurate resolved-state rendering */
   selectedLabels?: string[];
+  /** Closed because nobody answered in time. */
+  timedOut?: boolean;
 }
 
 /** An MCP server asking the user for input (a form or a page to open). */
@@ -178,6 +194,18 @@ export interface QueuedMessage {
 
 function nextId(): string {
   return `msg_${++msgCounter}_${Date.now()}`;
+}
+
+/** A user message from the text as sent to the agent, plus its images. */
+function userMessage(sent: string, images?: ThreadImage[]): ChatUserMessage {
+  const { files, typed } = attachedFilesFromSent(sent);
+  return {
+    kind: 'user',
+    id: nextId(),
+    text: typed,
+    ...(files.length > 0 ? { files } : {}),
+    ...(images?.length ? { images } : {}),
+  };
 }
 
 class MessageStore {
@@ -869,7 +897,11 @@ class MessageStore {
       this.sendCommand(sessionId, item.outgoing);
       return;
     }
-    this.addUserMessage(sessionId, item.displayText);
+    this.addUserMessage(
+      sessionId,
+      item.outgoing,
+      item.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
+    );
     window.groveBench.sendMessage(sessionId, item.outgoing, item.images?.length ? item.images : undefined);
     sessionStore.updateLastActive(sessionId);
   }
@@ -1256,13 +1288,10 @@ class MessageStore {
     }
   }
 
-  /** Add a user message to the display */
-  addUserMessage(sessionId: string, text: string) {
-    this.pushMessage(sessionId, {
-      kind: 'user',
-      id: nextId(),
-      text,
-    });
+  /** Add a user message to the display. `sent` is the text as sent to the
+   *  agent: attached files' content blocks come off it and show as chips. */
+  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[]) {
+    this.pushMessage(sessionId, userMessage(sent, images));
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
@@ -1352,6 +1381,10 @@ class MessageStore {
       case 'thinking':
         this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
+        // Thinking the API returned without text (display 'omitted', e.g.
+        // conversations recorded before we asked for summaries) has nothing
+        // to show.
+        if (!event.thinking.trim()) break;
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
@@ -1662,7 +1695,10 @@ class MessageStore {
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
         changed = true;
         matchedToolName = m.toolName;
-        return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
+        return {
+          ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false,
+          ...(event.images?.length ? { images: event.images } : {}),
+        };
       }
       // Fallback: if a tool_result exists, the tool ran, so the permission
       // was allowed. permission_resolved is the primary path but this catches
@@ -1792,13 +1828,17 @@ class MessageStore {
     const updated = msgs.map((m) => {
       if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
         changed = true;
-        return { ...m, resolved: true as const, decision: event.decision };
+        return { ...m, resolved: true as const, decision: event.decision, ...(event.reason === 'timeout' ? { timedOut: true } : {}) };
       }
       if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
         changed = true;
         // On replay the optimistic resolveQuestion() update never ran, so the
         // reply only exists on the event.
-        return { ...m, resolved: true as const, response: m.response ?? event.message };
+        return {
+          ...m,
+          resolved: true as const,
+          ...(event.reason === 'timeout' ? { timedOut: true } : { response: m.response ?? event.message }),
+        };
       }
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
         changed = true;
@@ -1870,7 +1910,11 @@ class MessageStore {
       );
       if (existingIdx >= 0) {
         const updated = [...msgs];
-        updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
+        const msg = updated[existingIdx] as ChatUserMessage;
+        // Main has saved the images: show them from disk and let go of the
+        // inline data. Only when every one was saved, so the two lists line up.
+        const saved = event.images?.length && event.images.length === msg.images?.length ? { images: event.images } : {};
+        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved };
         this.setMessagesForMutation(sessionId, updated);
         // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
         if (this.sideEffects) checkpointStore.scheduleRefresh(sessionId);
@@ -1879,12 +1923,7 @@ class MessageStore {
     }
     // Replayed from history: the event holds the text as sent (file content
     // blocks first), so rebuild what the chat showed when it was sent.
-    this.pushMessage(sessionId, {
-      kind: 'user',
-      id: nextId(),
-      text: displayTextFromSent(event.text),
-      uuid: event.uuid,
-    });
+    this.pushMessage(sessionId, { ...userMessage(event.text, event.images), uuid: event.uuid });
     // Schedule checkpoint list refresh so the Checkpoints tab updates
     if (event.uuid && this.sideEffects) {
       checkpointStore.scheduleRefresh(sessionId);
@@ -2178,7 +2217,7 @@ class MessageStore {
       if (m.kind === 'user' && (m as ChatUserMessage).uuid) {
         points.push({
           uuid: (m as ChatUserMessage).uuid!,
-          text: m.text,
+          text: userMessageLabel(m),
           index: i,
         });
       }
@@ -2372,7 +2411,7 @@ class MessageStore {
 function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
   if (event.isPlanExecution) return 'A plan is ready for review';
   if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
-  return `${event.toolName} is waiting for permission`;
+  return `The agent ${approvalRequest(event.toolName)}`;
 }
 
 export const messageStore = new MessageStore();

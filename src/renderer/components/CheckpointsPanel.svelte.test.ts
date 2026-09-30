@@ -7,18 +7,22 @@ import CheckpointsPanel from './CheckpointsPanel.svelte';
 import { checkpointStore } from '../stores/checkpoints.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { reviewStore } from '../stores/review.svelte.js';
-import { store as sessionStore } from '../stores/sessions.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
+import type { GitStatusResult } from '../../shared/types.js';
 
 const SID = 'cp-session';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  panelStore.collapsed = {};
   checkpointStore.clear(SID);
   reviewStore.clear(SID);
   localStorage.clear();
   messageStore.messagesBySession = { [SID]: [] };
   // The panel under test is on screen.
-  sessionStore.activeSessionId = SID;
+  store.activeSessionId = SID;
   messageStore.setActiveTab(SID, 'checkpoints');
   checkpointStore.checkpointsBySession = {
     [SID]: [
@@ -65,6 +69,58 @@ describe('CheckpointsPanel on the shared review panel', () => {
     await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
   });
 
+  it('keeps the file sidebar for a turn without file changes, so switching turns does not move the layout', async () => {
+    mockGroveBench.getCheckpointFiles.mockImplementation(async (_sid: string, uuid: string) =>
+      uuid === 'u2' ? { entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] } : { entries: [] });
+    mockGroveBench.getCheckpointFileDiff.mockResolvedValue({ kind: 'text', patch: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old line\n+new line\n' });
+    const { container, getByText, getByLabelText, queryByText } = render(CheckpointsPanel, { sessionId: SID });
+
+    await fireEvent.click(getByText('Initial change'));
+    await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
+    const sidebar = getByLabelText('Changed files');
+    expect(getByText('0 changes')).toBeInTheDocument();
+    expect(sidebar.contains(getByText('No file changes in this turn'))).toBe(false);
+
+    await fireEvent.click(getByText('Add polling'));
+    await waitFor(() => expect(container.textContent).toContain('new line'));
+    // Same sidebar element: it was not torn down and rebuilt.
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    expect(sidebar.querySelector('[data-file-key="src/a.ts:false"]')).not.toBeNull();
+    expect(queryByText('No file changes in this turn')).toBeNull();
+  });
+
+  it('shows the file sidebar while the first diff loads', async () => {
+    let resolveFiles: ((v: GitStatusResult) => void) | undefined;
+    mockGroveBench.getCheckpointFiles.mockImplementation(() => new Promise((res) => { resolveFiles = res; }));
+    const { container, getByText, getByLabelText } = render(CheckpointsPanel, { sessionId: SID });
+
+    await fireEvent.click(getByText('Add polling'));
+    await waitFor(() => expect(getByText('Loading diff...')).toBeInTheDocument());
+    const sidebar = getByLabelText('Changed files');
+
+    resolveFiles!({ entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] });
+    await waitFor(() => expect(container.querySelector('[data-file-key="src/a.ts:false"]')).not.toBeNull());
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+  });
+
+  it('folds the turn list to a rail of turn numbers that still selects turns', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [] });
+    const { getByLabelText, getByTitle, queryByText, container } = render(CheckpointsPanel, { sessionId: SID });
+
+    await fireEvent.click(getByLabelText('Collapse checkpoint list'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ checkpointList: true });
+    expect(queryByText('Add polling')).toBeNull();
+
+    await fireEvent.click(getByTitle('#1: Initial change'));
+    expect(mockGroveBench.getCheckpointFiles).toHaveBeenCalledWith(SID, 'u1', 'turn');
+    expect(container.querySelector('[data-turn="1"]')!.className).toContain('border-l-primary');
+    // The turn's file list keeps its own flag, so it is still open.
+    await waitFor(() => expect(getByLabelText('Collapse file list')).toBeInTheDocument());
+
+    await fireEvent.click(getByLabelText('Expand checkpoint list'));
+    expect(queryByText('Add polling')).not.toBeNull();
+  });
+
   it('tags review comments with the checkpoint they were written against', async () => {
     mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] });
     mockGroveBench.getCheckpointFileDiff.mockResolvedValue({ kind: 'text', patch: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old line\n+new line\n' });
@@ -78,5 +134,47 @@ describe('CheckpointsPanel on the shared review panel', () => {
 
     const [c] = reviewStore.getComments(SID);
     expect(c.context).toBe('checkpoint #2, this turn');
+  });
+});
+
+describe('CheckpointsPanel with grove characters', () => {
+  beforeEach(() => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/r', status: 'running' }] as any;
+  });
+
+  afterEach(() => {
+    store.sessions = [];
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it("puts the conversation's agent on its bench when there are no checkpoints yet", () => {
+    checkpointStore.checkpointsBySession = { [SID]: [] };
+    const { getByText, getByRole, container } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText('No checkpoints yet')).toBeInTheDocument();
+    expect(getByText(/Each message you send saves one/)).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(container.querySelector('[data-scenery="flag"]')).not.toBeNull();
+  });
+
+  it('puts it next to the list until a checkpoint is picked, and above an empty turn', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [] });
+    const { getByText, getByRole } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText('Select a checkpoint to view changes')).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+
+    await fireEvent.click(getByText('Initial change'));
+    await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    // The shared diff panel draws the Checkpoints tab's flag, not Changes' can.
+    expect(document.querySelector('[data-scenery="flag"]')).not.toBeNull();
+    expect(document.querySelector('[data-scenery="watering-can"]')).toBeNull();
+  });
+
+  it('shows only the message when grove characters are off', () => {
+    settingsStore.current.groveCharacters = false;
+    checkpointStore.checkpointsBySession = { [SID]: [] };
+    const { getByText, queryByRole } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText(/No checkpoints yet/)).toBeInTheDocument();
+    expect(queryByRole('img', { name: 'Ready' })).toBeNull();
   });
 });
