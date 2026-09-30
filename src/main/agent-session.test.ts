@@ -1474,6 +1474,53 @@ describe('AgentSessionManager.closeSession()', () => {
   });
 });
 
+describe('AgentSessionManager close/destroy during setup', () => {
+  /** A setup (worktree, npm install) that creates the session when released. */
+  function pendingSetup(id: string) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const setup = gate.then(() => sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    }));
+    sessionManager.trackPendingSetup(id, setup);
+    return { release, setup };
+  }
+
+  it('closing a conversation still being set up closes it once setup creates it', async () => {
+    const { release } = pendingSetup('test-close-setup');
+
+    const closing = sessionManager.closeSession('test-close-setup');
+    release();
+    await closing;
+
+    expect(sessionManager.getSession('test-close-setup')).toBeUndefined();
+    expect(mockAdapter.lastHandle?.close).toHaveBeenCalled();
+  });
+
+  it('destroying a conversation still being set up waits and destroys what setup created', async () => {
+    const { release, setup } = pendingSetup('test-destroy-setup');
+    let destroyed = false;
+
+    const destroying = sessionManager.destroySession('test-destroy-setup').then(() => { destroyed = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(destroyed).toBe(false);
+
+    release();
+    await setup;
+    const session = sessionManager.getSession('test-destroy-setup')!;
+    await destroying;
+
+    expect(sessionManager.getSession('test-destroy-setup')).toBeUndefined();
+    expect(session.checkpoints.cleanup).toHaveBeenCalledWith('test-destroy-setup', '/repo');
+  });
+
+  it('a failed setup leaves nothing to close', async () => {
+    sessionManager.trackPendingSetup('test-close-failed', Promise.reject(new Error('worktree failed')));
+    await expect(sessionManager.closeSession('test-close-failed')).resolves.toBeUndefined();
+    expect(sessionManager.getSession('test-close-failed')).toBeUndefined();
+  });
+});
+
 describe('AgentSessionManager.closeAll()', () => {
   it('stops every live agent on quit and keeps their checkpoints', async () => {
     const sessions = [];

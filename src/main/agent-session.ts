@@ -1777,7 +1777,12 @@ class AgentSessionManager {
     const inFlight = this.closing.get(id);
     if (inFlight) return inFlight;
     const session = this.sessions.get(id);
-    if (!session) return Promise.resolve();
+    if (!session) {
+      // Still being set up (new worktree, dependency install, resume): close
+      // it once it exists, or setup would start an agent after the close.
+      const setup = this.pendingSetups.get(id);
+      return setup ? setup.then(() => this.closeSession(id)) : Promise.resolve();
+    }
 
     // Out of the map at once so a reopen can't reattach to the dying agent;
     // createSession() waits on `closing` instead.
@@ -1803,6 +1808,9 @@ class AgentSessionManager {
   }
 
   async destroySession(id: string): Promise<void> {
+    // Setup still running (new worktree, dependency install, resume): let it
+    // finish, or it would start an agent for a deleted conversation.
+    await this.pendingSetups.get(id);
     // A close still shutting the agent down finishes first.
     await this.closing.get(id);
     const session = this.sessions.get(id);
