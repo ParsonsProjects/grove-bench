@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { installTooltips, placeTooltip, SHOW_DELAY_MS, WARM_WINDOW_MS } from './tooltip.js';
+import { installTooltips, nativeTitleChain, placeTooltip, SHOW_DELAY_MS, WARM_WINDOW_MS } from './tooltip.js';
 
 describe('placeTooltip', () => {
   const viewport = { width: 800, height: 600 };
@@ -18,6 +18,18 @@ describe('placeTooltip', () => {
   it('keeps the tooltip inside the viewport edges', () => {
     expect(placeTooltip({ left: 0, top: 0, width: 20, height: 20 }, tip, viewport).x).toBe(4);
     expect(placeTooltip({ left: 790, top: 0, width: 10, height: 20 }, tip, viewport).x).toBe(696);
+  });
+});
+
+describe('nativeTitleChain', () => {
+  it('climbs past SVG titles, which Chromium ignores, to the first HTML one', () => {
+    document.body.innerHTML = `
+      <div title="Outer"><button id="btn" title="Row"><svg id="svg" title="Icon"><g id="g" title="Part"></g></svg></button></div>
+    `;
+    const ids = (el: Element) => nativeTitleChain(el).map((e) => e.id);
+    expect(ids(document.getElementById('g')!)).toEqual(['g', 'svg', 'btn']);
+    expect(ids(document.getElementById('btn')!)).toEqual(['btn']);
+    expect(nativeTitleChain(null)).toEqual([]);
   });
 });
 
@@ -49,6 +61,8 @@ describe('installTooltips', () => {
       <input id="field" title="Search" />
       <span id="clip" style="text-overflow: ellipsis" title="src/lib/file.ts">src/lib/file.ts</span>
       <span id="clip2" style="text-overflow: ellipsis" title="first\nsecond">first</span>
+      <button id="row2" title="Row label"><svg id="icon" title="Worktree"><path id="path"></path></svg><span id="label">label</span></button>
+      <span id="late">later</span>
     `;
     uninstall = installTooltips(document, { isFocusVisible: () => focusVisible });
   });
@@ -213,6 +227,58 @@ describe('installTooltips', () => {
     expect($('a').getAttribute('aria-describedby')).toBe('grove-tooltip');
     out($('a'), document.body);
     expect($('a').hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('keeps the HTML title around an SVG one blank, since the native tooltip skips SVG titles', () => {
+    over($('label'));
+    vi.advanceTimersByTime(SHOW_DELAY_MS);
+    move($('label'), $('path'));
+    expect(tip().textContent).toBe('Worktree');
+    expect($('icon').getAttribute('title')).toBe('');
+    expect($('row2').getAttribute('title')).toBe('');
+    out($('path'), document.body);
+    expect($('icon').getAttribute('title')).toBe('Worktree');
+    expect($('row2').getAttribute('title')).toBe('Row label');
+  });
+
+  it('takes over a title added under a pointer that has not moved', async () => {
+    over($('late'));
+    $('late').setAttribute('title', 'Appeared');
+    await Promise.resolve();
+    expect($('late').getAttribute('title')).toBe('');
+    vi.advanceTimersByTime(SHOW_DELAY_MS);
+    expect(shown()).toBe(true);
+    expect(tip().textContent).toBe('Appeared');
+  });
+
+  it('takes over a titled element from a pointer move alone', () => {
+    $('a').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse' }));
+    expect($('a').getAttribute('title')).toBe('');
+  });
+
+  it('keeps the hovered title blank while keyboard focus shows another', () => {
+    over($('a'));
+    $('b').focus();
+    vi.advanceTimersByTime(SHOW_DELAY_MS);
+    expect(tip().textContent).toBe('Refresh');
+    expect($('a').getAttribute('title')).toBe('');
+    $('b').blur();
+    expect(shown()).toBe(false);
+    expect($('a').getAttribute('title')).toBe('');
+  });
+
+  it('hides when the window loses focus but keeps the hovered title blank', () => {
+    over($('a'));
+    vi.advanceTimersByTime(SHOW_DELAY_MS);
+    window.dispatchEvent(new Event('blur'));
+    expect(shown()).toBe(false);
+    expect($('a').getAttribute('title')).toBe('');
+  });
+
+  it('sees pointer events that a component stops from bubbling', () => {
+    $('a').addEventListener('pointerover', (e) => e.stopPropagation());
+    over($('a'));
+    expect($('a').getAttribute('title')).toBe('');
   });
 
   it('restores the title and removes the tooltip on uninstall', () => {

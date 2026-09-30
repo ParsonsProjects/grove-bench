@@ -1,12 +1,14 @@
 /**
  * App-styled tooltips for plain `title` attributes.
  *
- * Components keep writing `title="..."`. One listener on the document picks up
- * the element under the pointer (or focused from the keyboard), blanks its
- * `title` so Chromium's native tooltip never appears (an empty title also hides
- * ancestors' titles), and shows a single styled tooltip instead. The `title` is
- * put back when the pointer and focus leave, so the DOM (and tests using
- * `getByTitle`) look the same as before whenever no tooltip is showing.
+ * Components keep writing `title="..."`. One listener on the document follows
+ * the element under the pointer, blanks every `title` Chromium's native tooltip
+ * could show for it (an empty title also hides ancestors' titles), and shows a
+ * single styled tooltip instead. A title is only put back once the pointer has
+ * left it, so the native tooltip never gets a gap to appear in. Keyboard focus
+ * shows the same tooltip without blanking anything, since the native one only
+ * follows the pointer. Away from the pointer, the DOM (and tests using
+ * `getByTitle`) looks the same as before.
  *
  * Styles live in `styles/globals.css` under `.grove-tooltip`.
  */
@@ -40,9 +42,21 @@ export function placeTooltip(target: Box, tip: Size, viewport: Size): { x: numbe
   return { x: Math.round(x), y: Math.round(y), side };
 }
 
-/** Nearest element with a `title`, as the native tooltip picks it. */
+/** Nearest element with a `title`, SVG elements included. */
 export function findTitled(start: EventTarget | null): Element | null {
   return start instanceof Element ? start.closest('[title]') : null;
+}
+
+/**
+ * The titles Chromium's native tooltip could show when `el` is the nearest
+ * titled element. Chromium only reads `title` on HTML elements (an SVG element
+ * needs a <title> child), so past an SVG one it falls back to the titled
+ * elements above, up to the first HTML one.
+ */
+export function nativeTitleChain(el: Element | null): Element[] {
+  const chain: Element[] = [];
+  for (let at = el; at; at = at instanceof HTMLElement ? null : findTitled(at.parentElement)) chain.push(at);
+  return chain;
 }
 
 const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -92,34 +106,46 @@ export function installTooltips(doc: Document = document, options: TooltipOption
   tip.hidden = true;
   doc.body.appendChild(tip);
 
-  // The claimed element: it holds title="" and the tooltip shows `original`.
+  // Titles held blank for the pointer, each with the value to put back (null if it had none).
+  const held = new Map<Element, string | null>();
+  // Undoes the accessible name or description kept for a held element.
+  const a11y = new Map<Element, () => void>();
+
+  // The element under the pointer, and the titled elements the pointer and focus are on.
+  let pointerAt: Element | null = null;
+  let hoverEl: Element | null = null;
+  let focusEl: Element | null = null;
+  // The element the tooltip is for: whichever of those two was claimed last.
   let target: Element | null = null;
-  // Its real title, restored on release (null if Svelte removed it meanwhile).
-  let original: string | null = null;
   let text = '';
-  let hovered = false;
-  let focused = false;
   // Hidden by a click, Escape or scroll: stays hidden until another element is claimed.
   let suppressed = false;
   let visible = false;
   let showTimer: ReturnType<typeof setTimeout> | undefined;
   let warmUntil = 0;
-  let undoA11y: (() => void) | null = null;
 
-  // Svelte may change or remove the title while we hold it blank: follow it.
-  const titleObserver = new MutationObserver(() => {
-    if (!target) return;
-    const title = target.getAttribute('title');
-    if (title === '') return; // our own blank
-    original = title;
-    setText(title ?? '');
-    target.setAttribute('title', '');
-    undoA11y?.();
-    undoA11y = describe(target);
+  const titleOf = (el: Element) => (held.has(el) ? held.get(el) : el.getAttribute('title')) ?? '';
+
+  // Svelte may change or remove a title we hold blank, or add one under the
+  // pointer without it moving: follow both.
+  const titleObserver = new MutationObserver((records) => {
+    let heldChanged = false;
+    for (const { target: el } of records) {
+      if (!(el instanceof Element) || !held.has(el)) continue;
+      const title = el.getAttribute('title');
+      if (title === '') continue; // our own blank
+      held.set(el, title);
+      el.setAttribute('title', '');
+      heldChanged = true;
+    }
+    follow(pointerAt);
+    if (target && titleOf(target) !== text) setText(titleOf(target));
+    if (heldChanged) settle();
   });
-  // The element can be removed without a pointerout (e.g. its row re-renders).
+  // An element can be removed without a pointerout or focusout (e.g. its row re-renders).
   const treeObserver = new MutationObserver(() => {
-    if (target && !target.isConnected) release();
+    if (focusEl && !focusEl.isConnected) focusLeft();
+    if (pointerAt && !pointerAt.isConnected) follow(pointerAt);
   });
 
   function setText(next: string) {
@@ -159,16 +185,88 @@ export function installTooltips(doc: Document = document, options: TooltipOption
     warmUntil = Date.now() + WARM_WINDOW_MS;
   }
 
-  /** Keep the element's accessible name and description while its title is blank. */
-  function describe(el: Element): () => void {
-    if (!text.trim()) return () => {};
+  function dismiss() {
+    if (!target) return;
+    hide();
+    suppressed = true;
+  }
+
+  /** Point the tooltip at `el`, or at nothing, and start its show delay. */
+  function claim(el: Element | null) {
+    hide();
+    target = el;
+    suppressed = false;
+    setText(el ? titleOf(el) : '');
+    if (!el || !text.trim()) return;
+    if (Date.now() < warmUntil) show(true);
+    else showTimer = setTimeout(() => show(false), SHOW_DELAY_MS);
+  }
+
+  /** Follow the element under the pointer: hold its titles blank and show its tooltip. */
+  function follow(at: Element | null) {
+    // When the element goes, the pointer is still over its titled ancestor if that stayed.
+    if (at && !at.isConnected) at = hoverEl?.isConnected ? hoverEl : null;
+    pointerAt = at;
+    const el = findTitled(at);
+    if (el === hoverEl) return;
+    const left = hoverEl;
+    hoverEl = el;
+    holdChain();
+    if (el && el !== target) claim(el);
+    else if (!el && target === left && left !== focusEl) claim(null);
+    settle();
+  }
+
+  function focusLeft() {
+    const left = focusEl;
+    focusEl = null;
+    if (target === left && left !== hoverEl) claim(null);
+    settle();
+  }
+
+  /** Hold blank each title the native tooltip could show for the pointer; put the rest back. */
+  function holdChain() {
+    const want = nativeTitleChain(hoverEl);
+    for (const el of [...held.keys()]) if (!want.includes(el)) unhold(el);
+    for (const el of want) {
+      if (held.has(el)) continue;
+      held.set(el, el.getAttribute('title'));
+      el.setAttribute('title', '');
+    }
+  }
+
+  function unhold(el: Element) {
+    a11y.get(el)?.();
+    a11y.delete(el);
+    const original = held.get(el) ?? null;
+    held.delete(el);
+    if (original === null) el.removeAttribute('title');
+    else el.setAttribute('title', original);
+  }
+
+  /** Re-apply accessible names and descriptions, and watch for removal while anything is tracked. */
+  function settle() {
+    for (const undo of a11y.values()) undo();
+    a11y.clear();
+    for (const [el, title] of held) {
+      const undo = describe(el, title ?? '');
+      if (undo) a11y.set(el, undo);
+    }
+    if (hoverEl || focusEl) treeObserver.observe(doc.body, { childList: true, subtree: true });
+    else treeObserver.disconnect();
+  }
+
+  /** Keep a held element's accessible name and description while its title is blank. */
+  function describe(el: Element, title: string): (() => void) | null {
+    if (!title.trim()) return null;
     const label = el.getAttribute('aria-label');
     const nameless = !label && !el.hasAttribute('aria-labelledby') && !normalize(el.textContent ?? '');
     if (nameless) {
-      el.setAttribute('aria-label', text);
+      el.setAttribute('aria-label', title);
       return () => el.removeAttribute('aria-label');
     }
-    if (label && normalize(label) === normalize(text)) return () => {};
+    // The tooltip only holds this element's text while it is the target.
+    if (el !== target || (label && normalize(label) === normalize(title))) return null;
     const prev = el.getAttribute('aria-describedby');
     el.setAttribute('aria-describedby', prev ? `${prev} ${tip.id}` : tip.id);
     return () => {
@@ -177,60 +275,15 @@ export function installTooltips(doc: Document = document, options: TooltipOption
     };
   }
 
-  function claim(el: Element, via: 'pointer' | 'focus') {
-    const title = el.getAttribute('title') ?? '';
-    release();
-    // An empty title hides ancestors' tooltips natively; show nothing for it either.
-    if (!title.trim()) return;
-    target = el;
-    original = title;
-    hovered = via === 'pointer';
-    focused = via === 'focus';
-    suppressed = false;
-    el.setAttribute('title', '');
-    setText(title);
-    undoA11y = describe(el);
-    titleObserver.observe(el, { attributes: true, attributeFilter: ['title'] });
-    treeObserver.observe(doc.body, { childList: true, subtree: true });
-    if (Date.now() < warmUntil) show(true);
-    else showTimer = setTimeout(() => show(false), SHOW_DELAY_MS);
-  }
-
-  function release() {
-    hide();
-    if (!target) return;
-    // Disconnect first: it drops queued records, so restoring below isn't seen as an update.
-    titleObserver.disconnect();
-    treeObserver.disconnect();
-    undoA11y?.();
-    undoA11y = null;
-    if (original === null) target.removeAttribute('title');
-    else target.setAttribute('title', original);
-    target = null;
-    original = null;
-    hovered = focused = suppressed = false;
-  }
-
-  function dismiss() {
-    if (!target) return;
-    hide();
-    suppressed = true;
-  }
-
+  // Pointer moves catch what pointerover can miss, like a title put back or
+  // added while the pointer sat still.
   const onPointerOver = (e: PointerEvent) => {
-    if (e.pointerType === 'touch') return;
-    const el = findTitled(e.target);
-    if (!el) return;
-    if (el === target) hovered = true;
-    else claim(el, 'pointer');
+    if (e.pointerType !== 'touch') follow(e.target instanceof Element ? e.target : null);
   };
 
+  // relatedTarget is where the pointer went: null when it left the window.
   const onPointerOut = (e: PointerEvent) => {
-    if (!target || !hovered) return;
-    const to = e.relatedTarget;
-    if (to instanceof Node && target.contains(to)) return;
-    hovered = false;
-    if (!focused) release();
+    if (e.pointerType !== 'touch') follow(e.relatedTarget instanceof Element ? e.relatedTarget : null);
   };
 
   const onFocusIn = (e: FocusEvent) => {
@@ -238,20 +291,13 @@ export function installTooltips(doc: Document = document, options: TooltipOption
     if (!(from instanceof Element) || isTextEntry(from) || !isFocusVisible(from)) return;
     const el = findTitled(from);
     if (!el) return;
-    if (el === target) focused = true;
-    else claim(el, 'focus');
+    focusEl = el;
+    if (el !== target) claim(el);
+    settle();
   };
 
   const onFocusOut = (e: FocusEvent) => {
-    if (!target || findTitled(e.target) !== target) return;
-    focused = false;
-    if (!hovered) release();
-  };
-
-  const onPointerDown = () => {
-    // Keep a hovered element claimed so the native tooltip can't show after the click.
-    if (hovered) dismiss();
-    else release();
+    if (focusEl && e.target instanceof Node && focusEl.contains(e.target)) focusLeft();
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -263,31 +309,37 @@ export function installTooltips(doc: Document = document, options: TooltipOption
     if (target && (scroller === doc || (scroller instanceof Node && scroller.contains(target)))) dismiss();
   };
 
-  const onBlur = () => release();
-
-  doc.addEventListener('pointerover', onPointerOver);
-  doc.addEventListener('pointerout', onPointerOut);
-  doc.addEventListener('focusin', onFocusIn);
-  doc.addEventListener('focusout', onFocusOut);
-  doc.addEventListener('pointerdown', onPointerDown, true);
+  // Capture phase, so a component stopping propagation can't hide events from us.
+  doc.addEventListener('pointerover', onPointerOver, true);
+  doc.addEventListener('pointermove', onPointerOver, true);
+  doc.addEventListener('pointerout', onPointerOut, true);
+  doc.addEventListener('focusin', onFocusIn, true);
+  doc.addEventListener('focusout', onFocusOut, true);
+  doc.addEventListener('pointerdown', dismiss, true);
   // Covers Enter/Space on a focused control, which fires click without pointerdown.
   doc.addEventListener('click', dismiss, true);
   doc.addEventListener('keydown', onKeyDown, true);
   doc.addEventListener('scroll', onScroll, true);
-  win.addEventListener('blur', onBlur);
+  // The titles stay blank: the pointer may still be over them when the window comes back.
+  win.addEventListener('blur', dismiss);
   win.addEventListener('resize', dismiss);
+  titleObserver.observe(doc.body, { subtree: true, attributes: true, attributeFilter: ['title'] });
 
   return () => {
-    release();
-    doc.removeEventListener('pointerover', onPointerOver);
-    doc.removeEventListener('pointerout', onPointerOut);
-    doc.removeEventListener('focusin', onFocusIn);
-    doc.removeEventListener('focusout', onFocusOut);
-    doc.removeEventListener('pointerdown', onPointerDown, true);
+    hide();
+    titleObserver.disconnect();
+    treeObserver.disconnect();
+    for (const el of [...held.keys()]) unhold(el);
+    doc.removeEventListener('pointerover', onPointerOver, true);
+    doc.removeEventListener('pointermove', onPointerOver, true);
+    doc.removeEventListener('pointerout', onPointerOut, true);
+    doc.removeEventListener('focusin', onFocusIn, true);
+    doc.removeEventListener('focusout', onFocusOut, true);
+    doc.removeEventListener('pointerdown', dismiss, true);
     doc.removeEventListener('click', dismiss, true);
     doc.removeEventListener('keydown', onKeyDown, true);
     doc.removeEventListener('scroll', onScroll, true);
-    win.removeEventListener('blur', onBlur);
+    win.removeEventListener('blur', dismiss);
     win.removeEventListener('resize', dismiss);
     tip.remove();
   };
