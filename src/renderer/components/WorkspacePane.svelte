@@ -16,8 +16,7 @@
   import GitNotice from './GitNotice.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
-  import { sessionSpriteState } from '$lib/session-sprite-state.js';
-  import { sessionRepoColor } from '$lib/session-repo-color.js';
+  import { conversationAgent } from '$lib/session-sprite-state.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -184,14 +183,12 @@
 </script>
 
 {#snippet noGitNote(tab: string, why: string)}
+  {@const agent = settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null}
   <div class="flex-1 flex items-center justify-center p-6">
-    {#if session && settingsStore.current.groveCharacters}
+    {#if agent}
       <!-- The conversation's agent on its bench, as in the sidebar: typing
            while it edits your files in place, sitting when it's idle. -->
-      <GroveEmptyState
-        variant="agent"
-        agent={{ seed: sessionId, state: sessionSpriteState(session), projectColor: sessionRepoColor(sessionId) }}
-      >
+      <GroveEmptyState variant="agent" {agent}>
         <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
         <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
       </GroveEmptyState>

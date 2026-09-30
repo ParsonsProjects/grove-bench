@@ -7,6 +7,8 @@ import CheckpointsPanel from './CheckpointsPanel.svelte';
 import { checkpointStore } from '../stores/checkpoints.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { reviewStore } from '../stores/review.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 
 const SID = 'cp-session';
 
@@ -74,5 +76,43 @@ describe('CheckpointsPanel on the shared review panel', () => {
 
     const [c] = reviewStore.getComments(SID);
     expect(c.context).toBe('checkpoint #2, this turn');
+  });
+});
+
+describe('CheckpointsPanel with grove characters', () => {
+  beforeEach(() => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/r', status: 'running' }] as any;
+  });
+
+  afterEach(() => {
+    store.sessions = [];
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it("puts the conversation's agent on its bench when there are no checkpoints yet", () => {
+    checkpointStore.checkpointsBySession = { [SID]: [] };
+    const { getByText, getByRole } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText('No checkpoints yet')).toBeInTheDocument();
+    expect(getByText(/Each message you send saves one/)).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+  });
+
+  it('puts it next to the list until a checkpoint is picked, and above an empty turn', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [] });
+    const { getByText, getByRole } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText('Select a checkpoint to view changes')).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+
+    await fireEvent.click(getByText('Initial change'));
+    await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+  });
+
+  it('shows only the message when grove characters are off', () => {
+    settingsStore.current.groveCharacters = false;
+    checkpointStore.checkpointsBySession = { [SID]: [] };
+    const { getByText, queryByRole } = render(CheckpointsPanel, { sessionId: SID });
+    expect(getByText(/No checkpoints yet/)).toBeInTheDocument();
+    expect(queryByRole('img', { name: 'Ready' })).toBeNull();
   });
 });
