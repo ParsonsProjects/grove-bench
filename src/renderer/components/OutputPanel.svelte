@@ -466,7 +466,7 @@
         <ThinkingBlock thinking={msg.thinking} />
 
       {:else if msg.kind === 'system'}
-        <SystemBlock text={msg.text} />
+        <SystemBlock text={msg.text} variant={msg.level === 'warning' ? 'warning' : 'info'} />
 
       {:else if msg.kind === 'error'}
         <SystemBlock text={msg.text} variant="error" />

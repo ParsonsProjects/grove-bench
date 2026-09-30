@@ -220,6 +220,13 @@ export function transformMessage(
         if (modeValue) {
           events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeValue, ctx), source: 'sdk' });
         }
+      } else if (message.subtype === 'informational') {
+        // The CLI's own warnings (e.g. a sandbox that could not start) reach
+        // the user; lower levels are transcript-only chatter in the CLI too.
+        const m = message as { content?: unknown; level?: unknown };
+        if (m.level === 'warning' && typeof m.content === 'string' && m.content.trim()) {
+          events.push({ type: 'status', level: 'warning', message: m.content.trim() });
+        }
       } else if (message.subtype === 'local_command_output') {
         const content = (message as any).content;
         if (content) {
@@ -685,7 +692,7 @@ const PERMISSION_MODE_OPTIONS: ControlOption[] = [
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
   // Grove's own mode, listed after Claude's so the divider shows it isn't one
   // of the CLI's.
-  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks. Uses an OS sandbox where one can start' },
 ];
 
 /**

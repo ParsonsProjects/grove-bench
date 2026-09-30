@@ -930,6 +930,53 @@ describe('AgentSessionManager.permRequestCounter', () => {
   });
 });
 
+describe('read-safe sandbox warning', () => {
+  const warnings = (win: ReturnType<typeof makeMockWindow>) => win._send.mock.calls
+    .map(([, event]: [string, AgentEvent | undefined]) => event)
+    .filter((e: AgentEvent | undefined) => e?.type === 'status' && (e as { level?: string }).level === 'warning');
+
+  it('warns once, when a conversation starts in read-safe mode', async () => {
+    const { READ_SAFE_SANDBOX_WARNING } = await import('./agent-session.js');
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-warn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', permissionMode: 'readSafe',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-warn')?.queryHandle).toBeTruthy());
+
+    expect(warnings(win)).toEqual([{ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING }]);
+
+    // A restart doesn't repeat it.
+    await sessionManager.stopQuery('test-rs-warn');
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-warn')?.queryHandle).toBeTruthy());
+    expect(warnings(win)).toHaveLength(1);
+    await sessionManager.destroySession('test-rs-warn');
+  });
+
+  it('warns when switching a running conversation into read-safe mode', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-switch', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-switch')?.queryHandle).toBeTruthy());
+    expect(warnings(win)).toHaveLength(0);
+
+    sessionManager.setMode('test-rs-switch', 'readSafe');
+
+    expect(warnings(win).length).toBeGreaterThan(0);
+    await sessionManager.destroySession('test-rs-switch');
+  });
+
+  it('does not warn in other modes', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-none', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', permissionMode: 'acceptEdits',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-none')?.queryHandle).toBeTruthy());
+    expect(warnings(win)).toHaveLength(0);
+    await sessionManager.destroySession('test-rs-none');
+  });
+});
+
 describe('AgentSessionManager.setMode()', () => {
   it('refuses a mode the app does not offer, such as the SDK\'s bypassPermissions', async () => {
     await sessionManager.createSession({

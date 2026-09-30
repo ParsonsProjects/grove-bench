@@ -48,6 +48,14 @@ function readSafeSandbox(worktreePath: string): Record<string, unknown> {
   };
 }
 
+/** Shown the first time a conversation runs in read-safe mode. The sandbox
+ *  is requested with failIfUnavailable: false, so where it can't start the
+ *  agent's commands run unsandboxed (the SDK only logs a warning). */
+export const READ_SAFE_SANDBOX_WARNING =
+  'Read-safe mode asks for an OS sandbox, but runs without one if it can\'t start on this machine ' +
+  '(on Windows the sandbox has to be set up first). Without it, commands the read-only check lets ' +
+  'through run unsandboxed, so treat that check as a convenience, not protection.';
+
 /**
  * Initial control values for a new session: each of the adapter's declared
  * controls (except permissionMode, which has its own session field) starts
@@ -671,6 +679,12 @@ class AgentSessionManager {
 
     const skillsFilter = await this.skillsFilterFor(session, currentSettings.disabledSkills ?? []);
 
+    // Read-safe mode leans on a sandbox that may not start: say so once per
+    // conversation (eventHistory is reloaded from disk, so across restarts too).
+    if (session.permissionMode === 'readSafe' && !session.sandbox && !this.hasSandboxWarning(session)) {
+      emit({ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING });
+    }
+
     // Fresh conversation: snapshot the working tree as the session's baseline
     // before the query can accept a prompt, so the baseline is always the
     // oldest checkpoint and the first turn's diff is measured from it. The
@@ -1291,8 +1305,12 @@ class AgentSessionManager {
     if (mode === 'readSafe' && prevMode !== 'readSafe' && session.queryHandle && !session.sandbox) {
       session.emit?.({
         type: 'status',
-        message: 'Read-safe mode on — read-only tool calls run without prompting; sandbox enforcement applies from the next query restart.',
+        level: 'warning',
+        message: 'Read-safe mode on: read-only tool calls run without asking. The sandbox only applies once the agent restarts, and may not start at all on this machine.',
       });
+      if (!this.hasSandboxWarning(session)) {
+        session.emit?.({ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING });
+      }
     }
 
     // Pass the mode to the adapter so the SDK is kept in sync.
@@ -1303,6 +1321,10 @@ class AgentSessionManager {
         logger.warn(`Failed to set mode for session ${id}:`, e);
       }
     }
+  }
+
+  private hasSandboxWarning(session: ManagedSession): boolean {
+    return session.eventHistory.some((e) => e.type === 'status' && e.message === READ_SAFE_SANDBOX_WARNING);
   }
 
   /**

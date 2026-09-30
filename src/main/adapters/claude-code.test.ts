@@ -575,6 +575,22 @@ describe('capToolResult()', () => {
 });
 
 describe('transformMessage()', () => {
+  describe('informational messages', () => {
+    it('shows the CLI\'s warnings, such as a sandbox that could not start', () => {
+      const events = transformMessage(
+        { type: 'system', subtype: 'informational', level: 'warning', content: ' Sandbox unavailable; running commands unsandboxed ' } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'status', level: 'warning', message: 'Sandbox unavailable; running commands unsandboxed' }]);
+    });
+
+    it('drops lower levels, which the CLI itself keeps to the transcript', () => {
+      for (const level of ['info', 'notice', 'suggestion']) {
+        expect(transformMessage({ type: 'system', subtype: 'informational', level, content: 'x' } as any, makeCtx())).toEqual([]);
+      }
+    });
+  });
+
   describe('background task messages', () => {
     it('maps background_tasks_changed to a replace-style task list, dropping ambient tasks', () => {
       const events = transformMessage(

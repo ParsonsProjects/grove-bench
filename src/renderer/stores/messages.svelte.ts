@@ -48,6 +48,7 @@ export interface ChatSystemMessage {
   kind: 'system';
   id: string;
   text: string;
+  level?: 'warning';
 }
 
 export interface ChatErrorMessage {
@@ -1228,6 +1229,7 @@ class MessageStore {
           kind: 'system',
           id: nextId(),
           text: event.message,
+          ...(event.level ? { level: event.level } : {}),
         });
         break;
 

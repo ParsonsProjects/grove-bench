@@ -544,6 +544,11 @@ describe('ingestEvent — error and status', () => {
     expect((msgs[0] as any).text).toBe('Loading...');
   });
 
+  it('keeps a warning level on status messages', () => {
+    messageStore.ingestEvent(SID, { type: 'status', message: 'No sandbox', level: 'warning' } as AgentEvent);
+    expect(messageStore.getMessages(SID)[0]).toMatchObject({ kind: 'system', text: 'No sandbox', level: 'warning' });
+  });
+
   it('pushes a git identity notice', () => {
     messageStore.ingestEvent(SID, { type: 'git_identity_missing' });
     expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['git_identity_missing']);

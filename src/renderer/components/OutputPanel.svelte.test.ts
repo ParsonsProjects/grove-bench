@@ -31,6 +31,22 @@ async function pressCtrlF() {
   await tick();
 }
 
+describe('OutputPanel — status messages', () => {
+  it('shows a warning-level status as a note, and a plain one without', () => {
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'system', id: 's1', text: 'Connecting...' },
+        { kind: 'system', id: 's2', text: 'Runs without a sandbox', level: 'warning' },
+      ],
+    };
+    const { getByRole, getByText } = render(OutputPanel, { sessionId: SID });
+
+    expect(getByRole('note')).toHaveTextContent('Runs without a sandbox');
+    expect(getByText('Connecting...').closest('[role="note"]')).toBeNull();
+  });
+});
+
 describe('OutputPanel — rewind from a user message', () => {
   it('offers Rewind on user messages that have a checkpoint and opens the dialog on that message', async () => {
     store.activeSessionId = SID;

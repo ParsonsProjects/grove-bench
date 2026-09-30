@@ -162,7 +162,8 @@ export type AgentEvent =
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   | { type: 'user_message'; text: string; uuid?: string }
-  | { type: 'status'; message: string }
+  /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox). */
+  | { type: 'status'; message: string; level?: 'warning' }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number }
   // Rate limiting
