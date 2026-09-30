@@ -4,12 +4,10 @@
   import hljs from '../lib/hljs.js';
   import { openLink } from '$lib/preview-links.js';
 
-  // Allow data-code attribute through DOMPurify for copy button support
-  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
-    if (data.attrName === 'data-code') {
-      data.forceKeepAttr = true;
-    }
-  });
+  /** Marks the copy buttons this renderer adds. Chat content can include raw
+   *  HTML, and a button it writes must not work as one: it could show one
+   *  command and copy another. Random per launch, so content can't guess it. */
+  const COPY_MARK = crypto.randomUUID();
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -22,8 +20,8 @@
   function codeRenderer(highlight: boolean) {
     return {
       code({ text, lang }: { text: string; lang?: string }) {
-        const encoded = btoa(encodeURIComponent(text));
-        const copyBtn = `<button class="code-copy-btn" data-code="${encoded}" title="Copy">${COPY_SVG}</button>`;
+        // Copies the block's own code text (see the click handler).
+        const copyBtn = `<button class="code-copy-btn" data-copy="${COPY_MARK}" title="Copy">${COPY_SVG}</button>`;
 
         if (highlight && lang && hljs.getLanguage(lang)) {
           const highlighted = hljs.highlight(text, { language: lang }).value;
@@ -45,7 +43,7 @@
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
     try {
       const raw = instance.parse(content) as string;
-      return DOMPurify.sanitize(raw, { ADD_ATTR: ['data-code'] });
+      return DOMPurify.sanitize(raw);
     } catch {
       return DOMPurify.sanitize(content);
     }
@@ -80,15 +78,18 @@
     };
     container.addEventListener('click', linkHandler);
 
-    const buttons = container.querySelectorAll<HTMLButtonElement>('.code-copy-btn');
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button.code-copy-btn')]
+      .filter((btn) => btn.dataset.copy === COPY_MARK);
     const handlers: Array<[HTMLButtonElement, () => void]> = [];
 
     for (const btn of buttons) {
       const handler = async () => {
-        const encoded = btn.getAttribute('data-code');
-        if (!encoded) return;
+        // The code the block shows. Its content was escaped by the renderer,
+        // so it holds no markup that could hide part of it.
+        const code = btn.closest('.code-block-wrapper')?.querySelector('pre > code');
+        if (!code) return;
         try {
-          const text = decodeURIComponent(atob(encoded));
+          const text = code.textContent ?? '';
           await navigator.clipboard.writeText(text);
           btn.innerHTML = checkSvg;
           btn.classList.add('copied');
