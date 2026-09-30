@@ -507,7 +507,7 @@ describe('pending removals', () => {
   });
 });
 
-describe('registerDirect (direct + attached sessions)', () => {
+describe('registerDirect (direct sessions, and older attached ones)', () => {
   it('runs on the repo checkout and persists no explicit path for a plain direct session', async () => {
     const info = await manager.registerDirect('/repo', 'main');
 
@@ -522,36 +522,23 @@ describe('registerDirect (direct + attached sessions)', () => {
     });
   });
 
-  it('persists the shared worktree path for an attached session', async () => {
-    const wtPath = '/worktrees/abc/wt-src';
-    const info = await manager.registerDirect('/repo', 'feature-x', wtPath);
-
-    expect(info.direct).toBe(true);
-    expect(info.path).toBe(wtPath);
-    expect(savedManifest[info.id]).toEqual({
-      repoPath: '/repo',
-      branch: 'feature-x',
-      createdAt: info.createdAt,
-      direct: true,
-      path: wtPath,
-    });
-  });
-
-  it('does not touch git when an attached session is destroyed (shared worktree is preserved)', async () => {
-    const wtPath = '/worktrees/abc/wt-src';
-    const info = await manager.registerDirect('/repo', 'feature-x', wtPath);
+  it('does not touch git when an older attached session is destroyed (shared worktree is preserved)', async () => {
+    // New conversations can no longer attach, but older manifests still hold some.
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-attached': { repoPath: '/repo', branch: 'feature-x', createdAt: 1000, direct: true, path: '/worktrees/abc/wt-src' },
+    }));
     mockGit.mockClear();
 
-    await manager.remove(info.id);
+    await manager.remove('wt-attached');
 
     // No worktree remove / branch delete / prune — the worktree belongs to the
     // source session, not this attached one.
     expect(mockGit).not.toHaveBeenCalled();
-    expect(savedManifest).not.toHaveProperty(info.id);
+    expect(savedManifest).not.toHaveProperty('wt-attached');
   });
 
   it('records a conversation in a folder without git, and keeps that after restart', async () => {
-    const info = await manager.registerDirect('/notes', '', '/notes', { noGit: true });
+    const info = await manager.registerDirect('/notes', '', { noGit: true });
     expect(info.noGit).toBe(true);
     expect(savedManifest[info.id]).toMatchObject({ repoPath: '/notes', branch: '', direct: true, noGit: true });
 

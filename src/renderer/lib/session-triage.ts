@@ -2,8 +2,11 @@
  * Attention triage: classify each session into one mutually exclusive state so
  * the sidebar can offer All / Needs you / Working / Unread filters with counts
  * that add up. Priority order matters — a session blocked on a permission is
- * "needs you" even if it also finished a turn while unfocused.
+ * "needs you" even if it also finished a turn while unfocused. The order is the
+ * status colour's (agentSpriteState), so the two never disagree.
  */
+
+import type { AgentSpriteState } from './agent-sprite.js';
 
 export type TriageState = 'needs-you' | 'working' | 'unread' | 'idle';
 export type TriageFilter = 'all' | 'needs-you' | 'working' | 'unread';
@@ -17,20 +20,24 @@ export const TRIAGE_FILTER_LABELS: Record<TriageFilter, string> = {
   unread: 'Unread',
 };
 
-export interface TriageSignals {
-  /** Blocked on a permission prompt or an unanswered question. */
-  needsInput: boolean;
-  /** A turn is in progress. */
-  running: boolean;
-  /** Finished a turn (or got a PR alert) while not focused. */
-  unread: boolean;
-}
-
-export function triageState(s: TriageSignals): TriageState {
-  if (s.needsInput) return 'needs-you';
-  if (s.running) return 'working';
-  if (s.unread) return 'unread';
-  return 'idle';
+/**
+ * The triage state a conversation's status colour stands for (see
+ * AGENT_SPRITES), so a row's dot or character always matches the chip it is
+ * counted under. Error, and every quiet state, belong to no chip.
+ */
+export function triageForSprite(state: AgentSpriteState): TriageState {
+  switch (state) {
+    case 'permission':
+      return 'needs-you';
+    case 'working':
+    case 'starting':
+    case 'installing':
+      return 'working';
+    case 'unread':
+      return 'unread';
+    default:
+      return 'idle';
+  }
 }
 
 export function matchesTriageFilter(filter: TriageFilter, state: TriageState): boolean {

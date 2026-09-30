@@ -7,6 +7,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
+import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import type { CrossSessionSearchHit } from '../../shared/types.js';
 
 const HITS: CrossSessionSearchHit[] = [
@@ -58,6 +59,26 @@ describe('SessionFinder', () => {
     expect(screen.getByText('fix-parser')).toBeInTheDocument();
     // Preview-derived first prompt for the stopped session (no loaded messages)
     expect(await screen.findByText('fix the parser bug')).toBeInTheDocument();
+  });
+
+  it('shows the same status dot as the sidebar', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'starting', displayName: 'Booting' },
+      { id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'running', displayName: 'Idle one' },
+    ] as any;
+    render(SessionFinder, { onclose: vi.fn() });
+    expect(screen.getByRole('img', { name: 'Starting' })).toHaveClass(AGENT_SPRITES.starting.colorClass);
+    expect(screen.getByRole('img', { name: 'Ready' })).toHaveClass(AGENT_SPRITES.ready.colorClass);
+  });
+
+  it('shows a loaded first prompt as plain text, like the preview of an unloaded one', async () => {
+    messageStore.messagesBySession = { s1: [{ kind: 'user', id: 'u1', text: '## Plan\n- fix **the** parser' }] } as any;
+    try {
+      render(SessionFinder, { onclose: vi.fn() });
+      expect(screen.getByText('Plan fix the parser')).toBeInTheDocument();
+    } finally {
+      messageStore.messagesBySession = {};
+    }
   });
 
   it('searches conversations across sessions and shows snippets', async () => {

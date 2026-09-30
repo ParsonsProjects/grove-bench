@@ -1,5 +1,6 @@
 import type { AgentEvent, EventSearchHit, SessionPreview } from '../shared/types.js';
 import { displayTextFromSent, stripFileContext } from '../shared/prompt-text.js';
+import { oneLine, plainSnippet } from '../shared/plain-text.js';
 
 export type { EventSearchHit };
 
@@ -95,11 +96,6 @@ function makeSnippet(normalized: string, matchIndex: number, queryLen: number): 
 
 const PREVIEW_MAX_LEN = 160;
 
-function collapse(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > PREVIEW_MAX_LEN ? `${normalized.slice(0, PREVIEW_MAX_LEN)}…` : normalized;
-}
-
 /** Text of the first real user prompt (slash commands and attachment-only
  *  messages skipped), trimmed but otherwise as sent, or null when the history
  *  has none. */
@@ -124,8 +120,9 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
     if (e.type !== 'user_message') continue;
     const text = displayTextFromSent(e.text, e.images).trim();
     if (!text || text.startsWith('/')) continue;
-    firstPrompt = collapse(text);
-    break;
+    // A message that is only markdown syntax has no preview; try the next.
+    firstPrompt = plainSnippet(text, PREVIEW_MAX_LEN);
+    if (firstPrompt) break;
   }
 
   let lastText = '';
@@ -134,11 +131,12 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
     if (e.type === 'assistant_text' || e.type === 'user_message') {
       const text = (e.type === 'user_message' ? displayTextFromSent(e.text, e.images) : e.text).trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
-      lastText = collapse(text);
-      break;
+      // A message that is only markdown syntax has no preview; look further back.
+      lastText = plainSnippet(text, PREVIEW_MAX_LEN);
+      if (lastText) break;
     }
     if (e.type === 'tool_use_summary' && e.summary.trim()) {
-      lastText = collapse(e.summary);
+      lastText = oneLine(e.summary, PREVIEW_MAX_LEN);
       break;
     }
   }
