@@ -26,6 +26,9 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   vi.clearAllMocks();
   draftStore.discard();
+  // Starting with a message begins the new conversation's arrival scene;
+  // the mocked createSession always returns 'new1'.
+  arrivalScene.end('new1');
   store.repos = ['/repo/one', '/repo/two'];
   store.sessions = [];
   store.activeSessionId = null;

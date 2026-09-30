@@ -78,9 +78,8 @@ describe('PromptEditor: sizes a restored draft', () => {
 
 describe('PromptEditor: rewind', () => {
   beforeEach(() => {
-    messageStore.draftBySession = {};
+    messageStore.destroyAllSessions();
     messageStore.messagesBySession = { [SID]: [] };
-    messageStore.promptInsertBySession = {};
   });
   afterEach(() => cleanup());
 
@@ -100,12 +99,8 @@ describe('PromptEditor: rewind', () => {
 
 describe('PromptEditor: editing a queued prompt', () => {
   beforeEach(() => {
-    messageStore.draftBySession = {};
+    messageStore.destroyAllSessions();
     messageStore.messagesBySession = { [SID]: [] };
-    messageStore.promptInsertBySession = {};
-    messageStore.queuedBySession = {};
-    messageStore.queuePausedBySession = {};
-    messageStore.isRunning = {};
   });
   afterEach(() => cleanup());
 
@@ -139,10 +134,8 @@ describe('PromptEditor: editing a queued prompt', () => {
 
 describe('PromptEditor: attachments', () => {
   beforeEach(() => {
-    messageStore.draftBySession = {};
-    messageStore.attachmentsBySession = {};
+    messageStore.destroyAllSessions();
     messageStore.messagesBySession = { [SID]: [] };
-    messageStore.promptInsertBySession = {};
   });
   afterEach(() => cleanup());
 

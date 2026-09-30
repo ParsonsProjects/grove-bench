@@ -41,6 +41,7 @@ function diffText(container: HTMLElement): string {
 beforeEach(() => {
   vi.clearAllMocks();
   gitStatusStore.statusBySession = {};
+  gitStatusStore.scopeBySession = {};
   messageStore.messagesBySession = { [SID]: [] };
   messageStore.setIsRunning(SID, false);
   // The panel under test is on screen.

@@ -2247,7 +2247,27 @@ class MessageStore {
 
     // Delete every per-session entry. Reassign each $state record so Svelte
     // reliably drops derived subscriptions referencing this session.
-    for (const record of [
+    for (const record of this.perSessionRecords()) delete record[sessionId];
+    for (const map of this.perSessionMaps()) map.delete(sessionId);
+
+    // Extracted stores own their own per-session teardown.
+    backgroundTaskStore.destroy(sessionId);
+    rateLimitStore.destroy(sessionId);
+  }
+
+  /** destroySession for every conversation the store holds anything for.
+   *  Tests share this one store, so each starts from a clean one. */
+  destroyAllSessions() {
+    const ids = new Set<string>();
+    for (const record of this.perSessionRecords()) for (const id of Object.keys(record)) ids.add(id);
+    for (const map of this.perSessionMaps()) for (const id of map.keys()) ids.add(id);
+    for (const id of this.cleanups.keys()) ids.add(id);
+    for (const id of ids) this.destroySession(id);
+  }
+
+  /** Every record keyed by session id, reactive and plain. */
+  private perSessionRecords(): Record<string, unknown>[] {
+    return [
       this.messagesBySession, this.streamingText, this.streamingThinking,
       this.isRunning, this.pendingClear, this.activityBySession,
       this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
@@ -2258,23 +2278,13 @@ class MessageStore {
       this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
       this.queuedBySession, this.queuePausedBySession,
-    ] as Record<string, unknown>[]) {
-      delete record[sessionId];
-    }
+      // Plain (non-reactive) bookkeeping
+      this.pendingMessageAfterClear, this.stoppingSession, this.awaitingResponse, this.userExplicitMode,
+    ] as Record<string, unknown>[];
+  }
 
-    this.sourceIndexBySession.delete(sessionId);
-    this.orphanReplayEvents.delete(sessionId);
-    this.streamBuf.delete(sessionId);
-
-    // Extracted stores own their own per-session teardown.
-    backgroundTaskStore.destroy(sessionId);
-    rateLimitStore.destroy(sessionId);
-
-    // Plain (non-reactive) bookkeeping records
-    delete this.pendingMessageAfterClear[sessionId];
-    delete this.stoppingSession[sessionId];
-    delete this.awaitingResponse[sessionId];
-    delete this.userExplicitMode[sessionId];
+  private perSessionMaps(): Map<string, unknown>[] {
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf];
   }
 
   /** Subscribe to events from the main process for a session */

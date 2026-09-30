@@ -489,6 +489,17 @@ describe('Read-safe mode sandbox enforcement', () => {
 });
 
 describe('AgentSessionManager caveman mode', () => {
+  afterEach(() => {
+    // mockReturnValue outlives the test (clearAllMocks keeps it): put back
+    // the module mock's default so later tests see caveman mode off.
+    settingsMock.getSettings.mockReturnValue({
+      defaultSystemPromptAppend: null,
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'off',
+    });
+  });
+
   it('does not include caveman prompt when mode is off', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({

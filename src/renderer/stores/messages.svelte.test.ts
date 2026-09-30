@@ -14,6 +14,10 @@ const SID = 'test-session';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Each test starts from a clean store: state left by an earlier test
+  // (a stop in progress, a buffered stream, a mode the user set) changes
+  // what the next one sees.
+  messageStore.destroyAllSessions();
   sessionStore.sessions = [];
   // Clear messages for our test session
   messageStore.messagesBySession = {};
