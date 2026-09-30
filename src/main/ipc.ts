@@ -5,7 +5,7 @@ import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, OpenPrSum
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
-import { editorLaunchCommand } from './editor-launch.js';
+import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { clearApiKey, saveApiKey } from './credentials.js';
@@ -37,7 +37,6 @@ import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
 /** App-level lifecycle signals from the renderer (e.g. 'restore-complete'). */
@@ -908,28 +907,15 @@ export function registerHandlers() {
       throw new Error('Path traversal not allowed');
     }
 
-    // Try VS Code, then Cursor (editorLaunchCommand handles Windows .cmd shims),
+    // Try VS Code, then Cursor (launchEditor handles Windows .cmd shims),
     // then fall back to the OS default opener.
-    const tryEditor = (editor: string): Promise<boolean> =>
-      new Promise((resolve) => {
-        const { cmd, args } = editorLaunchCommand(editor, resolved, line);
-        execFile(cmd, args, (err) => resolve(!err));
-      });
+    if (await launchEditor('code', resolved, line)) return;
+    if (await launchEditor('cursor', resolved, line)) return;
 
-    if (await tryEditor('code')) return;
-    if (await tryEditor('cursor')) return;
-
-    // Final fallback: system default opener.
-    await new Promise<void>((resolve, reject) => {
-      const onDone = (err: unknown) =>
-        err ? reject(new Error('Could not open file. Install the VS Code or Cursor CLI.')) : resolve();
-      if (process.platform === 'win32') {
-        execFile('cmd', ['/c', 'start', '""', resolved], onDone);
-      } else {
-        const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-        execFile(opener, [resolved], onDone);
-      }
-    });
+    // Final fallback: system default opener. shell.openPath goes straight to
+    // the OS (ShellExecute on Windows), with no cmd.exe parsing of the path.
+    const openError = await shell.openPath(resolved);
+    if (openError) throw new Error('Could not open file. Install the VS Code or Cursor CLI.');
   });
 
   // ─── External links & process cleanup ───
