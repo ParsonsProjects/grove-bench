@@ -4,8 +4,8 @@ Multi-agent git worktree orchestrator for [Claude Code](https://docs.anthropic.c
 
 ## Features
 
-- **Concurrent conversations** — Run multiple Claude Code instances in parallel, one per conversation, each in its own git worktree
-- **Isolated worktrees** — Every conversation gets a dedicated worktree so agents never conflict
+- **Concurrent conversations** — Run multiple Claude Code instances in parallel, one per conversation
+- **Isolated worktrees** — In a git project, every conversation gets its own worktree so agents never conflict. A folder without git works too, with conversations editing it in place
 - **Integrated terminal** — Built-in xterm.js terminals with full PTY support
 - **Conversation management** — Start, monitor, and stop conversations across projects from a single UI
 - **Project memory** — Persistent notes per project, shared across conversations
