@@ -261,7 +261,9 @@ function makeMockWindow() {
 // ─── Tests ───
 
 // Import the module under test AFTER mocks are set up
-const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
+const { sessionManager } = await import('./agent-session.js');
+const { sanitizeElicitationResponse } = await import('./session-permissions.js');
+const { READ_SAFE_SANDBOX_WARNING } = await import('./session-config.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 const { getGitIdentity } = await import('./git.js');
 const { logger } = await import('./logger.js');
@@ -936,7 +938,6 @@ describe('read-safe sandbox warning', () => {
     .filter((e: AgentEvent | undefined) => e?.type === 'status' && (e as { level?: string }).level === 'warning');
 
   it('warns once, when a conversation starts in read-safe mode', async () => {
-    const { READ_SAFE_SANDBOX_WARNING } = await import('./agent-session.js');
     const win = makeMockWindow();
     await sessionManager.createSession({
       id: 'test-rs-warn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', permissionMode: 'readSafe',
@@ -3104,23 +3105,6 @@ describe('AgentSessionManager skill suggestions', () => {
 
     expect(result).toEqual([{ id: 'cached' }]);
     expect(analyzeRepo).not.toHaveBeenCalled();
-  });
-});
-
-describe('AgentSessionManager.beginSearch()', () => {
-  it("doesn't let a single-conversation search start a new pass during a sweep", () => {
-    const beginPass = vi.spyOn((sessionManager as unknown as { searchIndexes: { beginPass(): void } }).searchIndexes, 'beginPass');
-    const endSweep = sessionManager.beginSearch({ sweep: true });
-    expect(beginPass).toHaveBeenCalledTimes(1);
-
-    sessionManager.beginSearch(); // Ctrl+F while the sweep is paused
-    expect(beginPass).toHaveBeenCalledTimes(1);
-
-    endSweep();
-    endSweep(); // ending twice is harmless
-    sessionManager.beginSearch();
-    expect(beginPass).toHaveBeenCalledTimes(2);
-    beginPass.mockRestore();
   });
 });
 

@@ -22,6 +22,7 @@ src/
     git.ts             # Git CLI wrapper (execa)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
+    session-*.ts       # Session types, event log + history, permission prompts, skills, agent config
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
