@@ -177,10 +177,6 @@ class SessionStore {
     if (!folder && has) this.folderRepos = this.folderRepos.filter((r) => r !== path);
   }
 
-  canRemoveRepo(path: string): boolean {
-    return this.sessionsForRepo(path).length === 0;
-  }
-
   sessionsForRepo(path: string): SessionEntry[] {
     return this.sessions.filter((s) => s.repoPath === path);
   }
@@ -203,25 +199,6 @@ class SessionStore {
     }
     // Ensure the repo is tracked when a session is added
     this.addRepo(entry.repoPath);
-  }
-
-  /** Quick-create a new session (no dialog) that lands on `sourceSessionId`'s
-   *  branch, sharing its checkout. The main process resolves the branch + path
-   *  from the source session, so a new session forked off a worktree session
-   *  stays on that branch instead of the repo's default branch. Runs in-place
-   *  (direct), so it never creates or removes a worktree. It runs the same
-   *  agent as the source session. */
-  async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
-    try {
-      const adapterType = this.sessions.find((s) => s.id === sourceSessionId)?.agentType;
-      const result = await window.groveBench.createSession({
-        repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId,
-        ...(adapterType ? { adapterType } : {}),
-      });
-      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now(), ...(result.noGit ? { noGit: true } : {}) });
-    } catch (e: any) {
-      this.setError(e?.message || String(e));
-    }
   }
 
   removeSession(id: string) {

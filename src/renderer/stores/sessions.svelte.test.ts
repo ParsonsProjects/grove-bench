@@ -337,17 +337,6 @@ describe('SessionStore', () => {
       expect(result).toHaveLength(2);
       expect(result.every(s => s.repoPath === '/repo/a')).toBe(true);
     });
-
-    it('canRemoveRepo returns true when no sessions', () => {
-      store.addRepo('/repo/a');
-      expect(store.canRemoveRepo('/repo/a')).toBe(true);
-    });
-
-    it('canRemoveRepo returns false when sessions exist', () => {
-      store.addRepo('/repo/a');
-      store.addSession(makeSession({ repoPath: '/repo/a' }), false);
-      expect(store.canRemoveRepo('/repo/a')).toBe(false);
-    });
   });
 
   describe('repoDisplayName', () => {
@@ -462,33 +451,6 @@ describe('SessionStore', () => {
       store.sessions = [makeSession({ id: 'fresh', status: 'stopped', lastActiveAt: Date.now() } as never)] as never;
       expect(store.stoppedSessionsOlderThan(14)).toEqual([]);
     });
-  });
-});
-
-describe('createAttachedSession', () => {
-  it("runs the source conversation's agent", async () => {
-    store.sessions = [];
-    store.addSession({ id: 'src', branch: 'feat/x', repoPath: '/repo/test', status: 'running', agentType: 'codex' } as never);
-    const createSession = vi.fn().mockResolvedValue({ id: 'attached', branch: 'feat/x', agentType: 'codex' });
-    (mockGroveBench as unknown as { createSession: typeof createSession }).createSession = createSession;
-
-    await store.createAttachedSession('src', '/repo/test');
-
-    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ attachToSessionId: 'src', adapterType: 'codex' }));
-    expect(store.sessions.find((s) => s.id === 'attached')?.agentType).toBe('codex');
-    store.sessions = [];
-  });
-
-  it('marks a conversation attached to one without git as without git too', async () => {
-    store.sessions = [];
-    store.addSession({ id: 'src', branch: '', repoPath: '/notes', status: 'running', direct: true, noGit: true } as never);
-    const createSession = vi.fn().mockResolvedValue({ id: 'attached', branch: '', agentType: 'claude-code', noGit: true });
-    (mockGroveBench as unknown as { createSession: typeof createSession }).createSession = createSession;
-
-    await store.createAttachedSession('src', '/notes');
-
-    expect(store.sessions.find((s) => s.id === 'attached')).toMatchObject({ direct: true, noGit: true });
-    store.sessions = [];
   });
 });
 

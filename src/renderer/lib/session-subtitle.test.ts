@@ -98,6 +98,16 @@ describe('message helpers', () => {
     expect(lastTextSnippet(messages)).toBe('Done — sidebar fixed');
   });
 
+  it('lastTextSnippet drops markdown syntax', () => {
+    const md: ChatMessage[] = [{ kind: 'text', id: 'm1', text: '## Investigation summary\n\nThe **flakiness** came from `retry-helper.ts`', uuid: '' }];
+    expect(lastTextSnippet(md)).toBe('Investigation summary The flakiness came from retry-helper.ts');
+  });
+
+  it('firstPromptSnippet drops markdown syntax', () => {
+    const md: ChatMessage[] = [{ kind: 'user', id: 'u1', text: '# Task\n1. fix [the bug](https://x.test)' }];
+    expect(firstPromptSnippet(md)).toBe('Task fix the bug');
+  });
+
   it('pendingPermissionTool ignores resolved permissions', () => {
     expect(pendingPermissionTool(messages)).toBeNull();
   });

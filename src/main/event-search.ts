@@ -1,5 +1,6 @@
 import type { AgentEvent, EventSearchHit, SessionPreview } from '../shared/types.js';
 import { displayTextFromSent, stripFileContext } from '../shared/prompt-text.js';
+import { stripMarkdown } from '../shared/plain-text.js';
 
 export type { EventSearchHit };
 
@@ -124,7 +125,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
     if (e.type !== 'user_message') continue;
     const text = displayTextFromSent(e.text).trim();
     if (!text || text.startsWith('/')) continue;
-    firstPrompt = collapse(text);
+    firstPrompt = collapse(stripMarkdown(text));
     break;
   }
 
@@ -134,7 +135,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
     if (e.type === 'assistant_text' || e.type === 'user_message') {
       const text = (e.type === 'user_message' ? displayTextFromSent(e.text) : e.text).trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;
-      lastText = collapse(text);
+      lastText = collapse(stripMarkdown(text));
       break;
     }
     if (e.type === 'tool_use_summary' && e.summary.trim()) {

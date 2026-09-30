@@ -221,18 +221,26 @@ function sprite(label: string, colorClass: string, maps: string[][], opts: Parti
   };
 }
 
+/**
+ * The sidebar's status colours follow its filter chips, so a colour always
+ * means the same thing: amber needs you, blue is working (starting up
+ * included), green finished a turn you haven't seen, red is an error. Every
+ * quiet state is grey, told apart by pose: sitting (ready) or asleep (sleeping,
+ * stopped).
+ */
 export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   working: sprite('Working', 'text-primary', [TYPE_A, TYPE_B], { frameSeconds: 0.4 }),
   // Covers questions as well as permissions, like the sidebar's "Needs you" filter.
   permission: sprite('Waiting for you', 'text-amber-500', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
   unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
-  ready: sprite('Ready', 'text-green-500', [SIT]),
+  ready: sprite('Ready', 'text-foreground/60', [SIT]),
   stopped: sprite('Stopped', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
-  // Still open, agent shut down until it is opened: a dimmed Ready.
-  sleeping: sprite('Sleeping', 'text-green-500/50', [withSymbol(ASLEEP, ZZZ)]),
+  // Still open, agent shut down until it is opened. Looks like Stopped: both
+  // wake when opened.
+  sleeping: sprite('Sleeping', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
   error: sprite('Error', 'text-red-500', [withSymbol(SIT, BANG)]),
-  starting: sprite('Starting', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
-  installing: sprite('Installing dependencies', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
+  starting: sprite('Starting', 'text-primary', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
+  installing: sprite('Installing dependencies', 'text-primary', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
   removing: sprite('Removing', 'text-muted-foreground', [ASLEEP], { fade: true }),
   allowed: sprite('Allowed', 'text-green-400', [withSymbol(SIT, CHECK)]),
   denied: sprite('Denied', 'text-destructive', [withSymbol(SIT, CROSS)]),

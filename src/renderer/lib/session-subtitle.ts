@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import { approvalRequest, toolLabel } from './tool-names.js';
+import { stripMarkdown } from '../../shared/plain-text.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
 export type SubtitleTone = 'working' | 'waiting' | 'context';
@@ -16,6 +17,11 @@ function collapse(text: string): string {
   return normalized.length > MAX_LEN ? `${normalized.slice(0, MAX_LEN)}…` : normalized;
 }
 
+/** A chat message as one line of plain text: markdown syntax dropped. */
+function snippet(text: string): string {
+  return collapse(stripMarkdown(text));
+}
+
 /** The tool name of the most recent unresolved permission request, if any. */
 export function pendingPermissionTool(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -30,8 +36,8 @@ export function pendingPermissionTool(messages: ChatMessage[]): string | null {
 export function lastTextSnippet(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.kind === 'text' && m.text.trim()) return collapse(m.text);
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
+    if (m.kind === 'text' && m.text.trim()) return snippet(m.text);
+    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return snippet(m.text);
   }
   return null;
 }
@@ -39,7 +45,7 @@ export function lastTextSnippet(messages: ChatMessage[]): string | null {
 /** First real user prompt in the loaded messages (slash commands skipped). */
 export function firstPromptSnippet(messages: ChatMessage[]): string | null {
   for (const m of messages) {
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
+    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return snippet(m.text);
   }
   return null;
 }

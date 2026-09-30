@@ -234,41 +234,23 @@ export function registerHandlers() {
     const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
     const controls = sanitizeControls(opts.controls);
 
-    // A conversation attached to another shares its checkout, so it runs
-    // without git exactly when that one does. Otherwise a folder project
-    // (not a repository, or git isn't installed) can only run in the folder.
-    const attachSrc = opts.attachToSessionId
-      ? await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId)
-      : null;
-    if (opts.attachToSessionId && !attachSrc) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
-    let noGit: boolean;
-    if (attachSrc) {
-      noGit = !!attachSrc.noGit;
-    } else {
-      const kind = await projectKind(opts.repoPath);
-      if (kind === 'missing') throw new Error(`The project folder ${opts.repoPath} wasn't found.`);
-      noGit = kind === 'folder';
-    }
-    if (noGit && !opts.direct && !attachSrc) {
+    // A folder project (not a repository, or git isn't installed) can only
+    // run in the folder.
+    const kind = await projectKind(opts.repoPath);
+    if (kind === 'missing') throw new Error(`The project folder ${opts.repoPath} wasn't found.`);
+    const noGit = kind === 'folder';
+    if (noGit && !opts.direct) {
       throw new Error((await gitVersion())
         ? 'This project isn\'t a git repository, so a conversation can only work in the project folder itself.'
         : 'Git isn\'t installed, so a conversation can only work in the project folder itself.');
     }
 
-    if (opts.direct || attachSrc) {
-      // Direct mode — run in-place on an existing checkout, no worktree created.
-      // When attachToSessionId is set, the new session shares that session's
-      // worktree + branch; otherwise it runs on the repo's current checkout.
-      let branch: string;
-      let checkoutPath = opts.repoPath;
-      if (attachSrc) {
-        branch = attachSrc.branch;
-        checkoutPath = attachSrc.path;
-      } else if (noGit) {
-        branch = '';
-      } else {
-        branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
-      }
+    if (opts.direct) {
+      // Direct mode: run in-place on the repo's current checkout, no worktree created.
+      const checkoutPath = opts.repoPath;
+      const branch = noGit
+        ? ''
+        : opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
       logger.info(`Creating direct session: branch=${branch || '(no git)'}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
 
       const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath, { noGit });
