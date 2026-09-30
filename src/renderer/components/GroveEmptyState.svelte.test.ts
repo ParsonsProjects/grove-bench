@@ -24,7 +24,7 @@ afterEach(() => {
 describe('GroveEmptyState', () => {
   it('asks for a project first when there is none, with a button to add one', async () => {
     store.repos = [];
-    mockGroveBench.addRepo.mockResolvedValueOnce('/repo/new');
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'git', path: '/repo/new' });
     render(GroveEmptyState, { variant: 'empty' });
     expect(screen.getByText('Add a project to start')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
@@ -33,12 +33,22 @@ describe('GroveEmptyState', () => {
 
   it('says why a picked folder could not be added', async () => {
     store.repos = [];
-    mockGroveBench.addRepo.mockRejectedValueOnce(new Error("Error invoking remote method 'repo:select': Error: C:\\notes isn't in a git repository. Pick the folder that contains your project's .git folder, or run \"git init\" in it first."));
+    mockGroveBench.addRepo.mockRejectedValueOnce(new Error("Error invoking remote method 'repo:select': Error: C:\\app\\.git is inside a .git folder. Pick the project folder that contains it."));
     render(GroveEmptyState, { variant: 'empty' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
-    await waitFor(() => expect(store.error).toBe('C:\\notes isn\'t in a git repository. Pick the folder that contains your project\'s .git folder, or run "git init" in it first.'));
+    await waitFor(() => expect(store.error).toBe('C:\\app\\.git is inside a .git folder. Pick the project folder that contains it.'));
     expect(store.repos).toEqual([]);
     store.clearError();
+  });
+
+  it('asks what to do with a folder that is not a git repository instead of adding it', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'folder', path: 'C:\\notes', gitAvailable: true });
+    render(GroveEmptyState, { variant: 'empty' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.pendingFolder).toEqual({ path: 'C:\\notes', gitAvailable: true }));
+    expect(store.repos).toEqual([]);
+    store.pendingFolder = null;
   });
 
   it('offers to start a conversation once a project exists', async () => {

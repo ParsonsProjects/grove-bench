@@ -192,4 +192,33 @@ describe('DraftPane with no agent', () => {
     await waitFor(() => expect(draftStore.draft?.agentId).toBe('claude-code'));
     expect(await screen.findByLabelText('First message')).toBeInTheDocument();
   });
+
+describe('DraftPane git identity heads-up', () => {
+  it('warns before the first message when git has no name and email for the project', async () => {
+    mockGroveBench.hasGitIdentity.mockResolvedValue(false);
+    render(DraftPane);
+    expect(await screen.findByText(/Git doesn't have your name and email for this project/)).toBeInTheDocument();
+    expect(mockGroveBench.hasGitIdentity).toHaveBeenCalledWith('/repo/one');
+    mockGroveBench.hasGitIdentity.mockResolvedValue(true);
+  });
+
+  it('says nothing when git knows who you are', async () => {
+    render(DraftPane);
+    await waitFor(() => expect(mockGroveBench.hasGitIdentity).toHaveBeenCalled());
+    await settle();
+    expect(screen.queryByText(/Git doesn't have your name and email/)).not.toBeInTheDocument();
+  });
+
+  it('does not ask in a folder project without git', async () => {
+    store.setFolderProject('/repo/one', true);
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    await settle();
+    render(DraftPane);
+    await settle();
+    expect(mockGroveBench.hasGitIdentity).not.toHaveBeenCalled();
+    expect(screen.getByText(/This project isn't a git repository, so its edits land in place/)).toBeInTheDocument();
+    store.setFolderProject('/repo/one', false);
+  });
+});
 });

@@ -24,6 +24,7 @@
   import SessionFinder from './components/SessionFinder.svelte';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
   import FirstSteps from './components/FirstSteps.svelte';
+  import FolderProjectDialog from './components/FolderProjectDialog.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
@@ -546,6 +547,7 @@
 {/if}
 
 <ErrorToast />
+<FolderProjectDialog />
 <MemoryToast />
 
 <BookmarksDrawer />

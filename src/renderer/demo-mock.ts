@@ -288,6 +288,11 @@ const api: Record<string, unknown> = {
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
+  // Adding a project picks a folder without git, so the demo shows the choice.
+  addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes', gitAvailable: true }),
+  initGitRepo: async () => ({ ok: true }),
+  repoKind: async () => 'git',
+  hasGitIdentity: async () => true,
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
   // Main reports a woken conversation 'running' straight away.

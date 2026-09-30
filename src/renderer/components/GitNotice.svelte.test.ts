@@ -30,7 +30,7 @@ describe('GitNotice', () => {
   it('explains a missing git without blocking the app', () => {
     store.prerequisites = { git: { available: false }, agents };
     render(GitNotice);
-    expect(screen.getByRole('status')).toHaveTextContent('Git was not found');
+    expect(screen.getByRole('status')).toHaveTextContent('Git was not found. Without it, projects are plain folders');
   });
 
   it('names the old version', () => {

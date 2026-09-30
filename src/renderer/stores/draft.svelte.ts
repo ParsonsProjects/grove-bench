@@ -45,6 +45,11 @@ export interface DraftModelOption {
 
 const newBranchStart = (): DraftStart => ({ kind: 'new', branchName: '', baseBranch: '' });
 
+/** Where a new draft in `repo` starts: a new branch, or the folder itself
+ *  for a project that isn't a git repository (the only place it can run). */
+const defaultStart = (repo: string): DraftStart =>
+  sessionStore.isFolderProject(repo) ? { kind: 'folder' } : newBranchStart();
+
 class DraftStore {
   draft = $state<Draft | null>(null);
   starting = $state(false);
@@ -83,7 +88,7 @@ class DraftStore {
       const agentId = opts.agentId || active?.agentType || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
-      this.draft = { repoPath: repo, agentId, model, controls: {}, start: newBranchStart(), text: '' };
+      this.draft = { repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo), text: '' };
       this.modeTouched = false;
       this.error = '';
       void this.prefillBaseBranch(repo);
@@ -119,7 +124,7 @@ class DraftStore {
    *  default branch. */
   resetToNewBranch(): void {
     if (!this.draft) return;
-    this.setStart(newBranchStart());
+    this.setStart(defaultStart(this.draft.repoPath));
     void this.prefillBaseBranch(this.draft.repoPath);
   }
 
@@ -187,6 +192,8 @@ class DraftStore {
   }
 
   private async prefillBaseBranch(repo: string): Promise<void> {
+    // A folder without git has no branches to start from.
+    if (sessionStore.isFolderProject(repo)) return;
     const base = await resolveBaseBranch(repo);
     const d = this.draft;
     if (d && d.repoPath === repo && d.start.kind === 'new' && !d.start.baseBranch) {
@@ -288,6 +295,7 @@ class DraftStore {
         agentType: result.agentType,
         createdAt: Date.now(),
         ...(direct ? { direct: true } : {}),
+        ...(sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
         ...(placeholderName ? { displayName: placeholderName } : {}),
       });
       // Main holds a prompt sent during setup until the agent is ready.

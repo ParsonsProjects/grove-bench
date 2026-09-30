@@ -1,5 +1,7 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { git, gitVersion } from './git.js';
+import { git, gitVersion, getGitIdentity, isGitRepo } from './git.js';
+import type { PickedProject, ProjectKind } from '../shared/types.js';
 
 /** A `git rev-parse` answer in `dir`, or null when git fails there. */
 async function revParse(dir: string, flag: string): Promise<string | null> {
@@ -11,12 +13,13 @@ async function revParse(dir: string, flag: string): Promise<string | null> {
 }
 
 /**
- * The project path for a folder the user picked. A folder inside a
+ * What a folder the user picked can be as a project. A folder inside a
  * repository becomes the repository's top-level folder, so `repo/src` adds
- * `repo`. Anything that can't be a project throws a message the renderer
- * shows; returning null there looked the same as cancelling.
+ * `repo`. A folder outside any repository comes back as `folder`, for the
+ * user to set git up there or use as it is. A pick git can't work with
+ * throws a message the renderer shows.
  */
-export async function projectPathFor(picked: string): Promise<string> {
+export async function inspectProjectFolder(picked: string): Promise<PickedProject> {
   let root: string | null = null;
   let refusal = '';
   try {
@@ -32,7 +35,7 @@ export async function projectPathFor(picked: string): Promise<string> {
     };
     // Keep the dialog's spelling when it is the root, so the same folder
     // picked twice doesn't become two projects.
-    return norm(root) === norm(picked) ? picked : path.resolve(root);
+    return { kind: 'git', path: norm(root) === norm(picked) ? picked : path.resolve(root) };
   }
 
   // Git refuses some real repositories, such as one on a drive owned by
@@ -45,12 +48,47 @@ export async function projectPathFor(picked: string): Promise<string> {
   if (await revParse(picked, '--is-inside-git-dir') === 'true') {
     // A bare repository has no work tree and was accepted before; a `.git`
     // folder (or a folder inside one) is the wrong pick.
-    if (await revParse(picked, '--is-bare-repository') === 'true') return picked;
+    if (await revParse(picked, '--is-bare-repository') === 'true') return { kind: 'git', path: picked };
     throw new Error(`${picked} is inside a .git folder. Pick the project folder that contains it.`);
   }
 
-  if (!(await gitVersion())) {
-    throw new Error('Git wasn\'t found, so a project can\'t be added. Install Git 2.17 or later, then try again.');
+  return { kind: 'folder', path: picked, gitAvailable: !!(await gitVersion()) };
+}
+
+/** Whether a project path is a git repository, a plain folder, or gone. */
+export async function projectKind(dir: string): Promise<ProjectKind> {
+  try {
+    if (!(await fs.stat(dir)).isDirectory()) return 'missing';
+  } catch {
+    return 'missing';
   }
-  throw new Error(`${picked} isn't in a git repository. Pick the folder that contains your project's .git folder, or run "git init" in it first.`);
+  return (await isGitRepo(dir)) ? 'git' : 'folder';
+}
+
+/**
+ * Turn a plain folder into a git repository: `git init`, then a first
+ * commit of what is there (files matched by a .gitignore are left out), so
+ * conversations can work on their own branch in a separate copy. The first
+ * commit needs a name and email; without them nothing is changed and the
+ * message says how to set them. Never throws.
+ */
+export async function initGitRepo(dir: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!(await gitVersion())) {
+    return { ok: false, error: 'Git wasn\'t found. Install Git 2.17 or later, then try again.' };
+  }
+  if (await isGitRepo(dir)) return { ok: true };
+  if (!(await getGitIdentity(dir))) {
+    return {
+      ok: false,
+      error: 'Git needs your name and email for the first commit. Run git config --global user.name "Your Name" and git config --global user.email "you@example.com" in a terminal, then try again.',
+    };
+  }
+  try {
+    await git(['init', '-q'], dir);
+    await git(['add', '-A'], dir);
+    await git(['commit', '-q', '--allow-empty', '-m', 'Initial commit'], dir);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.stderr || e?.message || e).trim().slice(0, 500) };
+  }
 }

@@ -242,4 +242,27 @@ describe('draftStore review fixes', () => {
     expect(draftStore.error).toContain('project was removed');
     expect(createSessionMock()).not.toHaveBeenCalled();
   });
+
+describe('draftStore in a folder project without git', () => {
+  beforeEach(() => store.setFolderProject('/repo/two', true));
+  afterEach(() => store.setFolderProject('/repo/two', false));
+
+  it('starts in the project folder itself', async () => {
+    draftStore.open('/repo/two');
+    await settle();
+    expect(draftStore.draft?.start).toEqual({ kind: 'folder' });
+    draftStore.resetToNewBranch();
+    expect(draftStore.draft?.start).toEqual({ kind: 'folder' });
+    expect(mockGroveBench.getDefaultBranch).not.toHaveBeenCalled();
+  });
+
+  it('creates a conversation in the folder and marks it as having no git', async () => {
+    createSessionMock().mockResolvedValue({ id: 'n1', branch: '', agentType: 'claude-code' });
+    draftStore.open('/repo/two');
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/two', branchName: '', direct: true }));
+    expect(store.sessions.find((s) => s.id === 'n1')).toMatchObject({ direct: true, noGit: true, status: 'running' });
+  });
+});
 });

@@ -10,6 +10,9 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Runs in a folder that isn't a git repository: no Changes, checkpoints
+   *  or branches. */
+  noGit?: boolean;
   /** Adapter id the session runs on (e.g. 'claude-code'). */
   agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
@@ -26,6 +29,11 @@ interface SessionEntry {
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>([]);
+  /** Projects that are plain folders, not git repositories. */
+  folderRepos = $state<string[]>([]);
+  /** A picked folder that isn't a git repository, waiting for the user to
+   *  set git up there or use it as it is (FolderProjectDialog). */
+  pendingFolder = $state<{ path: string; gitAvailable: boolean } | null>(null);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
@@ -145,14 +153,28 @@ class SessionStore {
     } catch { /* ignore */ }
   }
 
-  addRepo(path: string) {
+  /** Add a project. `folder` says whether it's a plain folder (no git);
+   *  left out, an existing project keeps what it was. */
+  addRepo(path: string, opts: { folder?: boolean } = {}) {
     if (!this.repos.includes(path)) {
       this.repos = [...this.repos, path];
     }
+    if (opts.folder !== undefined) this.setFolderProject(path, opts.folder);
   }
 
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
+    this.setFolderProject(path, false);
+  }
+
+  isFolderProject(path: string): boolean {
+    return this.folderRepos.includes(path);
+  }
+
+  setFolderProject(path: string, folder: boolean) {
+    const has = this.folderRepos.includes(path);
+    if (folder && !has) this.folderRepos = [...this.folderRepos, path];
+    if (!folder && has) this.folderRepos = this.folderRepos.filter((r) => r !== path);
   }
 
   canRemoveRepo(path: string): boolean {

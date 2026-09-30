@@ -80,7 +80,7 @@
       <p class="text-sm mb-6 text-foreground/80">Pick a conversation</p>
       <div class="flex flex-wrap justify-center gap-x-6 gap-y-5 max-w-4xl">
         {#each picks as s (s.id)}
-          {@const name = s.displayName || s.branch}
+          {@const name = s.displayName || s.branch || 'New conversation'}
           <button type="button" class="pick flex flex-col items-center gap-2 p-2 w-28" onclick={() => open(s.id)} title={name}>
             <span class="seat relative flex justify-center">
               <!-- The bench sits behind the agent's legs. -->

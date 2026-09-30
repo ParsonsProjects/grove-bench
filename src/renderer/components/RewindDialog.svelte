@@ -1,5 +1,6 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -16,6 +17,9 @@
 
   let rewindPoints = $derived(messageStore.getRewindPoints(sessionId));
   let target = $derived(messageStore.getRewindDialogTarget(sessionId));
+  /** A conversation in a folder without git has no checkpoints, so only the
+   *  conversation can be rewound; its files stay as they are. */
+  let noGit = $derived(!!store.sessions.find((s) => s.id === sessionId)?.noGit);
 
   // Opened from a message in the Activity thread: preselect it and load its
   // preview so the user only has to confirm. Runs once per open; a manual
@@ -40,6 +44,7 @@
   async function handleSelect(uuid: string) {
     selectedId = uuid;
     diffPreview = null;
+    if (noGit) return;
     loadingDiff = true;
     try {
       diffPreview = await window.groveBench.getCheckpointDiff(sessionId, uuid);
@@ -55,7 +60,7 @@
     rewinding = true;
     error = '';
     try {
-      await messageStore.executeRewind(sessionId, selectedId, { conversationOnly });
+      await messageStore.executeRewind(sessionId, selectedId, { conversationOnly: noGit || conversationOnly });
       messageStore.closeRewindDialog(sessionId);
       selectedId = null;
       diffPreview = null;
@@ -78,10 +83,15 @@
     <Dialog.Header>
       <Dialog.Title>Rewind to Checkpoint</Dialog.Title>
       <Dialog.Description>
-        Select a message to rewind to. Files on disk will be restored to their state at that point.
-        <span class="text-muted-foreground text-xs block mt-1">
-          Captures full working tree state including all file changes.
-        </span>
+        {#if noGit}
+          Select a message to rewind the conversation to. This project isn't a git repository, so files on disk stay as
+          they are: the agent's edits after that point are not undone.
+        {:else}
+          Select a message to rewind to. Files on disk will be restored to their state at that point.
+          <span class="text-muted-foreground text-xs block mt-1">
+            Captures full working tree state including all file changes.
+          </span>
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
 
@@ -123,12 +133,14 @@
       <div class="text-destructive text-sm mt-2">{error}</div>
     {/if}
 
-    <div class="flex items-center gap-2 mt-2">
-      <Checkbox bind:checked={conversationOnly} id="conversation-only" />
-      <label for="conversation-only" class="text-sm text-muted-foreground cursor-pointer select-none">
-        Conversation only (keep file changes on disk)
-      </label>
-    </div>
+    {#if !noGit}
+      <div class="flex items-center gap-2 mt-2">
+        <Checkbox bind:checked={conversationOnly} id="conversation-only" />
+        <label for="conversation-only" class="text-sm text-muted-foreground cursor-pointer select-none">
+          Conversation only (keep file changes on disk)
+        </label>
+      </div>
+    {/if}
 
     <Dialog.Footer>
       <Button variant="outline" onclick={() => handleOpenChange(false)}>

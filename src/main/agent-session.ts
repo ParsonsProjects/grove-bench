@@ -16,11 +16,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
-import { getGitIdentity } from './git.js';
+import { getGitIdentity, isGitRepo } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
 import { findRewindForkPoint } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
+import { noGitCheckpoints, type Checkpoints } from './no-git-checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import { killTree } from './process-tree.js';
 import { previewManager } from './preview.js';
@@ -217,7 +218,10 @@ interface ManagedSession {
   /** Resolver for queryReady — called in runQuery after queryHandle is set. */
   resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
-  checkpoints: CheckpointManager;
+  checkpoints: Checkpoints;
+  /** The conversation's folder is a git repository. Without git there are no
+   *  checkpoints and no commits, so neither is attempted. */
+  gitBacked: boolean;
   /** Status to go back to when a sleeping session wakes: 'running', or
    *  'starting' when its query had not reported system_init yet. */
   statusBeforeSleep: SessionStatus | null;
@@ -515,6 +519,9 @@ class AgentSessionManager {
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
 
+    // A folder project isn't a git repository: no checkpoints, no commits.
+    const gitBacked = await isGitRepo(cwd);
+
     const session: ManagedSession = {
       id,
       branch,
@@ -559,7 +566,8 @@ class AgentSessionManager {
       restartRequested: false,
       queryReady: null,
       resolveQueryReady: null,
-      checkpoints: new CheckpointManager(),
+      checkpoints: gitBacked ? new CheckpointManager() : noGitCheckpoints,
+      gitBacked,
       statusBeforeSleep: null,
       sleepSettled: null,
       turnHandle: null,
@@ -665,7 +673,7 @@ class AgentSessionManager {
     // the vars stay unset and git's own rules apply (usually it refuses to
     // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
-    try {
+    if (session.gitBacked) try {
       const identity = await getGitIdentity(session.worktreePath);
       if (identity) {
         gitIdentityEnv = {
@@ -856,7 +864,7 @@ class AgentSessionManager {
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
-    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch} · ${session.permissionMode}` });
+    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
 
     // Process event stream from the adapter
     try {
@@ -1815,7 +1823,7 @@ class AgentSessionManager {
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
       if (worktree) {
         memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
-        await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+        if (!worktree.noGit) await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }

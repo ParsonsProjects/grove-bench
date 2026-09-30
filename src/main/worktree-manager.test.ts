@@ -550,6 +550,27 @@ describe('registerDirect (direct + attached sessions)', () => {
     expect(savedManifest).not.toHaveProperty(info.id);
   });
 
+  it('records a conversation in a folder without git, and keeps that after restart', async () => {
+    const info = await manager.registerDirect('/notes', '', '/notes', { noGit: true });
+    expect(info.noGit).toBe(true);
+    expect(savedManifest[info.id]).toMatchObject({ repoPath: '/notes', branch: '', direct: true, noGit: true });
+
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    const restarted = new WorktreeManager();
+    expect((await restarted.getWorktreeOrManifest(info.id))?.noGit).toBe(true);
+  });
+
+  it('lists a folder project\'s conversations even though git fails there', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-folder': { repoPath: '/notes', branch: '', createdAt: 1000, direct: true, noGit: true },
+    }));
+    mockGit.mockRejectedValue(new Error('fatal: not a git repository'));
+
+    const listed = await manager.list('/notes');
+
+    expect(listed).toEqual([expect.objectContaining({ id: 'wt-folder', path: '/notes', direct: true, noGit: true })]);
+  });
+
   it('reconstructs the shared worktree path from the manifest after restart', async () => {
     const wtPath = '/worktrees/abc/wt-src';
     mockFs.readFile.mockResolvedValue(JSON.stringify({
@@ -1063,5 +1084,29 @@ describe('remove: default branch guard', () => {
     await manager.remove('wt-a', true);
 
     expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
+  });
+});
+
+describe('sweepStaleWorktrees: direct entries', () => {
+  it('keeps a folder conversation while its folder exists, and drops git ones whose repo is gone', async () => {
+    const { isGitRepo } = await import('./git.js');
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue([]);
+    mockFs.stat.mockImplementation(async (p: string) => {
+      if (p === '/notes') return { isDirectory: () => true };
+      throw new Error('ENOENT');
+    });
+    savedManifest = {
+      'wt-folder': { repoPath: '/notes', branch: '', createdAt: 1, direct: true, noGit: true },
+      'wt-gone-folder': { repoPath: '/deleted', branch: '', createdAt: 1, direct: true, noGit: true },
+      'wt-git-gone': { repoPath: '/old-repo', branch: 'main', createdAt: 1, direct: true },
+    };
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(Object.keys(savedManifest)).toEqual(['wt-folder']);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
   });
 });

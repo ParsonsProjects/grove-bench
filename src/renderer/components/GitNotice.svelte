@@ -16,9 +16,10 @@
     <span class="text-yellow-500 shrink-0">!</span>
     <span class="flex-1 min-w-0 text-foreground/80">
       {#if git.available}
-        Git is too old ({git.version}). Projects and branches need Git 2.17 or later.
+        Git is too old ({git.version}). Separate copies, branches and rewinding need Git 2.17 or later.
       {:else}
-        Git was not found. Projects and branches need Git 2.17 or later.
+        Git was not found. Without it, projects are plain folders: the agent edits your files in place and its edits
+        can't be rewound. Git 2.17 or later is recommended.
       {/if}
     </span>
     <button

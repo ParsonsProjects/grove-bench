@@ -70,6 +70,7 @@ vi.mock('./memory-autosave.js', () => ({
 
 vi.mock('./git.js', () => ({
   getGitIdentity: vi.fn().mockResolvedValue({ name: 'Test User', email: 'test@example.com' }),
+  isGitRepo: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('./checkpoints.js', () => {
@@ -263,7 +264,8 @@ function makeMockWindow() {
 // Import the module under test AFTER mocks are set up
 const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
-const { getGitIdentity } = await import('./git.js');
+const { getGitIdentity, isGitRepo } = await import('./git.js');
+const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
 const { logger } = await import('./logger.js');
 
 beforeEach(() => {
@@ -325,6 +327,31 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager in a folder without git', () => {
+  afterEach(() => {
+    vi.mocked(isGitRepo).mockReset().mockResolvedValue(true);
+  });
+
+  it('skips checkpoints and the identity check, and says files can\'t be restored', async () => {
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    vi.mocked(getGitIdentity).mockClear();
+    const before = CheckpointManager.instances.length;
+
+    await sessionManager.createSession({
+      id: 'test-folder', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+
+    expect(CheckpointManager.instances.length).toBe(before);
+    expect(getGitIdentity).not.toHaveBeenCalled();
+    expect(sessionManager.getEventHistory('test-folder').some((e) => e.type === 'git_identity_missing')).toBe(false);
+    await expect(sessionManager.rewindFiles('test-folder', 'u1', { filesOnly: true }))
+      .rejects.toThrow(/isn't a git repository/);
+
+    await sessionManager.destroySession('test-folder');
   });
 });
 

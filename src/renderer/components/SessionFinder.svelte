@@ -46,7 +46,7 @@
         '';
       return {
         id: s.id,
-        label: s.displayName || s.branch,
+        label: s.displayName || s.branch || 'New conversation',
         branch: s.branch,
         repoName: store.repoDisplayName(s.repoPath),
         repoPath: s.repoPath,
@@ -124,7 +124,7 @@
   function sessionLabelFor(sessionId: string): { repoName: string; label: string } {
     const s = store.sessions.find((x) => x.id === sessionId);
     if (!s) return { repoName: '?', label: sessionId };
-    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch };
+    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch || 'New conversation' };
   }
 
   function selectSession(entry: SessionEntry) {

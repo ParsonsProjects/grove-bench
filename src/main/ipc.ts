@@ -12,8 +12,8 @@ import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
-import { projectPathFor } from './project-path.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, isGitRepo } from './git.js';
+import { inspectProjectFolder, projectKind, initGitRepo } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -168,23 +168,43 @@ export function registerHandlers() {
 
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
-      title: 'Select a project folder (git repository)',
+      title: 'Select a project folder',
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
-    const repoPath = await projectPathFor(result.filePaths[0]);
+    // A folder outside any repository comes back as 'folder'; the renderer
+    // asks whether to set git up there or use it as it is.
+    const picked = await inspectProjectFolder(result.filePaths[0]);
 
-    // Clean up any orphan worktrees from previous crashes
-    const orphans = await worktreeManager.cleanupOrphans(repoPath);
-    if (orphans > 0) {
-      logger.info(`Cleaned up ${orphans} orphan worktree(s) in ${repoPath}`);
+    if (picked.kind === 'git') {
+      // Clean up any orphan worktrees from previous crashes
+      const orphans = await worktreeManager.cleanupOrphans(picked.path);
+      if (orphans > 0) {
+        logger.info(`Cleaned up ${orphans} orphan worktree(s) in ${picked.path}`);
+      }
     }
 
-    return repoPath;
+    return picked;
   });
 
   ipcMain.handle(IPC.REPO_VALIDATE, async (_event, repoPath: string) => {
     return worktreeManager.validateRepo(repoPath);
+  });
+
+  ipcMain.handle(IPC.REPO_KIND, async (_event, repoPath: string) => {
+    if (typeof repoPath !== 'string' || !repoPath) return 'missing';
+    return projectKind(repoPath);
+  });
+
+  ipcMain.handle(IPC.REPO_INIT_GIT, async (_event, dir: string) => {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, error: 'Not a folder path.' };
+    logger.info(`Setting up git in ${dir}`);
+    return initGitRepo(dir);
+  });
+
+  ipcMain.handle(IPC.GIT_HAS_IDENTITY, async (_event, dir: string) => {
+    if (typeof dir !== 'string' || !dir) return false;
+    return !!(await getGitIdentity(dir));
   });
 
   ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
@@ -193,9 +213,11 @@ export function registerHandlers() {
       throw new Error('Cannot remove a project while it has active conversations');
     }
 
-    const orphans = await worktreeManager.cleanupOrphans(repoPath);
-    if (orphans > 0) {
-      logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
+    if (await projectKind(repoPath) === 'git') {
+      const orphans = await worktreeManager.cleanupOrphans(repoPath);
+      if (orphans > 0) {
+        logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
+      }
     }
   });
 
@@ -208,6 +230,13 @@ export function registerHandlers() {
     const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
     const controls = sanitizeControls(opts.controls);
 
+    // A folder project isn't a git repository: its conversations can only
+    // run in the folder itself.
+    const noGit = !opts.attachToSessionId && !(await isGitRepo(opts.repoPath));
+    if (noGit && !opts.direct) {
+      throw new Error('This project isn\'t a git repository, so a conversation can only work in the project folder itself.');
+    }
+
     if (opts.direct || opts.attachToSessionId) {
       // Direct mode — run in-place on an existing checkout, no worktree created.
       // When attachToSessionId is set, the new session shares that session's
@@ -219,12 +248,14 @@ export function registerHandlers() {
         if (!src) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
         branch = src.branch;
         checkoutPath = src.path;
+      } else if (noGit) {
+        branch = '';
       } else {
         branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
       }
-      logger.info(`Creating direct session: branch=${branch}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
+      logger.info(`Creating direct session: branch=${branch || '(no git)'}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
 
-      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath);
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath, { noGit });
 
       const session = await sessionManager.createSession({
         id: entry.id,
@@ -1130,7 +1161,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.GIT_SYNC_STATUS, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return { upstream: null, ahead: 0, behind: 0 };
+    if (!worktree || worktree.noGit) return { upstream: null, ahead: 0, behind: 0 };
     try {
       return await syncStatus(worktree.path);
     } catch (e) {
@@ -1238,7 +1269,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return { entries: [] };
+    if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
 
     try {
@@ -1308,7 +1339,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return [];
+    if (!worktree || worktree.noGit) return [];
     // Own comments are excluded from the feedback signature so the agent
     // replying on the PR doesn't trigger (and then auto-answer) a "new
     // comments" event about itself.

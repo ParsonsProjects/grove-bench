@@ -432,6 +432,17 @@ describe('Sidebar delete conversation', () => {
     expect(await screen.findByText(/1 commit on fix-parser isn't on main yet/)).toBeInTheDocument();
   });
 
+  it('says a conversation in a folder without git leaves the files alone', async () => {
+    store.sessions = [{ id: 'n1', branch: '', repoPath: '/repo-a', status: 'stopped', direct: true, noGit: true }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('It worked in the project folder itself, so no files are deleted.');
+    expect(screen.queryByText('Also delete the branch')).toBeNull();
+  });
+
   it('deletes after confirming', async () => {
     const destroySession = vi.fn().mockResolvedValue(undefined);
     (mockGroveBench as unknown as { destroySession: typeof destroySession }).destroySession = destroySession;
@@ -455,4 +466,15 @@ describe('Sidebar delete conversation', () => {
     await screen.findByRole('button', { name: 'Delete' });
     expect(screen.queryByText(/uncommitted changes that will be lost/)).toBeNull();
   });
+
+describe('Sidebar rows for folder projects without git', () => {
+  it('names a conversation with no branch and no name yet "New conversation"', async () => {
+    store.sessions = [
+      { id: 'n1', branch: '', repoPath: '/repo-a', status: 'running', direct: true, noGit: true, displayName: null },
+    ] as any;
+    render(Sidebar);
+    expect(await screen.findByText('New conversation')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toBeInTheDocument();
+  });
+});
 });

@@ -11,6 +11,17 @@ export interface WorktreeConfig {
   adapterType?: string;
 }
 
+/** A folder the user picked to add as a project. A folder outside any git
+ *  repository comes back as `folder`: the user then chooses to set git up
+ *  there or to use it as a plain folder. */
+export type PickedProject =
+  | { kind: 'git'; path: string }
+  | { kind: 'folder'; path: string; gitAvailable: boolean };
+
+/** What a project path is now: a git repository, a plain folder (projects
+ *  without git), or gone. */
+export type ProjectKind = 'git' | 'folder' | 'missing';
+
 export interface WorktreeInfo {
   id: string;
   path: string;
@@ -21,6 +32,9 @@ export interface WorktreeInfo {
   lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
+  /** The conversation runs in a folder that isn't a git repository (always
+   *  direct). Checkpoints, branches and the Changes tab don't apply. */
+  noGit?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
   /** Epoch ms when the user marked the session completed; null/absent when
@@ -888,7 +902,14 @@ export type PreviewKeyForward =
 
 export interface GroveBenchAPI {
   // Repo operations
-  addRepo(): Promise<string | null>;
+  /** Pick a folder to add as a project. Null when cancelled. */
+  addRepo(): Promise<PickedProject | null>;
+  /** Run `git init` and a first commit in a folder, so it can be a git project. */
+  initGitRepo(path: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Whether a project path is a git repository, a plain folder, or gone. */
+  repoKind(path: string): Promise<ProjectKind>;
+  /** Whether git has a user.name and user.email for commits in this folder. */
+  hasGitIdentity(path: string): Promise<boolean>;
   removeRepo(repoPath: string): Promise<void>;
   validateRepo(path: string): Promise<boolean>;
 
@@ -1508,6 +1529,9 @@ export const IPC = {
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
+  REPO_INIT_GIT: 'repo:initGit',
+  REPO_KIND: 'repo:kind',
+  GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
