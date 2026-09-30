@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { memoryStore } from './memory.svelte.js';
-import type { MemoryEntry } from '../../shared/types.js';
+import type { MemoryCompactionStatus, MemoryEntry } from '../../shared/types.js';
 
 const DAY = 86_400_000;
 
@@ -175,8 +175,8 @@ describe('compact result and undo', () => {
 
   describe('after switching project mid-compaction', () => {
     function startOnA() {
-      let finish!: (status: unknown) => void;
-      mockGroveBench.memoryCompact.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+      let finish!: (status: MemoryCompactionStatus) => void;
+      mockGroveBench.memoryCompact.mockReturnValueOnce(new Promise<MemoryCompactionStatus>((r) => { finish = r; }));
       memoryStore.activeRepo = '/repo-a';
       const running = memoryStore.compact();
       memoryStore.activeRepo = '/repo-b'; // the panel now shows another project
@@ -209,7 +209,7 @@ describe('compact result and undo', () => {
       expect(mockGroveBench.memoryList).not.toHaveBeenCalled();
       expect(memoryStore.files.map((f) => f.relativePath)).toEqual(['repo/b.md']);
 
-      mockGroveBench.memoryRestoreBackup.mockResolvedValueOnce({ restored: true });
+      mockGroveBench.memoryRestoreBackup.mockResolvedValueOnce({ restored: true, filesChanged: ['repo/a.md'] });
       await memoryStore.undoCompaction();
       expect(mockGroveBench.memoryRestoreBackup).toHaveBeenCalledWith('/repo-a', 'bk-a');
       expect(mockGroveBench.memoryList).not.toHaveBeenCalled();
