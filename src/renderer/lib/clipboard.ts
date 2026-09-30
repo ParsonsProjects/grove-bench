@@ -1,3 +1,13 @@
+/** Copy text for a rendered copy button's data-code attribute, encoded so any
+ *  characters survive the HTML attribute and sanitizing. */
+export function encodeCopyText(text: string): string {
+  return btoa(encodeURIComponent(text));
+}
+
+export function decodeCopyText(encoded: string): string {
+  return decodeURIComponent(atob(encoded));
+}
+
 /**
  * Put `plain` and `html` on the clipboard as one item: rich targets (Excel,
  * Word, Sheets, Outlook) paste the HTML, plain-text targets paste `plain`.

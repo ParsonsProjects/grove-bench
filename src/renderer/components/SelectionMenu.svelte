@@ -1,7 +1,8 @@
 <script lang="ts">
   import { messageStore } from '../stores/messages.svelte.js';
-  import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { selectionIn } from '$lib/activity-menu.js';
+  import { bookmarkSelection } from '$lib/bookmark-selection.js';
 
   // A floating "Bookmark / To prompt" menu shown when the user selects text
   // inside `container`. Works for any scroll container — the activity thread
@@ -19,11 +20,6 @@
   let selMenuEl = $state<HTMLDivElement>();
   let pendingSelection: { text: string; msgId: string | null } | null = null;
 
-  function elementOf(node: Node | null): Element | null {
-    if (!node) return null;
-    return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  }
-
   function clear() {
     selAnchor = null;
     pendingSelection = null;
@@ -31,17 +27,12 @@
 
   function handleSelectionUp() {
     if (store.activeSessionId !== sessionId) return;
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { clear(); return; }
-    const text = sel.toString().trim();
-    if (!text) { clear(); return; }
-    const range = sel.getRangeAt(0);
-    if (!container?.contains(range.commonAncestorContainer)) { clear(); return; }
-    // Anchor to the message the selection starts in, when there is one (handles
-    // multi-message spans). The diff view has no [data-msg-id] → text-only.
-    const msgId = elementOf(range.startContainer)?.closest('[data-msg-id]')?.getAttribute('data-msg-id') ?? null;
-    pendingSelection = { text, msgId };
-    const rect = range.getBoundingClientRect();
+    // Anchored to the message the selection starts in, when there is one
+    // (handles multi-message spans). The diff view has no [data-msg-id] → text-only.
+    const sel = container ? selectionIn(container) : null;
+    if (!sel) { clear(); return; }
+    pendingSelection = { text: sel.text, msgId: sel.msgId };
+    const rect = sel.range.getBoundingClientRect();
     selAnchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
     // Rough initial position; the clamp effect refines it once measured.
     selMenuPos = { left: rect.left, top: Math.max(6, rect.top - 38) };
@@ -69,7 +60,9 @@
   $effect(() => {
     const el = container;
     if (!el) return;
-    const onUp = () => handleSelectionUp();
+    // Only a left-button release: a right-click opens the context menu, which
+    // has the same actions, so this popup stays out of its way.
+    const onUp = (e: MouseEvent) => { if (e.button === 0) handleSelectionUp(); };
     const onDown = () => { if (selAnchor) clear(); };
     const onScroll = () => { if (selAnchor) clear(); };
     el.addEventListener('mouseup', onUp);
@@ -89,26 +82,7 @@
   async function addBookmark() {
     if (!pendingSelection) return;
     const { text, msgId } = pendingSelection;
-    let messageUuid: string | null = null;
-    let eventIndex: number | null = null;
-    if (msgId) {
-      const msg = messageStore.getMessages(sessionId).find((m) => m.id === msgId);
-      const uuid = (msg && 'uuid' in msg ? (msg as { uuid?: string }).uuid : '') || '';
-      messageUuid = uuid || null;
-      eventIndex = messageStore.getEventIndexForMessageId(sessionId, msgId);
-      if (eventIndex == null && uuid) {
-        eventIndex = await window.groveBench.findEventIndexByUuid(sessionId, uuid);
-      }
-    }
-    const session = store.sessions.find((s) => s.id === sessionId);
-    await bookmarkStore.add({
-      sessionId,
-      repoPath: session?.repoPath ?? '',
-      sessionLabel: session?.displayName || session?.branch || sessionId,
-      messageUuid,
-      eventIndex,
-      selectedText: text,
-    });
+    await bookmarkSelection(sessionId, text, msgId);
     clear();
     window.getSelection()?.removeAllRanges();
   }

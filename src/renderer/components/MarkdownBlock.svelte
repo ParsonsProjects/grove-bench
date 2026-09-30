@@ -3,7 +3,7 @@
   import DOMPurify from 'dompurify';
   import hljs from '../lib/hljs.js';
   import { openLink } from '$lib/preview-links.js';
-  import { writeRichText } from '$lib/clipboard.js';
+  import { writeRichText, encodeCopyText, decodeCopyText } from '$lib/clipboard.js';
 
   // Allow data-code attribute through DOMPurify for copy button support
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
@@ -23,7 +23,7 @@
   function codeRenderer(highlight: boolean) {
     return {
       code({ text, lang }: { text: string; lang?: string }) {
-        const encoded = btoa(encodeURIComponent(text));
+        const encoded = encodeCopyText(text);
         const copyBtn = `<button class="code-copy-btn" data-code="${encoded}" title="Copy">${COPY_SVG}</button>`;
 
         if (highlight && lang && hljs.getLanguage(lang)) {
@@ -39,7 +39,7 @@
    *  Markdown source. The click handler adds the rendered table as HTML. */
   const tableRenderer = {
     table(this: Renderer, token: Tokens.Table) {
-      const encoded = btoa(encodeURIComponent(token.raw.trim()));
+      const encoded = encodeCopyText(token.raw.trim());
       const copyBtn = `<button class="table-copy-btn" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
       return `<div class="table-wrapper">${Renderer.prototype.table.call(this, token)}${copyBtn}</div>`;
     },
@@ -99,7 +99,7 @@
         const encoded = btn.getAttribute('data-code');
         if (!encoded) return;
         try {
-          const text = decodeURIComponent(atob(encoded));
+          const text = decodeCopyText(encoded);
           // Tables also go on the clipboard as HTML so spreadsheets and
           // documents paste real cells; plain-text targets get the Markdown.
           const table = btn.classList.contains('table-copy-btn')
