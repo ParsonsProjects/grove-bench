@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import type { ActivityViewMode } from '../../shared/types.js';
+import { parseMcpToolName } from './tool-names.js';
 
 /** See ActivityViewMode in shared/types.ts for what each mode shows. */
 export type MessageViewMode = ActivityViewMode;
@@ -30,8 +31,20 @@ export const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
   focus: 'Showing agent responses, questions & your answers only — click for Detailed',
 };
 
-/** Tool calls shown in summary mode (everything else is hidden when details are off). */
-const SUMMARY_VISIBLE_TOOLS = new Set(['Edit', 'Write', 'Bash']);
+/** Built-in tools shown in summary mode: the ones that change files or run commands. */
+const SUMMARY_VISIBLE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash']);
+/** Grove's own MCP servers (the Preview browser, project memory): local, and
+ *  too frequent for Summary. */
+const GROVE_MCP_SERVERS = new Set(['grove-preview', 'grove-memory']);
+
+/** Whether summary mode shows a tool call. Other MCP tools stay in view:
+ *  they can act outside the project, such as creating a ticket or sending a
+ *  message. */
+function shownInSummary(toolName: string): boolean {
+  if (SUMMARY_VISIBLE_TOOLS.has(toolName)) return true;
+  const mcp = parseMcpToolName(toolName);
+  return !!mcp && !GROVE_MCP_SERVERS.has(mcp.server);
+}
 
 /**
  * Whether a message is rendered in the Activity panel for the given view mode.
@@ -49,7 +62,7 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
   if (msg.kind === 'thinking') return false;
 
   if (mode === 'summary') {
-    if (msg.kind === 'tool_call') return SUMMARY_VISIBLE_TOOLS.has(msg.toolName);
+    if (msg.kind === 'tool_call') return shownInSummary(msg.toolName);
     return true;
   }
 
