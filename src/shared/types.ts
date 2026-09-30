@@ -11,6 +11,16 @@ export interface WorktreeConfig {
   adapterType?: string;
 }
 
+/** A folder the user picked to add as a project. A folder outside any git
+ *  repository comes back as `folder` and is added as a plain folder. */
+export type PickedProject =
+  | { kind: 'git'; path: string }
+  | { kind: 'folder'; path: string };
+
+/** What a project path is now: a git repository, a plain folder (projects
+ *  without git), or gone. */
+export type ProjectKind = 'git' | 'folder' | 'missing';
+
 export interface WorktreeInfo {
   id: string;
   path: string;
@@ -21,6 +31,9 @@ export interface WorktreeInfo {
   lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
+  /** The conversation runs in a folder that isn't a git repository (always
+   *  direct). Checkpoints, branches and the Changes tab don't apply. */
+  noGit?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
   /** Epoch ms when the user marked the session completed; null/absent when
@@ -108,10 +121,21 @@ export interface AgentPrerequisiteStatus {
   apiKey?: {
     label: string;
     helpUrl: string;
+    /** How using a key is paid for, shown under the field. */
+    billingNote?: string;
     /** A key is saved. While saved it is used instead of any CLI sign-in. */
     saved: boolean;
     /** The OS can encrypt a key. Without it no key can be saved. */
     canStore: boolean;
+  };
+  /** Present when the user can sign in with the provider's CLI instead of a
+   *  key. `available` above says whether that CLI is installed. */
+  cliSignIn?: {
+    accountLabel: string;
+    accountDetail?: string;
+    cliName: string;
+    command: string;
+    setupUrl: string;
   };
 }
 
@@ -139,6 +163,10 @@ export interface PrerequisiteStatus {
  * so the renderer doesn't need to know provider-specific tool names.
  */
 export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
+
+/** How long a permission request waits for an answer before it is denied,
+ *  so a query can't hang forever on a prompt nobody sees. */
+export const PERMISSION_TIMEOUT_MINUTES = 30;
 
 // ─── Agent Events (renderer-side, serializable) ───
 
@@ -203,6 +231,9 @@ export type AgentEvent =
       /** The user's typed reply for a question (AskUserQuestion) or deny
        *  reason, so replayed history can still show what was answered. */
       message?: string;
+      /** Set when nobody answered: the request waited
+       *  PERMISSION_TIMEOUT_MINUTES and was denied. */
+      reason?: 'timeout';
     }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
@@ -870,12 +901,21 @@ export type PreviewKeyForward =
 
 export interface GroveBenchAPI {
   // Repo operations
-  addRepo(): Promise<string | null>;
+  /** Pick a folder to add as a project. Null when cancelled. */
+  addRepo(): Promise<PickedProject | null>;
+  /** Whether a project path is a git repository, a plain folder, or gone. */
+  repoKind(path: string): Promise<ProjectKind>;
+  /** Keep a project in the remembered list (one found some other way than
+   *  the folder picker, such as the old localStorage list). */
+  rememberRepo(path: string): Promise<void>;
+  /** Whether git has a user.name and user.email for commits in this folder. */
+  hasGitIdentity(path: string): Promise<boolean>;
   removeRepo(repoPath: string): Promise<void>;
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
-  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
+  /** `noGit` when the conversation runs in a folder without git. */
+  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string; noGit?: boolean }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   /** Stop the current turn; the agent process stays up for the next message. */
   stopSession(id: string): Promise<void>;
@@ -1490,6 +1530,9 @@ export const IPC = {
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
+  REPO_KIND: 'repo:kind',
+  REPO_REMEMBER: 'repo:remember',
+  GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',

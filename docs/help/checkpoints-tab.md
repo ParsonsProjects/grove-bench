@@ -2,6 +2,8 @@
 
 The Checkpoints tab (`Alt+3`) lets you track how your files changed turn by turn and rewind to a previous point in the conversation. A checkpoint is a snapshot of the worktree taken each time you send a message, before the agent acts on it. You can also start a rewind straight from a message in the Activity tab: hover it and click the rewind icon.
 
+Checkpoints are git commits kept out of your branches, so a conversation that runs without git has none: the tab only says it needs git. Rewinding from a message in the Activity tab still resets the conversation, but files stay as they are.
+
 ## Checkpoint List
 
 The left panel shows a numbered list of checkpoints. Each entry includes a brief description of what the agent was about to do at that point, along with `+added`/`−deleted` line counts showing how much that turn changed. Click a checkpoint to preview it.

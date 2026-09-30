@@ -13,6 +13,11 @@
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
   import RewindDialog from './RewindDialog.svelte';
+  import GitNotice from './GitNotice.svelte';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { sessionSpriteState } from '$lib/session-sprite-state.js';
+  import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -29,6 +34,10 @@
   let previewLoading = $derived(!!previewStore.getUser(sessionId)?.loading || !!previewStore.getAgent(sessionId)?.loading);
   let previewUnseen = $derived(previewStore.hasUnseenAgentActivity(sessionId));
   let previewVisible = $derived(activeTab === 'preview' && store.activeSessionId === sessionId);
+  /** A conversation in a folder without git: nothing to diff, commit or
+   *  checkpoint, so those tabs say why instead of loading. */
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+  let noGit = $derived(!!session?.noGit);
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
@@ -51,6 +60,7 @@
   function switchTab(tab: WorkspaceTab) {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
+    if (noGit) return;
     if (tab === 'changes') {
       gitStatusStore.refresh(sessionId);
     }
@@ -163,8 +173,8 @@
       messageStore.setHistoryLoaded(sessionId, true);
     }
 
-    // Single git status refresh after replay
-    gitStatusStore.refresh(sessionId);
+    // Single git status refresh after replay (none without git)
+    if (!noGit) gitStatusStore.refresh(sessionId);
   });
 
   onDestroy(() => {
@@ -172,6 +182,27 @@
     messageStore.unsubscribe(sessionId);
   });
 </script>
+
+{#snippet noGitNote(tab: string, why: string)}
+  <div class="flex-1 flex items-center justify-center p-6">
+    {#if session && settingsStore.current.groveCharacters}
+      <!-- The conversation's agent on its bench, as in the sidebar: typing
+           while it edits your files in place, sitting when it's idle. -->
+      <GroveEmptyState
+        variant="agent"
+        agent={{ seed: sessionId, state: sessionSpriteState(session), projectColor: sessionRepoColor(sessionId) }}
+      >
+        <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
+      </GroveEmptyState>
+    {:else}
+      <div class="max-w-md text-center">
+        <p class="text-sm text-foreground">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <div class="flex flex-col h-full bg-background">
   <!-- Tab bar -->
@@ -257,10 +288,19 @@
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
-    <ChangesReviewPanel {sessionId} />
+    <GitNotice />
+    {#if noGit}
+      {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
+    {:else}
+      <ChangesReviewPanel {sessionId} />
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
-    <CheckpointsPanel {sessionId} />
+    {#if noGit}
+      {@render noGitNote('Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in Activity; files stay as they are.')}
+    {:else}
+      <CheckpointsPanel {sessionId} />
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     {#if terminalMounted}

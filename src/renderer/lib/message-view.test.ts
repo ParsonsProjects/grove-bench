@@ -68,12 +68,19 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible({ kind: 'thinking', id: '1', thinking: 'x' }, 'focus')).toBe(false);
   });
 
-  it('in summary mode only shows Edit/Write/Bash tool calls', () => {
+  it('in summary mode shows edits and commands, and hides reads and searches', () => {
     expect(isMessageVisible(tool({ id: '1', toolName: 'Edit' }), 'summary')).toBe(true);
     expect(isMessageVisible(tool({ id: '2', toolName: 'Write' }), 'summary')).toBe(true);
     expect(isMessageVisible(tool({ id: '3', toolName: 'Bash' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '6', toolName: 'NotebookEdit' }), 'summary')).toBe(true);
     expect(isMessageVisible(tool({ id: '4', toolName: 'Read' }), 'summary')).toBe(false);
     expect(isMessageVisible(tool({ id: '5', toolName: 'Grep' }), 'summary')).toBe(false);
+  });
+
+  it('in summary mode shows MCP tools, which can act outside the project, but not Grove\'s own', () => {
+    expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__linear__create_issue' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'mcp__grove-preview__navigate' }), 'summary')).toBe(false);
+    expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-memory__save_memory' }), 'summary')).toBe(false);
   });
 
   it('shows user/text/system messages in summary mode', () => {

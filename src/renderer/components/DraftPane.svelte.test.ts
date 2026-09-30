@@ -69,6 +69,19 @@ describe('DraftPane', () => {
     expect(screen.getByText(/new branch from main, in a separate copy/)).toBeInTheDocument();
   });
 
+  it('says in words which mode the conversation will start in', async () => {
+    mockGroveBench.getAdapterControls.mockResolvedValue([
+      { id: 'permissionMode', label: 'Mode', default: 'default', options: [
+        { value: 'default', label: 'Ask', description: 'Check with you before each edit or command' },
+      ] },
+    ]);
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    await settle();
+    render(DraftPane);
+    expect(await screen.findByText(/Check with you before each edit or command\./)).toHaveTextContent('Mode: Ask.');
+  });
+
   it('starts on Enter and sends the message', async () => {
     render(DraftPane);
     const box = screen.getByLabelText('First message');
@@ -121,6 +134,48 @@ describe('DraftPane credentials', () => {
   });
 });
 
+describe('DraftPane sign-in choices', () => {
+  const cliSignIn = {
+    accountLabel: 'Claude plan',
+    accountDetail: 'Pro, Max, Team or Enterprise',
+    cliName: 'Claude Code',
+    command: 'claude',
+    setupUrl: 'https://example.com/setup',
+  };
+  function withCli(available: boolean): PrerequisiteStatus {
+    const s = status(false);
+    s.agents['claude-code'] = {
+      ...s.agents['claude-code'],
+      available,
+      cliSignIn,
+      apiKey: { ...s.agents['claude-code'].apiKey!, billingNote: 'Billed per use, separately from any plan.' },
+    };
+    return s;
+  }
+
+  it('offers the plan sign-in first, then an API key with how it is billed', async () => {
+    store.prerequisites = withCli(true);
+    mockGroveBench.checkPrerequisites.mockResolvedValue(withCli(true));
+    render(DraftPane);
+    const plan = await screen.findByRole('region', { name: 'Sign in with Claude Code' });
+    expect(plan).toHaveTextContent('Use your Claude plan (Pro, Max, Team or Enterprise)');
+    expect(plan).toHaveTextContent('Run claude in a terminal and sign in when it asks');
+    expect(screen.queryByRole('button', { name: 'How to install Claude Code' })).toBeNull();
+    const key = screen.getByRole('region', { name: 'Use an API key' });
+    expect(key).toHaveTextContent('Or use an API key');
+    expect(key).toHaveTextContent('Billed per use, separately from any plan. Stored encrypted');
+  });
+
+  it('links to the install guide when the CLI is not installed', async () => {
+    store.prerequisites = withCli(false);
+    mockGroveBench.checkPrerequisites.mockResolvedValue(withCli(false));
+    render(DraftPane);
+    const install = await screen.findByRole('button', { name: 'How to install Claude Code' });
+    await fireEvent.click(install);
+    expect(mockGroveBench.openExternal).toHaveBeenCalledWith('https://example.com/setup');
+  });
+});
+
 describe('DraftPane with no agent', () => {
   it('says so instead of waiting forever, and can try again', async () => {
     agentsStore.list = [];
@@ -137,4 +192,37 @@ describe('DraftPane with no agent', () => {
     await waitFor(() => expect(draftStore.draft?.agentId).toBe('claude-code'));
     expect(await screen.findByLabelText('First message')).toBeInTheDocument();
   });
+
+describe('DraftPane git identity heads-up', () => {
+  it('warns before the first message when git has no name and email for the project', async () => {
+    mockGroveBench.hasGitIdentity.mockResolvedValue(false);
+    render(DraftPane);
+    expect(await screen.findByText(/Git doesn't have your name and email for this project/)).toBeInTheDocument();
+    expect(screen.getByText(/before or after you start/)).toBeInTheDocument();
+    expect(mockGroveBench.hasGitIdentity).toHaveBeenCalledWith('/repo/one');
+    mockGroveBench.hasGitIdentity.mockResolvedValue(true);
+  });
+
+  it('says nothing when git knows who you are', async () => {
+    render(DraftPane);
+    await waitFor(() => expect(mockGroveBench.hasGitIdentity).toHaveBeenCalled());
+    await settle();
+    expect(screen.queryByText(/Git doesn't have your name and email/)).not.toBeInTheDocument();
+  });
+
+  it('does not ask in a folder project without git', async () => {
+    store.setFolderProject('/repo/one', true);
+    mockGroveBench.repoKind.mockResolvedValue('folder');
+    draftStore.discard();
+    draftStore.open('/repo/one');
+    await settle();
+    render(DraftPane);
+    await settle();
+    expect(mockGroveBench.hasGitIdentity).not.toHaveBeenCalled();
+    expect(screen.getByText(/project folder itself, without git, so its edits land in place/)).toBeInTheDocument();
+    expect(screen.getByText('Change the agent, model or mode in the bar below before you send.')).toBeInTheDocument();
+    store.setFolderProject('/repo/one', false);
+    mockGroveBench.repoKind.mockResolvedValue('git');
+  });
+});
 });

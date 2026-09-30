@@ -7,11 +7,17 @@
   interface Props {
     open: boolean;
     onclose: () => void;
+    /** Topic to show when the panel opens (a link to a page). */
+    topicId?: string | null;
   }
 
-  let { open, onclose }: Props = $props();
+  let { open, onclose, topicId = null }: Props = $props();
 
   let selectedTopicId = $state(topics[0].id);
+
+  $effect(() => {
+    if (open && topicId && topics.some((t) => t.id === topicId)) selectedTopicId = topicId;
+  });
   let contentEl: HTMLDivElement;
 
   const selectedTopic = $derived(topics.find(t => t.id === selectedTopicId) ?? topics[0]);

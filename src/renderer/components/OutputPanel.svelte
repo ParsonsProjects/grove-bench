@@ -436,8 +436,8 @@
           toolInput={msg.toolInput}
           resolved={msg.resolved}
           decision={msg.decision}
+          timedOut={msg.timedOut}
           decisionReason={msg.decisionReason}
-          suggestions={msg.suggestions}
           isPlanExecution={msg.isPlanExecution}
           toolCategory={msg.toolCategory}
           planText={msg.planText}
@@ -451,6 +451,7 @@
           resolved={msg.resolved}
           response={msg.response}
           selectedLabels={msg.selectedLabels}
+          timedOut={msg.timedOut}
         />
 
       {:else if msg.kind === 'elicitation'}

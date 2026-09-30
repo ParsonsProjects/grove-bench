@@ -1,7 +1,7 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS } from '../shared/types.js';
+import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -21,6 +21,7 @@ import { getCavemanPrompt } from './caveman.js';
 import { findRewindForkPoint } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
+import { noGitCheckpoints, type Checkpoints } from './no-git-checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import { killTree } from './process-tree.js';
 import { previewManager } from './preview.js';
@@ -217,7 +218,13 @@ interface ManagedSession {
   /** Resolver for queryReady — called in runQuery after queryHandle is set. */
   resolveQueryReady: (() => void) | null;
   /** Git-based checkpoint manager for rewind functionality. */
-  checkpoints: CheckpointManager;
+  checkpoints: Checkpoints;
+  /** The conversation's folder is a git repository. Without git there are no
+   *  checkpoints and no commits, so neither is attempted. */
+  gitBacked: boolean;
+  /** The last checkpoint capture failed. The thread is told once per run of
+   *  failures (git missing, a broken repository), not on every message. */
+  checkpointFailing?: boolean;
   /** Status to go back to when a sleeping session wakes: 'running', or
    *  'starting' when its query had not reported system_init yet. */
   statusBeforeSleep: SessionStatus | null;
@@ -467,6 +474,9 @@ class AgentSessionManager {
      *  conversation. Laid over the saved defaults; a value the model doesn't
      *  offer is ignored. */
     controls?: Record<string, string> | null;
+    /** Runs in a folder without git (the worktree entry's `noGit`): no
+     *  checkpoints and no commit identity. */
+    noGit?: boolean;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -515,6 +525,9 @@ class AgentSessionManager {
     // Ensure memory directory exists for this repo
     memory.ensureRepoMemory(repoPath);
 
+    // A folder project isn't a git repository: no checkpoints, no commits.
+    const gitBacked = !opts.noGit;
+
     const session: ManagedSession = {
       id,
       branch,
@@ -559,7 +572,8 @@ class AgentSessionManager {
       restartRequested: false,
       queryReady: null,
       resolveQueryReady: null,
-      checkpoints: new CheckpointManager(),
+      checkpoints: gitBacked ? new CheckpointManager() : noGitCheckpoints,
+      gitBacked,
       statusBeforeSleep: null,
       sleepSettled: null,
       turnHandle: null,
@@ -665,7 +679,7 @@ class AgentSessionManager {
     // the vars stay unset and git's own rules apply (usually it refuses to
     // commit and asks for one) rather than us inventing an author.
     let gitIdentityEnv: Record<string, string> = {};
-    try {
+    if (session.gitBacked) try {
       const identity = await getGitIdentity(session.worktreePath);
       if (identity) {
         gitIdentityEnv = {
@@ -697,7 +711,7 @@ class AgentSessionManager {
     // manager skips it if the session already has turns (rewind restart).
     // Resumed sessions rebuild their checkpoint state on system_init instead.
     const resumingProviderSession = !!session.providerSessionId;
-    if (!resumingProviderSession) {
+    if (!resumingProviderSession && session.gitBacked) {
       session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
         if (!written) logger.warn(`Checkpoint baseline not captured for ${id}`);
       });
@@ -749,7 +763,7 @@ class AgentSessionManager {
         if (session.permissionMode === 'readSafe' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath)) {
           return { behavior: 'allow', updatedInput: request.toolInput };
         }
-        const PERMISSION_TIMEOUT_MS = 30 * 60 * 1000;
+        const PERMISSION_TIMEOUT_MS = PERMISSION_TIMEOUT_MINUTES * 60 * 1000;
         const requestId = `perm_${id}_${++session.permRequestCounter}`;
         return new Promise<PermissionResponse>((resolve) => {
           const timer = setTimeout(() => {
@@ -759,6 +773,7 @@ class AgentSessionManager {
               requestId,
               toolUseId: request.toolUseId,
               decision: 'deny',
+              reason: 'timeout',
             });
             resolve({ behavior: 'deny', message: 'Permission request timed out' });
           }, PERMISSION_TIMEOUT_MS);
@@ -855,7 +870,7 @@ class AgentSessionManager {
     logger.debug(`[runQuery] session=${id} query created, entering event loop`);
 
     // Show a connecting message in the thread while waiting for system_init
-    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch} · ${session.permissionMode}` });
+    emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
 
     // Process event stream from the adapter
     try {
@@ -1150,12 +1165,18 @@ class AgentSessionManager {
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
     const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content));
-    if (!captured) {
+    // Without git there are no checkpoints to capture, so nothing failed.
+    if (captured) {
+      session.checkpointFailing = false;
+    } else if (session.gitBacked) {
       logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
-      session.emit?.({
-        type: 'error',
-        message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. See the log for the git error.',
-      });
+      if (!session.checkpointFailing) {
+        session.checkpointFailing = true;
+        session.emit?.({
+          type: 'error',
+          message: 'Checkpoint could not be captured for this message, so rewinding to it will not be available. Later messages won\'t get one either until git works again. See the log for the git error.',
+        });
+      }
     }
     // The query may have been torn down while the snapshot ran (stop, model
     // switch); if a replacement is starting, hand the prompt to that one.
@@ -1814,7 +1835,7 @@ class AgentSessionManager {
       const worktree = await worktreeManager.getWorktreeOrManifest(id).catch(() => undefined);
       if (worktree) {
         memoryAutosave.saveSessionMetadata(worktree.repoPath, id, this.getEventHistory(id), worktree.branch);
-        await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
+        if (!worktree.noGit) await new CheckpointManager().cleanup(id, worktree.path).catch(err => {
           logger.warn(`Checkpoint cleanup failed for ${id}:`, err);
         });
       }

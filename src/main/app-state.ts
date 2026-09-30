@@ -46,6 +46,10 @@ export interface AppState {
    *  Shown at the next launch until the agent reports its list again. The
    *  shape of `models` belongs to the adapter, which validates it on load. */
   modelCatalogs?: Record<string, ModelCatalogCache>;
+  /** Projects the user added, in the order they were added. The manifest
+   *  only knows projects that have conversations, so without this a project
+   *  with none was forgotten at restart. Absent until first listed. */
+  projects?: string[];
 }
 
 const DEFAULT_STATE: AppState = {
@@ -92,6 +96,7 @@ const appStateSchema = z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
   })).optional().catch(undefined),
+  projects: z.array(z.string()).optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -265,4 +270,43 @@ export function saveModelCatalog(adapterId: string, models: unknown[]): void {
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */
 export function flushPendingSaves(): void {
   for (const w of writers) w.flush();
+}
+
+// ─── Projects ───
+
+/**
+ * The project list: remembered projects in the order they were added, then
+ * any project the manifest knows that isn't remembered yet (one with
+ * conversations from before projects were remembered). Exported for tests.
+ */
+export function mergeProjects(remembered: string[] | undefined, fromManifest: string[]): string[] {
+  const list = [...(remembered ?? [])];
+  for (const repo of fromManifest) {
+    if (!list.includes(repo)) list.push(repo);
+  }
+  return list;
+}
+
+/** Every project to show, remembering any the manifest adds. */
+export function listProjects(fromManifest: string[]): string[] {
+  const remembered = loadAppState().projects;
+  const merged = mergeProjects(remembered, fromManifest);
+  if (!remembered || merged.length !== remembered.length) {
+    updateAppState((state) => { state.projects = merged; });
+  }
+  return merged;
+}
+
+/** Write-through — projects are added by hand. */
+export function rememberProject(repoPath: string): void {
+  updateAppState((state) => {
+    const list = state.projects ?? [];
+    if (!list.includes(repoPath)) state.projects = [...list, repoPath];
+  });
+}
+
+export function forgetProject(repoPath: string): void {
+  updateAppState((state) => {
+    if (state.projects) state.projects = state.projects.filter((p) => p !== repoPath);
+  });
 }

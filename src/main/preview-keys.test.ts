@@ -36,6 +36,8 @@ describe('previewKeyAction', () => {
     expect(previewKeyAction(key('T', { control: true, shift: true }))).toEqual({ kind: 'grove' });
     // Mode, thinking and effort.
     for (const k of ['m', 't', 'e']) expect(previewKeyAction(key(k, { alt: true }))).toEqual({ kind: 'grove' });
+    // Help.
+    expect(previewKeyAction(key('F1'))).toEqual({ kind: 'grove' });
   });
 
   it('keeps Ctrl+R and Ctrl+F in the page', () => {

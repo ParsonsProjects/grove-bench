@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
-import { IPC, type AgentEvent } from '../shared/types.js';
+import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
 import * as fs from 'node:fs';
 
 // ─── Mock infrastructure ───
@@ -70,6 +70,7 @@ vi.mock('./memory-autosave.js', () => ({
 
 vi.mock('./git.js', () => ({
   getGitIdentity: vi.fn().mockResolvedValue({ name: 'Test User', email: 'test@example.com' }),
+  isGitRepo: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('./checkpoints.js', () => {
@@ -152,7 +153,7 @@ class MockAdapter implements AgentAdapter {
   getControls(model?: string | null) {
     // Like Claude's Haiku, the lite model does not offer native auto mode.
     const modeOptions = [
-      { value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
+      { value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }, { value: 'acceptEdits', label: 'Edit' },
       { value: 'auto', label: 'Auto' }, { value: 'readSafe', label: 'Read-safe', group: 'Grove Bench' },
     ].filter((o) => o.value !== 'auto' || model !== 'mock-lite');
     const controls = [
@@ -263,7 +264,8 @@ function makeMockWindow() {
 // Import the module under test AFTER mocks are set up
 const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
-const { getGitIdentity } = await import('./git.js');
+const { getGitIdentity, isGitRepo } = await import('./git.js');
+const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
 const { logger } = await import('./logger.js');
 
 beforeEach(() => {
@@ -325,6 +327,53 @@ describe('AgentSessionManager.createSession()', () => {
     expect(mockAdapter.lastConfig?.appendSystemPrompt).toBeTruthy();
 
     await sessionManager.destroySession('test-config');
+  });
+});
+
+describe('AgentSessionManager in a folder without git', () => {
+  it('skips checkpoints and the identity check, and says files can\'t be restored', async () => {
+    vi.mocked(getGitIdentity).mockClear();
+    const before = CheckpointManager.instances.length;
+
+    await sessionManager.createSession({
+      id: 'test-folder', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock', noGit: true,
+    });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+
+    expect(CheckpointManager.instances.length).toBe(before);
+    expect(getGitIdentity).not.toHaveBeenCalled();
+    expect(sessionManager.getEventHistory('test-folder').some((e) => e.type === 'git_identity_missing')).toBe(false);
+    await expect(sessionManager.rewindFiles('test-folder', 'u1', { filesOnly: true }))
+      .rejects.toThrow(/isn't a git repository/);
+
+    await sessionManager.destroySession('test-folder');
+  });
+
+  it('sends messages without a "checkpoint could not be captured" error', async () => {
+    await sessionManager.createSession({
+      id: 'test-folder-send', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock', noGit: true,
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-folder-send')!;
+
+    expect(await sessionManager.sendMessage('test-folder-send', 'Tidy my notes')).toBe(true);
+    expect(session.queryHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Tidy my notes' }));
+    expect(session.eventHistory.filter((e) => e.type === 'error')).toHaveLength(0);
+
+    await sessionManager.destroySession('test-folder-send');
+  });
+
+  it('keeps checkpoints for a git conversation even if git is briefly unavailable', async () => {
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    const before = CheckpointManager.instances.length;
+    await sessionManager.createSession({
+      id: 'test-git-flaky', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    expect(CheckpointManager.instances.length).toBe(before + 1);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
+    await sessionManager.destroySession('test-git-flaky');
   });
 });
 
@@ -829,6 +878,38 @@ describe('AgentSessionManager.respondToPermission()', () => {
     });
 
     await sessionManager.destroySession('test-perm-msg');
+  });
+
+  it('denies an unanswered request after the timeout and says it timed out', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-perm-timeout',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    vi.useFakeTimers();
+    try {
+      const permPromise = mockAdapter.control!.permissionHandler!({
+        requestId: 't1',
+        toolName: 'Bash',
+        toolUseId: 'tu_timeout',
+        toolInput: { command: 'npm test' },
+      });
+      await vi.advanceTimersByTimeAsync(PERMISSION_TIMEOUT_MINUTES * 60 * 1000);
+      await expect(permPromise).resolves.toMatchObject({ behavior: 'deny' });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const resolved = sessionManager.getEventHistory('test-perm-timeout').filter((e) => e.type === 'permission_resolved');
+    expect(resolved[resolved.length - 1]).toMatchObject({ decision: 'deny', reason: 'timeout' });
+
+    await sessionManager.destroySession('test-perm-timeout');
   });
 
   it('adds tool to alwaysAllowedTools on allowAlways', async () => {
@@ -2387,6 +2468,29 @@ describe('AgentSessionManager checkpoint capture', () => {
     expect((errors[0] as any).message).toMatch(/Checkpoint could not be captured/);
 
     await sessionManager.destroySession('test-cp-fail');
+  });
+
+  it('says so once while captures keep failing, and again after one succeeds', async () => {
+    await sessionManager.createSession({
+      id: 'test-cp-repeat', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-cp-repeat')!;
+    const errorCount = () => session.eventHistory.filter((e) => e.type === 'error').length;
+
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+    await sessionManager.sendMessage('test-cp-repeat', 'one');
+    await sessionManager.sendMessage('test-cp-repeat', 'two');
+    expect(errorCount()).toBe(1);
+
+    vi.mocked(session.checkpoints.capture).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await sessionManager.sendMessage('test-cp-repeat', 'three');
+    await sessionManager.sendMessage('test-cp-repeat', 'four');
+    expect(errorCount()).toBe(2);
+
+    await sessionManager.destroySession('test-cp-repeat');
   });
 });
 

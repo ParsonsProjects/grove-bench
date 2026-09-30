@@ -167,3 +167,46 @@ describe('StatusBar context grove', () => {
     expect(queryByTestId('context-grove')).toBeNull();
   });
 });
+
+describe('StatusBar context actions', () => {
+  afterEach(() => {
+    delete messageStore.usageBySession[ACTIVE];
+    delete messageStore.contextWindowBySession[ACTIVE];
+  });
+
+  async function openContext() {
+    messageStore.contextWindowBySession[ACTIVE] = 200_000;
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 150_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Context 75% used. Click for details.' }));
+  }
+
+  it('labels the meter and says what context is', async () => {
+    await openContext();
+    expect(screen.getByText('Context 75%')).toBeTruthy();
+    expect(screen.getByText(/How much the agent can hold in mind at once/)).toBeTruthy();
+  });
+
+  it('asks before clearing the conversation, and Cancel keeps it', async () => {
+    const send = vi.spyOn(messageStore, 'sendCommand').mockImplementation(() => {});
+    await openContext();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Start fresh…' }));
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('Your files stay as they are');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(send).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Start fresh…' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(send).toHaveBeenCalledWith(ACTIVE, '/clear');
+  });
+
+  it('summarises without asking', async () => {
+    const send = vi.spyOn(messageStore, 'sendCommand').mockImplementation(() => {});
+    await openContext();
+    await fireEvent.click(screen.getByRole('button', { name: 'Summarise to free space' }));
+    expect(send).toHaveBeenCalledWith(ACTIVE, '/compact');
+  });
+});

@@ -17,6 +17,17 @@ window.addEventListener('unhandledrejection', (e) => {
 const now = Date.now();
 const min = 60_000;
 
+// The Claude Code adapter's mode options (PERMISSION_MODE_OPTIONS in
+// src/main/adapters/claude-code.ts), for both the draft and the live
+// conversation, so the two don't drift apart.
+const CLAUDE_MODE_OPTIONS = [
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
+  { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
+  { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+];
+
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
 
@@ -277,6 +288,10 @@ const api: Record<string, unknown> = {
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
+  // Adding a project picks a folder without git.
+  addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
+  repoKind: async (p: string) => (p.endsWith('notes') ? 'folder' : 'git'),
+  hasGitIdentity: async () => true,
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
   // Main reports a woken conversation 'running' straight away.
@@ -376,11 +391,7 @@ const api: Record<string, unknown> = {
     ] },
   ] : [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-      { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
-      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-      { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
-      { value: 'auto', label: 'Auto', tone: 'highlight' },
-      { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+      ...CLAUDE_MODE_OPTIONS,
     ] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [
       { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
@@ -418,9 +429,7 @@ const api: Record<string, unknown> = {
   getControls: async () => ({
     descriptors: [
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-        { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
-        { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'highlight' },
-        { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+        ...CLAUDE_MODE_OPTIONS,
       ] },
       { id: 'effort', label: 'Effort', default: 'medium', options: [
         { value: 'low', label: 'Low', tone: 'muted' }, { value: 'medium', label: 'Medium', tone: 'accent-soft' },
@@ -485,7 +494,7 @@ async function seedConversations() {
     's-oauth': [
       { kind: 'user', id: 'd4', text: 'Fix the OAuth refresh flow — sessions drop after exactly one hour' },
       { kind: 'text', id: 'd5', text: 'Found it: the refresh token is rotated twice per request. I need to patch src/auth/refresh.ts to reuse the rotation result.', uuid: '' },
-      { kind: 'permission', id: 'd6', requestId: 'dr1', toolName: 'Write', toolInput: { file_path: 'src/auth/refresh.ts' }, toolUseId: 'dt2', resolved: false },
+      { kind: 'permission', id: 'd6', requestId: 'dr1', toolName: 'Write', toolInput: { file_path: 'src/auth/refresh.ts' }, toolUseId: 'dt2', toolCategory: 'edit', resolved: false },
     ],
     // Idle: finished its turn with a document-style report (exercises the
     // markdown preview affordance in screenshots)

@@ -1,14 +1,17 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
 
 import GroveEmptyState from './GroveEmptyState.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { draftStore } from '../stores/draft.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
 
 afterEach(() => {
   cleanup();
   store.sessions = [];
+  store.repos = [];
   store.activeSessionId = null;
   store.needsAttention = {};
   store.deferredResume = {};
@@ -19,10 +22,51 @@ afterEach(() => {
 });
 
 describe('GroveEmptyState', () => {
-  it('shows the empty bench when there are no conversations', () => {
+  it('asks for a project first when there is none, with a button to add one', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'git', path: '/repo/new' });
+    render(GroveEmptyState, { variant: 'empty' });
+    expect(screen.getByText('Add a project to start')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.repos).toContain('/repo/new'));
+  });
+
+  it('says why a picked folder could not be added', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockRejectedValueOnce(new Error("Error invoking remote method 'repo:select': Error: C:\\app\\.git is inside a .git folder. Pick the project folder that contains it."));
+    render(GroveEmptyState, { variant: 'empty' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.error).toBe('C:\\app\\.git is inside a .git folder. Pick the project folder that contains it.'));
+    expect(store.repos).toEqual([]);
+    store.clearError();
+  });
+
+  it('adds a folder that is not a git repository straight away, as a plain folder', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'folder', path: 'C:\\notes' });
+    render(GroveEmptyState, { variant: 'empty' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.repos).toEqual(['C:\\notes']));
+    expect(store.isFolderProject('C:\\notes')).toBe(true);
+    store.setFolderProject('C:\\notes', false);
+  });
+
+  it('adds a git repository as a git project', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'git', path: '/repo/new' });
+    render(GroveEmptyState, { variant: 'empty' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.repos).toEqual(['/repo/new']));
+    expect(store.isFolderProject('/repo/new')).toBe(false);
+  });
+
+  it('offers to start a conversation once a project exists', async () => {
+    store.repos = ['/repo/one'];
     render(GroveEmptyState, { variant: 'empty' });
     expect(screen.getByText('No conversations yet')).toBeInTheDocument();
-    expect(screen.getByText('+ Conversation')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Start a conversation' }));
+    expect(draftStore.draft?.repoPath).toBe('/repo/one');
+    draftStore.discard();
   });
 
   it('seats each open conversation with its status and opens it on click', async () => {

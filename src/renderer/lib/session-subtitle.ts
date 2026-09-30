@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
+import { approvalRequest, toolLabel } from './tool-names.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
 export type SubtitleTone = 'working' | 'waiting' | 'context';
@@ -64,7 +65,7 @@ export interface SubtitleInput {
 export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
   if (input.pendingTool) {
     return {
-      text: input.pendingTool === 'question' ? 'Waiting for your answer' : `Waiting for approval — ${input.pendingTool}`,
+      text: input.pendingTool === 'question' ? 'Waiting for your answer' : capitalise(approvalRequest(input.pendingTool)),
       tone: 'waiting',
     };
   }
@@ -72,7 +73,8 @@ export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
   if (input.isRunning) {
     const { activity, toolName, toolSummary } = input.activity;
     if (activity === 'tool_starting' && toolName) {
-      return { text: collapse(toolSummary ? `${toolName}: ${toolSummary}` : `Running ${toolName}…`), tone: 'working' };
+      const name = toolLabel(toolName);
+      return { text: collapse(toolSummary ? `${name}: ${toolSummary}` : `Running ${name}…`), tone: 'working' };
     }
     if (activity === 'thinking') return { text: 'Thinking…', tone: 'working' };
     return { text: 'Working…', tone: 'working' };
@@ -80,4 +82,8 @@ export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
 
   const context = input.lastText || input.firstPrompt;
   return context ? { text: collapse(context), tone: 'context' } : null;
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

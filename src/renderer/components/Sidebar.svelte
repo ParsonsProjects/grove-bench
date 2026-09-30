@@ -14,6 +14,8 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { resolveBaseBranch } from '../lib/base-branch.js';
+  import { unsavedFileCount } from '../lib/unsaved-files.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import SettingsPanel from './SettingsPanel.svelte';
@@ -161,7 +163,7 @@
     if (store.isOpenTab(session)) {
       items.push({ label: 'Stop', icon: 'stop', action: () => stopSession(sessionId) });
     }
-    items.push({ label: 'Destroy Agent', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
     return items;
   }
 
@@ -259,7 +261,7 @@
         }
         try {
           const status = await window.groveBench.getGitStatus(s.id);
-          dirty[s.id] = status.entries.length > 0;
+          dirty[s.id] = unsavedFileCount(status.entries) > 0;
         } catch {
           dirty[s.id] = false; // unreadable worktree — nothing to lose
         }
@@ -364,9 +366,35 @@
     draftStore.open(repo);
   }
 
+  /** What deleting the conversation in the confirm dialog would lose: files
+   *  with uncommitted changes in its worktree, and commits on its branch
+   *  that its base branch doesn't have. Null while unknown. */
+  let destroyUncommitted = $state<number | null>(null);
+  let destroyUnmerged = $state<{ count: number; base: string } | null>(null);
+  /** Delete waits for both checks, so a quick click can't skip a warning. */
+  let destroyChecking = $state(false);
+
   function requestDestroy(id: string) {
     confirmDestroyId = id;
     deleteBranchOnDestroy = false;
+    destroyUncommitted = null;
+    destroyUnmerged = null;
+    destroyChecking = false;
+    const session = store.sessions.find((s) => s.id === id);
+    if (!session || session.direct) return;
+    destroyChecking = true;
+    // Best effort: a failed check leaves its warning out rather than
+    // blocking the delete.
+    const uncommitted = window.groveBench.getGitStatus(id)
+      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = unsavedFileCount(status.entries); })
+      .catch(() => {});
+    const unmerged = resolveBaseBranch(session.repoPath)
+      .then(async (base) => {
+        const commits = await window.groveBench.getBranchCommits(id, base);
+        if (confirmDestroyId === id) destroyUnmerged = { count: commits.length, base };
+      })
+      .catch(() => {});
+    void Promise.all([uncommitted, unmerged]).then(() => { if (confirmDestroyId === id) destroyChecking = false; });
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
@@ -439,10 +467,13 @@
   }
 
   /** Visible row label: a user/auto name when set, else the branch with a '#n'
-   *  prefix when shared. Kept separate from sessionLabel so rename prefill and
-   *  no-op detection use the plain name without the index. */
+   *  prefix when shared. A conversation in a folder without git has no branch
+   *  and is named after its first turn, so until then it's "New conversation".
+   *  Kept separate from sessionLabel so rename prefill and no-op detection use
+   *  the plain name without the index. */
   function sessionRowLabel(s: { id: string; repoPath: string; displayName?: string | null; branch: string }): string {
-    return s.displayName || (branchIndex(s) + s.branch);
+    if (s.displayName) return s.displayName;
+    return s.branch ? branchIndex(s) + s.branch : 'New conversation';
   }
 
   function startRename(sessionId: string, currentLabel: string) {
@@ -555,7 +586,7 @@
     <!-- PR data is only polled for open tabs; anything else would be stale, so it stays neutral. -->
     {@const pr = store.isOpenTab(session) ? prStore.getPr(session.id) : null}
     {@const health = prHealth(pr)}
-    {@const branchIconLabel = (session.direct ? 'Direct (no worktree)' : 'Worktree') + (pr ? `, PR #${pr.number}: ${health.label}` : '')}
+    {@const branchIconLabel = (session.noGit ? 'In the project folder (no git)' : session.direct ? 'Direct (no worktree)' : 'Worktree') + (pr ? `, PR #${pr.number}: ${health.label}` : '')}
     <button
       onclick={() => { if (!isDestroying && !greyedOut) focusSession(session.id); }}
       oncontextmenu={(e) => { if (isDestroying || greyedOut) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
@@ -611,13 +642,15 @@
           <span
             role="button"
             tabindex="-1"
-            title="Destroy agent"
+            title="Delete conversation"
+            aria-label="Delete conversation"
             onclick={(e) => { e.stopPropagation(); if (!isDestroying) requestDestroy(session.id); }}
             onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) requestDestroy(session.id); }}
             class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
               {isDestroying ? 'hidden' : 'hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/session:opacity-100 cursor-pointer'}"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            <!-- A bin, not an ✕: ✕ reads as "close", and this deletes. -->
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
           </span>
         {:else}
           <!-- Live session: stop (disconnect but keep it resumable). -->
@@ -625,6 +658,7 @@
             role="button"
             tabindex="-1"
             title="Stop agent"
+            aria-label="Stop agent"
             onclick={(e) => { e.stopPropagation(); if (!isDestroying) stopSession(session.id); }}
             onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !isDestroying) stopSession(session.id); }}
             class="w-5 h-5 flex items-center justify-center text-muted-foreground/40 transition-colors shrink-0
@@ -814,7 +848,7 @@
               onclick={() => canRemove ? confirmRemoveRepo = repo : null}
               disabled={!canRemove}
               class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:text-muted-foreground/30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-              title={canRemove ? 'Remove project' : 'Destroy all conversations first'}
+              title={canRemove ? 'Remove project' : 'Delete all conversations first'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
@@ -1099,36 +1133,50 @@
   </Dialog.Root>
 {/if}
 
-<!-- Destroy session confirmation dialog -->
+<!-- Delete conversation confirmation dialog -->
 {#if confirmDestroyId}
   {@const session = store.sessions.find(s => s.id === confirmDestroyId)}
+  {@const branch = session?.branch ?? 'unknown'}
   <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmDestroyId = null; }}>
-    <Dialog.Content class="max-w-xs">
+    <Dialog.Content class="max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>Destroy Agent?</Dialog.Title>
+        <Dialog.Title>Delete conversation?</Dialog.Title>
         <Dialog.Description>
-          {#if session?.direct}
-            This will stop the conversation on branch
-            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
-            No files will be deleted.
+          {#if session?.noGit}
+            This stops the conversation and removes it. It worked in the project folder itself, so no files are deleted.
+          {:else if session?.direct}
+            This stops the conversation and removes it. It worked in the project folder on
+            <span class="text-foreground font-medium">{branch}</span>, so no files are deleted.
           {:else}
-            This will kill the shell process and remove the worktree for branch
-            <span class="text-foreground font-medium">{session?.branch ?? 'unknown'}</span>.
+            This removes the conversation and its copy of the project (the worktree for
+            <span class="text-foreground font-medium">{branch}</span>).
           {/if}
         </Dialog.Description>
       </Dialog.Header>
       {#if !session?.direct}
+        {#if destroyUncommitted}
+          <p class="text-xs text-yellow-500 mt-3" role="alert">
+            {destroyUncommitted} {destroyUncommitted === 1 ? 'file has' : 'files have'} uncommitted changes that will be lost.
+          </p>
+        {/if}
         <label class="flex items-center gap-2 text-sm text-muted-foreground mt-3 cursor-pointer">
           <Checkbox bind:checked={deleteBranchOnDestroy} />
           Also delete the branch
         </label>
+        {#if deleteBranchOnDestroy && destroyUnmerged?.count}
+          <p class="text-xs text-yellow-500 mt-2" role="alert">
+            {destroyUnmerged.count} {destroyUnmerged.count === 1 ? 'commit' : 'commits'} on {branch}
+            {destroyUnmerged.count === 1 ? "isn't" : "aren't"} on {destroyUnmerged.base} yet. Unless you've pushed
+            {destroyUnmerged.count === 1 ? 'it' : 'them'}, deleting the branch can lose {destroyUnmerged.count === 1 ? 'it' : 'them'}.
+          </p>
+        {/if}
       {/if}
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmDestroyId = null}>
           Cancel
         </Button>
-        <Button variant="destructive" onclick={confirmDestroy}>
-          Destroy
+        <Button variant="destructive" onclick={confirmDestroy} disabled={destroyChecking}>
+          {destroyChecking ? 'Checking…' : 'Delete'}
         </Button>
       </Dialog.Footer>
     </Dialog.Content>

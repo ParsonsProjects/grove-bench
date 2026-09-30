@@ -64,7 +64,7 @@ describe('Sidebar session rows', () => {
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
     render(Sidebar);
-    expect(await screen.findByText('Waiting for approval — Write')).toBeInTheDocument();
+    expect(await screen.findByText('Wants to edit a file')).toBeInTheDocument();
   });
 
   it('uses the main-process preview for sessions with no loaded messages', async () => {
@@ -436,4 +436,79 @@ describe('Sidebar clean-up dialog', () => {
     expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR unknown');
     expect(screen.queryByRole('button', { name: /Select merged/ })).toBeDisabled();
   });
+});
+
+describe('Sidebar delete conversation', () => {
+  async function openDeleteDialog() {
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    return screen.findByRole('dialog');
+  }
+
+  it('warns about uncommitted files before deleting', async () => {
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] } as any);
+    const dialog = await openDeleteDialog();
+    expect(dialog).toHaveTextContent('Delete conversation?');
+    expect(await screen.findByText('2 files have uncommitted changes that will be lost.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('warns about commits the base branch lacks once the branch is to be deleted too', async () => {
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce([{ subject: 'Fix parser', body: '' }] as any);
+    await openDeleteDialog();
+    await waitFor(() => expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main'));
+    expect(screen.queryByText(/isn't on main yet/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('checkbox'));
+    expect(await screen.findByText(/1 commit on fix-parser isn't on main yet/)).toBeInTheDocument();
+  });
+
+  it('says a conversation in a folder without git leaves the files alone', async () => {
+    store.sessions = [{ id: 'n1', branch: '', repoPath: '/repo-a', status: 'stopped', direct: true, noGit: true }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('It worked in the project folder itself, so no files are deleted.');
+    expect(screen.queryByText('Also delete the branch')).toBeNull();
+  });
+
+  it('deletes after confirming', async () => {
+    const destroySession = vi.fn().mockResolvedValue(undefined);
+    (mockGroveBench as unknown as { destroySession: typeof destroySession }).destroySession = destroySession;
+    await openDeleteDialog();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(destroySession).toHaveBeenCalledWith('s2', false));
+  });
+
+  it('waits for its checks before Delete can be pressed', async () => {
+    let finish!: (v: { entries: [] }) => void;
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+    await openDeleteDialog();
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+    finish({ entries: [] });
+    expect(await screen.findByRole('button', { name: 'Delete' })).not.toBeDisabled();
+  });
+
+  it('does not count the settings file Grove writes into every worktree', async () => {
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: '.claude/settings.local.json', status: 'untracked', staged: false }] } as any);
+    await openDeleteDialog();
+    await screen.findByRole('button', { name: 'Delete' });
+    expect(screen.queryByText(/uncommitted changes that will be lost/)).toBeNull();
+  });
+
+describe('Sidebar rows for folder projects without git', () => {
+  it('names a conversation with no branch and no name yet "New conversation"', async () => {
+    store.sessions = [
+      { id: 'n1', branch: '', repoPath: '/repo-a', status: 'running', direct: true, noGit: true, displayName: null },
+    ] as any;
+    render(Sidebar);
+    expect(await screen.findByText('New conversation')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toBeInTheDocument();
+  });
+});
 });

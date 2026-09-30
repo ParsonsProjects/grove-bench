@@ -427,7 +427,7 @@ describe('OS notification triggers', () => {
       type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
     } as AgentEvent);
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'permission_request', body: 'Bash is waiting for permission' }),
+      expect.objectContaining({ kind: 'permission_request', body: 'The agent wants to run a command' }),
     );
   });
 
@@ -846,6 +846,48 @@ describe('ingestEvent — permission_resolved', () => {
     expect(perm.decision).toBe('allow');
   });
 
+  it('marks a permission denied by the timeout as timed out', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-to',
+      requestId: 'req-to',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-to',
+      toolUseId: 'tu-to',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const perm = messageStore.getMessages(SID).find((m) => m.kind === 'permission' && m.requestId === 'req-to') as any;
+    expect(perm).toMatchObject({ resolved: true, decision: 'deny', timedOut: true });
+  });
+
+  it('marks a question closed by the timeout as timed out, with no answer', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }] },
+      toolUseId: 'tu-qt',
+      requestId: 'req-qt',
+      toolCategory: 'question',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-qt',
+      toolUseId: 'tu-qt',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question' && m.requestId === 'req-qt') as any;
+    expect(q).toMatchObject({ resolved: true, timedOut: true });
+    expect(q.response).toBeUndefined();
+  });
+
   it('stores the answer from a replayed question resolution', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',
@@ -1238,7 +1280,7 @@ describe('getters with defaults', () => {
 
 describe('session controls', () => {
   const descriptors = [
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }] },
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }] },
     { id: 'thinking', label: 'Thinking', default: 'high', options: [{ value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] },
   ];
 

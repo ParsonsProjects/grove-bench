@@ -478,4 +478,31 @@ describe('createAttachedSession', () => {
     expect(store.sessions.find((s) => s.id === 'attached')?.agentType).toBe('codex');
     store.sessions = [];
   });
+
+  it('marks a conversation attached to one without git as without git too', async () => {
+    store.sessions = [];
+    store.addSession({ id: 'src', branch: '', repoPath: '/notes', status: 'running', direct: true, noGit: true } as never);
+    const createSession = vi.fn().mockResolvedValue({ id: 'attached', branch: '', agentType: 'claude-code', noGit: true });
+    (mockGroveBench as unknown as { createSession: typeof createSession }).createSession = createSession;
+
+    await store.createAttachedSession('src', '/notes');
+
+    expect(store.sessions.find((s) => s.id === 'attached')).toMatchObject({ direct: true, noGit: true });
+    store.sessions = [];
+  });
+});
+
+describe('loadRepos', () => {
+  it('moves projects from the old localStorage list into the remembered list', async () => {
+    localStorage.setItem('grove-bench:repos', JSON.stringify(['/repo/known', '/repo/legacy']));
+    mockGroveBench.listRepos.mockResolvedValueOnce(['/repo/known']);
+
+    await store.loadRepos();
+
+    expect(store.repos).toEqual(['/repo/known', '/repo/legacy']);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledWith('/repo/legacy');
+    expect(localStorage.getItem('grove-bench:repos')).toBeNull();
+    store.repos = [];
+  });
 });

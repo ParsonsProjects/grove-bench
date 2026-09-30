@@ -10,6 +10,7 @@ import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
+import { approvalRequest } from '../lib/tool-names.js';
 
 // ─── Chat message types ───
 
@@ -82,6 +83,8 @@ export interface ChatPermissionMessage {
   toolUseId: string;
   resolved: boolean;
   decision?: 'allow' | 'deny';
+  /** Denied because nobody answered in time, not by the user. */
+  timedOut?: boolean;
   decisionReason?: string;
   suggestions?: unknown[];
   /** Set by the adapter when this permission is for executing a plan. */
@@ -120,6 +123,8 @@ export interface ChatQuestionMessage {
   response?: string;
   /** Exact labels that were selected, for accurate resolved-state rendering */
   selectedLabels?: string[];
+  /** Closed because nobody answered in time. */
+  timedOut?: boolean;
 }
 
 /** An MCP server asking the user for input (a form or a page to open). */
@@ -1624,13 +1629,17 @@ class MessageStore {
     const updated = msgs.map((m) => {
       if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
         changed = true;
-        return { ...m, resolved: true as const, decision: event.decision };
+        return { ...m, resolved: true as const, decision: event.decision, ...(event.reason === 'timeout' ? { timedOut: true } : {}) };
       }
       if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
         changed = true;
         // On replay the optimistic resolveQuestion() update never ran, so the
         // reply only exists on the event.
-        return { ...m, resolved: true as const, response: m.response ?? event.message };
+        return {
+          ...m,
+          resolved: true as const,
+          ...(event.reason === 'timeout' ? { timedOut: true } : { response: m.response ?? event.message }),
+        };
       }
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
         changed = true;
@@ -2153,7 +2162,7 @@ class MessageStore {
 function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
   if (event.isPlanExecution) return 'A plan is ready for review';
   if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
-  return `${event.toolName} is waiting for permission`;
+  return `The agent ${approvalRequest(event.toolName)}`;
 }
 
 export const messageStore = new MessageStore();

@@ -10,6 +10,9 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Runs in a folder that isn't a git repository: no Changes, checkpoints
+   *  or branches. */
+  noGit?: boolean;
   /** Adapter id the session runs on (e.g. 'claude-code'). */
   agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
@@ -26,6 +29,8 @@ interface SessionEntry {
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>([]);
+  /** Projects that are plain folders, not git repositories. */
+  folderRepos = $state<string[]>([]);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
@@ -138,6 +143,9 @@ class SessionStore {
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
             this.repos = [...this.repos, r];
+            // Main keeps the list now; without this a project with no
+            // conversations would be gone at the next launch.
+            await window.groveBench.rememberRepo(r).catch(() => {});
           }
         }
         localStorage.removeItem('grove-bench:repos');
@@ -145,14 +153,28 @@ class SessionStore {
     } catch { /* ignore */ }
   }
 
-  addRepo(path: string) {
+  /** Add a project. `folder` says whether it's a plain folder (no git);
+   *  left out, an existing project keeps what it was. */
+  addRepo(path: string, opts: { folder?: boolean } = {}) {
     if (!this.repos.includes(path)) {
       this.repos = [...this.repos, path];
     }
+    if (opts.folder !== undefined) this.setFolderProject(path, opts.folder);
   }
 
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
+    this.setFolderProject(path, false);
+  }
+
+  isFolderProject(path: string): boolean {
+    return this.folderRepos.includes(path);
+  }
+
+  setFolderProject(path: string, folder: boolean) {
+    const has = this.folderRepos.includes(path);
+    if (folder && !has) this.folderRepos = [...this.folderRepos, path];
+    if (!folder && has) this.folderRepos = this.folderRepos.filter((r) => r !== path);
   }
 
   canRemoveRepo(path: string): boolean {
@@ -196,7 +218,7 @@ class SessionStore {
         repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId,
         ...(adapterType ? { adapterType } : {}),
       });
-      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now() });
+      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now(), ...(result.noGit ? { noGit: true } : {}) });
     } catch (e: any) {
       this.setError(e?.message || String(e));
     }

@@ -7,6 +7,9 @@ const api: GroveBenchAPI = {
   addRepo: () => ipcRenderer.invoke(IPC.REPO_SELECT),
   removeRepo: (repoPath: string) => ipcRenderer.invoke(IPC.REPO_REMOVE, repoPath),
   validateRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_VALIDATE, path),
+  repoKind: (path: string) => ipcRenderer.invoke(IPC.REPO_KIND, path),
+  rememberRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_REMEMBER, path),
+  hasGitIdentity: (path: string) => ipcRenderer.invoke(IPC.GIT_HAS_IDENTITY, path),
 
   // Session operations
   createSession: (opts: CreateSessionOpts) =>

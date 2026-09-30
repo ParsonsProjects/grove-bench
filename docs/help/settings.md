@@ -20,7 +20,7 @@ Configure agent behavior. There is one group per installed agent, each with:
 - **Default Model** — Pick the model new conversations with this agent start on. The list comes from the agent itself and updates after a conversation starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
 - **Background Model** — The model used for this agent's background tasks: memory notes, memory compaction, commit messages and skill suggestions. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider you chose for it
 - **Default Permission Mode** — The mode new conversations with this agent start in. Only the modes the agent offers on its default model are listed. See [Status bar](status-bar.md#mode) for what each mode allows. For Claude Agent:
-  - **Code**: asks before edits and non-trivial commands
+  - **Ask**: checks with you before each edit or command; reading files and read-only commands run without asking
   - **Plan**: explores and plans without editing files
   - **Edit**: accepts file edits inside the worktree
   - **Auto**: Claude's classifier approves or blocks each action instead of asking

@@ -37,6 +37,8 @@ interface ManifestEntry {
    *  before this was recorded, which were all Claude Code. */
   adapterType?: string;
   direct?: boolean;
+  /** Direct conversation in a folder that isn't a git repository. */
+  noGit?: boolean;
   /** Explicit checkout path for sessions that share another session's worktree
    *  (attached sessions). Absent for normal direct (repoPath) and worktree
    *  (worktreeRoot/hash/id) sessions, whose paths are derived. */
@@ -304,7 +306,7 @@ export class WorktreeManager {
    * attach the session to another session's worktree (sharing its branch).
    * Still tracked in the manifest for session ID persistence.
    */
-  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath): Promise<WorktreeInfo> {
+  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath, opts: { noGit?: boolean } = {}): Promise<WorktreeInfo> {
     const id = crypto.randomUUID().slice(0, 8);
     const attached = checkoutPath !== repoPath;
 
@@ -315,6 +317,7 @@ export class WorktreeManager {
       repoPath,
       createdAt: Date.now(),
       direct: true,
+      ...(opts.noGit ? { noGit: true } : {}),
     };
 
     this.worktrees.set(id, info);
@@ -325,6 +328,7 @@ export class WorktreeManager {
         branch,
         createdAt: info.createdAt,
         direct: true,
+        ...(opts.noGit ? { noGit: true } : {}),
         // Persist the path only for attached sessions; plain direct sessions
         // derive it from repoPath, so storing it would be redundant.
         ...(attached ? { path: checkoutPath } : {}),
@@ -460,6 +464,7 @@ export class WorktreeManager {
         createdAt: entry.createdAt,
         lastActiveAt: entry.lastActiveAt,
         direct: entry.direct,
+        ...(entry.noGit ? { noGit: true } : {}),
       };
     }
 
@@ -611,7 +616,9 @@ export class WorktreeManager {
   async list(repoPath: string): Promise<WorktreeInfo[]> {
     try {
       const manifest = await this.loadManifest();
-      const output = await git(['worktree', 'list', '--porcelain'], repoPath);
+      // A folder project isn't a git repository: only its direct
+      // conversations are listed, and they need no git.
+      const output = await git(['worktree', 'list', '--porcelain'], repoPath).catch(() => '');
       const blocks = output.split('\n\n').filter(Boolean);
 
       // Collect all worktree paths git knows about (normalized for cross-platform comparison)
@@ -645,6 +652,7 @@ export class WorktreeManager {
             createdAt: entry.createdAt,
             lastActiveAt: entry.lastActiveAt,
             direct: true,
+            ...(entry.noGit ? { noGit: true } : {}),
             displayName: entry.displayName ?? null,
             completedAt: entry.completedAt ?? null,
             agentType: agentTypeOf(entry),
@@ -933,6 +941,7 @@ export class WorktreeManager {
       createdAt: entry.createdAt,
       lastActiveAt: entry.lastActiveAt,
       direct: entry.direct,
+      ...(entry.noGit ? { noGit: true } : {}),
       displayName: entry.displayName ?? null,
       completedAt: entry.completedAt ?? null,
       agentType: agentTypeOf(entry),
@@ -1118,13 +1127,16 @@ export class WorktreeManager {
       logger.warn('Sweep: failed to scan worktree root:', e);
     }
 
-    // Phase 3: clean stale direct entries whose repos no longer exist
+    // Phase 3: clean stale direct entries whose project folder is gone. Only
+    // the folder counts, not whether git opens it: a missing or broken git at
+    // launch must not delete conversations, and a folder project has no
+    // repository to check.
     await this.withManifest(async (m) => {
       for (const [id, entry] of Object.entries(m)) {
         if (!entry.direct) continue;
         if (activeIds.has(id)) continue;
         try {
-          const valid = await isGitRepo(entry.repoPath);
+          const valid = await fs.stat(entry.repoPath).then((st) => st.isDirectory(), () => false);
           if (!valid) {
             logger.info(`Sweep: removing stale direct entry ${id} (repo gone: ${entry.repoPath})`);
             delete m[id];

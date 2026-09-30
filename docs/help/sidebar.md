@@ -1,10 +1,10 @@
 # Sidebar & Projects
 
-The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a git repository) with all of its conversations, where stopped conversations can be resumed, destroyed, or cleaned up.
+The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a folder, usually a git repository) with all of its conversations, where stopped conversations can be resumed, deleted, or cleaned up.
 
 ## Projects
 
-Each project you have added appears as a group under **Projects**. Today a project is a single git repository. Its name is shown with a colored accent unique to that project.
+Each project you have added appears as a group under **Projects**. Today a project is a single folder: a git repository, or a plain folder used without git (see Getting Started). Its name is shown with a colored accent unique to that project.
 
 Conversations within a project are listed below the project name. If multiple conversations share the same branch, they are grouped together under that branch name.
 
@@ -41,9 +41,11 @@ Right-click a conversation to access:
 - **Mark Completed** / **Reopen** — Hide a finished conversation, or bring it back
 - **Open Folder** — Open the worktree directory in your file explorer
 - **Stop** — Shut down a live conversation's agent but keep the conversation, so you can pick it up again later
-- **Destroy Agent** — Remove the conversation and optionally delete its branch
+- **Delete Conversation**: remove the conversation and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
 
-Stopping or destroying the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
+Hovering a row also shows a quick button: a power icon to stop a live conversation, or a bin to delete a stopped one (it asks first).
+
+Stopping or deleting the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
 
 Grove Bench also starts on the landing screen. The conversations you had open are listed there and under **Conversations**, and none of them starts its agent until you open it.
 

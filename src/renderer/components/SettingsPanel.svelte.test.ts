@@ -14,7 +14,7 @@ const MODE: ControlDescriptor = {
   label: 'Mode',
   default: 'default',
   options: [
-    { value: 'default', label: 'Code', description: 'Ask before edits and non-trivial commands' },
+    { value: 'default', label: 'Ask', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
     { value: 'plan', label: 'Plan' },
     { value: 'acceptEdits', label: 'Edit', description: 'Auto-accept file edits inside the worktree' },
     { value: 'auto', label: 'Auto' },
@@ -41,7 +41,7 @@ async function openModeSelect() {
   const trigger = await screen.findByRole('button', { name: 'Claude Agent default mode' });
   trigger.focus();
   await fireEvent.keyDown(trigger, { key: 'Enter' });
-  await screen.findByRole('option', { name: 'Code' });
+  await screen.findByRole('option', { name: 'Ask' });
   return trigger;
 }
 
@@ -93,7 +93,7 @@ describe('SettingsPanel default permission mode', () => {
     await openAgentTab();
     await openModeSelect();
 
-    for (const name of ['Code', 'Plan', 'Edit', 'Auto', 'Read-safe']) {
+    for (const name of ['Ask', 'Plan', 'Edit', 'Auto', 'Read-safe']) {
       expect(screen.getByRole('option', { name })).toBeInTheDocument();
     }
     expect(screen.getByText('Grove Bench')).toBeInTheDocument();
@@ -110,9 +110,9 @@ describe('SettingsPanel default permission mode', () => {
 
     trigger.focus();
     await fireEvent.keyDown(trigger, { key: 'Enter' });
-    await screen.findByRole('option', { name: 'Code' });
-    await pick('Code');
-    await waitFor(() => expect(trigger).toHaveTextContent('Code'));
+    await screen.findByRole('option', { name: 'Ask' });
+    await pick('Ask');
+    await waitFor(() => expect(trigger).toHaveTextContent('Ask'));
     expect(settingsStore.draft.adapterDefaults).toEqual({});
   });
 
