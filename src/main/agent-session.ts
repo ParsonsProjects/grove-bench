@@ -1,7 +1,7 @@
 import { BrowserWindow, app } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS } from '../shared/types.js';
+import { CONTROL_IDS, PERMISSION_MODES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
@@ -1261,6 +1261,12 @@ class AgentSessionManager {
   setMode(id: string, mode: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
+    // Only modes the app offers. The value comes over IPC, and anything else
+    // (e.g. the SDK's bypassPermissions) would be passed to the SDK as-is.
+    if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
+      logger.warn(`[setMode] session=${id} ignored unknown permission mode: ${mode}`);
+      return;
+    }
 
     const prevMode = session.permissionMode;
 

@@ -931,6 +931,21 @@ describe('AgentSessionManager.permRequestCounter', () => {
 });
 
 describe('AgentSessionManager.setMode()', () => {
+  it('refuses a mode the app does not offer, such as the SDK\'s bypassPermissions', async () => {
+    await sessionManager.createSession({
+      id: 'test-mode-bypass', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-mode-bypass')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-mode-bypass')!;
+    const before = session.permissionMode;
+
+    sessionManager.setMode('test-mode-bypass', 'bypassPermissions');
+
+    expect(session.permissionMode).toBe(before);
+    expect(session.queryHandle!.setPermissionMode).not.toHaveBeenCalledWith('bypassPermissions');
+    await sessionManager.destroySession('test-mode-bypass');
+  });
+
   it('stores permissionMode on session even without queryHandle', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -969,8 +984,8 @@ describe('AgentSessionManager.setMode()', () => {
     sessionManager.setMode('test-mode2', 'acceptEdits');
 
     const session = sessionManager.getSession('test-mode2');
-    // All modes are now passed to the adapter — the adapter decides which to accept.
-    // The session manager no longer filters modes.
+    // Every app mode is passed to the adapter, which decides which it offers
+    // per model; only modes outside PERMISSION_MODES are refused (test above).
     const handle = session?.queryHandle;
     if (handle?.setPermissionMode) {
       expect(handle.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
