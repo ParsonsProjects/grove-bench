@@ -98,7 +98,9 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (open && e.key === 'Escape') {
+    // Every conversation's pane stays mounted: one left open in a hidden
+    // pane must not swallow Escape meant for what is on screen.
+    if (open && e.key === 'Escape' && (rootRef?.checkVisibility?.() ?? true)) {
       e.stopPropagation();
       open = false;
     }

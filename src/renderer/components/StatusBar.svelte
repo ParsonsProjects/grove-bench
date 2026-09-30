@@ -96,14 +96,24 @@
     }
   }
 
+  /** Set while the PR turn is being prepared (the base branch lookup runs
+   *  git), so a double click can't send it twice. */
+  let preparingPrTurn = $state(false);
+
   /** Hand PR creation to the agent as a turn in this conversation. */
   async function sendAgentPrTurn() {
-    const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
-    const base = await resolveBaseBranch(repoPath);
-    const prompt = buildCreatePrPrompt(sessionBranch, base);
-    messageStore.addUserMessage(sessionId, prompt);
-    window.groveBench.sendMessage(sessionId, prompt);
-    store.updateLastActive(sessionId);
+    if (preparingPrTurn) return;
+    preparingPrTurn = true;
+    try {
+      const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
+      const base = await resolveBaseBranch(repoPath);
+      const prompt = buildCreatePrPrompt(sessionBranch, base);
+      messageStore.addUserMessage(sessionId, prompt);
+      window.groveBench.sendMessage(sessionId, prompt);
+      store.updateLastActive(sessionId);
+    } finally {
+      preparingPrTurn = false;
+    }
   }
 
   /** Default click: agent turn when the session can take one, manual dialog otherwise. */
@@ -432,22 +442,27 @@
     }
   }
 
+  /** When each pending sign-in stops being waited on. */
+  const mcpSignInDeadlines = new Map<string, number>();
+
   function startSignInPoll(name: string) {
     mcpSigningIn = { ...mcpSigningIn, [name]: true };
-    const deadline = Date.now() + MCP_SIGN_IN_TIMEOUT_MS;
+    mcpSignInDeadlines.set(name, Date.now() + MCP_SIGN_IN_TIMEOUT_MS);
     if (mcpSignInPoll) return; // one ticker serves every pending sign-in
     mcpSignInPoll = setInterval(async () => {
       await refreshMcpServers();
-      const timedOut = Date.now() > deadline;
       for (const pending of Object.keys(mcpSigningIn)) {
         const status = mcpStatuses.find((s) => s.name === pending)?.status;
+        const timedOut = Date.now() > (mcpSignInDeadlines.get(pending) ?? 0);
         if (status && status !== 'needs-auth' && status !== 'pending') {
           const { [pending]: _, ...rest } = mcpSigningIn;
           mcpSigningIn = rest;
+          mcpSignInDeadlines.delete(pending);
           if (status === 'connected') mcpNotice = `${pending} signed in and connected.`;
         } else if (timedOut) {
           const { [pending]: _, ...rest } = mcpSigningIn;
           mcpSigningIn = rest;
+          mcpSignInDeadlines.delete(pending);
           mcpNotice = `Still waiting on ${pending}. Finish signing in, then click Reconnect.`;
         }
       }
@@ -1264,7 +1279,7 @@
           <span class="flex items-center">
             <button
               onclick={startCreatePr}
-              disabled={isRunning}
+              disabled={isRunning || preparingPrTurn}
               class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
               title={canAgentCreatePr
                 ? 'Ask the agent to commit, push, and create a pull request in this conversation'

@@ -383,12 +383,18 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
-    // If already running, just reattach the window so events flow to new webContents
-    if (sessionManager.getSession(id)) {
-      const s = sessionManager.getSession(id)!;
+    // Its agent is up (or asleep, or starting): just reattach the window so
+    // events flow to the new webContents.
+    const existing = sessionManager.getSession(id);
+    if (existing && existing.status !== 'stopped' && existing.status !== 'error') {
       sessionManager.reattachWindow(id, win);
-      return { id: s.id, branch: s.branch };
+      return { id: existing.id, branch: existing.branch };
     }
+    // Its agent ended (exited or crashed, died in system sleep, or failed to
+    // start) but the session is still held: reattaching would leave the tab
+    // looking live with nothing behind it. Close it and resume below, as
+    // after an app restart.
+    if (existing) await sessionManager.closeSession(id);
 
     // The renderer already shows the tab and its input while this runs, so
     // register the resume as a pending setup: prompts sent meanwhile are held

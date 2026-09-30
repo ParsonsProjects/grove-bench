@@ -354,11 +354,29 @@ describe('SESSION_CREATE', () => {
 
 describe('conversation lifecycle', () => {
   it('SESSION_RESUME reattaches a live conversation instead of starting another agent', async () => {
-    m.sessionManager.getSession.mockReturnValue({ id: 's1', branch: 'feat' });
+    m.sessionManager.getSession.mockReturnValue({ id: 's1', branch: 'feat', status: 'running' });
 
     expect(await invoke(IPC.SESSION_RESUME, 's1', '/repo')).toEqual({ id: 's1', branch: 'feat' });
     expect(m.sessionManager.reattachWindow).toHaveBeenCalledWith('s1', win);
     expect(m.sessionManager.createSession).not.toHaveBeenCalled();
+  });
+
+  it('SESSION_RESUME starts a new agent for a held conversation whose agent ended', async () => {
+    for (const status of ['stopped', 'error']) {
+      vi.clearAllMocks();
+      m.sessionManager.getSession.mockReturnValue({ id: 's1', branch: 'feat', status });
+      m.sessionManager.closeSession.mockResolvedValue(undefined);
+      m.sessionManager.createSession.mockResolvedValue({ id: 's1', branch: 'feat', agentType: 'claude-code' });
+      m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(wtInfo());
+      m.worktreeManager.getProviderSessionId.mockResolvedValue('prov-1');
+
+      await invoke(IPC.SESSION_RESUME, 's1', '/repo');
+
+      expect(m.sessionManager.reattachWindow).not.toHaveBeenCalled();
+      expect(m.sessionManager.closeSession).toHaveBeenCalledWith('s1');
+      expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ id: 's1', resumeSessionId: 'prov-1' }));
+      expect(m.sessionManager.closeSession.mock.invocationCallOrder[0]).toBeLessThan(m.sessionManager.createSession.mock.invocationCallOrder[0]);
+    }
   });
 
   it('SESSION_RESUME restarts on the saved provider session, model and agent', async () => {

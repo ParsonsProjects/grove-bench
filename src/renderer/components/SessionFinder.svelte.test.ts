@@ -125,4 +125,41 @@ describe('SessionFinder', () => {
     await typeQuery('p');
     expect(mockGroveBench.searchAllEventHistory).not.toHaveBeenCalled();
   });
+
+  it('drops message hits for a query that was cleared while they loaded', async () => {
+    messageStore.clearJump('s2'); // left by an earlier test
+    let finish!: (hits: CrossSessionSearchHit[]) => void;
+    mockGroveBench.searchAllEventHistory.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('parser');
+    await typeQuery('');
+
+    finish(HITS);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // With the stale hit counted, the arrow keys could reach it though it
+    // isn't shown, and Enter would jump into that conversation's messages.
+    const input = screen.getByPlaceholderText('Search conversations and messages...');
+    for (let i = 0; i < 3; i++) await fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(messageStore.pendingJumpBySession['s2']).toBeUndefined();
+    messageStore.clearJump('s2');
+  });
+
+  it('does not select past an empty list, so Enter after late hits opens the first one', async () => {
+    let finish!: (hits: CrossSessionSearchHit[]) => void;
+    mockGroveBench.searchAllEventHistory.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    const onclose = vi.fn();
+    cleanup();
+    render(SessionFinder, { onclose });
+    const input = screen.getByPlaceholderText('Search conversations and messages...');
+    await fireEvent.input(input, { target: { value: 'zzqq edge' } }); // no conversation matches
+    await fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await new Promise((r) => setTimeout(r, 200));
+    finish(HITS);
+    await new Promise((r) => setTimeout(r, 0));
+
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onclose).toHaveBeenCalledWith('s2');
+  });
 });

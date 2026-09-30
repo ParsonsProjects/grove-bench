@@ -93,6 +93,7 @@
     const q = query.trim();
     const ids: string[] = JSON.parse(searchOrder);
     if (q.length < 2 || ids.length === 0) {
+      reqToken++; // a search still in flight is for a query that's gone
       contentHits = [];
       contentLoading = false;
       return;
@@ -144,6 +145,7 @@
   }
 
   function selectAt(index: number) {
+    if (index < 0) return;
     if (index < sessionResults.length) {
       selectSession(sessionResults[index]);
     } else {
@@ -155,7 +157,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      selectedIndex = Math.min(selectedIndex + 1, totalResults - 1);
+      selectedIndex = Math.max(0, Math.min(selectedIndex + 1, totalResults - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       selectedIndex = Math.max(selectedIndex - 1, 0);
