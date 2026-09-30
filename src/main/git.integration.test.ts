@@ -72,6 +72,23 @@ describe('a local base behind origin', () => {
   });
 });
 
+describe('squash', () => {
+  it('puts the branch back when the commit is rejected', async () => {
+    commit('m1.txt', 'mine 1');
+    commit('m2.txt', 'mine 2');
+    const before = run('rev-parse', 'HEAD');
+    // A commit-msg hook that rejects every message, like a failing commitlint.
+    const hook = path.join(repo, '.git', 'hooks', 'commit-msg');
+    fs.writeFileSync(hook, '#!/bin/sh\necho "rejected by hook" >&2\nexit 1\n', { mode: 0o755 });
+
+    const result = await squashSince(repo, 'HEAD~2', 'Squashed');
+
+    expect(result.success).toBe(false);
+    expect(run('rev-parse', 'HEAD')).toBe(before);
+    expect(run('status', '--porcelain')).toBe('');
+  });
+});
+
 describe('a local base ahead of origin', () => {
   it('keeps the local base', async () => {
     const originMain = run('rev-parse', 'HEAD');

@@ -241,3 +241,30 @@ describe('ChangesReviewPanel — review features', () => {
     await waitFor(() => expect(getByText('No merge base with main')).toBeInTheDocument());
   });
 });
+
+describe('ChangesReviewPanel — revert warnings', () => {
+  async function openRevertFor(entries: GitStatusEntry[]) {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
+    gitStatusStore.scopeBySession = {}; // an earlier test leaves branch scope, which hides Revert
+    gitStatusStore.statusBySession = { [SID]: { entries } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    const button = await waitFor(() => {
+      const b = view.getAllByRole('button').find((el) => /^(Revert|Discard)$/.test(el.textContent?.trim() ?? ''));
+      if (!b) throw new Error('no revert button yet');
+      return b;
+    });
+    button.click();
+    await tick();
+    return view;
+  }
+
+  it('says a staged revert also drops the file\'s unstaged edits', async () => {
+    const view = await openRevertFor([entry('src/a.ts', { staged: true }), entry('src/a.ts', { staged: false })]);
+    expect(await view.findByText(/its unstaged edits too/)).toBeInTheDocument();
+  });
+
+  it('says reverting a staged new file deletes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'added' })]);
+    expect(await view.findByText(/is a new file, so reverting it deletes it from disk/)).toBeInTheDocument();
+  });
+});

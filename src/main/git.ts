@@ -261,11 +261,16 @@ export async function squashSince(cwd: string, base: string, message: string): P
   if (!count || count < 2) {
     return { success: false, error: count === 1 ? 'Only one commit since the base — nothing to squash.' : 'No commits since the base.' };
   }
+  const head = (await git(['rev-parse', 'HEAD'], cwd)).trim();
   try {
     await git(['reset', '--soft', mergeBase], cwd);
     await git(['commit', '-m', message], cwd);
     return { success: true };
   } catch (e: any) {
+    // The commit can fail after the reset (a commit-msg or pre-commit hook,
+    // signing): put the branch back, or its commits would be left folded
+    // into staged changes. The tree was clean, so this restores it exactly.
+    await git(['reset', '--soft', head], cwd).catch(() => {});
     return { success: false, error: e?.stderr?.trim() || e?.message || 'squash failed' };
   }
 }
