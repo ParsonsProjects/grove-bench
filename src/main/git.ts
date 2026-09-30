@@ -3,6 +3,10 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
 
+/** Cap on network git commands (fetch): a dead network must not leave git
+ *  processes hanging or block what waits on them. */
+export const FETCH_TIMEOUT_MS = 30_000;
+
 export interface GitOptions {
   /** Kill the git process after this many ms (for network commands that can hang). */
   timeout?: number;
@@ -92,7 +96,7 @@ export async function getDefaultBranch(cwd: string): Promise<string> {
 export async function listBranches(cwd: string, opts: { fetch?: boolean } = {}): Promise<string[]> {
   // Fetch latest remote refs (non-blocking — proceed with local cache on failure)
   if (opts.fetch !== false) {
-    try { await git(['fetch', '--prune'], cwd); } catch { /* offline or no remote */ }
+    try { await git(['fetch', '--prune'], cwd, { timeout: FETCH_TIMEOUT_MS }); } catch { /* offline or no remote */ }
   }
 
   // Get remote names so we can strip their prefix from remote-tracking branches
@@ -250,12 +254,9 @@ export async function squashSince(cwd: string, base: string, message: string): P
   if (!message.trim()) return { success: false, error: 'A commit message is required.' };
   const dirty = await requireCleanTree(cwd);
   if (dirty) return dirty;
-  let mergeBase: string;
-  try {
-    mergeBase = (await git(['merge-base', base, 'HEAD'], cwd)).trim();
-  } catch (e: any) {
-    return { success: false, error: `Cannot find a merge base with ${base}: ${e?.stderr?.trim() || e?.message || e}` };
-  }
+  const resolved = await resolveMergeBase(cwd, base);
+  if (!resolved) return { success: false, error: `Cannot find a merge base with ${base}.` };
+  const { mergeBase } = resolved;
   const count = parseInt((await git(['rev-list', '--count', `${mergeBase}..HEAD`], cwd)).trim(), 10);
   if (!count || count < 2) {
     return { success: false, error: count === 1 ? 'Only one commit since the base — nothing to squash.' : 'No commits since the base.' };
@@ -390,17 +391,39 @@ export async function fileDiffAgainst(cwd: string, relPath: string, ref: string)
   return git(['diff', ref, '--', relPath], cwd);
 }
 
-/** Resolve the merge base between HEAD and `base`, trying the local branch
- *  first and the remote-tracking name second (the base is often only fetched). */
+/**
+ * Resolve the merge base between HEAD and `base`, from whichever of the local
+ * branch and `origin/<base>` gives the newer one. A local base that is behind
+ * origin (a new worktree starts from origin when the local branch can't be
+ * fast-forwarded) would otherwise count the upstream commits the branch
+ * started from as its own: in the branch diff, and in what a squash folds in.
+ * When they have diverged, the local branch wins.
+ */
 export async function resolveMergeBase(cwd: string, base: string): Promise<{ ref: string; mergeBase: string } | null> {
   if (!isRefArg(base)) return null;
+  let best: { ref: string; mergeBase: string } | null = null;
   for (const ref of [base, `origin/${base}`]) {
+    let mergeBase: string;
     try {
-      const mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
-      if (mergeBase) return { ref, mergeBase };
-    } catch { /* ref missing — try the next name */ }
+      mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
+    } catch { continue; /* ref missing */ }
+    if (!mergeBase) continue;
+    if (!best) {
+      best = { ref, mergeBase };
+    } else if (mergeBase !== best.mergeBase && (await isAncestor(cwd, best.mergeBase, mergeBase))) {
+      best = { ref, mergeBase };
+    }
   }
-  return null;
+  return best;
+}
+
+async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(['merge-base', '--is-ancestor', ancestor, descendant], cwd);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Working-tree content of a file as the index sees it (`git show :path`). */
@@ -561,17 +584,17 @@ export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
   }
 }
 
-/** Commits on HEAD that aren't on the base branch, newest first.
- *  Falls back to origin/<base> when the base has no local ref. */
+/** Commits on HEAD that aren't on the base branch, newest first. The base
+ *  is the local branch or origin/<base>, whichever is further ahead. */
 export async function branchCommits(cwd: string, base: string): Promise<BranchCommit[]> {
-  if (!isRefArg(base)) return [];
-  for (const ref of [base, `origin/${base}`]) {
-    try {
-      const raw = await git(['log', '--format=%s%x1f%b%x1e', `${ref}..HEAD`], cwd);
-      return parseBranchCommits(raw);
-    } catch { /* ref missing — try the remote-tracking name */ }
+  // The local base or origin/<base>, whichever is further ahead (see resolveMergeBase).
+  const resolved = await resolveMergeBase(cwd, base);
+  if (!resolved) return [];
+  try {
+    return parseBranchCommits(await git(['log', '--format=%s%x1f%b%x1e', `${resolved.ref}..HEAD`], cwd));
+  } catch {
+    return [];
   }
-  return [];
 }
 
 export function parseBranchCommits(raw: string): BranchCommit[] {
