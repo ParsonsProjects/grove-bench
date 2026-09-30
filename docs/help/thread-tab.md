@@ -1,6 +1,6 @@
-# Activity Tab
+# Thread Tab
 
-The Activity tab (`Alt+1`) is the primary view for interacting with your agent. It displays the full conversation history including messages, tool calls, and permission requests.
+The Thread tab (`Alt+1`) is the primary view for interacting with your agent. It displays the full conversation history including messages, tool calls, and permission requests.
 
 ## Message Types
 
@@ -47,5 +47,5 @@ Extended thinking from the agent appears as expandable sections. Click to see th
 ## Controls
 
 - **Search** (`Ctrl+F`) — Search through the conversation history
-- **Activity view** — The toggle in the status bar shows the current view and cycles through **Summary**, **Focus** and **Detailed**. Detailed shows everything. Summary hides thinking blocks and most tool calls. It keeps file edits, commands, and tools from MCP servers you added, since those can act outside the project (for example creating a ticket or sending a message). Focus shows only the agent's responses, its questions and your answers. New conversations start in the view set by **Default Activity View** in **Settings → General**.
+- **Thread view** — The toggle in the status bar shows the current view and cycles through **Summary**, **Focus** and **Detailed**. Detailed shows everything. Summary hides thinking blocks and most tool calls. It keeps file edits, commands, and tools from MCP servers you added, since those can act outside the project (for example creating a ticket or sending a message). Focus shows only the agent's responses, its questions and your answers. New conversations start in the view set by **Default Thread View** in **Settings → General**.
 - **Scroll** — The view auto-scrolls to the latest message. Scroll up to browse history; new messages will appear at the bottom.

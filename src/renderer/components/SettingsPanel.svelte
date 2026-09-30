@@ -733,7 +733,7 @@
               <Checkbox bind:checked={settingsStore.draft.groveCharacters} />
               Show grove characters
             </label>
-            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, when no conversation is open, and walking through the grove while a conversation starts up again.</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, when no conversation is open, on empty Changes, Checkpoints and Preview tabs, and walking through the grove while a conversation starts up again.</p>
           </div>
 
           <Separator />
@@ -825,9 +825,9 @@
 
           <Separator />
 
-          <!-- Default Activity View -->
+          <!-- Default Thread View -->
           <div>
-            <Label class="mb-1 block">Default Activity View</Label>
+            <Label class="mb-1 block">Default Thread View</Label>
             <Select.Root type="single" value={settingsStore.draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
               <Select.Trigger class="w-48">
                 {VIEW_MODE_LABELS[settingsStore.draft.defaultActivityView] ?? 'Summary'}

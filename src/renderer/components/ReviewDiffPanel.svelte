@@ -12,6 +12,9 @@
   import ImageDiffView from './ImageDiffView.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { conversationAgent } from '../lib/session-sprite-state.js';
+  import type { GroveTab } from '../lib/agent-sprite.js';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -39,6 +42,7 @@
     emptyTitle,
     emptyHint,
     emptyExtra,
+    emptyScene,
     sidebarTop,
     sidebarSummaryExtra,
     sidebarFooter,
@@ -69,6 +73,8 @@
     emptyTitle: string;
     emptyHint?: string;
     emptyExtra?: Snippet;
+    /** Which tab's props the grove scene over the empty message shows. */
+    emptyScene?: GroveTab;
     sidebarTop?: Snippet;
     sidebarSummaryExtra?: Snippet;
     sidebarFooter?: Snippet;
@@ -77,6 +83,8 @@
   } = $props();
 
   let isLoading = $derived(loading);
+  /** The conversation's agent on its bench above the empty message. */
+  let groveAgent = $derived(settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null);
   let hasStaging = $derived(!!onStage && !!onUnstage);
 
   // Group entries by section
@@ -618,8 +626,7 @@
         "
       ></span>
     {/each}
-    <div class="relative z-10 flex flex-col items-center gap-2">
-      <span>{emptyTitle}</span>
+    {#snippet emptyDetails()}
       {#if emptyExtra}{@render emptyExtra()}{/if}
       {#if emptyHint}
         <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
@@ -627,7 +634,20 @@
           {emptyHint}
         </span>
       {/if}
-    </div>
+    {/snippet}
+    {#if groveAgent}
+      <GroveEmptyState variant="agent" agent={groveAgent} tab={emptyScene}>
+        <div class="mt-5 flex flex-col items-center gap-2">
+          <span class="text-foreground/80">{emptyTitle}</span>
+          {@render emptyDetails()}
+        </div>
+      </GroveEmptyState>
+    {:else}
+      <div class="relative z-10 flex flex-col items-center gap-2">
+        <span>{emptyTitle}</span>
+        {@render emptyDetails()}
+      </div>
+    {/if}
   </div>
 {:else}
   <div class="flex-1 flex overflow-hidden">

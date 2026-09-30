@@ -2,6 +2,9 @@
   import { checkpointStore, FULL_THREAD_UUID } from '../stores/checkpoints.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { conversationAgent } from '../lib/session-sprite-state.js';
   import type { DiffStats, GitStatusEntry } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -15,6 +18,8 @@
   let rewindPoints = $derived(messageStore.getRewindPoints(sessionId));
   let history = $derived(checkpointStore.getHistory(sessionId));
   let diffMode = $derived(checkpointStore.getDiffMode(sessionId));
+  /** The conversation's agent on its bench above the empty messages. */
+  let groveAgent = $derived(settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null);
   let rewinding = $state(false);
   let error = $state('');
 
@@ -88,7 +93,14 @@
   </div>
 {:else if checkpoints.length === 0}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
-    No checkpoints yet — send a message to create one.
+    {#if groveAgent}
+      <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
+        <p class="text-sm mt-5 mb-2 text-foreground/80">No checkpoints yet</p>
+        <p class="text-xs text-muted-foreground max-w-md">Each message you send saves one before the agent acts on it, so you can see what that turn changed and rewind to it.</p>
+      </GroveEmptyState>
+    {:else}
+      No checkpoints yet — send a message to create one.
+    {/if}
   </div>
 {:else}
   <div class="flex-1 flex overflow-hidden">
@@ -148,7 +160,14 @@
     <div class="pixel-bg flex-1 flex flex-col overflow-hidden relative">
       {#if !selectedUuid}
         <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-          Select a checkpoint to view changes
+          {#if groveAgent}
+            <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
+              <p class="text-sm mt-5 mb-2 text-foreground/80">Select a checkpoint to view changes</p>
+              <p class="text-xs text-muted-foreground max-w-md">Pick a turn on the left to see what it changed, or All turns for the whole conversation.</p>
+            </GroveEmptyState>
+          {:else}
+            Select a checkpoint to view changes
+          {/if}
         </div>
       {:else}
         <!-- Header -->
@@ -246,6 +265,7 @@
             onRefresh={() => checkpointStore.reloadFiles(sessionId)}
             commentContext={comparisonLabel}
             {emptyTitle}
+            emptyScene="checkpoints"
           />
         {/if}
       {/if}
