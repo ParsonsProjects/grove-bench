@@ -200,9 +200,9 @@
         {#if modeHint}
           <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
         {/if}
-        <p class="text-xs text-muted-foreground/70 mt-2 max-w-md">Change the agent, model, mode or branch in the bar below before you send.</p>
+        <p class="text-xs text-muted-foreground/70 mt-2 max-w-md">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} in the bar below before you send.</p>
         {#if identityMissing}
-          <div class="mt-3 max-w-md text-left"><GitIdentityNotice /></div>
+          <div class="mt-3 max-w-md text-left"><GitIdentityNotice beforeStart /></div>
         {/if}
       </GroveEmptyState>
     {:else}
@@ -213,7 +213,7 @@
           <p class="text-xs max-w-md mt-1">Mode: {modeHint.label}. {modeHint.description}.</p>
         {/if}
         {#if identityMissing}
-          <div class="mt-3 max-w-md text-left"><GitIdentityNotice /></div>
+          <div class="mt-3 max-w-md text-left"><GitIdentityNotice beforeStart /></div>
         {/if}
       </div>
     {/if}

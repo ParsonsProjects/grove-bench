@@ -198,6 +198,7 @@ describe('DraftPane git identity heads-up', () => {
     mockGroveBench.hasGitIdentity.mockResolvedValue(false);
     render(DraftPane);
     expect(await screen.findByText(/Git doesn't have your name and email for this project/)).toBeInTheDocument();
+    expect(screen.getByText(/before or after you start/)).toBeInTheDocument();
     expect(mockGroveBench.hasGitIdentity).toHaveBeenCalledWith('/repo/one');
     mockGroveBench.hasGitIdentity.mockResolvedValue(true);
   });
@@ -218,6 +219,7 @@ describe('DraftPane git identity heads-up', () => {
     await settle();
     expect(mockGroveBench.hasGitIdentity).not.toHaveBeenCalled();
     expect(screen.getByText(/This project isn't a git repository, so its edits land in place/)).toBeInTheDocument();
+    expect(screen.getByText('Change the agent, model or mode in the bar below before you send.')).toBeInTheDocument();
     store.setFolderProject('/repo/one', false);
   });
 });
