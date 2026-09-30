@@ -59,3 +59,45 @@ export async function pathExists(p: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Errors Windows raises while another process (antivirus, the indexer, a
+ *  backup tool) briefly holds a file. */
+const TRANSIENT_FS_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+
+/** Retry `op` a few times while it fails with a transient lock error. */
+async function withLockRetry<T>(
+  op: () => Promise<T>,
+  delaysMs: number[] = [50, 150, 400],
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await op();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= delaysMs.length || !code || !TRANSIENT_FS_CODES.has(code)) throw err;
+      await sleep(delaysMs[attempt]);
+    }
+  }
+}
+
+/** Read a file, riding out brief locks. Other errors (ENOENT included) throw. */
+export function readFileWithRetry(filePath: string, sleep?: (ms: number) => Promise<void>): Promise<string> {
+  return withLockRetry(() => fs.readFile(filePath, 'utf-8'), undefined, sleep);
+}
+
+/**
+ * Replace a file's contents all at once: write a temp file beside it, then
+ * rename it over the original. A crash mid-write leaves the old file intact
+ * instead of a truncated one, and readers never see a half-written file.
+ */
+export async function writeFileAtomic(filePath: string, data: string, sleep?: (ms: number) => Promise<void>): Promise<void> {
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, data);
+  try {
+    await withLockRetry(() => fs.rename(tmp, filePath), undefined, sleep);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}

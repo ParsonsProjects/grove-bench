@@ -1,9 +1,11 @@
 name: Package
 
-# Builds the Windows installer without publishing it and checks that node-pty
-# works in the packaged app. Runs when packaging inputs change, weekly (runner
-# image updates have broken packaging before with no change in this repo), and
-# from the Release workflow, which publishes the installer uploaded here.
+# Builds the Windows installer without publishing it and checks that the
+# packaged app has every package main loads, and that node-pty and the agent
+# SDK's native binary work in it. Runs when packaging inputs change, weekly
+# (runner image updates have broken packaging before with no change in this
+# repo), and from the Release workflow, which publishes the installer
+# uploaded here.
 
 on:
   pull_request:
@@ -46,7 +48,9 @@ jobs:
         run: npm ci
 
       - name: Type check
-        run: npx tsc --noEmit
+        # tsc for .ts files, then svelte-check for the TypeScript in .svelte
+        # components, which tsc skips.
+        run: npm run typecheck
 
       - name: Run tests
         run: npm test
@@ -54,8 +58,14 @@ jobs:
       - name: Build installer
         run: npm run dist
 
+      - name: Check the packaged app's run-time packages
+        run: node scripts/smoke-deps.mjs
+
       - name: Smoke test node-pty in the packaged app
         run: node scripts/smoke-pty.mjs
+
+      - name: Smoke test the agent binary in the packaged app
+        run: node scripts/smoke-agent.mjs
 
       - name: Upload installer
         uses: actions/upload-artifact@v7

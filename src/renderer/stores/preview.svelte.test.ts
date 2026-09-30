@@ -21,7 +21,7 @@ describe('previewStore', () => {
       expect(previewStore.getUser('s1')).toBeNull();
     });
 
-    it("switches to Claude's page the first time it acts while yours is empty", () => {
+    it("switches to the agent's page the first time it acts while yours is empty", () => {
       expect(previewStore.getMode('s1')).toBe('user');
       previewStore.applyState('s1', 'agent', page({ lastAction: { text: 'Opened', at: 1 } }));
       expect(previewStore.getMode('s1')).toBe('agent');
@@ -117,7 +117,7 @@ describe('previewStore', () => {
   it('picks up pages that were already open when Grove reloads, without overwriting newer state', async () => {
     const fresh = new (previewStore.constructor as new () => typeof previewStore)();
     mockGroveBench.previewGetStates.mockResolvedValueOnce({
-      s1: { user: page({ title: 'From main' }), agent: page({ title: 'Claude page' }) },
+      s1: { user: page({ title: 'From main' }), agent: page({ title: 'Agent page' }) },
       s2: { user: null, agent: page({ title: 'Other' }) },
     });
     let push!: (id: string, kind: 'user' | 'agent', state: PreviewPageState | null) => void;
@@ -126,7 +126,7 @@ describe('previewStore', () => {
     push('s1', 'user', page({ title: 'Pushed' }));
     await vi.waitFor(() => expect(fresh.getAgent('s2')?.title).toBe('Other'));
     expect(fresh.getUser('s1')?.title).toBe('Pushed');
-    expect(fresh.getAgent('s1')?.title).toBe('Claude page');
+    expect(fresh.getAgent('s1')?.title).toBe('Agent page');
   });
 
   it('navigates through the bridge', async () => {

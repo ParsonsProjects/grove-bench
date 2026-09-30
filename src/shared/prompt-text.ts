@@ -6,14 +6,20 @@
  * typed and saw.
  */
 
-const AT_REF_RE = /@([\w.\/\-]+)/g;
+/** `@` and everything up to whitespace, so names with `+`, `[ ]`, `( )`, `@`
+ *  or non-ASCII letters survive (SvelteKit `+page.svelte`, Next.js
+ *  `[id].tsx`, `@types/…`, `café.ts`). Paths with spaces aren't supported. */
+const AT_REF_RE = /@(\S+)/g;
+/** Punctuation that ends a sentence or closes a bracket around a reference. */
+const TRAILING_PUNCT_RE = /[.,;:!?'"`)\]}>]+$/;
 
 /** Extract @-references from prompt text. A trailing `/` marks a folder. */
 export function extractAtRefs(text: string): string[] {
   const refs: string[] = [];
   let match;
   while ((match = AT_REF_RE.exec(text)) !== null) {
-    refs.push(match[1]);
+    const ref = match[1].replace(TRAILING_PUNCT_RE, '');
+    if (ref) refs.push(ref);
   }
   return refs;
 }

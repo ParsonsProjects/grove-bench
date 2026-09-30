@@ -1,15 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { mockReadFileSync, mockWriteFileSync } = vi.hoisted(() => ({
+const { mockReadFileSync, mockWriteFileSync, mockRenameSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  mockRenameSync: vi.fn(),
 }));
 
 vi.mock('node:fs', () => ({
   default: {
     readFileSync: mockReadFileSync,
     writeFileSync: mockWriteFileSync,
+    renameSync: mockRenameSync,
+    copyFileSync: vi.fn(),
+    rmSync: vi.fn(),
   },
+}));
+
+vi.mock('./logger.js', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 import {
@@ -22,11 +30,14 @@ import {
 /** The file as the last write left it, so read-modify-write chains see their own updates. */
 function useDisk(initial: unknown) {
   let disk = initial === undefined ? null : JSON.stringify(initial);
+  const temp = new Map<string, string>();
   mockReadFileSync.mockImplementation(() => {
-    if (disk === null) throw new Error('ENOENT');
+    if (disk === null) throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
     return disk;
   });
-  mockWriteFileSync.mockImplementation((_p: string, data: string) => { disk = data; });
+  // Writes land in a temp file; the rename puts them in place.
+  mockWriteFileSync.mockImplementation((p: string, data: string) => { temp.set(p, data); });
+  mockRenameSync.mockImplementation((from: string) => { disk = temp.get(from) ?? null; temp.delete(from); });
   return { get: () => (disk === null ? null : JSON.parse(disk)) };
 }
 
@@ -160,6 +171,19 @@ describe('debounced writers', () => {
     const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, knownSkills: { '/a': ['x'] } });
     saveKnownSkills('/b', ['y']);
     expect(disk.get().knownSkills).toEqual({ '/a': ['x'], '/b': ['y'] });
+  });
+
+  it('skips a save rather than write defaults over a file it can\'t read', () => {
+    const saved = { schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['keep'], knownSkills: { '/a': ['x'] } };
+    const disk = useDisk(saved);
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); });
+
+    saveKnownSkills('/b', ['y']);
+    saveOpenTabs(['new']);
+    flushPendingSaves();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(disk.get()).toEqual(saved);
   });
 });
 

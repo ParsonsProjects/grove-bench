@@ -275,8 +275,11 @@ class DraftStore {
   /** Create the conversation and send the draft's message as its first turn.
    *  Returns whether it started; on failure the draft stays with the error. */
   async start(): Promise<boolean> {
-    const d = this.draft;
-    if (!d || this.starting) return false;
+    const draft = this.draft;
+    if (!draft || this.starting) return false;
+    // A copy: the pickers stay usable while this awaits, and changes made
+    // meanwhile must not leak into the conversation being created.
+    const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project in the bar below.';
@@ -326,7 +329,9 @@ class DraftStore {
         window.groveBench.sendMessage(result.id, text);
         sessionStore.updateLastActive(result.id);
       }
-      this.discard();
+      // Discarded (and maybe replaced by a new draft) while this ran: leave
+      // the new one alone.
+      if (this.draft === draft) this.discard();
       return true;
     } catch (e: any) {
       this.error = e?.message || String(e);

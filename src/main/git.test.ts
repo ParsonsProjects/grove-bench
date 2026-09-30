@@ -6,6 +6,9 @@ vi.mock('execa', () => ({
 }));
 
 import { execa } from 'execa';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   git,
   gitVersion,
@@ -46,9 +49,25 @@ import {
   checkoutBranch,
   isWorkingTreeClean,
   getGitIdentity,
+  isRefArg,
+  listProjectFiles,
+  resolveMergeBase,
+  revertFile,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
+
+/** Answer git by command (args joined with spaces, matched by prefix)
+ *  rather than by call order. Unmatched commands print nothing. */
+function scriptGit(answers: Record<string, string | Error>) {
+  mockExeca.mockImplementation((async (_cmd: string, args: string[]) => {
+    const line = args.join(' ');
+    const key = Object.keys(answers).find((k) => line.startsWith(k));
+    const answer = key === undefined ? '' : answers[key];
+    if (answer instanceof Error) throw answer;
+    return { stdout: answer };
+  }) as never);
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -199,6 +218,11 @@ describe('listBranches()', () => {
     const branches = await listBranches('/repo');
     expect(branches).not.toContain('HEAD');
     expect(branches).not.toContain('origin/HEAD');
+  });
+
+  it('caps the fetch so a dead network cannot hang it', async () => {
+    await listBranches('/repo');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['fetch', '--prune'], { cwd: '/repo', timeout: 30_000 });
   });
 
   it('skips the fetch when asked', async () => {
@@ -546,17 +570,110 @@ describe('branchCommits()', () => {
   });
 
   it('falls back to origin/<base> when the local base ref is missing', async () => {
-    mockExeca
-      .mockRejectedValueOnce(new Error('unknown revision'))
-      .mockResolvedValueOnce({ stdout: 'subject\x1f\x1e' } as any);
+    scriptGit({
+      'merge-base main HEAD': new Error('unknown revision'),
+      'merge-base origin/main HEAD': 'mb',
+      'log': 'subject\x1f\x1e',
+    });
     const result = await branchCommits('/repo', 'main');
-    expect(mockExeca).toHaveBeenNthCalledWith(2, 'git', ['log', '--format=%s%x1f%b%x1e', 'origin/main..HEAD'], { cwd: '/repo' });
+    expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'origin/main..HEAD'], { cwd: '/repo' });
     expect(result).toEqual([{ subject: 'subject', body: '' }]);
+  });
+
+  it('uses origin/<base> when the local base is behind it', async () => {
+    scriptGit({
+      'merge-base main HEAD': 'old',
+      'merge-base origin/main HEAD': 'new',
+      'merge-base --is-ancestor old new': '',
+      'log': '',
+    });
+    await branchCommits('/repo', 'main');
+    expect(mockExeca).toHaveBeenCalledWith('git', ['log', '--format=%s%x1f%b%x1e', 'origin/main..HEAD'], { cwd: '/repo' });
   });
 
   it('returns empty when neither ref resolves', async () => {
     mockExeca.mockRejectedValue(new Error('unknown revision'));
     expect(await branchCommits('/repo', 'main')).toEqual([]);
+  });
+
+  it('never passes a base that git would read as an option', async () => {
+    // `git log --output=<file>..HEAD` would write a file.
+    expect(await branchCommits('/repo', '--output=/tmp/x')).toEqual([]);
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveMergeBase()', () => {
+  it('keeps the local base when origin/<base> is behind or has diverged', async () => {
+    scriptGit({
+      'merge-base main HEAD': 'local',
+      'merge-base origin/main HEAD': 'remote',
+      'merge-base --is-ancestor local remote': new Error('not an ancestor'),
+    });
+    expect(await resolveMergeBase('/repo', 'main')).toEqual({ ref: 'main', mergeBase: 'local' });
+  });
+
+  it('never passes a base that git would read as an option', async () => {
+    expect(await resolveMergeBase('/repo', '--independent')).toBeNull();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('isRefArg()', () => {
+  it('accepts branch-like names and rejects options and non-strings', () => {
+    expect(isRefArg('main')).toBe(true);
+    expect(isRefArg('feat/a-b')).toBe(true);
+    expect(isRefArg('-x')).toBe(false);
+    expect(isRefArg('')).toBe(false);
+    expect(isRefArg(undefined)).toBe(false);
+  });
+});
+
+describe('listProjectFiles()', () => {
+  it('lists tracked and untracked, unignored files, unquoted', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'café.ts\0src/a b.ts\0' } as any);
+    expect(await listProjectFiles('/repo')).toEqual(['café.ts', 'src/a b.ts']);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: '/repo' });
+  });
+
+  it('lists a conflicted file once', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'a.ts\0a.ts\0a.ts\0b.ts\0' } as any);
+    expect(await listProjectFiles('/repo')).toEqual(['a.ts', 'b.ts']);
+  });
+});
+
+describe('revertFile()', () => {
+  const status = (line: string) => mockExeca.mockResolvedValueOnce({ stdout: line } as any);
+  const lastArgs = () => mockExeca.mock.calls.at(-1)![1];
+
+  it('deletes a file staged as new, which isn\'t in HEAD', async () => {
+    status('A  new.ts');
+    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    await revertFile('/repo', 'new.ts', true);
+    expect(lastArgs()).toEqual(['rm', '-f', '-q', '--', 'new.ts']);
+  });
+
+  it('resets a staged change to HEAD', async () => {
+    status('M  a.ts');
+    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    await revertFile('/repo', 'a.ts', true);
+    expect(lastArgs()).toEqual(['checkout', 'HEAD', '--', 'a.ts']);
+  });
+
+  it('resets an unstaged change to the index, keeping a staged new file', async () => {
+    status('AM new.ts');
+    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    await revertFile('/repo', 'new.ts', false);
+    expect(lastArgs()).toEqual(['checkout', '--', 'new.ts']);
+  });
+
+  it('deletes an untracked file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-revert-'));
+    fs.writeFileSync(path.join(dir, 'scratch.ts'), 'x');
+    status('?? scratch.ts');
+    await revertFile(dir, 'scratch.ts', false);
+    expect(fs.existsSync(path.join(dir, 'scratch.ts'))).toBe(false);
+    expect(mockExeca).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -635,11 +752,11 @@ describe('branch operations', () => {
     });
 
     it('soft-resets to the merge base and commits', async () => {
-      clean();
-      mockExeca.mockResolvedValueOnce({ stdout: 'base123\n' } as any); // merge-base
-      mockExeca.mockResolvedValueOnce({ stdout: '3\n' } as any); // rev-list --count
-      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // reset --soft
-      mockExeca.mockResolvedValueOnce({ stdout: '' } as any); // commit
+      scriptGit({
+        'merge-base main HEAD': 'base123\n',
+        'merge-base origin/main HEAD': new Error('no remote'),
+        'rev-list --count': '3\n',
+      });
       const r = await squashSince('/repo', 'main', 'One commit');
       expect(r).toEqual({ success: true });
       expect(mockExeca).toHaveBeenCalledWith('git', ['merge-base', 'main', 'HEAD'], { cwd: '/repo' });
@@ -648,18 +765,26 @@ describe('branch operations', () => {
     });
 
     it('refuses with fewer than two commits', async () => {
-      clean();
-      mockExeca.mockResolvedValueOnce({ stdout: 'base123' } as any);
-      mockExeca.mockResolvedValueOnce({ stdout: '1' } as any);
+      scriptGit({ 'merge-base main HEAD': 'base123', 'merge-base origin/main HEAD': new Error('no remote'), 'rev-list --count': '1' });
       const r = await squashSince('/repo', 'main', 'msg');
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/Only one commit/);
       expect(mockExeca).not.toHaveBeenCalledWith('git', expect.arrayContaining(['reset']), expect.anything());
     });
 
+    it('squashes only since origin/<base> when the local base is behind it', async () => {
+      scriptGit({
+        'merge-base main HEAD': 'stale',
+        'merge-base origin/main HEAD': 'fresh',
+        'merge-base --is-ancestor stale fresh': '',
+        'rev-list --count fresh..HEAD': '2',
+      });
+      expect(await squashSince('/repo', 'main', 'msg')).toEqual({ success: true });
+      expect(mockExeca).toHaveBeenCalledWith('git', ['reset', '--soft', 'fresh'], { cwd: '/repo' });
+    });
+
     it('reports a missing merge base', async () => {
-      clean();
-      mockExeca.mockRejectedValueOnce(Object.assign(new Error('x'), { stderr: 'fatal: Not a valid object name nope' }));
+      scriptGit({ 'merge-base': Object.assign(new Error('x'), { stderr: 'fatal: Not a valid object name nope' }) });
       const r = await squashSince('/repo', 'nope', 'msg');
       expect(r.success).toBe(false);
       expect(r.error).toContain('merge base');

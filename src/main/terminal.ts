@@ -53,10 +53,10 @@ export class TerminalManager {
           buffer = '';
           return;
         }
-        if (buffer && !sender.isDestroyed()) {
-          sender.send(dataChannel, buffer);
-          buffer = '';
-        }
+        // Drop it when the window is gone too, or a chatty shell (a dev
+        // server) would grow it for as long as it runs.
+        if (buffer && !sender.isDestroyed()) sender.send(dataChannel, buffer);
+        buffer = '';
       };
 
       ptyProcess.onData((data: string) => {
@@ -138,31 +138,6 @@ export class TerminalManager {
       // Already dead
     }
     logger.info(`PTY killed: session=${sessionId}, child processes killed=${children.length}`);
-  }
-
-  // ─── Legacy shell execution (replaced by PTY) ───
-
-  /** @deprecated Spawn a one-off command. Use PTY instead. */
-  spawnCommand(sessionId: string, command: string, cwd: string, sender: WebContents): string {
-    // Legacy: run command via PTY write. Return a fake execId.
-    if (!this.sessions.has(sessionId)) {
-      this.spawnPty(sessionId, cwd, sender);
-    }
-    const execId = `exec-${Date.now()}`;
-    this.write(sessionId, command + '\n');
-    return execId;
-  }
-
-  /** @deprecated Kill a spawned command execution. */
-  killExecution(_execId: string): void {
-    // No-op: legacy shell executions are not individually tracked.
-    logger.debug(`[TerminalManager] killExecution called for ${_execId} (legacy no-op)`);
-  }
-
-  /** @deprecated Send input to a running command execution. */
-  sendInput(execId: string, data: string): void {
-    // Legacy: route to PTY write. The execId prefix maps to a session.
-    logger.debug(`[TerminalManager] sendInput called for ${execId} (legacy)`);
   }
 
   /** Check if a session has a live PTY. */

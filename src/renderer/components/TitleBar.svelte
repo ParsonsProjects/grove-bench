@@ -1,8 +1,13 @@
 <script lang="ts">
   import { PIXEL_TREE } from '../lib/pixel-tree.js';
   import UpdateNotification from './UpdateNotification.svelte';
-  import HelpPanel from './HelpPanel.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import { helpStore } from '../stores/help.svelte.js';
+
+  // Help (with every help page) loads when first opened, then stays mounted.
+  const loadHelpPanel = lazyComponent(() => import('./HelpPanel.svelte'));
+  let helpOpened = $state(false);
+  $effect(() => { if (helpStore.open) helpOpened = true; });
 
   /** F1 opens Help from anywhere in the app. It listens in the capture
    *  phase because the terminal (xterm) stops the keys it handles from
@@ -20,15 +25,28 @@
 
   let isMaximized = $state(false);
 
+  let checkSeq = 0;
   async function checkMaximized() {
-    isMaximized = await window.groveBench.winIsMaximized();
+    const seq = ++checkSeq;
+    const maximized = await window.groveBench.winIsMaximized();
+    if (seq === checkSeq) isMaximized = maximized;
   }
 
+  // Dragging a window edge fires resize many times a second: ask main once
+  // it settles (maximizing fires resize too), not once per event.
+  const RESIZE_SETTLE_MS = 150;
   $effect(() => {
     checkMaximized();
-    const onResize = () => checkMaximized();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(checkMaximized, RESIZE_SETTLE_MS);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+    };
   });
 
   // Match pixel-bg: 4px rects on a 6px grid (4px pixel + 2px gap).
@@ -189,7 +207,11 @@
   </div>
 </div>
 
-<HelpPanel open={helpStore.open} topicId={helpStore.topicId} onclose={() => helpStore.close()} />
+{#if helpOpened}
+  {#await loadHelpPanel() then HelpPanel}
+    <HelpPanel open={helpStore.open} topicId={helpStore.topicId} onclose={() => helpStore.close()} />
+  {/await}
+{/if}
 
 <style>
   .app-drag {

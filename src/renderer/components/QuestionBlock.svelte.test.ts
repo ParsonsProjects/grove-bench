@@ -12,7 +12,7 @@ const questions = [
     multiSelect: false,
     options: [{ label: 'SQLite', description: 'In memory' }, { label: 'Postgres', description: 'Docker' }],
   },
-  { header: 'Seed data', question: 'Seed the fixtures?', multiSelect: false, options: [{ label: 'Yes' }, { label: 'No' }] },
+  { header: 'Seed data', question: 'Seed the fixtures?', multiSelect: false, options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] },
 ];
 const props = { sessionId: 's1', requestId: 'r1', questions };
 

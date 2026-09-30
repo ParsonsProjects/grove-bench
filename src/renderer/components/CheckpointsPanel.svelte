@@ -1,6 +1,7 @@
 <script lang="ts">
   import { checkpointStore, FULL_THREAD_UUID } from '../stores/checkpoints.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { store as sessionStore } from '../stores/sessions.svelte.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
@@ -297,6 +298,7 @@
           {sessionId}
           {sourceKey}
           entries={files?.entries ?? []}
+          active={sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'checkpoints'}
           loading={isDiffLoading}
           changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
           {loadDiff}

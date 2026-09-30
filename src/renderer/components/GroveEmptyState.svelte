@@ -52,7 +52,7 @@
     checkpoints: [{ name: 'flag', map: FLAG, x: 45 }],
     preview: [{ name: 'easel', map: EASEL, x: 44 }],
   };
-  let props = $derived(
+  let tabProps = $derived(
     PROPS[tab ?? 'none'].map((p) => ({ name: p.name, x: p.x, y: GROUND_Y - p.map.length, runs: toRuns(p.map, SCENERY_PALETTE) })),
   );
 
@@ -92,7 +92,7 @@
           <rect x={r.x} y={r.y} width={r.w} height="1" fill={r.fill} />
         {/each}
       </g>
-      {#each props as p (p.name)}
+      {#each tabProps as p (p.name)}
         <g transform="translate({p.x} {p.y})" data-scenery={p.name}>
           {#each p.runs as r (`${r.x},${r.y}`)}
             <rect x={r.x} y={r.y} width={r.w} height="1" fill={r.fill} />

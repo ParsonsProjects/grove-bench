@@ -186,7 +186,8 @@ export type AgentEvent =
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
-  | { type: 'status'; message: string }
+  /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox). */
+  | { type: 'status'; message: string; level?: 'warning' }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number }
   // Rate limiting
@@ -268,13 +269,6 @@ export interface SessionPreview {
 // ─── PTY / Terminal ───
 
 /** @deprecated Legacy shell output event — replaced by PTY data stream. */
-export interface ShellOutputEvent {
-  execId: string;
-  stream: 'stdout' | 'stderr' | 'exit';
-  data?: string;
-  exitCode?: number;
-}
-
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
@@ -317,6 +311,9 @@ export interface GitStatusResult {
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
   scopeError?: string;
+  /** Set when git could not read the status: `entries` being empty then
+   *  does not mean the tree is clean. */
+  error?: string;
 }
 
 export interface FileDiffOptions {
@@ -900,9 +897,9 @@ export interface PreviewPageState {
   error: { code: number; description: string; url: string } | null;
   /** The page's process died. Reload to recover. */
   crashed: boolean;
-  /** Claude's page only: its last action and when it happened. */
+  /** The agent's page only: its last action and when it happened. */
   lastAction?: { text: string; at: number } | null;
-  /** Claude's page only: viewport size in CSS pixels. */
+  /** The agent's page only: viewport size in CSS pixels. */
   size?: { width: number; height: number };
 }
 
@@ -976,6 +973,9 @@ export interface GroveBenchAPI {
   /** Record the branch the conversation's checkout is on now, if it moved
    *  outside the app. Null when nothing changed. */
   syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
+  /** The conversations working in this conversation's checkout, itself
+   *  included (another conversation can be attached to the same one). */
+  getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -1130,7 +1130,7 @@ export interface GroveBenchAPI {
   previewSetViewport(sessionId: string, bounds: PreviewBounds | null): void;
   /** A picture of your page (JPEG data URL), shown while an overlay covers it. */
   previewSnapshot(sessionId: string): Promise<string | null>;
-  /** Claude's page as a JPEG data URL, or null when it hasn't changed since
+  /** The agent's page as a JPEG data URL, or null when it hasn't changed since
    *  `sinceVersion` (or doesn't exist). */
   previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
   /** Every conversation's open pages, for the renderer to catch up after a reload. */
@@ -1171,12 +1171,6 @@ export interface GroveBenchAPI {
   memoryStats(repoPath: string): Promise<MemoryStatsResult>;
   memoryBackupPreview(repoPath: string, backupId: string): Promise<MemoryBackupFile[]>;
   memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
-
-  // Shell / Terminal (legacy)
-  shellRun(sessionId: string, command: string): Promise<string>;
-  shellKill(execId: string): Promise<void>;
-  shellInput(execId: string, data: string): void;
-  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
 
   // PTY Terminal (per-session persistent shell)
   ptySpawn(sessionId: string): Promise<boolean>;
@@ -1572,6 +1566,7 @@ export const IPC = {
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
   BRANCH_SYNC: 'branch:sync',
+  CHECKOUT_SHARERS: 'branch:checkoutSharers',
   BRANCH_AUTO_NAME: 'branch:autoName',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
@@ -1690,10 +1685,6 @@ export const IPC = {
   MEMORY_STATS: 'memory:stats',
   MEMORY_BACKUP_PREVIEW: 'memory:backupPreview',
   MEMORY_BACKUP_READ_FILE: 'memory:backupReadFile',
-  SHELL_RUN: 'shell:run',
-  SHELL_KILL: 'shell:kill',
-  SHELL_INPUT: 'shell:input',
-  SHELL_OUTPUT: 'shell:output',
   // PTY channels (per-session persistent terminal)
   PTY_SPAWN: 'pty:spawn',
   PTY_WRITE: 'pty:write',

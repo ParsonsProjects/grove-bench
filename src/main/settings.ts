@@ -1,9 +1,10 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
+import { readJsonFile, writeFileAtomicSync } from './json-file.js';
+import { logger } from './logger.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Permission & Security
@@ -268,26 +269,39 @@ export function upgradeSettings(raw: unknown): { settings: GroveBenchSettings; m
 }
 
 let cached: GroveBenchSettings | null = null;
+/** settings.json existed but couldn't be read, so defaults stood in for it.
+ *  Saving is refused until the app restarts: the renderer's copy may have
+ *  started from those defaults, and saving it would replace the user's real
+ *  settings (their tool deny rules among them). */
+let readFailed = false;
 
 function getSettingsPath(): string {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
 function writeSettingsFile(settings: GroveBenchSettings): void {
-  try {
-    fs.writeFileSync(getSettingsPath(), JSON.stringify(stampSchemaVersion(settings, SETTINGS_SCHEMA_VERSION), null, 2));
-  } catch { /* ignore write errors */ }
+  writeFileAtomicSync(getSettingsPath(), JSON.stringify(stampSchemaVersion(settings, SETTINGS_SCHEMA_VERSION), null, 2));
 }
 
 export function loadSettings(): GroveBenchSettings {
-  try {
-    const data = fs.readFileSync(getSettingsPath(), 'utf-8');
-    const { settings, migrated } = upgradeSettings(JSON.parse(data));
-    cached = settings;
-    // Persist the upgraded shape so the migration only runs once.
-    if (migrated) writeSettingsFile(settings);
-  } catch {
+  const read = readJsonFile(getSettingsPath());
+  if (read.kind === 'unreadable') {
+    // Keep what was read before. With nothing yet, use defaults without
+    // caching them, so the next call reads the file again.
+    if (cached) return cached;
+    readFailed = true;
+    return { ...DEFAULT_SETTINGS };
+  }
+  if (read.kind !== 'ok') {
+    // Missing, or damaged (a copy is kept beside it).
     cached = { ...DEFAULT_SETTINGS };
+    return cached;
+  }
+  const { settings, migrated } = upgradeSettings(read.value);
+  cached = settings;
+  // Persist the upgraded shape so the migration only runs once.
+  if (migrated) {
+    try { writeSettingsFile(settings); } catch (err) { logger.warn('[settings] could not save migrated settings:', err); }
   }
   return cached;
 }
@@ -298,9 +312,18 @@ export function getSettings(): GroveBenchSettings {
 }
 
 export function saveSettings(settings: GroveBenchSettings): void {
+  if (readFailed) {
+    throw new Error("Your settings file couldn't be read, so the settings shown may be defaults and saving could replace your real ones. Restart Grove Bench and try again.");
+  }
   const clean = validateSettings(settings);
-  cached = clean;
   writeSettingsFile(clean);
+  cached = clean;
+}
+
+/** Test hook: forget the cached settings and any earlier read failure. */
+export function resetSettingsCache(): void {
+  cached = null;
+  readFailed = false;
 }
 
 export function applyImmediateEffects(win: BrowserWindow | null, settings: GroveBenchSettings): void {

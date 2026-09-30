@@ -32,6 +32,10 @@
 
   let allMessages = $derived(messageStore.getMessages(sessionId));
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  // Every conversation's pane stays mounted, hidden but for the open one.
+  // A hidden one skips drawing its live reply (re-parsed on every flush);
+  // shown again, it draws what has arrived so far.
+  let paneShown = $derived(store.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'activity');
   let streamingThinking = $derived(messageStore.getStreamingThinking(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
@@ -138,7 +142,7 @@
    *  can re-resolve a stale index or fall back). */
   async function jumpToEventIndex(eventIndex: number): Promise<boolean> {
     await messageStore.loadOlderUntil(sessionId, eventIndex);
-    const id = messageStore.findMessageIdForEventIndex(sessionId, eventIndex);
+    const id = await messageStore.findMessageForEvent(sessionId, eventIndex);
     if (!id) return false;
 
     // The target may be hidden by the current view mode (thinking or a
@@ -156,6 +160,9 @@
       await tick();
     }
     currentMatchId = id;
+    // Stop following new output, or the next streamed chunk snaps back to the
+    // bottom before the smooth scroll has moved far enough to say so itself.
+    shouldAutoScroll = false;
     requestAnimationFrame(() => {
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -187,14 +194,31 @@
     jumpInFlight = true;
     (async () => {
       try {
-        await resolveBookmarkJump(req);
+        let next: JumpRequest | undefined = req;
+        while (next) {
+          await resolveBookmarkJump(next);
+          // A jump asked for while this one ran was skipped above: take it now.
+          const pending: JumpRequest | undefined = messageStore.pendingJumpBySession[sessionId];
+          next = pending && !sameJump(pending, next) && store.activeSessionId === sessionId ? pending : undefined;
+        }
       } finally {
         jumpInFlight = false;
       }
     })();
   });
 
-  async function resolveBookmarkJump(req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+  type JumpRequest = { eventIndex: number | null; uuid: string | null; bookmarkId: string };
+  // By fields: search hits all share bookmarkId ''.
+  function sameJump(a: JumpRequest, b: JumpRequest): boolean {
+    return a.eventIndex === b.eventIndex && a.uuid === b.uuid && a.bookmarkId === b.bookmarkId;
+  }
+  /** Clear `req` once handled, but not a newer request that replaced it. */
+  function finishJump(req: JumpRequest) {
+    const pending = messageStore.pendingJumpBySession[sessionId];
+    if (pending && sameJump(pending, req)) messageStore.clearJump(sessionId);
+  }
+
+  async function resolveBookmarkJump(req: JumpRequest) {
     // Resolve to a concrete event index — cached first, then via the durable uuid.
     let eventIndex = req.eventIndex;
     if (eventIndex == null && req.uuid) {
@@ -203,13 +227,13 @@
     }
     if (eventIndex == null) {
       showBookmarkFallback(req.bookmarkId);
-      messageStore.clearJump(sessionId);
+      finishJump(req);
       return;
     }
 
     if (await jumpToEventIndex(eventIndex)) {
       clearHighlightOnInteraction = true;
-      messageStore.clearJump(sessionId);
+      finishJump(req);
       return;
     }
 
@@ -220,7 +244,7 @@
         bookmarkStore.patchEventIndex(req.bookmarkId, ei);
         if (await jumpToEventIndex(ei)) {
           clearHighlightOnInteraction = true;
-          messageStore.clearJump(sessionId);
+          finishJump(req);
           return;
         }
       }
@@ -231,7 +255,7 @@
     // source is genuinely gone (e.g. cleared history) → show the stored text.
     if (messageStore.getMessages(sessionId).length === 0) return;
     showBookmarkFallback(req.bookmarkId);
-    messageStore.clearJump(sessionId);
+    finishJump(req);
   }
 
   function showBookmarkFallback(bookmarkId: string) {
@@ -249,8 +273,10 @@
 
   function handleSearchKeydown(e: KeyboardEvent) {
     // Inactive session panes stay mounted (hidden via CSS); only the active
-    // session should toggle its search bar on Ctrl/Cmd+F.
+    // session should toggle its search bar on Ctrl/Cmd+F, and only while its
+    // Activity tab is showing (other tabs hide this pane the same way).
     if (store.activeSessionId !== sessionId) return;
+    if (messageStore.getActiveTab(sessionId) !== 'activity') return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       searchOpen = !searchOpen;
@@ -280,7 +306,11 @@
     if (len > prevMsgCount) {
       const last = filteredMessages[len - 1];
       if (last?.kind === 'user') {
-        shouldAutoScroll = true;
+        untrack(followLatest);
+      } else if (!untrack(() => shouldAutoScroll) && untrack(() => hasOlderMessages)) {
+        // Scrolled up to read: grow the window instead of sliding it, so the
+        // oldest rendered message (maybe the one being read) stays put.
+        untrack(() => { visibleCount += len - prevMsgCount; });
       }
     }
     prevMsgCount = len;
@@ -339,9 +369,19 @@
 
   function scrollToBottom() {
     if (scrollContainer) {
+      followLatest();
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      shouldAutoScroll = true;
     }
+  }
+
+  /** Back to the live end: follow new output and render only the latest page
+   *  again, so a window grown by reading back (loading older messages, or
+   *  output arriving while scrolled up) doesn't stay large for the rest of
+   *  the session. Only on a deliberate return (sending, Scroll to bottom):
+   *  a jump's smooth scroll passes near the bottom and would lose its target. */
+  function followLatest() {
+    shouldAutoScroll = true;
+    visibleCount = PAGE_SIZE;
   }
 </script>
 
@@ -487,7 +527,7 @@
         <ThinkingBlock thinking={msg.thinking} />
 
       {:else if msg.kind === 'system'}
-        <SystemBlock text={msg.text} />
+        <SystemBlock text={msg.text} variant={msg.level === 'warning' ? 'warning' : 'info'} />
 
       {:else if msg.kind === 'error'}
         <SystemBlock text={msg.text} variant="error" />
@@ -528,7 +568,7 @@
   <!-- Streaming text (live) -->
   {#if streamingText}
     <div class="py-1 text-sm text-foreground">
-      <MarkdownBlock content={streamingText} streaming />
+      {#if paneShown}<MarkdownBlock content={streamingText} streaming />{/if}
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
   {:else if arrival !== null}

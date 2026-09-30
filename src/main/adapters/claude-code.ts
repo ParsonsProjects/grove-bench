@@ -43,15 +43,16 @@ type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').Elicitatio
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
  *
- * By default the SDK launches its bundled CLI as `node <…/cli.js>`, relying on a
- * `node` binary being on PATH. A GUI-launched Electron app on Windows frequently
- * inherits a minimal PATH with no `node`, so that spawn fails with ENOENT —
- * surfaced confusingly as "Claude Code executable not found at …cli.js. Is
- * options.pathToClaudeCodeExecutable set?". Electron's own binary runs as a plain
- * Node process when ELECTRON_RUN_AS_NODE=1, and `process.execPath` is always a
- * valid path in both dev and packaged builds — so we redirect the `node`
- * invocation to ourselves and drop the PATH dependency entirely. Non-node
- * commands (e.g. a native `claude` binary) are spawned unchanged.
+ * The SDK runs its native `claude` binary, which it finds next to its own
+ * module. In the packaged app that path is inside app.asar: Electron can read
+ * files there, so the SDK sees the binary, but the OS can't run one (spawn
+ * fails with ENOTDIR or ENOENT). electron-builder unpacks the binary to
+ * app.asar.unpacked (see asarUnpack in electron-builder.yml), so it runs
+ * from there.
+ *
+ * A `node` command (older SDKs ran `node <…/cli.js>`) is redirected to
+ * Electron's own binary with ELECTRON_RUN_AS_NODE=1: a GUI-launched app on
+ * Windows often has no `node` on PATH, and `process.execPath` is always valid.
  */
 /** Tool results are kept only for display, replay and memory extraction — the
  *  model already received the full text. Cap what we retain so a test suite
@@ -67,12 +68,18 @@ export function capToolResult(content: string): string {
   return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
 }
 
-function spawnClaudeCodeProcess(
+/** `p` with an `app.asar` directory swapped for `app.asar.unpacked`, where
+ *  electron-builder puts files that must exist on disk. Unchanged otherwise. */
+export function asarUnpackedPath(p: string): string {
+  return p.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+}
+
+export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
 ): SpawnedProcess & { readonly pid?: number } {
   const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
-  const command = isNode ? process.execPath : opts.command;
+  const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
     : opts.env;
@@ -239,6 +246,13 @@ export function transformMessage(
         const modeValue = m.permissionMode ?? m.permission_mode;
         if (modeValue) {
           events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeValue, ctx), source: 'sdk' });
+        }
+      } else if (message.subtype === 'informational') {
+        // The CLI's own warnings (e.g. a sandbox that could not start) reach
+        // the user; lower levels are transcript-only chatter in the CLI too.
+        const m = message as { content?: unknown; level?: unknown };
+        if (m.level === 'warning' && typeof m.content === 'string' && m.content.trim()) {
+          events.push({ type: 'status', level: 'warning', message: m.content.trim() });
         }
       } else if (message.subtype === 'local_command_output') {
         const content = (message as any).content;
@@ -727,7 +741,7 @@ const PERMISSION_MODE_OPTIONS: ControlOption[] = [
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
   // Grove's own mode, listed after Claude's so the divider shows it isn't one
   // of the CLI's.
-  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks. Uses an OS sandbox where one can start' },
 ];
 
 /**
@@ -1142,6 +1156,27 @@ export function validateMcpName(name: string): void {
   }
 }
 
+/** Plugin ids as the CLI lists them (`name@marketplace`). The claude CLI runs
+ *  through the shell (a .cmd shim on Windows), and ids reach it from the
+ *  renderer and, before that, from marketplace listings that may be
+ *  third-party, so only shell-inert characters are accepted, and no leading
+ *  dash (it would read as a CLI option). */
+export function validatePluginId(id: unknown): string {
+  if (typeof id !== 'string' || id.startsWith('-') || !/^[A-Za-z0-9._\/:@+-]+$/.test(id)) {
+    throw new Error(`Invalid plugin id: ${String(id).slice(0, 80)}`);
+  }
+  return id;
+}
+
+const CONFIG_SCOPES: ReadonlySet<string> = new Set<McpConfigScope>(['local', 'user', 'project']);
+const MCP_TRANSPORTS: ReadonlySet<string> = new Set(['stdio', 'http', 'sse']);
+
+/** A settings scope for the claude CLI's -s/--scope; anything else throws. */
+export function validateConfigScope(scope: unknown): McpConfigScope {
+  if (typeof scope !== 'string' || !CONFIG_SCOPES.has(scope)) throw new Error(`Invalid scope: ${String(scope).slice(0, 40)}`);
+  return scope as McpConfigScope;
+}
+
 /**
  * Quote a single argument for execFile with `shell: true` (cmd.exe on
  * Windows joins args with spaces and does NOT quote them). Values that could
@@ -1212,7 +1247,8 @@ interface McpAuthenticateResponse {
 /** Build the `claude mcp add ...` argument list for the given options. */
 export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   validateMcpName(opts.name);
-  const args = ['mcp', 'add', '-s', opts.scope, '-t', opts.transport];
+  if (!MCP_TRANSPORTS.has(opts.transport)) throw new Error(`Invalid transport: ${String(opts.transport).slice(0, 40)}`);
+  const args = ['mcp', 'add', '-s', validateConfigScope(opts.scope), '-t', opts.transport];
   for (const [key, value] of Object.entries(opts.env ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       throw new Error(`Invalid environment variable name: ${key}`);
@@ -1881,7 +1917,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       throw new Error(`${name} can't be removed from Grove Bench (${managedBy.label}). ${managedBy.hint}`);
     }
     validateMcpName(name);
-    const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
+    const args = ['mcp', 'remove', ...(scope ? ['-s', validateConfigScope(scope)] : []), quoteArg(name)];
     await execFileAsync('claude', args, {
       shell: true,
       ...(cwd ? { cwd } : {}),
@@ -1901,19 +1937,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'install', pluginId, '--scope', scope], { shell: true });
+    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true });
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'uninstall', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true });
   }
 
   async enablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'enable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true });
   }
 
   async disablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'disable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true });
   }
 
   // ─── Text generation (for memory extraction) ───

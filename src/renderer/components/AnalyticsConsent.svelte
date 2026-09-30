@@ -9,16 +9,15 @@
     show = visible;
   });
 
+  // Only the answer is saved: save() would also write whatever the Settings
+  // panel's draft holds, including edits closed without saving.
   async function handleAccept() {
-    settingsStore.draft.analyticsEnabled = true;
-    settingsStore.draft.analyticsPrompted = true;
-    await settingsStore.save();
+    await settingsStore.updateNow({ analyticsEnabled: true, analyticsPrompted: true });
     show = false;
   }
 
   async function handleDecline() {
-    settingsStore.draft.analyticsPrompted = true;
-    await settingsStore.save();
+    await settingsStore.updateNow({ analyticsPrompted: true });
     show = false;
   }
 </script>

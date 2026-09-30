@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
-import { decodeCopyText } from './clipboard.js';
+import { isRenderedCopyButton, renderedCode, renderedTable } from './copy-mark.js';
 import { isPreviewableMarkdown } from './markdown-detect.js';
 
 /** Text selected inside a pane, and the Activity row the selection starts in
@@ -41,7 +41,8 @@ export interface ActivityMenuTarget {
 }
 
 /** Read the menu target from the DOM around `el`. Code blocks and tables are
- *  found through the copy buttons MarkdownBlock renders for them. */
+ *  found through the copy buttons MarkdownBlock renders for them; look-alikes
+ *  written as raw HTML in a reply are skipped. */
 export function readActivityTarget(
   el: Element,
   container: Element,
@@ -51,13 +52,13 @@ export function readActivityTarget(
   const sel = selectionIn(container);
   if (sel) target.selection = { text: sel.text, msgId: sel.msgId };
 
-  const code = el.closest('.code-block-wrapper')?.querySelector('.code-copy-btn')?.getAttribute('data-code');
-  if (code) target.code = decodeCopyText(code);
+  const codeBtn = el.closest('.code-block-wrapper')?.querySelector(':scope > .code-copy-btn');
+  const code = isRenderedCopyButton(codeBtn) ? renderedCode(codeBtn) : null;
+  if (code !== null) target.code = code;
 
-  const tableWrapper = el.closest('.table-wrapper');
-  const markdown = tableWrapper?.querySelector('.table-copy-btn')?.getAttribute('data-code');
-  const table = tableWrapper?.querySelector('table');
-  if (markdown && table) target.table = { markdown: decodeCopyText(markdown), html: table.outerHTML };
+  const tableBtn = el.closest('.table-wrapper')?.querySelector(':scope > .table-copy-btn');
+  const table = isRenderedCopyButton(tableBtn) ? renderedTable(tableBtn) : null;
+  if (table) target.table = table;
 
   const href = el.closest('a[href]')?.getAttribute('href');
   if (href) target.link = href;

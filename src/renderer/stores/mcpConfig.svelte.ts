@@ -14,6 +14,9 @@ class McpConfigStore {
   loading = $state(false);
   /** True once the first refresh has completed (empty list vs never loaded). */
   loaded = $state(false);
+  /** True once a refresh has finished, even a failed one. Opening the tab
+   *  loads until this is set; after a failure the Refresh button retries. */
+  attempted = $state(false);
   error = $state<string | null>(null);
   /** Server name currently being added/removed/approved. */
   actionInProgress = $state<string | null>(null);
@@ -52,6 +55,7 @@ class McpConfigStore {
       this.error = e.message || String(e);
     } finally {
       this.loading = false;
+      this.attempted = true;
     }
   }
 

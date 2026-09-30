@@ -368,6 +368,13 @@ describe('SessionStore', () => {
       expect(store.popRecentlyClosed()).toBe('s1');
     });
 
+    it('forgets a conversation once it is deleted', () => {
+      store.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'stopped' }] as never;
+      store.pushRecentlyClosed('s1');
+      store.removeSession('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
+    });
+
     it('popRecentlyClosed returns null when empty', () => {
       expect(store.popRecentlyClosed()).toBeNull();
     });

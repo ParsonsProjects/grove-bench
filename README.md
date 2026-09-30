@@ -45,6 +45,7 @@ npm start
 |---|---|
 | `npm start` | Run in dev mode |
 | `npm run dist` | Build the Windows installer into `out/` |
+| `npm run typecheck` | Type check the TypeScript and the Svelte components |
 | `npm test` | Run all tests |
 | `npm run test:watch` | Watch mode |
 | `npm run test:coverage` | Run tests with coverage |

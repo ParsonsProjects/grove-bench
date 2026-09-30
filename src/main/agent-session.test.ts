@@ -275,7 +275,9 @@ function makeMockWindow() {
 // ─── Tests ───
 
 // Import the module under test AFTER mocks are set up
-const { sessionManager, sanitizeElicitationResponse } = await import('./agent-session.js');
+const { sessionManager } = await import('./agent-session.js');
+const { sanitizeElicitationResponse } = await import('./session-permissions.js');
+const { READ_SAFE_SANDBOX_WARNING } = await import('./session-config.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 const { getGitIdentity, isGitRepo } = await import('./git.js');
 const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
@@ -549,6 +551,17 @@ describe('Read-safe mode sandbox enforcement', () => {
 });
 
 describe('AgentSessionManager caveman mode', () => {
+  afterEach(() => {
+    // mockReturnValue outlives the test (clearAllMocks keeps it): put back
+    // the module mock's default so later tests see caveman mode off.
+    settingsMock.getSettings.mockReturnValue({
+      defaultSystemPromptAppend: null,
+      toolAllowRules: [],
+      toolDenyRules: [],
+      cavemanMode: 'off',
+    });
+  });
+
   it('does not include caveman prompt when mode is off', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -1026,7 +1039,68 @@ describe('AgentSessionManager.permRequestCounter', () => {
   });
 });
 
+describe('read-safe sandbox warning', () => {
+  const warnings = (win: ReturnType<typeof makeMockWindow>) => win._send.mock.calls
+    .map(([, event]: [string, AgentEvent | undefined]) => event)
+    .filter((e: AgentEvent | undefined) => e?.type === 'status' && (e as { level?: string }).level === 'warning');
+
+  it('warns once, when a conversation starts in read-safe mode', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-warn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', permissionMode: 'readSafe',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-warn')?.queryHandle).toBeTruthy());
+
+    expect(warnings(win)).toEqual([{ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING }]);
+
+    // A restart doesn't repeat it.
+    await sessionManager.stopQuery('test-rs-warn');
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-warn')?.queryHandle).toBeTruthy());
+    expect(warnings(win)).toHaveLength(1);
+    await sessionManager.destroySession('test-rs-warn');
+  });
+
+  it('warns when switching a running conversation into read-safe mode', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-switch', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-switch')?.queryHandle).toBeTruthy());
+    expect(warnings(win)).toHaveLength(0);
+
+    sessionManager.setMode('test-rs-switch', 'readSafe');
+
+    expect(warnings(win).length).toBeGreaterThan(0);
+    await sessionManager.destroySession('test-rs-switch');
+  });
+
+  it('does not warn in other modes', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-none', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', permissionMode: 'acceptEdits',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-none')?.queryHandle).toBeTruthy());
+    expect(warnings(win)).toHaveLength(0);
+    await sessionManager.destroySession('test-rs-none');
+  });
+});
+
 describe('AgentSessionManager.setMode()', () => {
+  it('refuses a mode the app does not offer, such as the SDK\'s bypassPermissions', async () => {
+    await sessionManager.createSession({
+      id: 'test-mode-bypass', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-mode-bypass')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-mode-bypass')!;
+    const before = session.permissionMode;
+
+    sessionManager.setMode('test-mode-bypass', 'bypassPermissions');
+
+    expect(session.permissionMode).toBe(before);
+    expect(session.queryHandle!.setPermissionMode).not.toHaveBeenCalledWith('bypassPermissions');
+    await sessionManager.destroySession('test-mode-bypass');
+  });
+
   it('stores permissionMode on session even without queryHandle', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -1065,8 +1139,8 @@ describe('AgentSessionManager.setMode()', () => {
     sessionManager.setMode('test-mode2', 'acceptEdits');
 
     const session = sessionManager.getSession('test-mode2');
-    // All modes are now passed to the adapter — the adapter decides which to accept.
-    // The session manager no longer filters modes.
+    // Every app mode is passed to the adapter, which decides which it offers
+    // per model; only modes outside PERMISSION_MODES are refused (test above).
     const handle = session?.queryHandle;
     if (handle?.setPermissionMode) {
       expect(handle.setPermissionMode).toHaveBeenCalledWith('acceptEdits');
@@ -1567,6 +1641,98 @@ describe('AgentSessionManager.closeSession()', () => {
     const { CheckpointManager } = await import('./checkpoints.js');
     const instances = (CheckpointManager as unknown as { instances: { cleanup: ReturnType<typeof vi.fn> }[] }).instances;
     expect(instances.at(-1)!.cleanup).toHaveBeenCalledWith('test-close-destroy', '/wt/test-close-destroy');
+  });
+});
+
+describe('AgentSessionManager close/destroy during setup', () => {
+  /** A setup (worktree, npm install) that creates the session when released. */
+  function pendingSetup(id: string) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const setup = gate.then(() => sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    }));
+    sessionManager.trackPendingSetup(id, setup);
+    return { release, setup };
+  }
+
+  it('closing a conversation still being set up closes it once setup creates it', async () => {
+    const { release } = pendingSetup('test-close-setup');
+
+    const closing = sessionManager.closeSession('test-close-setup');
+    release();
+    await closing;
+
+    expect(sessionManager.getSession('test-close-setup')).toBeUndefined();
+    expect(mockAdapter.lastHandle?.close).toHaveBeenCalled();
+  });
+
+  it('destroying a conversation still being set up waits and destroys what setup created', async () => {
+    const { release, setup } = pendingSetup('test-destroy-setup');
+    let destroyed = false;
+
+    const destroying = sessionManager.destroySession('test-destroy-setup').then(() => { destroyed = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(destroyed).toBe(false);
+
+    release();
+    await setup;
+    const session = sessionManager.getSession('test-destroy-setup')!;
+    await destroying;
+
+    expect(sessionManager.getSession('test-destroy-setup')).toBeUndefined();
+    expect(session.checkpoints.cleanup).toHaveBeenCalledWith('test-destroy-setup', '/repo');
+  });
+
+  it('deleting a conversation stops a setup that can stop', async () => {
+    const abort = new AbortController();
+    // Like a setup killed mid-install: it settles once aborted.
+    const setup = new Promise<void>((resolve) => abort.signal.addEventListener('abort', () => resolve()));
+    sessionManager.trackPendingSetup('test-destroy-abort', setup, abort);
+
+    await sessionManager.destroySession('test-destroy-abort');
+
+    expect(abort.signal.aborted).toBe(true);
+  });
+
+  it('closing a conversation lets its setup finish instead of stopping it', async () => {
+    const abort = new AbortController();
+    let release!: () => void;
+    const setup = new Promise<void>((r) => { release = r; });
+    sessionManager.trackPendingSetup('test-close-noabort', setup, abort);
+
+    const closing = sessionManager.closeSession('test-close-noabort');
+    release();
+    await closing;
+
+    expect(abort.signal.aborted).toBe(false);
+  });
+
+  it('a failed setup leaves nothing to close', async () => {
+    sessionManager.trackPendingSetup('test-close-failed', Promise.reject(new Error('worktree failed')));
+    await expect(sessionManager.closeSession('test-close-failed')).resolves.toBeUndefined();
+    expect(sessionManager.getSession('test-close-failed')).toBeUndefined();
+  });
+});
+
+describe('AgentSessionManager.closeAll()', () => {
+  it('stops every live agent on quit and keeps their checkpoints', async () => {
+    const sessions = [];
+    for (const id of ['test-quit-a', 'test-quit-b']) {
+      await sessionManager.createSession({
+        id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBeTruthy());
+      sessions.push(sessionManager.getSession(id)!);
+    }
+    await sessionManager.closeAll();
+
+    expect(sessionManager.count).toBe(0);
+    expect(sessionManager.closingCount).toBe(0);
+    for (const session of sessions) {
+      expect(session.queryHandle!.close).toHaveBeenCalled();
+      expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -2104,6 +2270,39 @@ describe('AgentSessionManager.listSessions()', () => {
 });
 
 describe('AgentSessionManager.rewindFiles()', () => {
+  it('stops a running turn before restoring files', async () => {
+    await sessionManager.createSession({
+      id: 'test-rewind-midturn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rewind-midturn')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-rewind-midturn')!;
+    await sessionManager.sendMessage('test-rewind-midturn', 'Refactor everything');
+    const uuid = (session.eventHistory.find((e) => e.type === 'user_message') as { uuid: string }).uuid;
+    const handle = session.queryHandle!;
+    expect(sessionManager.isMidTurn('test-rewind-midturn')).toBe(true);
+
+    await sessionManager.rewindFiles('test-rewind-midturn', uuid, { filesOnly: true });
+
+    expect(handle.interrupt).toHaveBeenCalled();
+    expect(vi.mocked(handle.interrupt!).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(session.checkpoints.restore).mock.invocationCallOrder[0]);
+    await sessionManager.destroySession('test-rewind-midturn');
+  });
+
+  it('leaves an idle agent alone when restoring files only', async () => {
+    await sessionManager.createSession({
+      id: 'test-rewind-idle', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rewind-idle')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-rewind-idle')!;
+
+    await sessionManager.rewindFiles('test-rewind-idle', 'gone-uuid', { filesOnly: true });
+
+    expect(session.queryHandle!.interrupt).not.toHaveBeenCalled();
+    expect(session.checkpoints.restore).toHaveBeenCalled();
+    await sessionManager.destroySession('test-rewind-idle');
+  });
+
   it('clears providerSessionId so the next query starts fresh', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -2279,6 +2478,8 @@ describe('AgentSessionManager.rewindFiles()', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     await sessionManager.sendMessage('test-rewind-files-only', 'Hello');
+    // The turn has finished: nothing to interrupt before the restore.
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
     await new Promise((r) => setTimeout(r, 50));
 
     const session = sessionManager.getSession('test-rewind-files-only')!;
@@ -3093,23 +3294,6 @@ describe('AgentSessionManager skill suggestions', () => {
 
     expect(result).toEqual([{ id: 'cached' }]);
     expect(analyzeRepo).not.toHaveBeenCalled();
-  });
-});
-
-describe('AgentSessionManager.beginSearch()', () => {
-  it("doesn't let a single-conversation search start a new pass during a sweep", () => {
-    const beginPass = vi.spyOn((sessionManager as unknown as { searchIndexes: { beginPass(): void } }).searchIndexes, 'beginPass');
-    const endSweep = sessionManager.beginSearch({ sweep: true });
-    expect(beginPass).toHaveBeenCalledTimes(1);
-
-    sessionManager.beginSearch(); // Ctrl+F while the sweep is paused
-    expect(beginPass).toHaveBeenCalledTimes(1);
-
-    endSweep();
-    endSweep(); // ending twice is harmless
-    sessionManager.beginSearch();
-    expect(beginPass).toHaveBeenCalledTimes(2);
-    beginPass.mockRestore();
   });
 });
 

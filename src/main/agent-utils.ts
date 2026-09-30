@@ -514,3 +514,13 @@ export function findRewindForkPoint(
   }
   return null;
 }
+
+/** Sign-in failures as the agent CLI and API word them. Whole words only:
+ *  a bare "auth" also matched "author" (git identity errors) and "oauth". */
+const AUTH_FAILURE_RE = /\bauth(entication|orization)?\b|\bunauthori[sz]ed\b|\b40[13]\b|invalid (x-)?api[ _-]?key|not logged in|\boauth token\b|\/login\b|credential/i;
+
+/** Whether an agent failure reads as a sign-in problem, so the adapter's
+ *  sign-in help is shown instead of the raw error. */
+export function isAuthFailure(detail: string): boolean {
+  return AUTH_FAILURE_RE.test(detail);
+}

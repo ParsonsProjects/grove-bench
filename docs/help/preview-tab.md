@@ -4,10 +4,10 @@ The Preview tab (`Alt+5`) is a browser inside each conversation. Use it to look 
 
 ## Two pages
 
-Each conversation has two pages. Switch between them with **Yours** and **Claude's** at the top left of the tab.
+Each conversation has two pages. Switch between them with **Yours** and **Agent's** at the top left of the tab.
 
 - **Yours** is a normal browser page you click around in. It opens any web address, and files inside the conversation's worktree, such as a built HTML page.
-- **Claude's** is the page the agent drives with its browser tools. You see it update as the agent opens pages, clicks and types. It's view only. **Open in yours** loads the same address in your page.
+- **Agent's** is the page the agent drives with its browser tools. You see it update as the agent opens pages, clicks and types. It's view only. **Open in yours** loads the same address in your page.
 
 The two pages share cookies and storage, so signing in on one signs in the other. Each conversation's storage is separate from other conversations and is cleared when the conversation closes.
 
@@ -44,6 +44,7 @@ The agent can open a local page, take a screenshot, read the page's text, click,
 - Files load only from the conversation's worktree, and the agent's page only loads web files (HTML, CSS, scripts, images, fonts, media)
 - A dot on the Preview tab means the agent used its browser since you last looked
 - The page is 1280×800 unless the agent picks another size, for example a phone size
+- The agent's page closes when the conversation goes to sleep, so it isn't left running. The agent opens it again next time it uses the browser. Your page and the shared sign-ins stay
 
 Turn the agent's browser off under **Settings > General > Let the agent use the Preview browser**. The change applies to agents started after it.
 

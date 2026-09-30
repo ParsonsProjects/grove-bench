@@ -21,7 +21,7 @@
   import MemoryToast from './components/MemoryToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
-  import SessionFinder from './components/SessionFinder.svelte';
+  import { lazyComponent } from './lib/lazy-component.js';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
   import FirstSteps from './components/FirstSteps.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
@@ -39,6 +39,8 @@
   import DraftPane from './components/DraftPane.svelte';
 
   let showAnalyticsConsent = $state(false);
+  // Loaded the first time it opens (Ctrl+R or the search button).
+  const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -222,12 +224,15 @@
   });
 
   function reopenLastClosedTab() {
-    const id = store.popRecentlyClosed();
-    if (!id) return;
-    const session = store.sessions.find((s) => s.id === id);
-    if (!session || session.status !== 'stopped') return;
-    // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
-    store.activeSessionId = id;
+    // Skip entries reopened since they were closed, so one press always
+    // reopens something when anything is left to reopen.
+    for (let id = store.popRecentlyClosed(); id; id = store.popRecentlyClosed()) {
+      const session = store.sessions.find((s) => s.id === id);
+      if (session?.status !== 'stopped') continue;
+      // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
+      store.activeSessionId = id;
+      return;
+    }
   }
 
   /** Any key skips the wake-up scene, and still does its usual job. Runs in
@@ -554,7 +559,9 @@
 </div>
 
 {#if store.finderOpen}
-  <SessionFinder onclose={() => store.finderOpen = false} />
+  {#await loadSessionFinder() then SessionFinder}
+    <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
 {/if}
 
 <ErrorToast />

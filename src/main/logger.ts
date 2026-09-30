@@ -80,9 +80,25 @@ function write(level: Level, line: string): void {
   }
 }
 
-function formatMessage(level: string, msg: string, ...args: unknown[]): string {
+/** One extra argument as log text. Errors keep their stack (JSON.stringify
+ *  turns an Error into "{}"); anything JSON can't take (a circular object,
+ *  a bigint) falls back to String() instead of throwing out of the logger. */
+function formatArg(arg: unknown): string {
+  if (arg instanceof Error) {
+    const code = (arg as NodeJS.ErrnoException).code;
+    return (arg.stack || `${arg.name}: ${arg.message}`) + (code ? ` [code ${code}]` : '');
+  }
+  try {
+    return JSON.stringify(arg) ?? String(arg);
+  } catch {
+    return String(arg);
+  }
+}
+
+/** Exported for tests. */
+export function formatMessage(level: string, msg: string, ...args: unknown[]): string {
   const timestamp = new Date().toISOString();
-  const extra = args.length ? ' ' + args.map((a) => JSON.stringify(a)).join(' ') : '';
+  const extra = args.length ? ' ' + args.map(formatArg).join(' ') : '';
   return `[${timestamp}] [${level}] ${msg}${extra}\n`;
 }
 

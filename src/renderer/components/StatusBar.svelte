@@ -11,8 +11,7 @@
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { prHealth } from '../lib/pr-state.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
-  import CreatePrDialog from './CreatePrDialog.svelte';
-  import AddSkillDialog from './AddSkillDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { mergeSkills } from '../lib/skills-merge.js';
@@ -37,6 +36,9 @@
   let gitSync = $derived(prStore.getSync(sessionId));
   let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
   let createPrOpen = $state(false);
+  // Dialogs load when first opened.
+  const loadCreatePrDialog = lazyComponent(() => import('./CreatePrDialog.svelte'));
+  const loadAddSkillDialog = lazyComponent(() => import('./AddSkillDialog.svelte'));
   let pushing = $state(false);
   let pushError = $state('');
 
@@ -96,14 +98,24 @@
     }
   }
 
+  /** Set while the PR turn is being prepared (the base branch lookup runs
+   *  git), so a double click can't send it twice. */
+  let preparingPrTurn = $state(false);
+
   /** Hand PR creation to the agent as a turn in this conversation. */
   async function sendAgentPrTurn() {
-    const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
-    const base = await resolveBaseBranch(repoPath);
-    const prompt = buildCreatePrPrompt(sessionBranch, base);
-    messageStore.addUserMessage(sessionId, prompt);
-    window.groveBench.sendMessage(sessionId, prompt);
-    store.updateLastActive(sessionId);
+    if (preparingPrTurn) return;
+    preparingPrTurn = true;
+    try {
+      const repoPath = store.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
+      const base = await resolveBaseBranch(repoPath);
+      const prompt = buildCreatePrPrompt(sessionBranch, base);
+      messageStore.addUserMessage(sessionId, prompt);
+      window.groveBench.sendMessage(sessionId, prompt);
+      store.updateLastActive(sessionId);
+    } finally {
+      preparingPrTurn = false;
+    }
   }
 
   /** Default click: agent turn when the session can take one, manual dialog otherwise. */
@@ -245,7 +257,7 @@
   let memoryCompacting = $derived.by(() => {
     const repo = store.sessions.find((s) => s.id === sessionId)?.repoPath;
     if (!repo) return false;
-    return (memoryStore.compacting && memoryStore.activeRepo === repo)
+    return (memoryStore.compacting && memoryStore.compactingRepo === repo)
       || memoryStore.autoCompactingRepo === repo;
   });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
@@ -435,22 +447,27 @@
     }
   }
 
+  /** When each pending sign-in stops being waited on. */
+  const mcpSignInDeadlines = new Map<string, number>();
+
   function startSignInPoll(name: string) {
     mcpSigningIn = { ...mcpSigningIn, [name]: true };
-    const deadline = Date.now() + MCP_SIGN_IN_TIMEOUT_MS;
+    mcpSignInDeadlines.set(name, Date.now() + MCP_SIGN_IN_TIMEOUT_MS);
     if (mcpSignInPoll) return; // one ticker serves every pending sign-in
     mcpSignInPoll = setInterval(async () => {
       await refreshMcpServers();
-      const timedOut = Date.now() > deadline;
       for (const pending of Object.keys(mcpSigningIn)) {
         const status = mcpStatuses.find((s) => s.name === pending)?.status;
+        const timedOut = Date.now() > (mcpSignInDeadlines.get(pending) ?? 0);
         if (status && status !== 'needs-auth' && status !== 'pending') {
           const { [pending]: _, ...rest } = mcpSigningIn;
           mcpSigningIn = rest;
+          mcpSignInDeadlines.delete(pending);
           if (status === 'connected') mcpNotice = `${pending} signed in and connected.`;
         } else if (timedOut) {
           const { [pending]: _, ...rest } = mcpSigningIn;
           mcpSigningIn = rest;
+          mcpSignInDeadlines.delete(pending);
           mcpNotice = `Still waiting on ${pending}. Finish signing in, then click Reconnect.`;
         }
       }
@@ -1269,7 +1286,7 @@
           <span class="flex items-center">
             <button
               onclick={startCreatePr}
-              disabled={isRunning}
+              disabled={isRunning || preparingPrTurn}
               class="text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50 disabled:no-underline"
               title={canAgentCreatePr
                 ? 'Ask the agent to commit, push, and create a pull request in this conversation'
@@ -1469,7 +1486,7 @@
             <span class="text-muted-foreground w-14 shrink-0">Auto</span>
             <label
               class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
-              title="When CI fails on a new commit, send a fix turn automatically — max 2 attempts per commit, then it asks for you"
+              title="When CI fails, send a fix turn automatically. After 2 tries without CI going green, it asks for you"
             >
               <Checkbox
                 class="size-3.5"
@@ -1764,20 +1781,24 @@
 </div>
 
 {#if createPrOpen}
-  <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+  {#await loadCreatePrDialog() then CreatePrDialog}
+    <CreatePrDialog {sessionId} onclose={() => createPrOpen = false} />
+  {/await}
 {/if}
 
 {#if addSkillOpen}
-  <AddSkillDialog
-    {sessionId}
-    initial={addSkillInitial}
-    onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
-    oncreated={(skill) => {
-      refreshSkills();
-      skillsExpanded = true;
-      // A created suggestion is resolved — drop it from the list for good.
-      const created = suggestions.find((s) => s.name === skill.name);
-      if (created) dismissSkillSuggestion(created.id);
-    }}
-  />
+  {#await loadAddSkillDialog() then AddSkillDialog}
+    <AddSkillDialog
+      {sessionId}
+      initial={addSkillInitial}
+      onclose={() => { addSkillOpen = false; addSkillInitial = null; }}
+      oncreated={(skill) => {
+        refreshSkills();
+        skillsExpanded = true;
+        // A created suggestion is resolved — drop it from the list for good.
+        const created = suggestions.find((s) => s.name === skill.name);
+        if (created) dismissSkillSuggestion(created.id);
+      }}
+    />
+  {/await}
 {/if}

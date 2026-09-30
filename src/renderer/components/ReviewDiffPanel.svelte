@@ -31,6 +31,7 @@
     sessionId,
     sourceKey,
     entries,
+    active = true,
     loading = false,
     changesLabel = 'Changes',
     loadDiff: fetchDiff,
@@ -57,6 +58,10 @@
      *  cache (diffs, expansions, composer) resets. */
     sourceKey: string;
     entries: GitStatusEntry[];
+    /** Whether this panel is on screen. Hidden, it doesn't fetch diffs on
+     *  each status refresh (one runs after every file edit); it fetches
+     *  them when shown again. */
+    active?: boolean;
     loading?: boolean;
     /** Heading for the unstaged section. */
     changesLabel?: string;
@@ -150,6 +155,7 @@
   // Search filter
   let searchQuery = $state('');
   let searchInputEl = $state<HTMLInputElement | null>(null);
+  let fileListEl = $state<HTMLDivElement | null>(null);
   let searchFocused = $state(false);
   let dropdownIndex = $state(-1);
 
@@ -184,11 +190,7 @@
     searchQuery = '';
     searchFocused = false;
     searchInputEl?.blur();
-    // Scroll sidebar item into view
-    requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    });
+    scrollSidebarItemIntoView(key);
   }
 
   function handleSearchKeydown(e: KeyboardEvent) {
@@ -244,9 +246,19 @@
       lastSourceKey = key;
       const kept: Record<string, FileDiffResult> = {};
       if (!scopeChanged) {
+        const byKey = new Map(list.map(e => [fileKey(e), e]));
         for (const [key, diff] of Object.entries(fileDiffs)) {
-          if (currentKeys.has(key)) kept[key] = diff;
+          const e = byKey.get(key);
+          // Keep a diff while its file is as it was when fetched. Only the
+          // selected file and its neighbours reload below, so a changed file
+          // kept here would show its old patch when selected. The selected
+          // one stays on screen until its reload lands.
+          if (e && (diffSigByKey.get(key) === entrySig(e) || key === selectedFileKey)) kept[key] = diff;
         }
+      } else {
+        // Replies still on their way are for the old comparison.
+        diffGen++;
+        diffInFlight.clear();
       }
       fileDiffs = kept;
       if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; }
@@ -258,7 +270,7 @@
         selectedFileKey = null;
       }
 
-      loadSelectedAndNeighbors(true);
+      refreshDiffs(true);
     });
   });
 
@@ -270,7 +282,25 @@
     selectedFileKey;
     untrack(() => {
       hunkIdx = 0;
-      loadSelectedAndNeighbors(false);
+      // The open comment box holds only a side and line: left open, it would
+      // save its draft against the same line of the next file.
+      composer = null;
+      refreshDiffs(false);
+    });
+  });
+
+  // Set while hidden when a load was skipped; shown again, reload then.
+  let reloadWhenShown = false;
+  function refreshDiffs(forceReload: boolean) {
+    if (!active) { reloadWhenShown = true; return; }
+    loadSelectedAndNeighbors(forceReload);
+  }
+  $effect(() => {
+    if (!active) return;
+    untrack(() => {
+      if (!reloadWhenShown) return;
+      reloadWhenShown = false;
+      loadSelectedAndNeighbors(true);
     });
   });
 
@@ -295,11 +325,19 @@
   // request has not resolved yet.
   const diffRequestSeq = new Map<string, number>();
   const diffInFlight = new Set<string>();
+  /** Bumped when the comparison changes, so older replies are dropped. */
+  let diffGen = 0;
+  /** The file state each cached diff was fetched for. */
+  const diffSigByKey = new Map<string, string>();
+  function entrySig(e: GitStatusEntry): string {
+    return [e.status, e.origPath ?? '', e.contentHash ?? '', e.additions ?? '', e.deletions ?? ''].join('|');
+  }
 
   async function loadDiff(entry: GitStatusEntry, forceReload = false) {
     const key = fileKey(entry);
     if (!forceReload && (fileDiffs[key] !== undefined || diffInFlight.has(key))) return;
     const seq = (diffRequestSeq.get(key) ?? 0) + 1;
+    const gen = diffGen;
     diffRequestSeq.set(key, seq);
     diffInFlight.add(key);
     let diff: FileDiffResult;
@@ -308,8 +346,9 @@
     } catch {
       diff = { kind: 'text', patch: '' };
     }
-    if (diffRequestSeq.get(key) !== seq) return;
+    if (gen !== diffGen || diffRequestSeq.get(key) !== seq) return;
     diffInFlight.delete(key);
+    diffSigByKey.set(key, entrySig(entry));
     fileDiffs = { ...fileDiffs, [key]: diff };
   }
 
@@ -373,11 +412,14 @@
   // prefetches and git-status refreshes reassign `fileDiffs` several times per
   // selection, and each reassignment would otherwise reparse (and re-highlight)
   // the whole patch.
+  // Keyed on the file key, a string: every status refresh hands back new
+  // entry objects, and reading the entry here would rebuild the lines below
+  // (and re-render every row of the diff) even when the patch is the same.
+  let selectedKey = $derived(selectedEntry ? fileKey(selectedEntry) : null);
   let parsedDiff: { key: string; patch: string; lines: DiffLine[] } | null = null;
   let selectedDiffLines = $derived.by((): DiffLine[] => {
-    const entry = selectedEntry;
-    if (!entry) return [];
-    const key = fileKey(entry);
+    const key = selectedKey;
+    if (key === null) return [];
     const result = fileDiffs[key];
     if (!result || result.kind !== 'text' || !result.patch) return [];
     if (parsedDiff && parsedDiff.key === key && parsedDiff.patch === result.patch) return parsedDiff.lines;
@@ -408,9 +450,8 @@
     });
   });
   let displayLines = $derived.by((): DiffLine[] => {
-    const entry = selectedEntry;
-    if (!entry) return [];
-    const key = fileKey(entry);
+    const key = selectedKey;
+    if (key === null) return [];
     return withExpandableContext(selectedDiffLines, fileLinesByKey[key] ?? null, revealedByKey[key] ?? []);
   });
 
@@ -544,7 +585,9 @@
 
   function scrollSidebarItemIntoView(key: string) {
     requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
+      // This panel's list: a hidden panel (another conversation, or Changes
+      // beside Checkpoints) can show the same file.
+      const el = fileListEl?.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }
@@ -663,6 +706,7 @@
 <div class="flex-1 flex overflow-hidden">
   <!-- Left: File sidebar -->
   <div
+    bind:this={fileListEl}
     class="{collapsed ? 'w-9' : 'w-56'} flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
     role="listbox"
     aria-label="Changed files"

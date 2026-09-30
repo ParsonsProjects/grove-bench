@@ -15,6 +15,8 @@ import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 
 beforeEach(() => {
+  // Call counts start from zero in every test, whatever ran before it.
+  vi.clearAllMocks();
   store.repos = ['/repo-a'];
   store.sessions = [
     { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
@@ -200,21 +202,16 @@ describe('Sidebar session rows', () => {
       { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
       { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Other one' },
     ] as any;
-    const closeSession = vi.fn().mockResolvedValue(undefined);
-    (mockGroveBench as any).closeSession = closeSession;
-    try {
-      render(Sidebar);
-      const row = (await screen.findAllByText('Sidebar revamp'))
-        .map((el) => el.closest('.group\\/session'))
-        .find((el) => el?.querySelector('[title="Stop agent"]'))!;
-      await fireEvent.click(row.querySelector('[title="Stop agent"]')!);
+    const { closeSession } = mockGroveBench;
+    render(Sidebar);
+    const row = (await screen.findAllByText('Sidebar revamp'))
+      .map((el) => el.closest('.group\\/session'))
+      .find((el) => el?.querySelector('[title="Stop agent"]'))!;
+    await fireEvent.click(row.querySelector('[title="Stop agent"]')!);
 
-      expect(closeSession).toHaveBeenCalledWith('s1');
-      // Not the other running conversation.
-      expect(store.activeSessionId).toBeNull();
-    } finally {
-      delete (mockGroveBench as any).closeSession;
-    }
+    expect(closeSession).toHaveBeenCalledWith('s1');
+    // Not the other running conversation.
+    expect(store.activeSessionId).toBeNull();
   });
 
   it('colours the branch icon by the PR health shown in the status bar', async () => {
@@ -401,6 +398,36 @@ describe('Sidebar bottom buttons', () => {
   });
 });
 
+describe('Sidebar settings', () => {
+  it('loads the Settings panel when first opened', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(Sidebar);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    await fireEvent.click(screen.getByTitle('Settings'));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar rename', () => {
+  it('shows a saved name even if the dialog closed before the save returned', async () => {
+    let finish!: () => void;
+    mockGroveBench.renameSession.mockImplementationOnce(() => new Promise<void>((r) => { finish = r; }));
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
+    await fireEvent.click(await screen.findByText('Rename'));
+    const input = await screen.findByDisplayValue('Sidebar revamp');
+    await fireEvent.input(input, { target: { value: 'Faster sidebar' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    finish();
+
+    expect(await screen.findByText('Faster sidebar')).toBeInTheDocument();
+  });
+});
+
 describe('Sidebar clean-up dialog', () => {
   const DAY = 86_400_000;
   const longAgo = Date.now() - 30 * DAY;
@@ -519,6 +546,80 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
   });
 
+  it('keeps PR lookups to 3 at a time across cutoff edits, and stops them on close', async () => {
+    const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
+    const recent = (n: number) => ({ id: `new${n}`, branch: `b-new${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `New ${n}`, lastActiveAt: Date.now() - 10 * DAY });
+    store.sessions = [old(1), old(2), old(3), old(4), recent(1), recent(2), recent(3)] as any;
+    const pending: Array<() => void> = [];
+    mockGroveBench.getPrs.mockImplementation((() => new Promise((res) => { pending.push(() => res([])); })) as any);
+
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getPrs).toHaveBeenCalled());
+    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await waitFor(() => expect(screen.getByLabelText(/New 3/)).toBeInTheDocument());
+    await tick();
+    // None has finished, so every call so far is still running.
+    expect(mockGroveBench.getPrs.mock.calls.length).toBeLessThanOrEqual(3);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const before = mockGroveBench.getPrs.mock.calls.length;
+    for (const finish of pending.splice(0)) finish();
+    await tick();
+    await tick();
+    expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(before);
+  });
+
+  it('runs at most 3 git status checks at once, and none left waiting after close', async () => {
+    const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
+    store.sessions = [old(1), old(2), old(3), old(4), old(5)] as any;
+    const pending: Array<() => void> = [];
+    mockGroveBench.getGitStatus.mockImplementation((() => new Promise((res) => { pending.push(() => res({ entries: [] })); })) as any);
+
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+    pending.shift()!();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    for (const finish of pending.splice(0)) finish();
+    await tick();
+    await tick();
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not tick a conversation until its status check comes back clean', async () => {
+    let finish!: (v: unknown) => void;
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
+      id === 'open' ? new Promise((r) => { finish = r; }) : { entries: [] }) as any);
+    await openDialog();
+    await waitFor(() => expect(screen.getByLabelText(/Merged one/)).toBeChecked());
+
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+
+    finish({ entries: [] });
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+  });
+
+  it('leaves one whose status git could not read unticked, and says so', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
+      id === 'nopr' ? { entries: [], error: 'fatal: index file corrupt' } : { entries: [] }) as any);
+    await openDialog();
+    await screen.findByText('· changes unknown');
+
+    expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+    expect(screen.getByLabelText(/Open one/)).toBeChecked();
+  });
+
+  it('lists nothing while the day field is empty', async () => {
+    await openDialog();
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeInTheDocument());
+    const days = screen.getByRole('spinbutton');
+    await fireEvent.input(days, { target: { value: '' } });
+    await waitFor(() => expect(screen.queryByLabelText(/Open one/)).not.toBeInTheDocument());
+  });
+
   it('does not run a git status check for direct conversations', async () => {
     store.sessions = [
       ...store.sessions,
@@ -601,8 +702,7 @@ describe('Sidebar delete conversation', () => {
   });
 
   it('deletes after confirming', async () => {
-    const destroySession = vi.fn().mockResolvedValue(undefined);
-    (mockGroveBench as unknown as { destroySession: typeof destroySession }).destroySession = destroySession;
+    const { destroySession } = mockGroveBench;
     await openDeleteDialog();
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(destroySession).toHaveBeenCalledWith('s2', false));
@@ -663,8 +763,7 @@ describe('Sidebar projects tree', () => {
 });
 
 describe('Sidebar remove project', () => {
-  const destroySession = vi.fn();
-  const removeRepo = vi.fn();
+  const { destroySession, removeRepo } = mockGroveBench;
 
   beforeEach(() => {
     store.repos = ['/repo-a', '/repo-b'];
@@ -677,12 +776,9 @@ describe('Sidebar remove project', () => {
     store.activeSessionId = null;
     destroySession.mockReset().mockResolvedValue(undefined);
     removeRepo.mockReset().mockResolvedValue(undefined);
-    Object.assign(mockGroveBench, { destroySession, removeRepo });
   });
 
   afterEach(() => {
-    delete (mockGroveBench as any).destroySession;
-    delete (mockGroveBench as any).removeRepo;
     mockGroveBench.getGitStatus.mockReset();
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
     mockGroveBench.getBranchCommits.mockReset();

@@ -102,9 +102,9 @@
 
   function copyToPrompt() {
     if (!pendingSelection) return;
-    // Insert into the (live) prompt input. The prompt is mounted on both the
-    // Activity and Changes tabs, so no tab switch is needed.
-    messageStore.requestPromptInsert(sessionId, pendingSelection.text);
+    // Into the draft too: the Checkpoints tab's diff has no prompt input
+    // showing, and one that mounts later only reads the draft.
+    messageStore.appendToPrompt(sessionId, pendingSelection.text);
     clear();
     window.getSelection()?.removeAllRanges();
   }

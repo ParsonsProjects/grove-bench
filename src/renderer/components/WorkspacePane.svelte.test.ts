@@ -6,6 +6,7 @@ import WorkspacePane from './WorkspacePane.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 
 const agents = { 'claude-code': { available: true, authenticated: true } };
 
@@ -25,6 +26,8 @@ afterEach(() => {
   store.prerequisites = null;
   settingsStore.current.groveCharacters = true;
   messageStore.setIsRunning('n1', false);
+  messageStore.destroyAllSessions();
+  gitStatusStore.statusBySession = {};
 });
 
 describe('WorkspacePane in a conversation without git', () => {
@@ -86,5 +89,22 @@ describe('WorkspacePane in a conversation without git', () => {
     expect(await screen.findByRole('button', { name: /^Thread\s+Alt\+1/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Activity/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Switch to Thread to send messages (Alt+1)' })).toBeInTheDocument();
+  });
+});
+
+const SID = 'pane-session';
+
+describe('WorkspacePane tabs', () => {
+  it('loads the Changes tab on its first visit', async () => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo', status: 'running' }] as never;
+    store.activeSessionId = SID;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    messageStore.messagesBySession = { [SID]: [] };
+    render(WorkspacePane, { sessionId: SID });
+    expect(screen.queryByText('Working tree clean')).toBeNull();
+
+    messageStore.setActiveTab(SID, 'changes');
+
+    expect(await screen.findByText('Working tree clean')).toBeInTheDocument();
   });
 });

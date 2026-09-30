@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, thinkingDisplayFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -480,6 +480,33 @@ describe('buildMcpAddArgs()', () => {
   });
 });
 
+describe('plugin and scope arguments for the claude CLI', () => {
+  it('accepts plugin ids as the CLI lists them', () => {
+    expect(validatePluginId('code-review@claude-plugins-official')).toBe('code-review@claude-plugins-official');
+    expect(validatePluginId('figma')).toBe('figma');
+  });
+
+  it('refuses plugin ids with shell characters, spaces or a leading dash', () => {
+    for (const id of ['a&b', 'a|b', 'a b', 'a"b', '%x%', '-rf', '', 42]) {
+      expect(() => validatePluginId(id), String(id)).toThrow('Invalid plugin id');
+    }
+  });
+
+  it('refuses unknown scopes and transports', () => {
+    expect(validateConfigScope('project')).toBe('project');
+    expect(() => validateConfigScope('user & x')).toThrow('Invalid scope');
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'http', commandOrUrl: 'https://x', scope: 'global' as never })).toThrow('Invalid scope');
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'ws' as never, commandOrUrl: 'https://x', scope: 'user' })).toThrow('Invalid transport');
+  });
+
+  it('refuses a bad plugin id before running the CLI', async () => {
+    const adapter = new ClaudeCodeAdapter();
+    await expect(adapter.installPlugin('x & y')).rejects.toThrow('Invalid plugin id');
+    await expect(adapter.installPlugin('ok', 'all')).rejects.toThrow('Invalid scope');
+    await expect(adapter.disablePlugin('x|y')).rejects.toThrow('Invalid plugin id');
+  });
+});
+
 describe('quoteArg()', () => {
   it('passes simple args through unquoted', () => {
     expect(quoteArg('npx')).toBe('npx');
@@ -614,6 +641,22 @@ describe('capToolResult()', () => {
 });
 
 describe('transformMessage()', () => {
+  describe('informational messages', () => {
+    it('shows the CLI\'s warnings, such as a sandbox that could not start', () => {
+      const events = transformMessage(
+        { type: 'system', subtype: 'informational', level: 'warning', content: ' Sandbox unavailable; running commands unsandboxed ' } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'status', level: 'warning', message: 'Sandbox unavailable; running commands unsandboxed' }]);
+    });
+
+    it('drops lower levels, which the CLI itself keeps to the transcript', () => {
+      for (const level of ['info', 'notice', 'suggestion']) {
+        expect(transformMessage({ type: 'system', subtype: 'informational', level, content: 'x' } as any, makeCtx())).toEqual([]);
+      }
+    });
+  });
+
   describe('background task messages', () => {
     it('maps background_tasks_changed to a replace-style task list, dropping ambient tasks', () => {
       const events = transformMessage(

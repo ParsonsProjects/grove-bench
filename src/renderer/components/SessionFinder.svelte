@@ -24,6 +24,8 @@
   /** A first prompt's length, matching the main-process preview (PREVIEW_MAX_LEN). */
   const PROMPT_MAX_LEN = 160;
 
+  /** What the search looks at. Live state (status, running) is read per row
+   *  instead, so it can change without rebuilding the search index. */
   interface SessionEntry {
     id: string;
     label: string;
@@ -31,8 +33,6 @@
     repoName: string;
     repoPath: string;
     firstPrompt: string;
-    /** Same state, so the same dot, as the conversation's sidebar row. */
-    spriteState: AgentSpriteState;
   }
 
   onMount(() => {
@@ -41,25 +41,31 @@
     sessionPreviewStore.ensure(store.sessions.map((s) => s.id));
   });
 
-  let entries = $derived.by((): SessionEntry[] => {
-    return store.sessions.map((s) => {
-      // The same plain text (and length) as the main-process preview, so a
-      // conversation reads the same whether or not its messages are loaded.
-      const firstPrompt =
-        firstPromptSnippet(messageStore.getMessages(s.id), PROMPT_MAX_LEN) ||
-        sessionPreviewStore.get(s.id)?.firstPrompt ||
-        '';
-      return {
-        id: s.id,
-        label: s.displayName || s.branch || 'New conversation',
-        branch: s.branch,
-        repoName: store.repoDisplayName(s.repoPath),
-        repoPath: s.repoPath,
-        firstPrompt,
-        spriteState: sessionSpriteState(s),
-      };
-    });
-  });
+  // Re-read on every message (the first prompt comes from the messages), but
+  // kept as a string: the index below is only rebuilt when the searchable
+  // text changes, not each time any conversation gets a message.
+  let entriesKey = $derived(JSON.stringify(store.sessions.map((s): SessionEntry => {
+    // The same plain text (and length) as the main-process preview, so a
+    // conversation reads the same whether or not its messages are loaded.
+    const firstPrompt =
+      firstPromptSnippet(messageStore.getMessages(s.id), PROMPT_MAX_LEN) ||
+      sessionPreviewStore.get(s.id)?.firstPrompt ||
+      '';
+    return {
+      id: s.id,
+      label: s.displayName || s.branch || 'New conversation',
+      branch: s.branch,
+      repoName: store.repoDisplayName(s.repoPath),
+      repoPath: s.repoPath,
+      firstPrompt,
+    };
+  })));
+  let entries = $derived(JSON.parse(entriesKey) as SessionEntry[]);
+
+  /** Same state, so the same dot, as the conversation's sidebar row. */
+  function spriteStateOf(id: string): AgentSpriteState {
+    return sessionSpriteState(store.sessions.find((s) => s.id === id) ?? { id, status: 'stopped' });
+  }
 
   let fuse = $derived(
     new Fuse(entries, {
@@ -96,6 +102,7 @@
     const q = query.trim();
     const ids: string[] = JSON.parse(searchOrder);
     if (q.length < 2 || ids.length === 0) {
+      reqToken++; // a search still in flight is for a query that's gone
       contentHits = [];
       contentLoading = false;
       return;
@@ -147,6 +154,7 @@
   }
 
   function selectAt(index: number) {
+    if (index < 0) return;
     if (index < sessionResults.length) {
       selectSession(sessionResults[index]);
     } else {
@@ -158,7 +166,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      selectedIndex = Math.min(selectedIndex + 1, totalResults - 1);
+      selectedIndex = Math.max(0, Math.min(selectedIndex + 1, totalResults - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       selectedIndex = Math.max(selectedIndex - 1, 0);
@@ -218,7 +226,7 @@
               onmouseenter={() => selectedIndex = i}
             >
               <div class="flex items-center gap-2">
-                <StatusDot state={entry.spriteState} />
+                <StatusDot state={spriteStateOf(entry.id)} />
                 <span class="text-muted-foreground shrink-0"><HighlightedText text={entry.repoName} {query} words /></span>
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0"><HighlightedText text={entry.label} {query} words /></span>

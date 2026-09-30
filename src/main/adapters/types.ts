@@ -112,7 +112,7 @@ export interface PreviewScreenshot {
 }
 
 /** Adapter-agnostic browser operations on the conversation's Preview page for
- *  the agent (Claude's page, separate from the one the user drives). Text
+ *  the agent (its own page, separate from the one the user drives). Text
  *  results are ready to show the agent. Failures throw with a readable message. */
 export interface PreviewOperations {
   open(opts: { url?: string; width?: number; height?: number }): Promise<string>;

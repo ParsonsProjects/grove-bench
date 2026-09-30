@@ -1,8 +1,10 @@
 <script lang="ts" module>
   import type { DiffLine, SideBySideRow, ContextGap, ReviewComment } from '../lib/diff-types.js';
   import { intralineRanges } from '../lib/diff-highlight.js';
+  import { parseDiffLines } from '../lib/diff-parse.js';
   // Re-export so existing component consumers can keep importing from here.
   export type { DiffLine, SideBySideRow, ContextGap, ReviewComment };
+  export { parseDiffLines };
 
   /** Where a new comment is being written: the anchored line range on one side. */
   export interface CommentAnchor { side: 'old' | 'new'; startLine: number; endLine: number }
@@ -76,48 +78,6 @@
   }
 
   import { createPatch } from 'diff';
-
-  export function parseDiffLines(patch: string): DiffLine[] {
-    const lines = patch.split('\n');
-    const result: DiffLine[] = [];
-    let oldLine = 0;
-    let newLine = 0;
-    for (const line of lines) {
-      if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('Index:') || line.startsWith('====')) continue;
-      if (line.startsWith('@@')) {
-        const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-        if (m) {
-          oldLine = parseInt(m[1], 10);
-          newLine = parseInt(m[3], 10);
-          result.push({
-            type: 'hunk',
-            text: line,
-            hunk: {
-              oldStart: oldLine,
-              oldCount: m[2] === undefined ? 1 : parseInt(m[2], 10),
-              newStart: newLine,
-              newCount: m[4] === undefined ? 1 : parseInt(m[4], 10),
-            },
-          });
-        } else {
-          result.push({ type: 'hunk', text: line });
-        }
-        continue;
-      }
-      if (line.startsWith('+')) {
-        result.push({ type: 'add', text: line.slice(1), lineNum: newLine, newLineNum: newLine });
-        newLine++;
-      } else if (line.startsWith('-')) {
-        result.push({ type: 'del', text: line.slice(1), lineNum: oldLine, oldLineNum: oldLine });
-        oldLine++;
-      } else if (line.startsWith(' ')) {
-        result.push({ type: 'context', text: line.slice(1), lineNum: newLine, oldLineNum: oldLine, newLineNum: newLine });
-        oldLine++;
-        newLine++;
-      }
-    }
-    return result;
-  }
 
   export function computeDiffLines(toolName: string, input: Record<string, unknown>, filePath: string): DiffLine[] {
     if (toolName === 'Edit') {
@@ -202,10 +162,17 @@
   let draft = $state('');
   let editingId = $state<string | null>(null);
   let editDraft = $state('');
+  // The anchor the draft was typed against (not state: only compared).
+  let draftAnchor: CommentAnchor | null = null;
   $effect(() => {
-    // Reset the draft when the composer moves to a different anchor.
-    composer;
-    draft = '';
+    // Reset the draft when the composer moves to a different anchor, but not
+    // when Shift+click widens the range the draft is already about.
+    const next = composer ? { side: composer.side, startLine: composer.startLine, endLine: composer.endLine } : null;
+    const prev = draftAnchor;
+    const widened = !!prev && !!next && prev.side === next.side
+      && next.startLine <= prev.startLine && next.endLine >= prev.endLine;
+    if (!widened) draft = '';
+    draftAnchor = next;
   });
 
   function submitDraft() {
@@ -330,7 +297,7 @@
         <tbody>
           {#each rows as row}
             {#if row.type === 'hunk'}
-              <tr>
+              <tr data-hunk="true">
                 <td colspan="4" class="text-cyan-400 bg-cyan-950/20 px-2 py-0.5">{row.hunkText}</td>
               </tr>
             {:else if row.type === 'expander'}
@@ -342,6 +309,10 @@
               {@const anchorNum = row.right ? row.right.lineNum : row.left?.lineNum}
               {@const anchorText = row.right ? row.right.text : row.left?.text ?? ''}
               {@const inRange = inComposerRange(side, anchorNum)}
+              <!-- A removed line paired with an added one: the row anchors on
+                   the added line, but comments made on the removed one in
+                   the unified view belong here too. -->
+              {@const pairedOld = row.type !== 'context' && row.right ? row.left?.lineNum : undefined}
               {#if row.type === 'context'}
                 <tr class="group/line {inRange ? 'outline outline-1 outline-primary/60' : ''}">
                   <td class="w-8 text-right text-muted-foreground/40 pr-2 select-none align-top relative">{@render addButton(side, anchorNum, anchorText)}{row.left?.lineNum ?? ''}</td>
@@ -357,8 +328,8 @@
                   <td class="diff-add px-2 whitespace-pre-wrap break-all align-top {row.right ? 'bg-green-950/30 text-green-300' : ''}">{#if row.right}{@html hl(row.right.text, row.rightRanges)}{/if}</td>
                 </tr>
               {/if}
-              {#if commentsAt(side, anchorNum).length > 0 || composerAt(side, anchorNum)}
-                <tr><td colspan="4" class="p-0">{@render commentCards(side, anchorNum)}{@render composerBox(side, anchorNum)}</td></tr>
+              {#if commentsAt(side, anchorNum).length > 0 || composerAt(side, anchorNum) || commentsAt('old', pairedOld).length > 0 || composerAt('old', pairedOld)}
+                <tr><td colspan="4" class="p-0">{@render commentCards('old', pairedOld)}{@render composerBox('old', pairedOld)}{@render commentCards(side, anchorNum)}{@render composerBox(side, anchorNum)}</td></tr>
               {/if}
             {/if}
           {/each}

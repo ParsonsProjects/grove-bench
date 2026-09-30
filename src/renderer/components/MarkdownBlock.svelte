@@ -3,14 +3,9 @@
   import DOMPurify from 'dompurify';
   import hljs from '../lib/hljs.js';
   import { openLink } from '$lib/preview-links.js';
-  import { writeRichText, encodeCopyText, decodeCopyText } from '$lib/clipboard.js';
-
-  // Allow data-code attribute through DOMPurify for copy button support
-  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
-    if (data.attrName === 'data-code') {
-      data.forceKeepAttr = true;
-    }
-  });
+  import { splitStreamingMarkdown } from '$lib/markdown-stream.js';
+  import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
+  import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -23,8 +18,8 @@
   function codeRenderer(highlight: boolean) {
     return {
       code({ text, lang }: { text: string; lang?: string }) {
-        const encoded = encodeCopyText(text);
-        const copyBtn = `<button class="code-copy-btn" data-code="${encoded}" title="Copy">${COPY_SVG}</button>`;
+        // Copies the block's own code text (see the click handler).
+        const copyBtn = `<button class="code-copy-btn" data-copy="${COPY_MARK}" title="Copy">${COPY_SVG}</button>`;
 
         if (highlight && lang && hljs.getLanguage(lang)) {
           const highlighted = hljs.highlight(text, { language: lang }).value;
@@ -40,7 +35,7 @@
   const tableRenderer = {
     table(this: Renderer, token: Tokens.Table) {
       const encoded = encodeCopyText(token.raw.trim());
-      const copyBtn = `<button class="table-copy-btn" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
+      const copyBtn = `<button class="table-copy-btn" data-copy="${COPY_MARK}" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
       return `<div class="table-wrapper">${Renderer.prototype.table.call(this, token)}${copyBtn}</div>`;
     },
   };
@@ -56,7 +51,8 @@
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
     try {
       const raw = instance.parse(content) as string;
-      return DOMPurify.sanitize(raw, { ADD_ATTR: ['data-code'] });
+      // No forms: submitting one would navigate the app window.
+      return DOMPurify.sanitize(raw, { FORBID_TAGS: ['form'] });
     } catch {
       return DOMPurify.sanitize(content);
     }
@@ -65,71 +61,74 @@
 
 <script lang="ts">
   /** `streaming`: the content is a live preview that re-renders on every
-   *  flush, so skip syntax highlighting; the finalized message gets it. */
+   *  flush, so skip syntax highlighting; the finalized message gets it. It
+   *  is also rendered a block at a time: blocks that are done keep their
+   *  HTML, and each flush re-parses only the block still growing. */
   let { content, streaming = false }: { content: string; streaming?: boolean } = $props();
 
-  let html = $derived.by(() => renderMarkdown(content, { highlight: !streaming }));
+  let html = $derived(streaming ? '' : renderMarkdown(content));
+  let streamParts = $derived(streaming ? splitStreamingMarkdown(content) : null);
   let container: HTMLDivElement;
 
   const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
   const copySvg = COPY_SVG;
 
+  async function copy(btn: HTMLElement) {
+    try {
+      if (btn.classList.contains('table-copy-btn')) {
+        const table = renderedTable(btn);
+        if (!table) return;
+        await writeRichText(table.markdown, table.html);
+      } else {
+        const code = renderedCode(btn);
+        if (code === null) return;
+        await navigator.clipboard.writeText(code);
+      }
+      btn.innerHTML = checkSvg;
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.innerHTML = copySvg;
+        btn.classList.remove('copied');
+      }, 1500);
+    } catch { /* ignore */ }
+  }
+
+  // One listener for the whole block, so content that re-renders (or grows
+  // while streaming) needs nothing re-attached.
   $effect(() => {
-    const _html = html; // track re-renders
     if (!container) return;
-
-    // Intercept link clicks: localhost opens in the Preview tab, the rest in
-    // the system browser.
-    const linkHandler = (e: MouseEvent) => {
-      const anchor = (e.target as HTMLElement).closest('a');
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Only buttons this renderer made: chat content can hold its own.
+      const btn = target.closest('button.code-copy-btn, button.table-copy-btn');
+      if (isRenderedCopyButton(btn)) {
+        void copy(btn);
+        return;
+      }
+      // Links: localhost opens in the Preview tab, the rest in the system
+      // browser. Every other link (relative, `?x`, `#x`, mailto:) does
+      // nothing: followed, it would navigate or reload the app window.
+      const anchor = target.closest('a');
       if (!anchor) return;
+      e.preventDefault();
       const href = anchor.getAttribute('href');
-      if (href && /^https?:\/\//i.test(href)) {
-        e.preventDefault();
-        openLink(href, e);
-      }
+      if (href && /^https?:\/\//i.test(href)) openLink(href, e);
     };
-    container.addEventListener('click', linkHandler);
-
-    const buttons = container.querySelectorAll<HTMLButtonElement>('.code-copy-btn, .table-copy-btn');
-    const handlers: Array<[HTMLButtonElement, () => void]> = [];
-
-    for (const btn of buttons) {
-      const handler = async () => {
-        const encoded = btn.getAttribute('data-code');
-        if (!encoded) return;
-        try {
-          const text = decodeCopyText(encoded);
-          // Tables also go on the clipboard as HTML so spreadsheets and
-          // documents paste real cells; plain-text targets get the Markdown.
-          const table = btn.classList.contains('table-copy-btn')
-            ? btn.parentElement?.querySelector('table')
-            : null;
-          if (table) await writeRichText(text, table.outerHTML);
-          else await navigator.clipboard.writeText(text);
-          btn.innerHTML = checkSvg;
-          btn.classList.add('copied');
-          setTimeout(() => {
-            btn.innerHTML = copySvg;
-            btn.classList.remove('copied');
-          }, 1500);
-        } catch { /* ignore */ }
-      };
-      btn.addEventListener('click', handler);
-      handlers.push([btn, handler]);
-    }
-
-    return () => {
-      container.removeEventListener('click', linkHandler);
-      for (const [btn, handler] of handlers) {
-        btn.removeEventListener('click', handler);
-      }
-    };
+    container.addEventListener('click', onClick);
+    return () => container.removeEventListener('click', onClick);
   });
 </script>
 
 <div class="markdown-content" bind:this={container}>
-  {@html html}
+  {#if streamParts}
+    <!-- A block's string never changes once cut, so its HTML is made once. -->
+    {#each streamParts.settled as block, i (i)}
+      {@html renderMarkdown(block, { highlight: false })}
+    {/each}
+    {@html renderMarkdown(streamParts.tail, { highlight: false })}
+  {:else}
+    {@html html}
+  {/if}
 </div>
 
 <style>

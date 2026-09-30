@@ -57,14 +57,16 @@
   });
 
   // Insert text pushed from elsewhere (e.g. the activity thread's "copy
-  // selection to prompt"). Initialised from the current nonce so a stale
-  // request doesn't re-fire when this editor (re)mounts.
+  // selection to prompt", or a rewind's message text, which replaces it).
+  // Initialised from the current nonce so a stale request doesn't re-fire
+  // when this editor (re)mounts.
   let lastInsertNonce = untrack(() => messageStore.promptInsertBySession[sessionId]?.nonce ?? 0);
   $effect(() => {
     const req = messageStore.promptInsertBySession[sessionId];
     if (!req || req.nonce === lastInsertNonce) return;
     lastInsertNonce = req.nonce;
-    value = value ? `${value}\n${req.text}` : req.text;
+    value = req.replace ? req.text : value ? `${value}\n${req.text}` : req.text;
+    if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
     tick().then(() => { textarea?.focus(); autoResize(); });
   });
   let userResized = $state(false);
@@ -73,8 +75,12 @@
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
 
-  // File attachments (drag-drop, paste, file picker)
-  let attachedFiles = $state<AttachedFile[]>([]);
+  // File attachments (drag-drop, paste, file picker), restored and kept in
+  // the store like the draft so they outlive this editor.
+  let attachedFiles = $state<AttachedFile[]>(untrack(() => [...messageStore.getAttachments(sessionId)]));
+  $effect(() => {
+    messageStore.setAttachments(sessionId, $state.snapshot(attachedFiles));
+  });
   let dragOver = $state(false);
   let dropMessage = $state<{ text: string; isError: boolean } | null>(null);
   let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -175,6 +181,8 @@
     const displayText = attachedFiles.length > 0
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
       : text;
+    // Kept on a queued prompt so Edit can restore it as typed.
+    const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
     // Sends now if the agent is idle, otherwise parks the prompt in the queue.
     function send(outgoing: string) {
@@ -182,6 +190,7 @@
         displayText,
         outgoing,
         images: images.length > 0 ? images : undefined,
+        typed,
       });
     }
 
@@ -307,7 +316,8 @@
 
     const pos = textarea?.selectionStart ?? 0;
     const textBefore = value.slice(0, pos);
-    const atMatch = textBefore.match(/@([\w.\/\-]*)$/);
+    // Same characters extractAtRefs accepts: anything but whitespace.
+    const atMatch = textBefore.match(/@(\S*)$/);
 
     if (atMatch) {
       pickerOpen = true;

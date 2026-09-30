@@ -17,6 +17,27 @@ import { logger } from './logger.js';
 const FORWARD_WINDOW_MS = 60_000;
 const FORWARD_MAX_PER_WINDOW = 20;
 
+/**
+ * Rejections the agent SDK leaves behind while a query is torn down. Stopping
+ * or closing a conversation closes the SDK transport; control responses still
+ * in flight (e.g. a permission decision written back after pending
+ * permissions were denied) then fail to write, and the SDK's retry in its
+ * catch block escapes as an unhandled rejection. Expected and harmless, so
+ * they are logged at debug level instead of reported.
+ */
+const SDK_TEARDOWN_REJECTIONS = [
+  'Operation aborted',
+  'ProcessTransport is not ready for writing',
+  'Cannot write to terminated process',
+  'Cannot write to process that exited', // followed by a variable code/signal
+  'Claude Code process aborted by user',
+];
+
+export function isExpectedTeardownRejection(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  return SDK_TEARDOWN_REJECTIONS.some((m) => message.startsWith(m));
+}
+
 /** Message + stack for anything `throw`n or rejected with. */
 export function describeError(err: unknown): { message: string; stack?: string } {
   if (err instanceof Error) {
@@ -92,6 +113,10 @@ export function installProcessErrorHandlers(opts: ProcessErrorHandlerOptions): v
     handleMainError(buildReport('uncaughtException', err), opts.getWindow, limiter);
   });
   proc.on('unhandledRejection', (reason: unknown) => {
+    if (isExpectedTeardownRejection(reason)) {
+      logger.debug(`[unhandledRejection] Suppressed expected SDK teardown error: ${describeError(reason).message}`);
+      return;
+    }
     handleMainError(buildReport('unhandledRejection', reason), opts.getWindow, limiter);
   });
 }

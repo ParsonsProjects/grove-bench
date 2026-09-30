@@ -3,9 +3,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
-  import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
-  import { previewStore } from '../stores/preview.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
@@ -18,8 +16,7 @@
   import { unsavedFileCount } from '../lib/unsaved-files.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
-  import SettingsPanel from './SettingsPanel.svelte';
-  import MemoryPanel from './MemoryPanel.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import ContextMenu from './ContextMenu.svelte';
   import { formatAge } from '../lib/format-age.js';
@@ -30,6 +27,7 @@
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import { forgetConversation } from '$lib/forget-conversation.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import AgentSprite from './AgentSprite.svelte';
   import StatusDot from './StatusDot.svelte';
@@ -37,6 +35,7 @@
   import PanelToggle from './PanelToggle.svelte';
   import { panelStore } from '../stores/panels.svelte.js';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
+  import { limitedQueue } from '../lib/limited-queue.js';
   import { onMount, untrack } from 'svelte';
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
@@ -177,6 +176,14 @@
   }
 
   let showSettings = $state(false);
+
+  // Settings and Memory load when first opened, then stay mounted.
+  const loadSettingsPanel = lazyComponent(() => import('./SettingsPanel.svelte'));
+  const loadMemoryPanel = lazyComponent(() => import('./MemoryPanel.svelte'));
+  let settingsOpened = $state(false);
+  let memoryOpened = $state(false);
+  $effect(() => { if (showSettings) settingsOpened = true; });
+  $effect(() => { if (memoryStore.panelOpen) memoryOpened = true; });
   let confirmDestroyId = $state<string | null>(null);
   let destroying = $state<Set<string>>(new Set());
   let confirmRemoveRepo = $state<string | null>(null);
@@ -194,13 +201,17 @@
   let cleaningUp = $state(false);
   const cleanupDayPresets = [7, 14, 30, 90];
 
-  /** gh calls run at most this many at once while the dialog looks up PR
-   *  state, so a long candidate list doesn't spawn a gh process per row in
-   *  one burst (the status bar's poll is sequential for the same reason). */
-  const CLEANUP_PR_CONCURRENCY = 3;
+  /** Checks run at most this many at once per kind (git status, gh), so a
+   *  long candidate list doesn't spawn a process per row in one burst (the
+   *  status bar's PR poll is sequential for the same reason). Each git status
+   *  check itself runs a few git commands. */
+  const CLEANUP_CONCURRENCY = 3;
 
-  /** sessionId → has uncommitted changes in its worktree. Absent = still checking / unknown. */
+  /** sessionId → has uncommitted changes in its worktree (or its status
+   *  couldn't be read, so it may have). Absent = still checking. */
   let cleanupDirty = $state<Record<string, boolean>>({});
+  /** sessionId → true when git couldn't read its status. */
+  let cleanupStatusUnknown = $state<Record<string, boolean>>({});
   /** sessionId → the session's primary PR (list head: open before merged or
    *  closed, newest first), null when it has none, 'unknown' when gh couldn't
    *  answer (offline, not logged in). Absent = still checking, or gh isn't
@@ -211,9 +222,28 @@
   const cleanupCheckedIds = new Set<string>();
   /** Bumped each time the dialog opens so results from a previous open are dropped. */
   let cleanupGeneration = 0;
+  /** Shared by every run of the check effect, so editing the cutoff queues
+   *  more rows instead of starting more processes. Separate queues, so a
+   *  slow gh never holds up the uncommitted-changes checks. */
+  const cleanupStatusQueue = limitedQueue(CLEANUP_CONCURRENCY);
+  const cleanupPrQueue = limitedQueue(CLEANUP_CONCURRENCY);
+  // Closing the dialog drops the checks not started; opening it starts over.
+  $effect(() => {
+    if (showCleanup) return;
+    cleanupStatusQueue.clear();
+    cleanupPrQueue.clear();
+  });
 
-  const cleanupDaysNum = $derived(Math.max(0, Math.floor(Number(cleanupDays)) || 0));
-  const cleanupCandidates = $derived(store.stoppedSessionsOlderThan(cleanupDaysNum));
+  /** Days from the field, or null while it's empty or not a number (a
+   *  number input binds null when cleared, which would otherwise read as 0
+   *  days and list every stopped conversation). */
+  const cleanupDaysNum = $derived.by(() => {
+    const raw = cleanupDays as unknown;
+    if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) ? Math.max(0, n) : null;
+  });
+  const cleanupCandidates = $derived(cleanupDaysNum === null ? [] : store.stoppedSessionsOlderThan(cleanupDaysNum));
   /** Identity of the candidate set. The check effect keys off this rather
    *  than the array, so an unrelated store update (another session's status
    *  changing, a rename) doesn't reset the user's ticks or re-run the checks. */
@@ -234,16 +264,21 @@
     cleanupGeneration++;
     cleanupCheckedIds.clear();
     cleanupDirty = {};
+    cleanupStatusUnknown = {};
     cleanupPr = {};
     cleanupSelection = {};
+    cleanupStatusQueue.clear();
+    cleanupPrQueue.clear();
     showCleanup = true;
   }
 
   // When the dialog opens or the candidate set changes (cutoff edited, a
-  // session removed): preselect the newly listed candidates, then check each
-  // one's git status and PR state. Dirty ones are deselected: removing those
-  // loses work, so they must be opted into explicitly. Candidates already
-  // checked keep their results and whatever the user ticked.
+  // session removed): check each newly listed candidate's git status and PR
+  // state, and tick it once it is known to be clean. Dirty ones, and ones
+  // whose status couldn't be read, stay unticked: removing those can lose
+  // work (removal falls back to --force), so they must be opted into
+  // explicitly. Candidates already checked keep their results and whatever
+  // the user ticked.
   // Direct conversations skip the git status check: removing one deletes no
   // files and keeps the branch, so there is nothing to lose.
   $effect(() => {
@@ -255,62 +290,57 @@
     const generation = cleanupGeneration;
     const ghAvailable = untrack(() => cleanupGhAvailable);
 
-    // Preselect the new rows; the async status check below deselects dirty ones.
-    // (Reads are untracked so writing the same state here can't loop.)
-    untrack(() => {
-      const sel = { ...cleanupSelection };
-      for (const s of fresh) sel[s.id] = true;
-      cleanupSelection = sel;
-    });
-
-    (async () => {
-      const dirty: Record<string, boolean> = {};
-      await Promise.all(fresh.map(async (s) => {
-        if (s.direct) {
-          dirty[s.id] = false;
-          return;
-        }
-        try {
-          const status = await window.groveBench.getGitStatus(s.id);
-          dirty[s.id] = unsavedFileCount(status.entries) > 0;
-        } catch {
-          dirty[s.id] = false; // unreadable worktree — nothing to lose
-        }
-      }));
+    // Each row is settled as its own check comes back, so one slow worktree
+    // doesn't hold up the rest.
+    function settle(id: string, dirty: boolean, unknown: boolean) {
       if (generation !== cleanupGeneration) return;
-      cleanupDirty = { ...cleanupDirty, ...dirty };
-      // Deselect dirty sessions without re-checking ones the user unticked
-      const next = { ...cleanupSelection };
+      cleanupDirty = { ...cleanupDirty, [id]: dirty };
+      if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [id]: true };
+      // Tick it when clean, unless the user already decided about it.
+      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !dirty };
+    }
+    untrack(() => {
       for (const s of fresh) {
-        if (dirty[s.id]) next[s.id] = false;
+        if (s.direct) { settle(s.id, false, false); continue; }
+        cleanupStatusQueue.add(async () => {
+          let dirty: boolean;
+          let unknown: boolean;
+          try {
+            const status = await window.groveBench.getGitStatus(s.id);
+            // A status git couldn't read may hide changes: treat it as dirty.
+            unknown = !!status.error;
+            dirty = unsavedFileCount(status.entries) > 0 || unknown;
+          } catch {
+            dirty = unknown = true;
+          }
+          settle(s.id, dirty, unknown);
+        });
       }
-      cleanupSelection = next;
-    })();
 
-    // PR state is looked up separately so a slow gh never delays the dirty
-    // check, and skipped entirely when gh isn't installed (every call would fail).
-    if (ghAvailable) {
-      const queue = [...fresh];
-      const worker = async () => {
-        for (let s = queue.shift(); s; s = queue.shift()) {
+      // PR state is skipped entirely when gh isn't installed (every call would fail).
+      if (!ghAvailable) return;
+      for (const s of fresh) {
+        cleanupPrQueue.add(async () => {
           let result: PrInfo | null | 'unknown';
           try {
             result = (await window.groveBench.getPrs(s.id))[0] ?? null;
           } catch {
             result = 'unknown';
           }
-          if (generation !== cleanupGeneration) return;
-          cleanupPr = { ...cleanupPr, [s.id]: result };
-        }
-      };
-      for (let i = 0; i < Math.min(CLEANUP_PR_CONCURRENCY, queue.length); i++) void worker();
-    }
+          if (generation === cleanupGeneration) cleanupPr = { ...cleanupPr, [s.id]: result };
+        });
+      }
+    });
   });
 
-  /** Tick every candidate without uncommitted changes (the initial state). */
+  /** Tick every candidate known to have no uncommitted changes (the initial
+   *  state). Ones still being checked are left undecided, so they are
+   *  ticked if their check comes back clean. */
   function cleanupSelectAllClean() {
     const sel: Record<string, boolean> = {};
-    for (const s of cleanupCandidates) sel[s.id] = !cleanupDirty[s.id];
+    for (const s of cleanupCandidates) {
+      if (cleanupDirty[s.id] !== undefined) sel[s.id] = !cleanupDirty[s.id];
+    }
     cleanupSelection = sel;
   }
 
@@ -319,7 +349,12 @@
    *  initial preselection. */
   function cleanupSelectMerged() {
     const sel: Record<string, boolean> = {};
-    for (const s of cleanupCandidates) sel[s.id] = isPrMerged(cleanupPrOf(s.id)) && !cleanupDirty[s.id];
+    for (const s of cleanupCandidates) {
+      const merged = isPrMerged(cleanupPrOf(s.id));
+      // A merged one still being checked is ticked once it comes back clean.
+      if (merged && cleanupDirty[s.id] === undefined) continue;
+      sel[s.id] = merged && cleanupDirty[s.id] === false;
+    }
     cleanupSelection = sel;
   }
 
@@ -409,7 +444,7 @@
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
-   *  renderer state (messages + IPC listener, checkpoints, terminal). Shared
+   *  renderer state (see forgetConversation). Shared
    *  by the per-row destroy flow and the bulk clean-up dialog. */
   async function destroySessionById(id: string, deleteBranch: boolean): Promise<boolean> {
     destroying = new Set([...destroying, id]);
@@ -424,14 +459,7 @@
     try {
       await window.groveBench.destroySession(id, deleteBranch);
       trackEvent('session_destroyed');
-      store.removeSession(id);
-      gitStatusStore.clear(id);
-      messageStore.destroySession(id);
-      checkpointStore.clear(id);
-      terminalStore.destroySession(id);
-      previewStore.forget(id);
-      bookmarkStore.dropSessionLocal(id);
-      sessionPreviewStore.invalidate(id);
+      forgetConversation(id);
       return true;
     } catch (e: any) {
       store.setError(e.message || String(e));
@@ -581,20 +609,25 @@
   }
 
   async function confirmRename() {
-    if (!renamingSessionId) return;
+    // Held across the save: the dialog can close (or open on another
+    // conversation) before it returns, and the name is saved either way.
+    const id = renamingSessionId;
+    if (!id) return;
     const newName = renameValue.trim();
     if (!newName) { renamingSessionId = null; return; }
 
-    const session = store.sessions.find(s => s.id === renamingSessionId);
+    const session = store.sessions.find(s => s.id === id);
     if (session && newName === sessionLabel(session)) { renamingSessionId = null; return; }
 
     try {
-      await window.groveBench.renameSession(renamingSessionId, newName);
-      store.updateDisplayName(renamingSessionId, newName);
-      renamingSessionId = null;
-      renameError = null;
+      await window.groveBench.renameSession(id, newName);
+      store.updateDisplayName(id, newName);
+      if (renamingSessionId === id) {
+        renamingSessionId = null;
+        renameError = null;
+      }
     } catch (e: any) {
-      renameError = e.message || String(e);
+      if (renamingSessionId === id) renameError = e.message || String(e);
     }
   }
 
@@ -1138,8 +1171,16 @@
 </aside>
 
 
-<SettingsPanel open={showSettings} onclose={() => showSettings = false} />
-<MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />
+{#if settingsOpened}
+  {#await loadSettingsPanel() then SettingsPanel}
+    <SettingsPanel open={showSettings} onclose={() => showSettings = false} />
+  {/await}
+{/if}
+{#if memoryOpened}
+  {#await loadMemoryPanel() then MemoryPanel}
+    <MemoryPanel open={memoryStore.panelOpen} onclose={() => memoryStore.panelOpen = false} />
+  {/await}
+{/if}
 
 {#if contextMenu}
   <ContextMenu
@@ -1261,7 +1302,9 @@
                   {:else if cleanupPr[session.id] === 'unknown'}
                     <span class="text-muted-foreground/60" title="The GitHub CLI could not look up this branch's pull request (offline or not logged in)" data-testid="cleanup-pr-{session.id}">· PR unknown</span>
                   {/if}
-                  {#if cleanupDirty[session.id]}
+                  {#if cleanupStatusUnknown[session.id]}
+                    <span class="text-amber-500 font-medium" title="Git couldn't read this worktree's status, so it may have uncommitted changes">· changes unknown</span>
+                  {:else if cleanupDirty[session.id]}
                     <span class="text-amber-500 font-medium">· uncommitted changes</span>
                   {/if}
                 </div>

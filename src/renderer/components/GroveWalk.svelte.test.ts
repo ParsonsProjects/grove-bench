@@ -130,9 +130,12 @@ describe('GroveWalk', () => {
     });
 
     it('carries on from where it was when shown again part way through', () => {
+      // A frozen clock: under load, rendering can take long enough to move
+      // a real one past the expected delay.
+      vi.useFakeTimers();
       const { container } = render(GroveWalk, { seed: 's1', arrival: Date.now() - ARRIVE_SIT_AT_MS / 2 });
       expect(path(container)).toHaveClass('arriving');
-      expect(path(container).style.animationDelay).toMatch(/^-1\.[45]/);
+      expect(path(container).style.animationDelay).toBe('-1.5s');
     });
 
     it('is already on the bench with reduced motion', () => {

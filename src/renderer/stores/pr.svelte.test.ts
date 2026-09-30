@@ -3,6 +3,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { prStore } from './pr.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { messageStore } from './messages.svelte.js';
 import type { PrInfo, SessionStatus } from '../../shared/types.js';
 
 const SID = 'pr-test-session';
@@ -346,5 +347,50 @@ describe('global sweep', () => {
     prStore.setViewing(A);
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchesOf(A)).toBe(2);
+  });
+});
+
+describe('auto-fix CI limit', () => {
+  const failing = (sha: string) => pr({ headSha: sha, checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['build'] });
+  const passing = (sha: string) => pr({ headSha: sha });
+  const fixTurns = () => mockGroveBench.sendMessage.mock.calls.filter(([id]) => id === SID).length;
+  /** The fix turn ran and ended; the agent pushed a new commit. */
+  const turnEnds = () => messageStore.setIsRunning(SID, false);
+
+  beforeEach(() => {
+    setStatus('running');
+    turnEnds(); // idle, whatever earlier tests left
+    prStore.setAuto(SID, { fixCi: true });
+  });
+
+  afterEach(() => {
+    prStore.setAuto(SID, { fixCi: false });
+    messageStore.destroySession(SID);
+  });
+
+  it('stops after 2 fix turns on a PR, even though each fix is a new commit', async () => {
+    await refreshWith(passing('sha-1')); // seeds
+    await refreshWith(failing('sha-2'));
+    turnEnds();
+    await refreshWith(failing('sha-3'));
+    turnEnds();
+    await refreshWith(failing('sha-4'));
+
+    expect(fixTurns()).toBe(2);
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'needs_human' }]);
+  });
+
+  it('gives the attempts back once CI goes green, but not while it is still running', async () => {
+    await refreshWith(passing('sha-1'));
+    await refreshWith(failing('sha-2'));
+    turnEnds();
+    await refreshWith(pr({ headSha: 'sha-3', checks: { total: 1, passed: 0, failed: 0, pending: 1 } }));
+    await refreshWith(failing('sha-3'));
+    turnEnds();
+    await refreshWith(passing('sha-4'));
+    await refreshWith(failing('sha-5'));
+
+    expect(fixTurns()).toBe(3);
+    expect(prStore.getAlerts(SID).some((a) => a.kind === 'needs_human')).toBe(false);
   });
 });

@@ -218,3 +218,29 @@ describe('background models', () => {
     expect(settingsStore.dirty).toBe(true);
   });
 });
+
+describe('updateNow', () => {
+  it('keeps both of two quick skill toggles', async () => {
+    let finishFirst!: () => void;
+    mockGroveBench.saveSettings
+      .mockImplementationOnce(() => new Promise<void>((r) => { finishFirst = r; }))
+      .mockResolvedValue(undefined);
+
+    const first = settingsStore.setSkillDisabled('lint', true);
+    const second = settingsStore.setSkillDisabled('deploy', true);
+    await Promise.resolve();
+    finishFirst();
+    await Promise.all([first, second]);
+
+    expect(settingsStore.current.disabledSkills).toEqual(['lint', 'deploy']);
+    const lastSaved = mockGroveBench.saveSettings.mock.calls.at(-1)![0] as GroveBenchSettings;
+    expect(lastSaved.disabledSkills).toEqual(['lint', 'deploy']);
+  });
+
+  it('keeps going after a failed save', async () => {
+    mockGroveBench.saveSettings.mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined);
+    await expect(settingsStore.updateNow({ theme: 'dark' })).rejects.toThrow('disk full');
+    await settingsStore.updateNow({ theme: 'light' });
+    expect(settingsStore.current.theme).toBe('light');
+  });
+});

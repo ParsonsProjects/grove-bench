@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { memoryStore } from './memory.svelte.js';
-import type { MemoryEntry } from '../../shared/types.js';
+import type { MemoryCompactionStatus, MemoryEntry } from '../../shared/types.js';
 
 const DAY = 86_400_000;
 
@@ -166,9 +166,54 @@ describe('compact result and undo', () => {
 
   it('cancelCompact forwards to the main process while a pass is running', async () => {
     memoryStore.compacting = true;
+    memoryStore.compactingRepo = '/repo';
     await memoryStore.cancelCompact();
     expect(mockGroveBench.memoryCompactCancel).toHaveBeenCalledWith('/repo');
     memoryStore.compacting = false;
+    memoryStore.compactingRepo = null;
+  });
+
+  describe('after switching project mid-compaction', () => {
+    function startOnA() {
+      let finish!: (status: MemoryCompactionStatus) => void;
+      mockGroveBench.memoryCompact.mockReturnValueOnce(new Promise<MemoryCompactionStatus>((r) => { finish = r; }));
+      memoryStore.activeRepo = '/repo-a';
+      const running = memoryStore.compact();
+      memoryStore.activeRepo = '/repo-b'; // the panel now shows another project
+      memoryStore.files = [entry('repo/b.md', 1)];
+      return { running, finish };
+    }
+
+    it('cancels the project the compaction is running on', async () => {
+      const { running, finish } = startOnA();
+      await memoryStore.cancelCompact();
+      expect(mockGroveBench.memoryCompactCancel).toHaveBeenCalledWith('/repo-a');
+      finish({ compacted: false, skippedReason: 'cancelled', filesChanged: [] });
+      await running;
+    });
+
+    it('shows its progress only for that project', async () => {
+      const { running, finish } = startOnA();
+      (memoryStore as any).handleCompactionEvent({ kind: 'stage', repoPath: '/repo-a', auto: false, stage: 'generating' });
+      expect(memoryStore.compactStage).toBe('generating');
+      expect(memoryStore.compactingRepo).toBe('/repo-a');
+      finish({ compacted: false, skippedReason: 'below threshold', filesChanged: [] });
+      await running;
+      expect(memoryStore.compactingRepo).toBeNull();
+    });
+
+    it('undoes it in its own project and leaves the shown list alone', async () => {
+      const { running, finish } = startOnA();
+      finish({ compacted: true, backupId: 'bk-a', filesChanged: ['repo/a.md'] });
+      await running;
+      expect(mockGroveBench.memoryList).not.toHaveBeenCalled();
+      expect(memoryStore.files.map((f) => f.relativePath)).toEqual(['repo/b.md']);
+
+      mockGroveBench.memoryRestoreBackup.mockResolvedValueOnce({ restored: true, filesChanged: ['repo/a.md'] });
+      await memoryStore.undoCompaction();
+      expect(mockGroveBench.memoryRestoreBackup).toHaveBeenCalledWith('/repo-a', 'bk-a');
+      expect(mockGroveBench.memoryList).not.toHaveBeenCalled();
+    });
   });
 
   it('cancelCompact is a no-op when nothing is running', async () => {
@@ -201,7 +246,8 @@ describe('compact result and undo', () => {
     expect(memoryStore.toast).toBeNull();
   });
 
-  it('tracks manual compaction stages for the active repo', () => {
+  it('tracks manual compaction stages for the project being compacted', () => {
+    memoryStore.compactingRepo = '/repo';
     (memoryStore as any).handleCompactionEvent({
       kind: 'stage', repoPath: '/repo', auto: false, stage: 'generating',
     });
@@ -213,12 +259,14 @@ describe('compact result and undo', () => {
       kind: 'stage', repoPath: '/other', auto: false, stage: 'applying',
     });
     expect(memoryStore.compactStage).toBeNull();
+    memoryStore.compactingRepo = null;
   });
 
   it('undoCompaction restores the recorded snapshot and clears the result', async () => {
-    memoryStore.lastCompaction = {
+    mockGroveBench.memoryCompact.mockResolvedValueOnce({
       compacted: true, filesChanged: ['repo/a.md'], backupId: 'snap-1',
-    };
+    });
+    await memoryStore.compact();
     mockGroveBench.memoryRestoreBackup.mockResolvedValueOnce({ restored: true, filesChanged: ['repo/a.md'] });
 
     await memoryStore.undoCompaction();

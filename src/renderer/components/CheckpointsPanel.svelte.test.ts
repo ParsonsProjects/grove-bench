@@ -21,6 +21,9 @@ beforeEach(() => {
   reviewStore.clear(SID);
   localStorage.clear();
   messageStore.messagesBySession = { [SID]: [] };
+  // The panel under test is on screen.
+  store.activeSessionId = SID;
+  messageStore.setActiveTab(SID, 'checkpoints');
   checkpointStore.checkpointsBySession = {
     [SID]: [
       { uuid: 'u2', turn: 2, ref: 'r2', text: 'Add polling' },

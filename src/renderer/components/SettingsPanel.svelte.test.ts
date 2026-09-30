@@ -5,6 +5,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import SettingsPanel from './SettingsPanel.svelte';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
+import { mcpConfigStore } from '../stores/mcpConfig.svelte.js';
 import type { AgentSummary, ControlDescriptor, GroveBenchSettings } from '../../shared/types.js';
 
 const claude: AgentSummary = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true };
@@ -121,6 +122,53 @@ describe('SettingsPanel default permission mode', () => {
     await openAgentTab();
 
     expect(await screen.findByRole('button', { name: 'Claude Agent default mode' })).toHaveTextContent('Read-safe');
+  });
+});
+
+describe('SettingsPanel loading', () => {
+  it('keeps unsaved edits when an agent reports new models', async () => {
+    render(SettingsPanel, { open: true, onclose: vi.fn() });
+    await waitFor(() => expect(settingsStore.loading).toBe(false));
+    settingsStore.draft.theme = 'dark';
+
+    // What the models-changed listener does.
+    await agentsStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockGroveBench.getSettings).toHaveBeenCalledTimes(1);
+    expect(settingsStore.draft.theme).toBe('dark');
+  });
+
+  it('fetches the Agent tab\'s models once per models-changed event', async () => {
+    let fire!: () => void;
+    mockGroveBench.onModelsChanged.mockImplementation(((cb: () => void) => { fire = cb; return () => {}; }) as never);
+    mockGroveBench.listAdapters.mockResolvedValue([claude]);
+    await openAgentTab();
+    await waitFor(() => expect(mockGroveBench.getModels).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    mockGroveBench.getModels.mockClear();
+
+    fire();
+    await waitFor(() => expect(mockGroveBench.getModels).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockGroveBench.getModels).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a failed MCP listing in a loop', async () => {
+    agentsStore.list = [{ ...claude, capabilities: { mcpConfig: true } }];
+    mcpConfigStore.loaded = false;
+    mcpConfigStore.attempted = false;
+    mockGroveBench.mcpConfigList.mockRejectedValue(new Error('claude: command not found'));
+    render(SettingsPanel, { open: true, onclose: vi.fn() });
+    await waitFor(() => expect(settingsStore.loading).toBe(false));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'MCP' }));
+    await waitFor(() => expect(mcpConfigStore.error).toMatch(/command not found/));
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockGroveBench.mcpConfigList).toHaveBeenCalledTimes(1);
+    mockGroveBench.mcpConfigList.mockResolvedValue([]);
   });
 });
 
