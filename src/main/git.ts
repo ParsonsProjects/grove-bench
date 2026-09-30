@@ -441,10 +441,13 @@ export function isRefArg(ref: unknown): ref is string {
   return typeof ref === 'string' && ref.length > 0 && !ref.startsWith('-');
 }
 
-/** Tracked files, as real paths. `-z` because without it git quotes any
- *  path with non-ASCII characters (`"caf\303\251.ts"`). */
-export async function listTrackedFiles(cwd: string): Promise<string[]> {
-  return (await git(['ls-files', '-z'], cwd)).split('\0').filter(Boolean);
+/** Tracked files plus untracked ones that aren't ignored (new files the
+ *  agent hasn't added yet), as real paths. `-z` because without it git quotes
+ *  any path with non-ASCII characters (`"caf\303\251.ts"`). */
+export async function listProjectFiles(cwd: string): Promise<string[]> {
+  const out = await git(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd);
+  // A file in a merge conflict is listed once per stage.
+  return [...new Set(out.split('\0').filter(Boolean))];
 }
 
 /**

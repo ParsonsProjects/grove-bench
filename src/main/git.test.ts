@@ -50,7 +50,7 @@ import {
   isWorkingTreeClean,
   getGitIdentity,
   isRefArg,
-  listTrackedFiles,
+  listProjectFiles,
   resolveMergeBase,
   revertFile,
 } from './git.js';
@@ -590,11 +590,16 @@ describe('isRefArg()', () => {
   });
 });
 
-describe('listTrackedFiles()', () => {
-  it('splits NUL-separated output so non-ASCII paths come back unquoted', async () => {
+describe('listProjectFiles()', () => {
+  it('lists tracked and untracked, unignored files, unquoted', async () => {
     mockExeca.mockResolvedValue({ stdout: 'café.ts\0src/a b.ts\0' } as any);
-    expect(await listTrackedFiles('/repo')).toEqual(['café.ts', 'src/a b.ts']);
-    expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '-z'], { cwd: '/repo' });
+    expect(await listProjectFiles('/repo')).toEqual(['café.ts', 'src/a b.ts']);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: '/repo' });
+  });
+
+  it('lists a conflicted file once', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'a.ts\0a.ts\0a.ts\0b.ts\0' } as any);
+    expect(await listProjectFiles('/repo')).toEqual(['a.ts', 'b.ts']);
   });
 });
 

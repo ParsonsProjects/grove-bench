@@ -12,7 +12,7 @@ import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listTrackedFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -900,7 +900,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const files = await listTrackedFiles(worktree.path);
+    const files = await listProjectFiles(worktree.path);
 
     // Extract unique directories from file paths
     const dirs = new Set<string>();
@@ -1731,9 +1731,9 @@ export function registerHandlers() {
     }
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {
-      // Return a listing of tracked files under this directory
+      // Return a listing of the files under this directory
       const prefix = path.relative(worktree.path, resolved).replace(/\\/g, '/');
-      const entries = (await listTrackedFiles(worktree.path))
+      const entries = (await listProjectFiles(worktree.path))
         .filter(f => f.startsWith(prefix ? prefix + '/' : ''));
       return entries.join('\n');
     }
