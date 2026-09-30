@@ -732,6 +732,18 @@ describe('transformMessage()', () => {
       expect(ctx.toolUseMap.get('tu1')).toBe('Bash');
     });
 
+    it('puts PowerShell in the shell category', () => {
+      const events = transformMessage(
+        {
+          type: 'assistant',
+          uuid: 'u2',
+          message: { content: [{ type: 'tool_use', id: 'tu1', name: 'PowerShell', input: { command: 'Get-ChildItem' } }] },
+        } as any,
+        makeCtx(),
+      );
+      expect(events).toContainEqual(expect.objectContaining({ type: 'assistant_tool_use', toolName: 'PowerShell', toolCategory: 'bash' }));
+    });
+
     it('transforms thinking blocks', () => {
       const events = transformMessage(
         {

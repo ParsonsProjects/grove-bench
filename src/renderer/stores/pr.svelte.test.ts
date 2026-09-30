@@ -227,6 +227,7 @@ describe('global sweep', () => {
       { id: A, branch: 'a', repoPath: 'C:/repo', status: 'running' },
       { id: B, branch: 'b', repoPath: 'C:/repo', status: 'running' },
     ];
+    prStore.setViewing(null);
     prStore.clear(A);
     prStore.clear(B);
   });
@@ -258,7 +259,8 @@ describe('global sweep', () => {
 
     await vi.advanceTimersByTimeAsync(60_000 + 45_000); // sweep 1: A hangs, B done
     const afterFirst = calls;
-    await vi.advanceTimersByTimeAsync(60_000 + 45_000); // sweep 2 must still run
+    // Neither is on screen, so the next refresh is due after the idle interval.
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 45_000); // later sweeps must still run
     expect(calls).toBeGreaterThan(afterFirst);
   });
 
@@ -275,5 +277,74 @@ describe('global sweep', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mockGroveBench.getPrs).toHaveBeenCalledWith(A);
     expect(prStore.getPr(A)?.number).toBe(9);
+  });
+
+  const fetchesOf = (id: string) => mockGroveBench.getPrs.mock.calls.filter(([s]) => s === id).length;
+
+  it('refreshes a conversation nobody has looked at only every 5 minutes', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.startGlobalPolling(() => [A]);
+
+    await vi.advanceTimersByTimeAsync(60_000); // first sweep: never fetched, so due
+    expect(fetchesOf(A)).toBe(1);
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchesOf(A)).toBe(1);
+    await vi.advanceTimersByTimeAsync(2 * 60_000); // 5 minutes since the last fetch
+    expect(fetchesOf(A)).toBe(2);
+  });
+
+  it('refreshes the conversation on screen every sweep', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.startGlobalPolling(() => [A, B]);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchesOf(A)).toBe(1); // never fetched, so opening it fetches now
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchesOf(A)).toBe(4);
+    expect(fetchesOf(B)).toBe(1); // idle: only the first sweep
+  });
+
+  it('keeps a conversation on the full rate for 10 minutes after leaving it', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.startGlobalPolling(() => [A]);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    prStore.setViewing(B); // leave A
+
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    expect(fetchesOf(A)).toBe(10); // on open, then all 9 sweeps
+
+    // Past 10 minutes: idle cadence, so nothing until 5 minutes after the last fetch.
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(fetchesOf(A)).toBe(10);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchesOf(A)).toBe(11);
+  });
+
+  it('keeps the full rate while PR automation is on', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.setAuto(A, { fixCi: true });
+    prStore.startGlobalPolling(() => [A]);
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchesOf(A)).toBe(3);
+  });
+
+  it('fetches on opening only when the data is older than one poll', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    await prStore.refresh(A, true);
+    expect(fetchesOf(A)).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchesOf(A)).toBe(1); // fresh enough
+
+    prStore.setViewing(null);
+    await vi.advanceTimersByTimeAsync(60_000);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchesOf(A)).toBe(2);
   });
 });

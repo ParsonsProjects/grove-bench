@@ -25,6 +25,20 @@ export const GH_OFFLINE_MESSAGE = 'GitHub is unreachable, retrying shortly';
 
 let offlineUntil = 0;
 
+/** First back-off after GitHub rate-limits us. gh does not say when the limit
+ *  resets, so each further hit doubles the wait, up to the max. Without it,
+ *  the sweep keeps spending the same quota the agents' own gh calls need. */
+export const GH_RATE_LIMIT_COOLDOWN_MS = 2 * 60_000;
+export const GH_RATE_LIMIT_MAX_COOLDOWN_MS = 30 * 60_000;
+
+/** Thrown while the rate-limit back-off holds. Short for the same reason as
+ *  GH_OFFLINE_MESSAGE. */
+export const GH_RATE_LIMITED_MESSAGE = 'GitHub rate limit reached, retrying later';
+
+let rateLimitedUntil = 0;
+/** Rate-limit hits in a row, for the doubling. A success resets it. */
+let rateLimitStrikes = 0;
+
 /** gh failing because it could not reach GitHub (DNS, connection, TLS, or our
  *  own timeout), as opposed to an auth, no-PR, or bad-argument failure. Only
  *  the former is worth backing off from; the rest stay broken until something
@@ -38,13 +52,32 @@ export function isNetworkError(e: unknown): boolean {
   return /error connecting to|timed out|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|dial tcp|connection refused|TLS handshake|network is unreachable|GitHub is unreachable/i.test(parts.join('\n'));
 }
 
+/** gh failing because GitHub rate-limited the account (primary or secondary
+ *  limit). Only stderr is read when there is one: execa's message also holds
+ *  the command line, and a PR title passed to `gh pr create` may well
+ *  mention rate limits. */
+export function isRateLimitError(e: unknown): boolean {
+  const err = e as { stderr?: unknown; message?: unknown } | null;
+  const text = typeof err?.stderr === 'string' ? err.stderr : typeof err?.message === 'string' ? err.message : '';
+  // GH_RATE_LIMITED_MESSAGE matches too, so a short-circuited call still
+  // reads as rate-limited once a caller has wrapped it in its own message.
+  return /rate limit|HTTP 429/i.test(text);
+}
+
 /** True while a recent network failure's cooldown still holds. */
 export function ghOffline(): boolean {
   return Date.now() < offlineUntil;
 }
 
+/** True while the back-off after a rate-limit hit still holds. */
+export function ghRateLimited(): boolean {
+  return Date.now() < rateLimitedUntil;
+}
+
 export function resetGhOfflineCooldownForTests(): void {
   offlineUntil = 0;
+  rateLimitedUntil = 0;
+  rateLimitStrikes = 0;
 }
 
 /** gh for calls that need GitHub itself. Fails in microseconds while the
@@ -54,13 +87,24 @@ export function resetGhOfflineCooldownForTests(): void {
  *  usually just noticed (and maybe fixed) the connection, so they always get
  *  a real attempt. */
 async function ghOnline(args: string[], cwd?: string, opts?: { bypassCooldown?: boolean }): Promise<string> {
-  if (!opts?.bypassCooldown && ghOffline()) throw new Error(GH_OFFLINE_MESSAGE);
+  if (!opts?.bypassCooldown) {
+    if (ghOffline()) throw new Error(GH_OFFLINE_MESSAGE);
+    if (ghRateLimited()) throw new Error(GH_RATE_LIMITED_MESSAGE);
+  }
   try {
     const out = await gh(args, cwd);
     offlineUntil = 0;
+    rateLimitedUntil = 0;
+    rateLimitStrikes = 0;
     return out;
   } catch (e) {
-    if (isNetworkError(e)) offlineUntil = Date.now() + GH_OFFLINE_COOLDOWN_MS;
+    if (isRateLimitError(e)) {
+      rateLimitStrikes++;
+      const wait = Math.min(GH_RATE_LIMIT_COOLDOWN_MS * 2 ** (rateLimitStrikes - 1), GH_RATE_LIMIT_MAX_COOLDOWN_MS);
+      rateLimitedUntil = Date.now() + wait;
+    } else if (isNetworkError(e)) {
+      offlineUntil = Date.now() + GH_OFFLINE_COOLDOWN_MS;
+    }
     throw e;
   }
 }

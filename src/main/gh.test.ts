@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, isNetworkError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS } from './gh.js';
+import { ghVersion, ghAuthenticated, ghLogin, resetGhLoginCacheForTests, resetGhOfflineCooldownForTests, ghOffline, ghRateLimited, isNetworkError, isRateLimitError, summarizeChecks, failingCheckNames, commentSignature, prStatus, prList, prsForBranches, sortPrs, prCreate, prReviewComments, parseOpenPrs, openPrs, GH_TIMEOUT_MS, GH_OFFLINE_MESSAGE, GH_OFFLINE_COOLDOWN_MS, GH_RATE_LIMITED_MESSAGE, GH_RATE_LIMIT_COOLDOWN_MS, GH_RATE_LIMIT_MAX_COOLDOWN_MS } from './gh.js';
 
 const mockExeca = vi.mocked(execa);
 
@@ -260,6 +260,89 @@ describe('offline cooldown', () => {
     mockExeca.mockRejectedValue(netFail());
     await expect(prList('/repo', 'feat/x')).rejects.toThrow();
     expect(ghOffline()).toBe(true);
+
+    mockExeca.mockReset();
+    mockExeca
+      .mockResolvedValueOnce({ stdout: 'https://github.com/o/r/pull/9' } as any)
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ number: 9, url: 'u' }) } as any);
+    expect((await prCreate('/repo', 'feat/x', { title: 'T', body: 'B', base: '' })).number).toBe(9);
+  });
+});
+
+describe('rate-limit back-off', () => {
+  const rateLimited = () => Object.assign(new Error('Command failed'), { stderr: 'GraphQL: API rate limit exceeded for user ID 1.' });
+
+  it('classifies primary, secondary and HTTP 429 limits, but not other failures', () => {
+    expect(isRateLimitError(rateLimited())).toBe(true);
+    expect(isRateLimitError(Object.assign(new Error('x'), { stderr: 'You have exceeded a secondary rate limit.' }))).toBe(true);
+    expect(isRateLimitError(Object.assign(new Error('x'), { stderr: 'HTTP 429: Too Many Requests' }))).toBe(true);
+    expect(isRateLimitError(new Error(`gh pr list failed: ${GH_RATE_LIMITED_MESSAGE}`))).toBe(true);
+    expect(isRateLimitError(Object.assign(new Error('x'), { stderr: 'error connecting to api.github.com' }))).toBe(false);
+    expect(isRateLimitError(new Error('no pull requests found'))).toBe(false);
+  });
+
+  it('ignores the command line, which can hold a PR title', () => {
+    const err = Object.assign(new Error('Command failed: gh pr create --title Handle rate limit errors'), { stderr: 'pull request create failed: GraphQL: Head sha can\'t be blank' });
+    expect(isRateLimitError(err)).toBe(false);
+  });
+
+  it('skips gh for the next calls after a rate-limit hit, without marking GitHub offline', async () => {
+    mockExeca.mockRejectedValue(rateLimited());
+    await expect(prList('/repo', 'feat/x')).rejects.toThrow(/rate limit exceeded/);
+    expect(ghRateLimited()).toBe(true);
+    expect(ghOffline()).toBe(false);
+
+    mockExeca.mockClear();
+    await expect(prList('/repo', 'feat/y')).rejects.toThrow(GH_RATE_LIMITED_MESSAGE);
+    await expect(prsForBranches('/repo', ['a', 'b'])).rejects.toThrow(GH_RATE_LIMITED_MESSAGE);
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it('doubles the wait on each further hit, up to the max, and a success resets it', async () => {
+    vi.useFakeTimers();
+    try {
+      mockExeca.mockRejectedValue(rateLimited());
+      await expect(prList('/repo', 'feat/x')).rejects.toThrow();
+
+      // First wait: the base cooldown.
+      vi.advanceTimersByTime(GH_RATE_LIMIT_COOLDOWN_MS - 1);
+      expect(ghRateLimited()).toBe(true);
+      vi.advanceTimersByTime(2);
+      expect(ghRateLimited()).toBe(false);
+
+      // Second hit: twice as long.
+      await expect(prList('/repo', 'feat/x')).rejects.toThrow(/rate limit exceeded/);
+      vi.advanceTimersByTime(GH_RATE_LIMIT_COOLDOWN_MS * 2 - 1);
+      expect(ghRateLimited()).toBe(true);
+      vi.advanceTimersByTime(2);
+      expect(ghRateLimited()).toBe(false);
+
+      // Many more hits: capped.
+      for (let i = 0; i < 10; i++) {
+        await expect(prList('/repo', 'feat/x')).rejects.toThrow(/rate limit exceeded/);
+        vi.advanceTimersByTime(GH_RATE_LIMIT_MAX_COOLDOWN_MS + 1);
+      }
+      await expect(prList('/repo', 'feat/x')).rejects.toThrow(/rate limit exceeded/);
+      vi.advanceTimersByTime(GH_RATE_LIMIT_MAX_COOLDOWN_MS - 1);
+      expect(ghRateLimited()).toBe(true);
+      vi.advanceTimersByTime(2);
+      expect(ghRateLimited()).toBe(false);
+
+      // A success resets the doubling: the next hit waits the base cooldown again.
+      mockExeca.mockResolvedValueOnce({ stdout: '[]' } as any);
+      expect(await prList('/repo', 'feat/x')).toEqual([]);
+      await expect(prList('/repo', 'feat/x')).rejects.toThrow(/rate limit exceeded/);
+      vi.advanceTimersByTime(GH_RATE_LIMIT_COOLDOWN_MS + 1);
+      expect(ghRateLimited()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still attempts a user-initiated PR create while the back-off holds', async () => {
+    mockExeca.mockRejectedValue(rateLimited());
+    await expect(prList('/repo', 'feat/x')).rejects.toThrow();
+    expect(ghRateLimited()).toBe(true);
 
     mockExeca.mockReset();
     mockExeca

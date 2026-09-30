@@ -4,6 +4,7 @@ import { draftStore } from './draft.svelte.js';
 import { store } from './sessions.svelte.js';
 import { agentsStore } from './agents.svelte.js';
 import { messageStore } from './messages.svelte.js';
+import { arrivalScene } from './arrivalScene.svelte.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
@@ -175,7 +176,10 @@ describe('draftStore.start', () => {
     expect(store.activeSessionId).toBe('new1');
     expect(store.sessions.find((s) => s.id === 'new1')?.displayName).toBeTruthy();
     expect(draftStore.draft).toBeNull();
+    // The chat shows the agent walking to its bench until the first reply.
+    expect(arrivalScene.for('new1')).not.toBeNull();
     addUserMessage.mockRestore();
+    arrivalScene.end('new1');
   });
 
   it('starts without a message and sends nothing', async () => {
@@ -183,6 +187,7 @@ describe('draftStore.start', () => {
     await settle();
     expect(await draftStore.start()).toBe(true);
     expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+    expect(arrivalScene.for('new1')).toBeNull();
   });
 
   it('resolves the base branch when none is set', async () => {

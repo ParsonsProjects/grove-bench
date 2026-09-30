@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -15,8 +15,13 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
-  import { filterVisibleMessages } from '$lib/message-view.js';
+  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { filterVisibleMessages, hasAgentReply } from '$lib/message-view.js';
+  import { sessionRepoColor } from '$lib/session-repo-color.js';
+  import { sessionSpriteState } from '$lib/session-sprite-state.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -55,6 +60,33 @@
   let hasUnloadedEvents = $derived(messageStore.hasOlderEvents(sessionId));
   let unloadedEventCount = $derived(messageStore.olderEventCount(sessionId));
   let isLoadingOlderEvents = $derived(messageStore.isLoadingOlder(sessionId));
+
+  // ─── First turn: the agent walks to its bench (stores/arrivalScene) ───
+  // Stands in for the empty chat and the working row until the first reply
+  // shows, as the view mode shows it: in Summary, say, a first turn of reads
+  // keeps the scene up. Live thinking doesn't end it; the caption says
+  // "Thinking..." instead.
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+  let agentLive = $derived(session?.status === 'starting' || session?.status === 'installing' || session?.status === 'running');
+  let replied = $derived(hasAgentReply(filteredMessages) || !!streamingText || hasUnloadedEvents);
+  let arrival = $derived(
+    settingsStore.current.groveCharacters && agentLive && !replied ? arrivalScene.for(sessionId) : null,
+  );
+
+  // Starting a conversation with a message begins the scene (see
+  // draftStore.start): the message only shows once the agent is ready, so
+  // there is nothing here to go on before then. A first message sent later,
+  // in a conversation started without one, begins it here. It ends at the
+  // reply, or when the agent stops or goes to sleep without one; Stop ends
+  // it too (PromptEditor).
+  $effect(() => {
+    if (replied || !agentLive) {
+      untrack(() => arrivalScene.end(sessionId));
+    } else if (isRunning && allMessages.some((m) => m.kind === 'user')) {
+      untrack(() => arrivalScene.begin(sessionId));
+    }
+  });
+  onDestroy(() => arrivalScene.end(sessionId));
 
   // Reset visible count when switching sessions
   $effect(() => {
@@ -307,24 +339,30 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"
+  class:flex={arrival !== null}
+  class:flex-col={arrival !== null}
   bind:this={scrollContainer}
   onscroll={handleScroll}
   onmousedown={maybeClearHighlight}
   onwheel={maybeClearHighlight}
 >
-  {#each Array(20) as _, i}
-    <span
-      class="blue-pixel absolute"
-      style="
-        width: 4px; height: 4px;
-        top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
-        left: {Math.round((5 + (((i * 53 + 7) * 11) % 90)) / 100 * 1400 / 6) * 6}px;
-        animation-delay: {(i * 1.3) % 6}s;
-      "
-    ></span>
-  {/each}
+  <!-- Clipped to the view: the dots reach 726px down, and unclipped they
+       made a short chat scroll, so following it hid the first messages. -->
+  <div class="absolute inset-0 overflow-hidden pointer-events-none">
+    {#each Array(20) as _, i}
+      <span
+        class="blue-pixel absolute"
+        style="
+          width: 4px; height: 4px;
+          top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
+          left: {Math.round((5 + (((i * 53 + 7) * 11) % 90)) / 100 * 1400 / 6) * 6}px;
+          animation-delay: {(i * 1.3) % 6}s;
+        "
+      ></span>
+    {/each}
+  </div>
 
-  {#if messages.length === 0 && !streamingText}
+  {#if messages.length === 0 && !streamingText && arrival === null}
     <div class="flex items-center justify-center h-full text-muted-foreground">
       <div class="text-center relative z-10">
         <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
@@ -458,7 +496,7 @@
   {/each}
 
   <!-- Streaming thinking (live) — suppressed in focus mode -->
-  {#if streamingThinking && viewMode !== 'focus'}
+  {#if streamingThinking && viewMode !== 'focus' && arrival === null}
     {@const trimmed = streamingThinking.trimEnd()}
     {@const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() || 'thinking...'}
     <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
@@ -473,22 +511,47 @@
       <MarkdownBlock content={streamingText} streaming />
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
     </div>
+  {:else if arrival !== null}
+    <!-- The first turn: the agent walks up to its bench and gets to work.
+         Only the open conversation draws it, so it picks up from its start
+         time when shown again rather than replaying a stale animation. -->
+    <div class="flex-1 flex items-center justify-center py-6">
+      {#if store.activeSessionId === sessionId}
+        <GroveWalk seed={sessionId} projectColor={sessionRepoColor(sessionId)} spriteState={session ? sessionSpriteState(session) : 'starting'} {arrival}>
+          {#snippet caption()}
+            <p class="text-sm mt-4 text-muted-foreground">
+              {#if session?.status === 'installing'}
+                Installing dependencies...
+              {:else if session?.status === 'starting' || !isRunning}
+                Starting agent...
+              {:else}
+                {@render activityLabel()}
+              {/if}
+            </p>
+          {/snippet}
+        </GroveWalk>
+      {/if}
+    </div>
   {:else if isRunning && (!streamingThinking || viewMode === 'focus')}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
       <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget"></span>
-      {#if activity.activity === 'thinking'}
-        <span class="text-purple-400">Thinking...</span>
-      {:else if activity.activity === 'tool_starting'}
-        <span class="text-yellow-400">
-          Running {activity.toolName ?? 'tool'}{#if activity.toolSummary}&nbsp;<span class="text-muted-foreground">{activity.toolSummary}</span>{/if}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
-        </span>
-      {:else if activity.activity === 'generating'}
-        <span class="text-primary">Writing...</span>
-      {:else}
-        <span>Working...</span>
-      {/if}
+      {@render activityLabel()}
     </div>
   {/if}
+
+  {#snippet activityLabel()}
+    {#if activity.activity === 'thinking'}
+      <span class="text-purple-400">Thinking...</span>
+    {:else if activity.activity === 'tool_starting'}
+      <span class="text-yellow-400">
+        Running {activity.toolName ?? 'tool'}{#if activity.toolSummary}&nbsp;<span class="text-muted-foreground">{activity.toolSummary}</span>{/if}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
+      </span>
+    {:else if activity.activity === 'generating'}
+      <span class="text-primary">Writing...</span>
+    {:else}
+      <span>Working...</span>
+    {/if}
+  {/snippet}
 
   <div class="h-1"></div>
 </div>

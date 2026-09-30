@@ -14,7 +14,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
-import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { generateCommitMessage } from './commit-message.js';
@@ -1339,20 +1339,24 @@ export function registerHandlers() {
     return [...new Set(ordered)].slice(0, MAX_SESSION_PR_BRANCHES);
   }
 
-  /** An unreachable GitHub is routine (laptop offline, VPN, GitHub down) and
-   *  the renderer already keeps its last snapshot and marks it stale, so it
-   *  does not deserve a stack trace per session per sweep. Record it once per
-   *  cooldown and rethrow a one-line error; the rejection is what tells the
-   *  renderer the data is stale, so it cannot be swallowed. */
+  /** An unreachable or rate-limiting GitHub is routine (laptop offline, VPN,
+   *  GitHub down, many open conversations) and the renderer already keeps its
+   *  last snapshot and marks it stale, so it does not deserve a stack trace
+   *  per session per sweep. Record it once per cooldown and rethrow a one-line
+   *  error; the rejection is what tells the renderer the data is stale, so it
+   *  cannot be swallowed. */
   let lastOfflineLog = 0;
   function rethrowGhFailure(e: unknown): never {
-    if (!isNetworkError(e)) throw e;
+    const rateLimited = isRateLimitError(e);
+    if (!rateLimited && !isNetworkError(e)) throw e;
     const now = Date.now();
     if (now - lastOfflineLog >= GH_OFFLINE_COOLDOWN_MS) {
       lastOfflineLog = now;
-      logger.warn('GitHub is unreachable; PR status stays stale until it responds again');
+      logger.warn(rateLimited
+        ? 'GitHub rate limit reached; PR status polling backs off and stays stale until it lifts'
+        : 'GitHub is unreachable; PR status stays stale until it responds again');
     }
-    throw new Error(GH_OFFLINE_MESSAGE);
+    throw new Error(rateLimited ? GH_RATE_LIMITED_MESSAGE : GH_OFFLINE_MESSAGE);
   }
 
   ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {

@@ -10,6 +10,7 @@
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { wakeScene } from './stores/wakeScene.svelte.js';
+  import { arrivalScene } from './stores/arrivalScene.svelte.js';
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
   import { sessionSpriteState } from './lib/session-sprite-state.js';
@@ -323,6 +324,14 @@
     }
   });
 
+  // PR status polls at the full rate for the conversation on screen and ones
+  // seen recently; the rest slow down (see prStore.setViewing). Untracked: the
+  // refresh it may start reads store state that must not re-run this effect.
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    untrack(() => prStore.setViewing(activeId));
+  });
+
   onMount(() => {
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
     const uninstallTooltips = installTooltips();
@@ -493,6 +502,9 @@
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}
         {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
+        <!-- A new conversation's chat shows its own walk (OutputPanel) from
+             the start, so the loading walk would only cut in on it. -->
+        {@const arriving = settingsStore.current.groveCharacters && arrivalScene.for(session.id) !== null}
         <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
           {#if live}
             <!-- A render/effect error in one session's pane must not take the
@@ -507,7 +519,7 @@
           <!-- The walk: while a stopped conversation reconnects, and over the
                chat (kept mounted underneath) while its history loads or the
                wake-up scene plays. -->
-          {#if !live || scene || loading}
+          {#if !live || scene || (loading && !arriving)}
             <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
             <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">

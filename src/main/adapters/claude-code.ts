@@ -18,7 +18,7 @@ import type {
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
-import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -112,6 +112,7 @@ function categorizeToolName(toolName: string): ToolCategory {
     case 'MultiEdit':
       return 'edit';
     case 'Bash':
+    case 'PowerShell':
       return 'bash';
     case 'Read':
     case 'Grep':
@@ -1468,22 +1469,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       // Settings rules are written in neutral terms (shell(...), edit(...),
       // read(...), ...) or with Claude's tool names; both match here.
+      // Chained shell commands are split first, so an allow rule has to
+      // match every command in the chain (see checkToolRules). shell(...)
+      // covers PowerShell too, split by PowerShell's own syntax.
       const category = categorizeToolName(toolName);
       const specifier = toolCallSpecifier(toolName, input, category);
-      const toolCall = specifier ? `${toolName}(${specifier})` : toolName;
-
-      // Deny rules
-      for (const rule of config.toolDenyRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
-          return { behavior: 'deny' as const, message: `Denied by settings rule: ${rule.pattern}` };
-        }
+      const shellSyntax = toolName === 'PowerShell' ? 'powershell' : 'bash';
+      const ruleVerdict = checkToolRules(
+        config.toolAllowRules, config.toolDenyRules, toolName, specifier, category, shellSyntax,
+      );
+      if (ruleVerdict?.behavior === 'deny') {
+        return { behavior: 'deny' as const, message: `Denied by settings rule: ${ruleVerdict.pattern}` };
       }
-
-      // Allow rules
-      for (const rule of config.toolAllowRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
-          return { behavior: 'allow' as const, updatedInput: input };
-        }
+      if (ruleVerdict?.behavior === 'allow') {
+        return { behavior: 'allow' as const, updatedInput: input };
       }
 
       // Sandbox auto-approve Bash — only when the sandbox config opts in,
