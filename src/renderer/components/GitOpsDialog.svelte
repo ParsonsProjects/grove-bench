@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
@@ -40,6 +41,12 @@
   let pickLoading = $state(false);
 
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
+
+  // These rewrite the checkout under an agent that may be editing it, so
+  // they wait while any conversation working there is mid-turn (branch
+  // switching has the same rule).
+  let sharers = $state<string[]>(untrack(() => [sessionId]));
+  let agentBusy = $derived(sharers.some((id) => messageStore.getIsRunning(id)));
   let sessionBranch = $derived(session?.branch ?? '');
 
   const MODES: { id: GitOpMode; label: string }[] = [
@@ -49,6 +56,9 @@
   ];
 
   onMount(async () => {
+    window.groveBench.getCheckoutSharers(sessionId)
+      .then((ids) => { if (ids.length > 0) sharers = ids; })
+      .catch(() => { /* keep this conversation's own check */ });
     baseBranch = await resolveBaseBranch(session?.repoPath ?? '');
     candidates = candidateBranches(store.sessions, sessionId, baseBranch);
     rebaseOnto = candidates[0]?.branch ?? baseBranch;
@@ -98,7 +108,7 @@
   }
 
   async function run() {
-    if (busy) return;
+    if (busy || agentBusy) return;
     busy = true;
     result = null;
     try {
@@ -126,7 +136,7 @@
   }
 
   let canRun = $derived.by(() => {
-    if (busy) return false;
+    if (busy || agentBusy) return false;
     if (mode === 'rebase') return !!rebaseOnto.trim();
     if (mode === 'squash') return !!squashBase.trim() && !!squashMessage.trim() && squashCommits.length >= 2;
     return !!pickSha;
@@ -242,6 +252,12 @@
           <option value={c.branch}>{c.label}</option>
         {/each}
       </datalist>
+
+      {#if agentBusy}
+        <div role="status" class="p-2 text-xs border border-border bg-muted/40 text-muted-foreground">
+          An agent is working in this checkout. Wait for its turn to finish, then try again.
+        </div>
+      {/if}
 
       {#if result}
         <div class="p-2 text-xs whitespace-pre-wrap border {result.ok ? 'bg-green-500/10 border-green-500/40 text-green-400' : 'bg-destructive/10 border-destructive/50 text-destructive'}">

@@ -30,6 +30,7 @@
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import AgentSprite from './AgentSprite.svelte';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
+  import { limitedQueue } from '../lib/limited-queue.js';
   import { onMount, untrack } from 'svelte';
 
   // Per-repo accordion collapse state, persisted via app-state. An explicit
@@ -182,10 +183,11 @@
   let cleaningUp = $state(false);
   const cleanupDayPresets = [7, 14, 30, 90];
 
-  /** gh calls run at most this many at once while the dialog looks up PR
-   *  state, so a long candidate list doesn't spawn a gh process per row in
-   *  one burst (the status bar's poll is sequential for the same reason). */
-  const CLEANUP_PR_CONCURRENCY = 3;
+  /** Checks run at most this many at once per kind (git status, gh), so a
+   *  long candidate list doesn't spawn a process per row in one burst (the
+   *  status bar's PR poll is sequential for the same reason). Each git status
+   *  check itself runs a few git commands. */
+  const CLEANUP_CONCURRENCY = 3;
 
   /** sessionId → has uncommitted changes in its worktree (or its status
    *  couldn't be read, so it may have). Absent = still checking. */
@@ -202,29 +204,17 @@
   const cleanupCheckedIds = new Set<string>();
   /** Bumped each time the dialog opens so results from a previous open are dropped. */
   let cleanupGeneration = 0;
-  /** Candidates waiting for their PR lookup, and lookups running now. Shared
-   *  by every run of the check effect, so editing the cutoff queues more
-   *  rows instead of starting more gh processes. */
-  let cleanupPrQueue: string[] = [];
-  let cleanupPrActive = 0;
-
-  function pumpCleanupPrLookups() {
-    while (showCleanup && cleanupPrActive < CLEANUP_PR_CONCURRENCY && cleanupPrQueue.length > 0) {
-      const id = cleanupPrQueue.shift()!;
-      const generation = cleanupGeneration;
-      cleanupPrActive++;
-      window.groveBench.getPrs(id)
-        .then((prs): PrInfo | null => prs[0] ?? null, (): 'unknown' => 'unknown')
-        .then((result) => {
-          if (generation === cleanupGeneration) cleanupPr = { ...cleanupPr, [id]: result };
-        })
-        .finally(() => {
-          cleanupPrActive--;
-          // Stops here once the dialog is closed; opening it again starts over.
-          pumpCleanupPrLookups();
-        });
-    }
-  }
+  /** Shared by every run of the check effect, so editing the cutoff queues
+   *  more rows instead of starting more processes. Separate queues, so a
+   *  slow gh never holds up the uncommitted-changes checks. */
+  const cleanupStatusQueue = limitedQueue(CLEANUP_CONCURRENCY);
+  const cleanupPrQueue = limitedQueue(CLEANUP_CONCURRENCY);
+  // Closing the dialog drops the checks not started; opening it starts over.
+  $effect(() => {
+    if (showCleanup) return;
+    cleanupStatusQueue.clear();
+    cleanupPrQueue.clear();
+  });
 
   /** Days from the field, or null while it's empty or not a number (a
    *  number input binds null when cleared, which would otherwise read as 0
@@ -257,7 +247,8 @@
     cleanupStatusUnknown = {};
     cleanupPr = {};
     cleanupSelection = {};
-    cleanupPrQueue = [];
+    cleanupStatusQueue.clear();
+    cleanupPrQueue.clear();
     showCleanup = true;
   }
 
@@ -281,11 +272,19 @@
 
     // Each row is settled as its own check comes back, so one slow worktree
     // doesn't hold up the rest.
-    for (const s of fresh) {
-      void (async () => {
-        let dirty = false;
-        let unknown = false;
-        if (!s.direct) {
+    function settle(id: string, dirty: boolean, unknown: boolean) {
+      if (generation !== cleanupGeneration) return;
+      cleanupDirty = { ...cleanupDirty, [id]: dirty };
+      if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [id]: true };
+      // Tick it when clean, unless the user already decided about it.
+      if (cleanupSelection[id] === undefined) cleanupSelection = { ...cleanupSelection, [id]: !dirty };
+    }
+    untrack(() => {
+      for (const s of fresh) {
+        if (s.direct) { settle(s.id, false, false); continue; }
+        cleanupStatusQueue.add(async () => {
+          let dirty: boolean;
+          let unknown: boolean;
           try {
             const status = await window.groveBench.getGitStatus(s.id);
             // A status git couldn't read may hide changes: treat it as dirty.
@@ -294,21 +293,24 @@
           } catch {
             dirty = unknown = true;
           }
-        }
-        if (generation !== cleanupGeneration) return;
-        cleanupDirty = { ...cleanupDirty, [s.id]: dirty };
-        if (unknown) cleanupStatusUnknown = { ...cleanupStatusUnknown, [s.id]: true };
-        // Tick it when clean, unless the user already decided about it.
-        if (cleanupSelection[s.id] === undefined) cleanupSelection = { ...cleanupSelection, [s.id]: !dirty };
-      })();
-    }
+          settle(s.id, dirty, unknown);
+        });
+      }
 
-    // PR state is looked up separately so a slow gh never delays the dirty
-    // check, and skipped entirely when gh isn't installed (every call would fail).
-    if (ghAvailable) {
-      cleanupPrQueue.push(...fresh.map((s) => s.id));
-      untrack(pumpCleanupPrLookups);
-    }
+      // PR state is skipped entirely when gh isn't installed (every call would fail).
+      if (!ghAvailable) return;
+      for (const s of fresh) {
+        cleanupPrQueue.add(async () => {
+          let result: PrInfo | null | 'unknown';
+          try {
+            result = (await window.groveBench.getPrs(s.id))[0] ?? null;
+          } catch {
+            result = 'unknown';
+          }
+          if (generation === cleanupGeneration) cleanupPr = { ...cleanupPr, [s.id]: result };
+        });
+      }
+    });
   });
 
   /** Tick every candidate known to have no uncommitted changes (the initial

@@ -450,6 +450,24 @@ describe('Sidebar clean-up dialog', () => {
     expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(before);
   });
 
+  it('runs at most 3 git status checks at once, and none left waiting after close', async () => {
+    const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
+    store.sessions = [old(1), old(2), old(3), old(4), old(5)] as any;
+    const pending: Array<() => void> = [];
+    mockGroveBench.getGitStatus.mockImplementation((() => new Promise((res) => { pending.push(() => res({ entries: [] })); })) as any);
+
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+    pending.shift()!();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    for (const finish of pending.splice(0)) finish();
+    await tick();
+    await tick();
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4);
+  });
+
   it('does not tick a conversation until its status check comes back clean', async () => {
     let finish!: (v: unknown) => void;
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>

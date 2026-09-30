@@ -54,6 +54,7 @@ const mockGroveBench = {
   listBranches: vi.fn((_repoPath: string, _opts?: { fetch?: boolean }) => Promise.resolve([] as string[])),
   switchBranch: vi.fn(() => Promise.resolve({ success: false, error: 'not mocked' } as import('../../shared/types.js').BranchSwitchResult)),
   syncBranch: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').BranchSyncResult | null)),
+  getCheckoutSharers: vi.fn((sessionId: string) => Promise.resolve([sessionId])),
   getPrs: vi.fn((_sessionId: string) => Promise.resolve([] as import('../../shared/types.js').PrInfo[])),
   listOpenPrs: vi.fn((_repoPath: string) => Promise.resolve([] as import('../../shared/types.js').OpenPrSummary[])),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),

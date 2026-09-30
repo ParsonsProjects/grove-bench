@@ -919,6 +919,9 @@ export interface GroveBenchAPI {
   /** Record the branch the conversation's checkout is on now, if it moved
    *  outside the app. Null when nothing changed. */
   syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
+  /** The conversations working in this conversation's checkout, itself
+   *  included (another conversation can be attached to the same one). */
+  getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -1500,6 +1503,7 @@ export const IPC = {
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
   BRANCH_SYNC: 'branch:sync',
+  CHECKOUT_SHARERS: 'branch:checkoutSharers',
   BRANCH_AUTO_NAME: 'branch:autoName',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',

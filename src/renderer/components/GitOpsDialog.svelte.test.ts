@@ -5,6 +5,7 @@ import { render, cleanup, fireEvent, waitFor, screen } from '@testing-library/sv
 import { mockGroveBench } from '../__mocks__/setup.js';
 import GitOpsDialog from './GitOpsDialog.svelte';
 import { store } from '../stores/sessions.svelte.js';
+import { messageStore } from '../stores/messages.svelte.js';
 import type { CommitEntry } from '../../shared/types.js';
 
 const SID = 'gitops-session';
@@ -13,6 +14,7 @@ const commit = (sha: string, subject: string): CommitEntry => ({ sha, shortSha: 
 beforeEach(() => {
   vi.clearAllMocks();
   store.sessions = [];
+  messageStore.isRunning = {};
 });
 afterEach(() => cleanup());
 
@@ -66,5 +68,33 @@ describe('GitOpsDialog cherry-pick', () => {
     await fireEvent.click(button());
 
     expect(mockGroveBench.gitCherryPick.mock.calls.map((c) => (c as unknown[])[1])).toEqual(['s1', 's2']);
+  });
+});
+
+describe('GitOpsDialog while an agent works in the checkout', () => {
+  it('disables Run while a conversation sharing the checkout is mid-turn, and enables it after', async () => {
+    mockGroveBench.getCheckoutSharers.mockResolvedValue([SID, 'attached']);
+    mockGroveBench.gitLogCommits.mockResolvedValue([commit('s1', 'first')]);
+    const { source, button } = await openCherryPick();
+    await fireEvent.input(source, { target: { value: 'feature' } });
+    await screen.findByText('first');
+    expect(button()).toBeEnabled();
+
+    messageStore.setIsRunning('attached', true);
+    await waitFor(() => expect(button()).toBeDisabled());
+    expect(screen.getByRole('status')).toHaveTextContent('An agent is working in this checkout');
+
+    messageStore.setIsRunning('attached', false);
+    await waitFor(() => expect(button()).toBeEnabled());
+  });
+
+  it('ignores conversations working in other checkouts', async () => {
+    mockGroveBench.gitLogCommits.mockResolvedValue([commit('s1', 'first')]);
+    messageStore.setIsRunning('elsewhere', true);
+    const { source, button } = await openCherryPick();
+    await fireEvent.input(source, { target: { value: 'feature' } });
+    await screen.findByText('first');
+
+    expect(button()).toBeEnabled();
   });
 });

@@ -46,6 +46,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
   syncBranch: (sessionId: string) =>
     ipcRenderer.invoke(IPC.BRANCH_SYNC, sessionId),
+  getCheckoutSharers: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.CHECKOUT_SHARERS, sessionId) as Promise<string[]>,
   autoNameBranch: (sessionId: string) =>
     ipcRenderer.invoke(IPC.BRANCH_AUTO_NAME, sessionId),
 

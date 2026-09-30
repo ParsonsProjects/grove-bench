@@ -28,7 +28,7 @@ const m = vi.hoisted(() => {
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'saveCompleted', 'renameBranch', 'switchBranch',
-      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable',
+      'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
@@ -546,6 +546,12 @@ describe('branch switching', () => {
   it('refuses a non-string branch', async () => {
     expect(await invoke(IPC.BRANCH_SWITCH, 's1', 42)).toEqual({ success: false, error: 'Pick a branch.' });
     expect(m.worktreeManager.switchBranch).not.toHaveBeenCalled();
+  });
+
+  it('lists the conversations sharing a checkout', async () => {
+    m.worktreeManager.checkoutSharers.mockResolvedValue(['s1', 's2']);
+    expect(await invoke(IPC.CHECKOUT_SHARERS, 's1')).toEqual(['s1', 's2']);
+    expect(m.worktreeManager.checkoutSharers).toHaveBeenCalledWith('s1');
   });
 });
 

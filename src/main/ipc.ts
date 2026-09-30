@@ -600,6 +600,10 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.CHECKOUT_SHARERS, async (_event, sessionId: string): Promise<string[]> => {
+    return worktreeManager.checkoutSharers(sessionId);
+  });
+
   ipcMain.handle(IPC.BRANCH_SWITCH, async (
     _event, sessionId: string, branch: string, opts?: { create?: boolean; busySessionIds?: string[] },
   ): Promise<BranchSwitchResult> => {
