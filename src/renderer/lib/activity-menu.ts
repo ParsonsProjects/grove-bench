@@ -120,7 +120,8 @@ function toolCallEntries(msg: Extract<ChatMessage, { kind: 'tool_call' }>): Entr
 function messageEntries(msg: ChatMessage): Entry[] {
   switch (msg.kind) {
     case 'user': {
-      const entries = [copy('Copy message', msg.text)];
+      // A message of only attachments has no text to copy.
+      const entries = msg.text.trim() ? [copy('Copy message', msg.text)] : [];
       if (msg.uuid) entries.push({ label: 'Rewind to this message', action: { kind: 'rewind', uuid: msg.uuid } });
       return entries;
     }

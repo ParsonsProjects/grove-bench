@@ -42,6 +42,9 @@ describe('activityMenuEntries', () => {
 
   it('only offers Rewind for a user message with a checkpoint', () => {
     expect(labels(activityMenuEntries({ message: { kind: 'user', id: 'u', text: 'hi' } }))).toEqual(['Copy message']);
+    // Only an image: nothing to copy, but it can still be rewound to.
+    const imageOnly = { kind: 'user' as const, id: 'u', text: '', uuid: 'u1', images: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }] };
+    expect(labels(activityMenuEntries({ message: imageOnly }))).toEqual(['Rewind to this message']);
   });
 
   it('offers the full-width view only for document-like replies', () => {
