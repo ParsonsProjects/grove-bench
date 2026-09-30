@@ -16,7 +16,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
-import { getGitIdentity, isGitRepo } from './git.js';
+import { getGitIdentity } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
 import { findRewindForkPoint } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
@@ -471,6 +471,9 @@ class AgentSessionManager {
      *  conversation. Laid over the saved defaults; a value the model doesn't
      *  offer is ignored. */
     controls?: Record<string, string> | null;
+    /** Runs in a folder without git (the worktree entry's `noGit`): no
+     *  checkpoints and no commit identity. */
+    noGit?: boolean;
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -520,7 +523,7 @@ class AgentSessionManager {
     memory.ensureRepoMemory(repoPath);
 
     // A folder project isn't a git repository: no checkpoints, no commits.
-    const gitBacked = await isGitRepo(cwd);
+    const gitBacked = !opts.noGit;
 
     const session: ManagedSession = {
       id,
@@ -705,7 +708,7 @@ class AgentSessionManager {
     // manager skips it if the session already has turns (rewind restart).
     // Resumed sessions rebuild their checkpoint state on system_init instead.
     const resumingProviderSession = !!session.providerSessionId;
-    if (!resumingProviderSession) {
+    if (!resumingProviderSession && session.gitBacked) {
       session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
         if (!written) logger.warn(`Checkpoint baseline not captured for ${id}`);
       });
@@ -1159,7 +1162,8 @@ class AgentSessionManager {
     // which the thread shows so a later rewind attempt is not a surprise.
     // Label the checkpoint with what the chat shows, not attached file content.
     const captured = await session.checkpoints.capture(id, session.worktreePath, uuid, displayTextFromSent(content));
-    if (!captured) {
+    // Without git there are no checkpoints to capture, so nothing failed.
+    if (!captured && session.gitBacked) {
       logger.warn(`Checkpoint capture failed for ${id} uuid=${uuid}`);
       session.emit?.({
         type: 'error',

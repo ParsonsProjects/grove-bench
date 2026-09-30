@@ -244,8 +244,14 @@ describe('draftStore review fixes', () => {
   });
 
 describe('draftStore in a folder project without git', () => {
-  beforeEach(() => store.setFolderProject('/repo/two', true));
-  afterEach(() => store.setFolderProject('/repo/two', false));
+  beforeEach(() => {
+    store.setFolderProject('/repo/two', true);
+    mockGroveBench.repoKind.mockResolvedValue('folder');
+  });
+  afterEach(() => {
+    store.setFolderProject('/repo/two', false);
+    mockGroveBench.repoKind.mockResolvedValue('git');
+  });
 
   it('starts in the project folder itself', async () => {
     draftStore.open('/repo/two');
@@ -257,12 +263,29 @@ describe('draftStore in a folder project without git', () => {
   });
 
   it('creates a conversation in the folder and marks it as having no git', async () => {
-    createSessionMock().mockResolvedValue({ id: 'n1', branch: '', agentType: 'claude-code' });
+    createSessionMock().mockResolvedValue({ id: 'n1', branch: '', agentType: 'claude-code', noGit: true });
     draftStore.open('/repo/two');
     await settle();
     expect(await draftStore.start()).toBe(true);
     expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/two', branchName: '', direct: true }));
     expect(store.sessions.find((s) => s.id === 'n1')).toMatchObject({ direct: true, noGit: true, status: 'running' });
+  });
+
+  it('goes back to a new branch when the folder has become a git repository since launch', async () => {
+    mockGroveBench.repoKind.mockResolvedValue('git');
+    draftStore.open('/repo/two');
+    await settle();
+    expect(store.isFolderProject('/repo/two')).toBe(false);
+    expect(draftStore.draft?.start).toMatchObject({ kind: 'new', baseBranch: 'main' });
+  });
+
+  it('trusts main over its own flag when marking the new conversation', async () => {
+    // Main found a repository after all, so the conversation runs with git.
+    createSessionMock().mockResolvedValue({ id: 'g1', branch: 'main', agentType: 'claude-code' });
+    draftStore.open('/repo/two');
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(store.sessions.find((s) => s.id === 'g1')?.noGit).toBeUndefined();
   });
 });
 });

@@ -1127,16 +1127,16 @@ export class WorktreeManager {
       logger.warn('Sweep: failed to scan worktree root:', e);
     }
 
-    // Phase 3: clean stale direct entries whose repos no longer exist. A
-    // folder project's entry needs only its folder, not a repository.
+    // Phase 3: clean stale direct entries whose project folder is gone. Only
+    // the folder counts, not whether git opens it: a missing or broken git at
+    // launch must not delete conversations, and a folder project has no
+    // repository to check.
     await this.withManifest(async (m) => {
       for (const [id, entry] of Object.entries(m)) {
         if (!entry.direct) continue;
         if (activeIds.has(id)) continue;
         try {
-          const valid = entry.noGit
-            ? await fs.stat(entry.repoPath).then((st) => st.isDirectory(), () => false)
-            : await isGitRepo(entry.repoPath);
+          const valid = await fs.stat(entry.repoPath).then((st) => st.isDirectory(), () => false);
           if (!valid) {
             logger.info(`Sweep: removing stale direct entry ${id} (repo gone: ${entry.repoPath})`);
             delete m[id];

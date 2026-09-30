@@ -12,7 +12,7 @@ import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, isGitRepo } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -224,24 +224,36 @@ export function registerHandlers() {
     const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
     const controls = sanitizeControls(opts.controls);
 
-    // A folder project isn't a git repository: its conversations can only
-    // run in the folder itself.
-    const noGit = !opts.attachToSessionId && !(await isGitRepo(opts.repoPath));
-    if (noGit && !opts.direct) {
-      throw new Error('This project isn\'t a git repository, so a conversation can only work in the project folder itself.');
+    // A conversation attached to another shares its checkout, so it runs
+    // without git exactly when that one does. Otherwise a folder project
+    // (not a repository, or git isn't installed) can only run in the folder.
+    const attachSrc = opts.attachToSessionId
+      ? await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId)
+      : null;
+    if (opts.attachToSessionId && !attachSrc) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
+    let noGit: boolean;
+    if (attachSrc) {
+      noGit = !!attachSrc.noGit;
+    } else {
+      const kind = await projectKind(opts.repoPath);
+      if (kind === 'missing') throw new Error(`The project folder ${opts.repoPath} wasn't found.`);
+      noGit = kind === 'folder';
+    }
+    if (noGit && !opts.direct && !attachSrc) {
+      throw new Error((await gitVersion())
+        ? 'This project isn\'t a git repository, so a conversation can only work in the project folder itself.'
+        : 'Git isn\'t installed, so a conversation can only work in the project folder itself.');
     }
 
-    if (opts.direct || opts.attachToSessionId) {
+    if (opts.direct || attachSrc) {
       // Direct mode — run in-place on an existing checkout, no worktree created.
       // When attachToSessionId is set, the new session shares that session's
       // worktree + branch; otherwise it runs on the repo's current checkout.
       let branch: string;
       let checkoutPath = opts.repoPath;
-      if (opts.attachToSessionId) {
-        const src = await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId);
-        if (!src) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
-        branch = src.branch;
-        checkoutPath = src.path;
+      if (attachSrc) {
+        branch = attachSrc.branch;
+        checkoutPath = attachSrc.path;
       } else if (noGit) {
         branch = '';
       } else {
@@ -261,10 +273,11 @@ export function registerHandlers() {
         permissionMode,
         model,
         controls,
+        noGit,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
-      return { id: session.id, branch: session.branch, agentType: session.agentType };
+      return { id: session.id, branch: session.branch, agentType: session.agentType, ...(noGit ? { noGit: true } : {}) };
     }
 
     // Generate a stable ID up front so the renderer can open a tab immediately.
@@ -428,6 +441,7 @@ export function registerHandlers() {
         resumeSessionId: providerSessionId,
         model: savedModel,
         adapterType,
+        noGit: !!worktree.noGit,
       });
 
       logger.info(`Session resumed: id=${session.id}`);
@@ -1408,8 +1422,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.MCP_CONFIG_APPROVE, async (_event, name: string, repoPath: string, adapterType?: string) => {
     const adapter = resolveAdapter(adapterType);
     if (!adapter.approveProjectMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP server approval`);
-    if (!(await worktreeManager.validateRepo(repoPath))) {
-      throw new Error(`${repoPath} is not a git repository`);
+    if (typeof repoPath !== 'string' || (await projectKind(repoPath)) === 'missing') {
+      throw new Error(`The project folder ${repoPath} wasn't found.`);
     }
     const worktrees = await worktreeManager.list(repoPath);
     await adapter.approveProjectMcpServer(name, [repoPath, ...worktrees.map((w) => w.path)]);

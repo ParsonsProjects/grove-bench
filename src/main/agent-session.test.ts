@@ -331,17 +331,12 @@ describe('AgentSessionManager.createSession()', () => {
 });
 
 describe('AgentSessionManager in a folder without git', () => {
-  afterEach(() => {
-    vi.mocked(isGitRepo).mockReset().mockResolvedValue(true);
-  });
-
   it('skips checkpoints and the identity check, and says files can\'t be restored', async () => {
-    vi.mocked(isGitRepo).mockResolvedValue(false);
     vi.mocked(getGitIdentity).mockClear();
     const before = CheckpointManager.instances.length;
 
     await sessionManager.createSession({
-      id: 'test-folder', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock',
+      id: 'test-folder', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock', noGit: true,
     });
     await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
 
@@ -352,6 +347,33 @@ describe('AgentSessionManager in a folder without git', () => {
       .rejects.toThrow(/isn't a git repository/);
 
     await sessionManager.destroySession('test-folder');
+  });
+
+  it('sends messages without a "checkpoint could not be captured" error', async () => {
+    await sessionManager.createSession({
+      id: 'test-folder-send', branch: '', cwd: '/notes', repoPath: '/notes', window: makeMockWindow(), adapterType: 'mock', noGit: true,
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-folder-send')!;
+
+    expect(await sessionManager.sendMessage('test-folder-send', 'Tidy my notes')).toBe(true);
+    expect(session.queryHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'Tidy my notes' }));
+    expect(session.eventHistory.filter((e) => e.type === 'error')).toHaveLength(0);
+
+    await sessionManager.destroySession('test-folder-send');
+  });
+
+  it('keeps checkpoints for a git conversation even if git is briefly unavailable', async () => {
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    const before = CheckpointManager.instances.length;
+    await sessionManager.createSession({
+      id: 'test-git-flaky', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    expect(CheckpointManager.instances.length).toBe(before + 1);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
+    await sessionManager.destroySession('test-git-flaky');
   });
 });
 

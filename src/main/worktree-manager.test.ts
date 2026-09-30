@@ -1109,4 +1109,22 @@ describe('sweepStaleWorktrees: direct entries', () => {
     expect(Object.keys(savedManifest)).toEqual(['wt-folder']);
     vi.mocked(isGitRepo).mockResolvedValue(true);
   });
+
+  it('keeps a git conversation whose folder exists even when git fails at launch', async () => {
+    const { isGitRepo } = await import('./git.js');
+    vi.mocked(isGitRepo).mockResolvedValue(false);
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue([]);
+    mockFs.stat.mockImplementation(async (p: string) => {
+      if (p === '/repo') return { isDirectory: () => true };
+      throw new Error('ENOENT');
+    });
+    savedManifest = { 'wt-direct': { repoPath: '/repo', branch: 'main', createdAt: 1, direct: true } };
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+
+    await manager.sweepStaleWorktrees();
+
+    expect(Object.keys(savedManifest)).toEqual(['wt-direct']);
+    vi.mocked(isGitRepo).mockResolvedValue(true);
+  });
 });

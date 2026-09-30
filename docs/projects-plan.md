@@ -133,8 +133,11 @@ A minimal version, without the `Project` record:
   `folder` is added straight away, with no extra step. There is no in-app
   "set up git"; the user runs `git init` themselves. When git isn't installed,
   every pick is a `folder`.
-- **Knowing the kind.** The renderer keeps `folderRepos` in memory and rebuilds
-  it at launch from `repoKind()` (`git`, `folder` or `missing`).
+- **Knowing the kind.** The renderer keeps `folderRepos` in memory, rebuilds
+  it at launch from `repoKind()` (`git`, `folder` or `missing`) and checks again
+  when a draft opens. Main decides each new conversation's `noGit` itself and
+  returns it. A folder with a `.git` that git refuses stays `git` when git is
+  installed, so git's error shows instead of the agent editing in place.
 - **Conversations.** A folder project's draft only offers the project folder.
   `SESSION_CREATE` checks `isGitRepo()` itself, refuses a worktree in a folder,
   and registers a direct entry with `noGit: true` and an empty branch.

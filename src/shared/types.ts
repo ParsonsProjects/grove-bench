@@ -903,7 +903,6 @@ export interface GroveBenchAPI {
   // Repo operations
   /** Pick a folder to add as a project. Null when cancelled. */
   addRepo(): Promise<PickedProject | null>;
-  /** Run `git init` and a first commit in a folder, so it can be a git project. */
   /** Whether a project path is a git repository, a plain folder, or gone. */
   repoKind(path: string): Promise<ProjectKind>;
   /** Whether git has a user.name and user.email for commits in this folder. */
@@ -912,7 +911,8 @@ export interface GroveBenchAPI {
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
-  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
+  /** `noGit` when the conversation runs in a folder without git. */
+  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string; noGit?: boolean }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   /** Stop the current turn; the agent process stays up for the next message. */
   stopSession(id: string): Promise<void>;

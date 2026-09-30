@@ -73,4 +73,10 @@ describe('projectKind', () => {
     expect(await projectKind(root)).toBe('git');
     expect(await projectKind(path.join(root, 'gone'))).toBe('missing');
   });
+
+  it('keeps a repository git refuses as a git project, so its error shows instead of editing in place', async () => {
+    await execa('git', ['init', '-q'], { cwd: root });
+    process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+    expect(await projectKind(root)).toBe('git');
+  });
 });

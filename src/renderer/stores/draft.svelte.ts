@@ -93,6 +93,7 @@ class DraftStore {
       this.error = '';
       void this.prefillBaseBranch(repo);
       void this.loadAgentInfo();
+      void this.refreshKind(repo);
     }
     sessionStore.activeSessionId = null;
   }
@@ -118,6 +119,24 @@ class DraftStore {
     this.draft.repoPath = repo;
     // Branches belong to the old project.
     this.resetToNewBranch();
+    void this.refreshKind(repo);
+  }
+
+  /** Check what the project is now: git may have been installed, or
+   *  `git init` run in a folder project, since launch. When it changed, the
+   *  draft goes back to that kind of project's default start. */
+  private async refreshKind(repo: string): Promise<void> {
+    let kind: Awaited<ReturnType<typeof window.groveBench.repoKind>>;
+    try {
+      kind = await window.groveBench.repoKind(repo);
+    } catch {
+      return;
+    }
+    if (kind === 'missing') return;
+    const folder = kind === 'folder';
+    if (folder === sessionStore.isFolderProject(repo)) return;
+    sessionStore.setFolderProject(repo, folder);
+    if (this.draft?.repoPath === repo) this.resetToNewBranch();
   }
 
   /** Back to the default place to run: a new branch from the project's
@@ -295,7 +314,7 @@ class DraftStore {
         agentType: result.agentType,
         createdAt: Date.now(),
         ...(direct ? { direct: true } : {}),
-        ...(sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
+        ...(result.noGit ? { noGit: true } : {}),
         ...(placeholderName ? { displayName: placeholderName } : {}),
       });
       // Main holds a prompt sent during setup until the agent is ready.

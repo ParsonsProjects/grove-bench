@@ -215,7 +215,7 @@ class SessionStore {
         repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId,
         ...(adapterType ? { adapterType } : {}),
       });
-      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now() });
+      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now(), ...(result.noGit ? { noGit: true } : {}) });
     } catch (e: any) {
       this.setError(e?.message || String(e));
     }

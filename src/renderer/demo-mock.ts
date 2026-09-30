@@ -290,7 +290,7 @@ const api: Record<string, unknown> = {
   listRepos: async () => [],
   // Adding a project picks a folder without git.
   addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
-  repoKind: async () => 'git',
+  repoKind: async (p: string) => (p.endsWith('notes') ? 'folder' : 'git'),
   hasGitIdentity: async () => true,
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),

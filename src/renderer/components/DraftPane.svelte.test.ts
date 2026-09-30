@@ -212,6 +212,7 @@ describe('DraftPane git identity heads-up', () => {
 
   it('does not ask in a folder project without git', async () => {
     store.setFolderProject('/repo/one', true);
+    mockGroveBench.repoKind.mockResolvedValue('folder');
     draftStore.discard();
     draftStore.open('/repo/one');
     await settle();
@@ -221,6 +222,7 @@ describe('DraftPane git identity heads-up', () => {
     expect(screen.getByText(/project folder itself, without git, so its edits land in place/)).toBeInTheDocument();
     expect(screen.getByText('Change the agent, model or mode in the bar below before you send.')).toBeInTheDocument();
     store.setFolderProject('/repo/one', false);
+    mockGroveBench.repoKind.mockResolvedValue('git');
   });
 });
 });

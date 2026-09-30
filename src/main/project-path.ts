@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { git, isGitRepo } from './git.js';
+import { git, gitVersion, isGitRepo } from './git.js';
 import type { PickedProject, ProjectKind } from '../shared/types.js';
 
 /** A `git rev-parse` answer in `dir`, or null when git fails there. */
@@ -55,12 +55,21 @@ export async function inspectProjectFolder(picked: string): Promise<PickedProjec
   return { kind: 'folder', path: picked };
 }
 
-/** Whether a project path is a git repository, a plain folder, or gone. */
+/**
+ * Whether a project path is a git repository, a plain folder, or gone.
+ * Without git installed every folder is a plain folder. With git installed,
+ * a folder with a `.git` that git refuses (for example "dubious ownership")
+ * stays a git project, so git's own error shows when a conversation starts
+ * rather than the agent quietly editing the checkout in place.
+ */
 export async function projectKind(dir: string): Promise<ProjectKind> {
   try {
     if (!(await fs.stat(dir)).isDirectory()) return 'missing';
   } catch {
     return 'missing';
   }
-  return (await isGitRepo(dir)) ? 'git' : 'folder';
+  if (await isGitRepo(dir)) return 'git';
+  const hasDotGit = await fs.stat(path.join(dir, '.git')).then(() => true, () => false);
+  if (hasDotGit && (await gitVersion())) return 'git';
+  return 'folder';
 }
