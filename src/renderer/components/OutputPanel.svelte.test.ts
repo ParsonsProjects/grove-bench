@@ -108,6 +108,51 @@ describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
     await pressCtrlF();
     expect(queryByPlaceholderText('Search full history...')).toBeNull();
   });
+
+  it('ignores Ctrl+F while another tab of this conversation is showing', async () => {
+    store.activeSessionId = SID;
+    messageStore.setActiveTab(SID, 'changes');
+    const { queryByPlaceholderText } = render(OutputPanel, { sessionId: SID });
+
+    await pressCtrlF();
+    messageStore.setActiveTab(SID, 'activity');
+    await tick();
+
+    expect(queryByPlaceholderText('Search full history...')).toBeNull();
+  });
+});
+
+describe('OutputPanel — bookmark jumps', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    messageStore.pendingJumpBySession = {};
+  });
+
+  it('still makes a jump asked for while an earlier one is paging in history', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'text', id: 'm1', text: 'deep', uuid: 'a1' },
+        { kind: 'text', id: 'm2', text: 'recent', uuid: 'a2' },
+      ],
+    };
+    let finishPaging!: () => void;
+    vi.spyOn(messageStore, 'loadOlderUntil').mockImplementation(((_sid: string, eventIndex: number) =>
+      eventIndex === 1 ? new Promise<void>((r) => { finishPaging = r; }) : Promise.resolve()) as never);
+    const find = vi.spyOn(messageStore, 'findMessageForEvent').mockImplementation(async (_sid, ei) => (ei === 1 ? 'm1' : 'm2'));
+    render(OutputPanel, { sessionId: SID });
+
+    messageStore.requestJump(SID, { eventIndex: 1, uuid: null, bookmarkId: 'A' });
+    await tick();
+    messageStore.requestJump(SID, { eventIndex: 40, uuid: null, bookmarkId: 'B' });
+    await tick();
+    finishPaging();
+
+    await vi.waitFor(() => expect(find).toHaveBeenCalledWith(SID, 40));
+    await vi.waitFor(() => expect(messageStore.pendingJumpBySession[SID]).toBeUndefined());
+  });
 });
 
 describe('OutputPanel: follows the conversation after being hidden', () => {
@@ -151,6 +196,49 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
     await findByTitle('Scroll to bottom');
     resized();
     expect(el.scrollTop).toBe(0);
+  });
+
+  it('keeps the oldest rendered message while scrolled up and new ones arrive', async () => {
+    messageStore.messagesBySession = {
+      [SID]: Array.from({ length: 60 }, (_, i) => ({ kind: 'text', id: `m${i}`, text: `reply ${i}`, uuid: `a${i}` })),
+    };
+    messageStore.setViewMode(SID, 'detailed');
+    const { container, findByTitle } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    expect(container.querySelector('[data-msg-id="m10"]')).not.toBeNull();
+    measure(el, { scrollTop: 0, scrollHeight: 5000, clientHeight: 500 });
+    el.dispatchEvent(new Event('scroll'));
+    await findByTitle('Scroll to bottom');
+
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'reply 60', uuid: 'a60' } as never);
+    await tick();
+
+    expect(container.querySelector('[data-msg-id="m10"]')).not.toBeNull();
+  });
+
+  it('stops following the stream after a jump to an older message', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'text', id: 'm1', text: 'older', uuid: 'a1' }, { kind: 'text', id: 'm2', text: 'newer', uuid: 'a2' }],
+    };
+    vi.spyOn(messageStore, 'loadOlderUntil').mockResolvedValue();
+    vi.spyOn(messageStore, 'findMessageForEvent').mockResolvedValue('m1');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    const el = scroller(container);
+    measure(el, { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 });
+
+    messageStore.requestJump(SID, { eventIndex: 0, uuid: null, bookmarkId: '' });
+    await vi.waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+    el.scrollTop = 1450; // the smooth scroll has only just started
+    messageStore.streamingText = { ...messageStore.streamingText, [SID]: 'more text' };
+    await tick();
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    expect(el.scrollTop).toBe(1450);
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    vi.restoreAllMocks();
+    messageStore.streamingText = {};
+    messageStore.pendingJumpBySession = {};
   });
 
   it('ignores scroll events while hidden', async () => {

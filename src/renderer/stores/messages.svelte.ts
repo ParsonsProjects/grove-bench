@@ -254,6 +254,9 @@ class MessageStore {
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
+  /** Files attached to the draft, kept for the same reason: the prompt box
+   *  unmounts on the Terminal and Checkpoints tabs. */
+  attachmentsBySession = $state<Record<string, AttachedFile[]>>({});
 
   /** Prompts waiting to be sent, oldest first. Dispatched one per turn once the
    *  session is connected and idle. See submitMessage / flushQueue. */
@@ -718,6 +721,15 @@ class MessageStore {
 
   setDraft(sessionId: string, text: string) {
     this.draftBySession[sessionId] = text;
+  }
+
+  getAttachments(sessionId: string): AttachedFile[] {
+    return this.attachmentsBySession[sessionId] ?? [];
+  }
+
+  setAttachments(sessionId: string, files: AttachedFile[]) {
+    if (files.length > 0) this.attachmentsBySession[sessionId] = files;
+    else delete this.attachmentsBySession[sessionId];
   }
 
   getPromptSuggestions(sessionId: string): string[] {
@@ -2220,7 +2232,7 @@ class MessageStore {
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.viewModeBySession,
-      this.draftBySession, this.preservedEditHistory, this.paginationBySession,
+      this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
       this.queuedBySession, this.queuePausedBySession,
     ] as Record<string, unknown>[]) {

@@ -75,8 +75,12 @@
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
 
-  // File attachments (drag-drop, paste, file picker)
-  let attachedFiles = $state<AttachedFile[]>([]);
+  // File attachments (drag-drop, paste, file picker), restored and kept in
+  // the store like the draft so they outlive this editor.
+  let attachedFiles = $state<AttachedFile[]>(untrack(() => [...messageStore.getAttachments(sessionId)]));
+  $effect(() => {
+    messageStore.setAttachments(sessionId, $state.snapshot(attachedFiles));
+  });
   let dragOver = $state(false);
   let dropMessage = $state<{ text: string; isError: boolean } | null>(null);
   let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;

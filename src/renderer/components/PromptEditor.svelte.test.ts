@@ -136,3 +136,25 @@ describe('PromptEditor: editing a queued prompt', () => {
     expect(messageStore.getQueue(SID)).toEqual([]);
   });
 });
+
+describe('PromptEditor: attachments', () => {
+  beforeEach(() => {
+    messageStore.draftBySession = {};
+    messageStore.attachmentsBySession = {};
+    messageStore.messagesBySession = { [SID]: [] };
+    messageStore.promptInsertBySession = {};
+  });
+  afterEach(() => cleanup());
+
+  it('keeps unsent attachments when the prompt box unmounts (another tab) and comes back', async () => {
+    const first = render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, 'see this', { attachments: [{ type: 'text', name: 'notes.txt', content: 'hi' }] });
+    await tick();
+    expect(first.getByText('notes.txt')).toBeInTheDocument();
+    first.unmount();
+
+    const again = render(PromptEditor, { sessionId: SID });
+
+    expect(again.getByText('notes.txt')).toBeInTheDocument();
+  });
+});

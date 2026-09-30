@@ -155,6 +155,9 @@
       await tick();
     }
     currentMatchId = id;
+    // Stop following new output, or the next streamed chunk snaps back to the
+    // bottom before the smooth scroll has moved far enough to say so itself.
+    shouldAutoScroll = false;
     requestAnimationFrame(() => {
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -186,14 +189,31 @@
     jumpInFlight = true;
     (async () => {
       try {
-        await resolveBookmarkJump(req);
+        let next: JumpRequest | undefined = req;
+        while (next) {
+          await resolveBookmarkJump(next);
+          // A jump asked for while this one ran was skipped above: take it now.
+          const pending: JumpRequest | undefined = messageStore.pendingJumpBySession[sessionId];
+          next = pending && !sameJump(pending, next) && store.activeSessionId === sessionId ? pending : undefined;
+        }
       } finally {
         jumpInFlight = false;
       }
     })();
   });
 
-  async function resolveBookmarkJump(req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+  type JumpRequest = { eventIndex: number | null; uuid: string | null; bookmarkId: string };
+  // By fields: search hits all share bookmarkId ''.
+  function sameJump(a: JumpRequest, b: JumpRequest): boolean {
+    return a.eventIndex === b.eventIndex && a.uuid === b.uuid && a.bookmarkId === b.bookmarkId;
+  }
+  /** Clear `req` once handled, but not a newer request that replaced it. */
+  function finishJump(req: JumpRequest) {
+    const pending = messageStore.pendingJumpBySession[sessionId];
+    if (pending && sameJump(pending, req)) messageStore.clearJump(sessionId);
+  }
+
+  async function resolveBookmarkJump(req: JumpRequest) {
     // Resolve to a concrete event index — cached first, then via the durable uuid.
     let eventIndex = req.eventIndex;
     if (eventIndex == null && req.uuid) {
@@ -202,13 +222,13 @@
     }
     if (eventIndex == null) {
       showBookmarkFallback(req.bookmarkId);
-      messageStore.clearJump(sessionId);
+      finishJump(req);
       return;
     }
 
     if (await jumpToEventIndex(eventIndex)) {
       clearHighlightOnInteraction = true;
-      messageStore.clearJump(sessionId);
+      finishJump(req);
       return;
     }
 
@@ -219,7 +239,7 @@
         bookmarkStore.patchEventIndex(req.bookmarkId, ei);
         if (await jumpToEventIndex(ei)) {
           clearHighlightOnInteraction = true;
-          messageStore.clearJump(sessionId);
+          finishJump(req);
           return;
         }
       }
@@ -230,7 +250,7 @@
     // source is genuinely gone (e.g. cleared history) → show the stored text.
     if (messageStore.getMessages(sessionId).length === 0) return;
     showBookmarkFallback(req.bookmarkId);
-    messageStore.clearJump(sessionId);
+    finishJump(req);
   }
 
   function showBookmarkFallback(bookmarkId: string) {
@@ -248,8 +268,10 @@
 
   function handleSearchKeydown(e: KeyboardEvent) {
     // Inactive session panes stay mounted (hidden via CSS); only the active
-    // session should toggle its search bar on Ctrl/Cmd+F.
+    // session should toggle its search bar on Ctrl/Cmd+F, and only while its
+    // Activity tab is showing (other tabs hide this pane the same way).
     if (store.activeSessionId !== sessionId) return;
+    if (messageStore.getActiveTab(sessionId) !== 'activity') return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       searchOpen = !searchOpen;
@@ -280,6 +302,10 @@
       const last = filteredMessages[len - 1];
       if (last?.kind === 'user') {
         shouldAutoScroll = true;
+      } else if (!untrack(() => shouldAutoScroll) && untrack(() => hasOlderMessages)) {
+        // Scrolled up to read: grow the window instead of sliding it, so the
+        // oldest rendered message (maybe the one being read) stays put.
+        untrack(() => { visibleCount += len - prevMsgCount; });
       }
     }
     prevMsgCount = len;
