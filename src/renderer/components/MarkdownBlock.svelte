@@ -43,7 +43,8 @@
     const instance = opts.highlight === false ? markedStreaming : markedInstance;
     try {
       const raw = instance.parse(content) as string;
-      return DOMPurify.sanitize(raw);
+      // No forms: submitting one would navigate the app window.
+      return DOMPurify.sanitize(raw, { FORBID_TAGS: ['form'] });
     } catch {
       return DOMPurify.sanitize(content);
     }
@@ -66,15 +67,14 @@
     if (!container) return;
 
     // Intercept link clicks: localhost opens in the Preview tab, the rest in
-    // the system browser.
+    // the system browser. Every other link (relative, `?x`, `#x`, mailto:)
+    // does nothing: followed, it would navigate or reload the app window.
     const linkHandler = (e: MouseEvent) => {
       const anchor = (e.target as HTMLElement).closest('a');
       if (!anchor) return;
+      e.preventDefault();
       const href = anchor.getAttribute('href');
-      if (href && /^https?:\/\//i.test(href)) {
-        e.preventDefault();
-        openLink(href, e);
-      }
+      if (href && /^https?:\/\//i.test(href)) openLink(href, e);
     };
     container.addEventListener('click', linkHandler);
 

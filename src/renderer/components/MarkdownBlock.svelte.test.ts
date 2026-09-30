@@ -39,3 +39,19 @@ describe('MarkdownBlock copy buttons', () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 });
+
+describe('MarkdownBlock links', () => {
+  it('does not follow links that would navigate the app window', async () => {
+    const { container } = render(MarkdownBlock, { content: '[same page](?reload) and [relative](index.html)' });
+    for (const a of container.querySelectorAll('a')) {
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+      a.dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+    }
+  });
+
+  it('drops forms from raw HTML', () => {
+    const { container } = render(MarkdownBlock, { content: '<form action="?x"><button>Go</button></form>' });
+    expect(container.querySelector('form')).toBeNull();
+  });
+});
