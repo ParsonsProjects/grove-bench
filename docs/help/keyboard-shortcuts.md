@@ -10,7 +10,7 @@
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt+1` | Switch to Activity tab |
+| `Alt+1` | Switch to Conversation tab |
 | `Alt+2` | Switch to Changes tab |
 | `Alt+3` | Switch to Checkpoints tab |
 | `Alt+4` | Switch to Terminal tab |
@@ -20,7 +20,7 @@
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+F` | Search in Activity tab |
+| `Ctrl+F` | Search in Conversation tab |
 | `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
 | `Ctrl+N` | New conversation draft (in the open conversation's project) |
 | `Ctrl+L` | Go to the address bar (Preview tab) |

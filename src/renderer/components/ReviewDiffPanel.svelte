@@ -14,6 +14,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { conversationAgent } from '../lib/session-sprite-state.js';
+  import type { GroveTab } from '../lib/agent-sprite.js';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -41,6 +42,7 @@
     emptyTitle,
     emptyHint,
     emptyExtra,
+    emptyScene,
     sidebarTop,
     sidebarSummaryExtra,
     sidebarFooter,
@@ -71,6 +73,8 @@
     emptyTitle: string;
     emptyHint?: string;
     emptyExtra?: Snippet;
+    /** Which tab's props the grove scene over the empty message shows. */
+    emptyScene?: GroveTab;
     sidebarTop?: Snippet;
     sidebarSummaryExtra?: Snippet;
     sidebarFooter?: Snippet;
@@ -632,7 +636,7 @@
       {/if}
     {/snippet}
     {#if groveAgent}
-      <GroveEmptyState variant="agent" agent={groveAgent}>
+      <GroveEmptyState variant="agent" agent={groveAgent} tab={emptyScene}>
         <div class="mt-5 flex flex-col items-center gap-2">
           <span class="text-foreground/80">{emptyTitle}</span>
           {@render emptyDetails()}

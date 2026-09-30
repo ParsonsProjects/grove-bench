@@ -91,10 +91,11 @@ describe('CheckpointsPanel with grove characters', () => {
 
   it("puts the conversation's agent on its bench when there are no checkpoints yet", () => {
     checkpointStore.checkpointsBySession = { [SID]: [] };
-    const { getByText, getByRole } = render(CheckpointsPanel, { sessionId: SID });
+    const { getByText, getByRole, container } = render(CheckpointsPanel, { sessionId: SID });
     expect(getByText('No checkpoints yet')).toBeInTheDocument();
     expect(getByText(/Each message you send saves one/)).toBeInTheDocument();
     expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(container.querySelector('[data-scenery="flag"]')).not.toBeNull();
   });
 
   it('puts it next to the list until a checkpoint is picked, and above an empty turn', async () => {
@@ -106,6 +107,9 @@ describe('CheckpointsPanel with grove characters', () => {
     await fireEvent.click(getByText('Initial change'));
     await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
     expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    // The shared diff panel draws the Checkpoints tab's flag, not Changes' can.
+    expect(document.querySelector('[data-scenery="flag"]')).not.toBeNull();
+    expect(document.querySelector('[data-scenery="watering-can"]')).toBeNull();
   });
 
   it('shows only the message when grove characters are off', () => {

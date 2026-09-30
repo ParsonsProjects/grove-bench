@@ -74,5 +74,17 @@ describe('WorkspacePane in a conversation without git', () => {
     // One on Checkpoints, one on the hidden Changes tab.
     expect(screen.getAllByRole('img', { name: 'Ready' })).toHaveLength(2);
     expect(mockGroveBench.listCheckpoints).not.toHaveBeenCalled();
+    // Each tab's scene has its own props.
+    expect(document.querySelectorAll('[data-scenery="flag"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-scenery="watering-can"]')).toHaveLength(1);
+  });
+
+  it('calls the chat tab Conversation, and points back to it from other tabs', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    messageStore.setActiveTab('n1', 'checkpoints');
+    render(WorkspacePane, { sessionId: 'n1' });
+    expect(await screen.findByRole('button', { name: /^Conversation\s+Alt\+1/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Activity/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Switch to Conversation to send messages (Alt+1)' })).toBeInTheDocument();
   });
 });

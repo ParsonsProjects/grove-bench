@@ -352,7 +352,7 @@
           <div class="pixel-bg h-full flex p-6 overflow-auto">
             <div class="m-auto max-w-md text-center text-muted-foreground">
               {#if groveAgent}
-                <GroveEmptyState variant="agent" agent={groveAgent}>
+                <GroveEmptyState variant="agent" agent={groveAgent} tab="preview">
                   <!-- Full width, so long addresses truncate as without the scene. -->
                   <div class="mt-5 self-stretch">
                     <p class="text-sm text-foreground mb-1">Preview your app</p>
@@ -399,7 +399,7 @@
           <div class="pixel-bg flex-1 flex p-6 overflow-auto">
             <div class="m-auto max-w-md text-center text-muted-foreground">
               {#if groveAgent}
-                <GroveEmptyState variant="agent" agent={groveAgent}>
+                <GroveEmptyState variant="agent" agent={groveAgent} tab="preview">
                   <!-- Full width, so long addresses truncate as without the scene. -->
                   <div class="mt-5 self-stretch">
                     <p class="text-sm text-foreground mb-1">Claude's page</p>

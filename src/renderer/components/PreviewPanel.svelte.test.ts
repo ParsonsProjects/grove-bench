@@ -110,6 +110,7 @@ describe('PreviewPanel with grove characters', () => {
     render(PreviewPanel, { sessionId: 's1', active: true });
     expect(screen.getByText('Preview your app')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(document.querySelector('[data-scenery="easel"]')).not.toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'http://localhost:5173/' }));
     expect(mockGroveBench.previewNavigate).toHaveBeenCalledWith('s1', 'user', 'http://localhost:5173/');
   });

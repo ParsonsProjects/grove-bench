@@ -256,9 +256,10 @@ describe('ChangesReviewPanel with grove characters', () => {
   });
 
   it("puts the conversation's agent on its bench above the empty message, typing while it works", async () => {
-    const { getByText, getByRole, findByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    const { getByText, getByRole, findByRole, container } = render(ChangesReviewPanel, { sessionId: SID });
     expect(getByText('Working tree clean')).toBeInTheDocument();
     expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
 
     messageStore.setIsRunning(SID, true);
     expect(await findByRole('img', { name: 'Working' })).toBeInTheDocument();

@@ -94,7 +94,7 @@
 {:else if checkpoints.length === 0}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden">
     {#if groveAgent}
-      <GroveEmptyState variant="agent" agent={groveAgent}>
+      <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
         <p class="text-sm mt-5 mb-2 text-foreground/80">No checkpoints yet</p>
         <p class="text-xs text-muted-foreground max-w-md">Each message you send saves one before the agent acts on it, so you can see what that turn changed and rewind to it.</p>
       </GroveEmptyState>
@@ -161,7 +161,7 @@
       {#if !selectedUuid}
         <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
           {#if groveAgent}
-            <GroveEmptyState variant="agent" agent={groveAgent}>
+            <GroveEmptyState variant="agent" agent={groveAgent} tab="checkpoints">
               <p class="text-sm mt-5 mb-2 text-foreground/80">Select a checkpoint to view changes</p>
               <p class="text-xs text-muted-foreground max-w-md">Pick a turn on the left to see what it changed, or All turns for the whole conversation.</p>
             </GroveEmptyState>
@@ -265,6 +265,7 @@
             onRefresh={() => checkpointStore.reloadFiles(sessionId)}
             commentContext={comparisonLabel}
             {emptyTitle}
+            emptyScene="checkpoints"
           />
         {/if}
       {/if}

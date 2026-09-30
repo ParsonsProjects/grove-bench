@@ -243,13 +243,41 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
 /** Exported for tests: every pose map, so their sizes can be checked. */
 export const SPRITE_MAPS = { SIT, TYPE_A, TYPE_B, ASLEEP, WAVE_A, WAVE_B, WALK_A, WALK_B };
 
-// Scenery for the empty states: a park bench and an unlit lamp post.
+// Scenery for the empty states: a park bench and an unlit lamp post, and
+// each workspace tab's own props, which stand in for the lamp.
 export const SCENERY_PALETTE: Record<string, string> = {
   w: '#8a6a4a', // wood
   W: '#6a5040', // dark wood
   m: '#57534e', // metal
   o: '#3f3f46', // unlit lamp
+  g: '#6b7f8e', // watering can
+  G: '#4f5f6b', // watering can, shaded
+  l: '#5ab868', // leaf, the tree's middle green
+  r: '#c2553d', // flag cloth, muted so it doesn't read as an error
+  p: '#d6d3d1', // paper
+  b: '#4a7aaa', // page title bar, the background pixels' blue
+  k: '#a8a29e', // page content
 };
 
 export const BENCH = ['WWWWWWWWWWWW', '.w........w.', 'wwwwwwwwwwww', '.W........W.', '.W........W.'];
 export const LAMP = ['mmm', '.o.', 'mmm', '.m.', '.m.', '.m.', '.m.', '.m.', '.m.', '.m.', 'mmm'];
+
+/** The workspace tabs whose empty states have their own props. */
+export type GroveTab = 'changes' | 'checkpoints' | 'preview';
+
+// Changes: a watering can by a sprout, for the agent tending your files.
+export const WATERING_CAN = ['....GGG.', '...G...G', 'g..ggggg', '.g.ggggg', '..gggggg', '...GGGGG'];
+export const SPROUT = ['l.l', '.l.', '.l.'];
+// Checkpoints: a flag on a pole, as in a game.
+export const FLAG = [
+  '.m....', '.mrrrr', '.mrrr.', '.mrrrr', '.m....', '.m....',
+  '.m....', '.m....', '.m....', '.m....', 'mmm...',
+];
+// Preview: an easel holding a small web page.
+export const EASEL = [
+  '....W....', 'WWWWWWWWW', 'WbbbbbbbW', 'WpkkkkppW', 'WpppppppW', 'WpkkpkkpW',
+  'WWWWWWWWW', '.W..W..W.', '.W..W..W.', 'W...W...W', 'W...W...W',
+];
+
+/** Exported for tests: every scenery map, so their sizes and colours can be checked. */
+export const SCENERY_MAPS = { BENCH, LAMP, WATERING_CAN, SPROUT, FLAG, EASEL };
