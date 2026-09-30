@@ -1,5 +1,11 @@
 # Keyboard Shortcuts
 
+## Help
+
+| Shortcut | Action |
+|----------|--------|
+| `F1` | Open Help (the **?** in the title bar does the same) |
+
 ## Tab Navigation
 
 | Shortcut | Action |

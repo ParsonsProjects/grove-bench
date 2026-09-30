@@ -84,7 +84,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Filter/search within message history (Ctrl+F with highlighting)
 
 ### Help System
-- [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md` and HelpPanel is mounted; missing piece is the F1 shortcut
+- [x] Keybinding documentation (F1 or similar) — `F1` opens Help, and the empty state links to Getting Started
 - [ ] Context-aware footer showing relevant keyboard shortcuts
 
 ### Cost & Usage Dashboard
