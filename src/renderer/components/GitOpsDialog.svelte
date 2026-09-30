@@ -56,29 +56,39 @@
     pickSource = candidates.find((c) => c.sessionId)?.branch ?? '';
   });
 
+  // Each field edit starts a lookup; only the latest one's reply counts, so
+  // a slow reply for what was typed earlier can't replace the list.
+  let squashReq = 0;
+  let pickReq = 0;
+
   // Squash preview: the commits that would be folded together
   $effect(() => {
     const base = squashBase.trim();
-    if (mode !== 'squash' || !base) { squashCommits = []; return; }
+    const req = ++squashReq;
+    if (mode !== 'squash' || !base) { squashCommits = []; squashLoading = false; return; }
     squashLoading = true;
     window.groveBench.gitLogCommits(sessionId, 'HEAD', base)
       .then((commits) => {
+        if (req !== squashReq) return;
         squashCommits = commits;
         if (!squashMessage.trim()) squashMessage = squashMessageFrom(commits);
       })
-      .catch(() => { squashCommits = []; })
-      .finally(() => { squashLoading = false; });
+      .catch(() => { if (req === squashReq) squashCommits = []; })
+      .finally(() => { if (req === squashReq) squashLoading = false; });
   });
 
-  // Cherry-pick: commits on the source branch that this branch doesn't have
+  // Cherry-pick: commits on the source branch that this branch doesn't have.
+  // The selection goes with the list, so Cherry-pick never applies a commit
+  // that isn't shown.
   $effect(() => {
     const source = pickSource.trim();
-    if (mode !== 'cherry-pick' || !source) { pickCommits = []; return; }
+    const req = ++pickReq;
+    if (mode !== 'cherry-pick' || !source) { pickCommits = []; pickSha = ''; pickLoading = false; return; }
     pickLoading = true;
     window.groveBench.gitLogCommits(sessionId, source, 'HEAD')
-      .then((commits) => { pickCommits = commits; pickSha = commits[0]?.sha ?? ''; })
-      .catch(() => { pickCommits = []; })
-      .finally(() => { pickLoading = false; });
+      .then((commits) => { if (req === pickReq) { pickCommits = commits; pickSha = commits[0]?.sha ?? ''; } })
+      .catch(() => { if (req === pickReq) { pickCommits = []; pickSha = ''; } })
+      .finally(() => { if (req === pickReq) pickLoading = false; });
   });
 
   function afterChange() {
@@ -102,7 +112,10 @@
       } else {
         const r = await window.groveBench.gitCherryPick(sessionId, pickSha);
         result = describeOpResult(r, 'Cherry-pick');
-        if (r.success) pickCommits = pickCommits.filter((c) => c.sha !== pickSha);
+        if (r.success) {
+          pickCommits = pickCommits.filter((c) => c.sha !== pickSha);
+          pickSha = pickCommits[0]?.sha ?? '';
+        }
       }
       if (result.ok) afterChange();
     } catch (e: any) {

@@ -202,6 +202,29 @@
   const cleanupCheckedIds = new Set<string>();
   /** Bumped each time the dialog opens so results from a previous open are dropped. */
   let cleanupGeneration = 0;
+  /** Candidates waiting for their PR lookup, and lookups running now. Shared
+   *  by every run of the check effect, so editing the cutoff queues more
+   *  rows instead of starting more gh processes. */
+  let cleanupPrQueue: string[] = [];
+  let cleanupPrActive = 0;
+
+  function pumpCleanupPrLookups() {
+    while (showCleanup && cleanupPrActive < CLEANUP_PR_CONCURRENCY && cleanupPrQueue.length > 0) {
+      const id = cleanupPrQueue.shift()!;
+      const generation = cleanupGeneration;
+      cleanupPrActive++;
+      window.groveBench.getPrs(id)
+        .then((prs): PrInfo | null => prs[0] ?? null, (): 'unknown' => 'unknown')
+        .then((result) => {
+          if (generation === cleanupGeneration) cleanupPr = { ...cleanupPr, [id]: result };
+        })
+        .finally(() => {
+          cleanupPrActive--;
+          // Stops here once the dialog is closed; opening it again starts over.
+          pumpCleanupPrLookups();
+        });
+    }
+  }
 
   /** Days from the field, or null while it's empty or not a number (a
    *  number input binds null when cleared, which would otherwise read as 0
@@ -234,6 +257,7 @@
     cleanupStatusUnknown = {};
     cleanupPr = {};
     cleanupSelection = {};
+    cleanupPrQueue = [];
     showCleanup = true;
   }
 
@@ -282,20 +306,8 @@
     // PR state is looked up separately so a slow gh never delays the dirty
     // check, and skipped entirely when gh isn't installed (every call would fail).
     if (ghAvailable) {
-      const queue = [...fresh];
-      const worker = async () => {
-        for (let s = queue.shift(); s; s = queue.shift()) {
-          let result: PrInfo | null | 'unknown';
-          try {
-            result = (await window.groveBench.getPrs(s.id))[0] ?? null;
-          } catch {
-            result = 'unknown';
-          }
-          if (generation !== cleanupGeneration) return;
-          cleanupPr = { ...cleanupPr, [s.id]: result };
-        }
-      };
-      for (let i = 0; i < Math.min(CLEANUP_PR_CONCURRENCY, queue.length); i++) void worker();
+      cleanupPrQueue.push(...fresh.map((s) => s.id));
+      untrack(pumpCleanupPrLookups);
     }
   });
 

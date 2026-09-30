@@ -407,6 +407,29 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
   });
 
+  it('keeps PR lookups to 3 at a time across cutoff edits, and stops them on close', async () => {
+    const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
+    const recent = (n: number) => ({ id: `new${n}`, branch: `b-new${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `New ${n}`, lastActiveAt: Date.now() - 10 * DAY });
+    store.sessions = [old(1), old(2), old(3), old(4), recent(1), recent(2), recent(3)] as any;
+    const pending: Array<() => void> = [];
+    mockGroveBench.getPrs.mockImplementation((() => new Promise((res) => { pending.push(() => res([])); })) as any);
+
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getPrs).toHaveBeenCalled());
+    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await waitFor(() => expect(screen.getByLabelText(/New 3/)).toBeInTheDocument());
+    await tick();
+    // None has finished, so every call so far is still running.
+    expect(mockGroveBench.getPrs.mock.calls.length).toBeLessThanOrEqual(3);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const before = mockGroveBench.getPrs.mock.calls.length;
+    for (const finish of pending.splice(0)) finish();
+    await tick();
+    await tick();
+    expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(before);
+  });
+
   it('does not tick a conversation until its status check comes back clean', async () => {
     let finish!: (v: unknown) => void;
     mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
