@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
+import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint, isAuthFailure } from './agent-utils.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
@@ -505,5 +505,27 @@ describe('findRewindForkPoint()', () => {
     ];
     // findLast semantics: the second grove-1 is the anchor
     expect(findRewindForkPoint(events, 'grove-1')).toBe('sdk-1');
+  });
+});
+
+describe('isAuthFailure()', () => {
+  it('recognises sign-in failures', () => {
+    for (const msg of [
+      'Invalid API key · Please run /login',
+      'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+      'OAuth token has expired',
+      'Not logged in',
+      'Request failed: Unauthorized',
+      'cloud_credential_error',
+    ]) expect(isAuthFailure(msg), msg).toBe(true);
+  });
+
+  it('does not mistake unrelated errors for sign-in problems', () => {
+    for (const msg of [
+      'Author identity unknown: please tell me who you are',
+      'Cannot find module oauth-helper',
+      'Invalid JSON at key "name"',
+      'Claude Code process exited with code 1',
+    ]) expect(isAuthFailure(msg), msg).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { getCavemanPrompt } from './caveman.js';
-import { findRewindForkPoint } from './agent-utils.js';
+import { findRewindForkPoint, isAuthFailure } from './agent-utils.js';
 import { isReadOnlyToolCall } from './read-only-tools.js';
 import { CheckpointManager } from './checkpoints.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
@@ -568,7 +568,7 @@ class AgentSessionManager {
     this.runQuery(session, emit).catch((err) => {
         console.error(`[runQuery] session=${id} FAILED:`, err);
         const errMsg = String(err.message || err);
-        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+        const isAuthError = isAuthFailure(errMsg);
         emit({ type: 'error', message: isAuthError
           ? adapter.authErrorMessage
           : errMsg });
@@ -609,7 +609,7 @@ class AgentSessionManager {
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
       const errMsg = String(err?.message || err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      const isAuthError = isAuthFailure(errMsg);
       emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
       session.status = 'error';
     });
@@ -971,7 +971,7 @@ class AgentSessionManager {
         const detail = stderr ? `${errMsg}\n${stderr}` : errMsg;
         logger.error(`[runQuery] session=${id} event loop error (exit=${exitCode}):`, detail);
 
-        const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(detail);
+        const isAuthError = isAuthFailure(detail);
         if (isAuthError) {
           emit({ type: 'error', message: session.adapter.authErrorMessage });
         } else {
@@ -1669,7 +1669,7 @@ class AgentSessionManager {
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED after stop:`, err);
       const errMsg = String(err.message || err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      const isAuthError = isAuthFailure(errMsg);
       emit({ type: 'error', message: isAuthError
         ? session.adapter.authErrorMessage
         : errMsg });
@@ -1748,7 +1748,7 @@ class AgentSessionManager {
     })().catch((err) => {
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
       const errMsg = String(err?.message || err);
-      const isAuthError = /auth|unauthorized|401|403|invalid.*key|not.*logged|credential/i.test(errMsg);
+      const isAuthError = isAuthFailure(errMsg);
       emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
       session.status = 'error';
       if (!session.window.isDestroyed()) {
