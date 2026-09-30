@@ -5,6 +5,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import WorkspacePane from './WorkspacePane.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 
 const agents = { 'claude-code': { available: true, authenticated: true } };
 
@@ -22,6 +23,8 @@ afterEach(() => {
   store.repos = [];
   store.activeSessionId = null;
   store.prerequisites = null;
+  settingsStore.current.groveCharacters = true;
+  messageStore.setIsRunning('n1', false);
 });
 
 describe('WorkspacePane in a conversation without git', () => {
@@ -41,5 +44,23 @@ describe('WorkspacePane in a conversation without git', () => {
     expect(warning).toHaveTextContent("Git isn't installed.");
     expect(screen.getByRole('button', { name: 'Download Git' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Re-check' })).toBeInTheDocument();
+  });
+
+  it("puts the conversation's agent on its bench above the message, typing while it works", async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    render(WorkspacePane, { sessionId: 'n1' });
+    await screen.findByText('Changes needs git');
+    expect(screen.getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+
+    messageStore.setIsRunning('n1', true);
+    expect(await screen.findByRole('img', { name: 'Working' })).toBeInTheDocument();
+  });
+
+  it('shows only the message when grove characters are off', async () => {
+    settingsStore.current.groveCharacters = false;
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    render(WorkspacePane, { sessionId: 'n1' });
+    await screen.findByText('Changes needs git');
+    expect(screen.queryByRole('img', { name: 'Ready' })).not.toBeInTheDocument();
   });
 });

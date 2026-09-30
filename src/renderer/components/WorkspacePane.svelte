@@ -14,6 +14,10 @@
   import PromptEditor from './PromptEditor.svelte';
   import RewindDialog from './RewindDialog.svelte';
   import GitNotice from './GitNotice.svelte';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { sessionSpriteState } from '$lib/session-sprite-state.js';
+  import { sessionRepoColor } from '$lib/session-repo-color.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -32,7 +36,8 @@
   let previewVisible = $derived(activeTab === 'preview' && store.activeSessionId === sessionId);
   /** A conversation in a folder without git: nothing to diff, commit or
    *  checkpoint, so those tabs say why instead of loading. */
-  let noGit = $derived(!!store.sessions.find((s) => s.id === sessionId)?.noGit);
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+  let noGit = $derived(!!session?.noGit);
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
@@ -178,12 +183,24 @@
   });
 </script>
 
-{#snippet noGitNote(tab: string, why: string)}
+{#snippet noGitNote(tab: string, why: string, withAgent = false)}
   <div class="flex-1 flex items-center justify-center p-6">
-    <div class="max-w-md text-center">
-      <p class="text-sm text-foreground">{tab} needs git</p>
-      <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
-    </div>
+    {#if withAgent && session && settingsStore.current.groveCharacters}
+      <!-- The conversation's agent on its bench, as in the sidebar: typing
+           while it edits your files in place, sitting when it's idle. -->
+      <GroveEmptyState
+        variant="agent"
+        agent={{ seed: sessionId, state: sessionSpriteState(session), projectColor: sessionRepoColor(sessionId) }}
+      >
+        <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
+      </GroveEmptyState>
+    {:else}
+      <div class="max-w-md text-center">
+        <p class="text-sm text-foreground">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
+      </div>
+    {/if}
   </div>
 {/snippet}
 
@@ -273,7 +290,7 @@
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
     <GitNotice />
     {#if noGit}
-      {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
+      {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.', true)}
     {:else}
       <ChangesReviewPanel {sessionId} />
     {/if}
