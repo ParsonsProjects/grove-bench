@@ -214,6 +214,57 @@ describe('ChangesReviewPanel — review features', () => {
     submit.mockRestore();
   });
 
+  it('closes an open comment box when another file is selected', async () => {
+    const { container, getByPlaceholderText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!);
+    await tick();
+    await fireEvent.input(getByPlaceholderText('What should the agent change here?'), { target: { value: 'meant for a.ts' } });
+
+    await fireEvent.click(container.querySelector('[data-file-key="src/b.ts:false"]')!);
+    await tick();
+    await waitFor(() => expect(container.querySelector('[data-file-key="src/b.ts:false"]')!.className).toContain('border-primary'));
+
+    expect(queryByPlaceholderText('What should the agent change here?')).toBeNull();
+    expect(reviewStore.getComments(SID)).toEqual([]);
+  });
+
+  it('scrolls its own file list, not a hidden panel showing the same file', async () => {
+    const OTHER = 'other-session';
+    messageStore.messagesBySession[OTHER] = [];
+    gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [OTHER]: gitStatusStore.statusBySession[SID] };
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    try {
+      render(ChangesReviewPanel, { sessionId: OTHER }); // first in the page
+      const { container } = render(ChangesReviewPanel, { sessionId: SID });
+      await waitFor(() => expect(diffText(container)).toContain('bar'));
+
+      // Ticking "Viewed" moves on to b.ts and scrolls it into view.
+      await fireEvent.click(container.querySelector('input[type="checkbox"]')!);
+      await waitFor(() => expect(scrolled.length).toBeGreaterThan(0));
+      const mine = container.querySelector('[data-file-key="src/b.ts:false"]')!;
+
+      expect(scrolled.at(-1)).toBe(mine);
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    }
+  });
+
+  it('keeps the typed comment when Shift+click widens its range', async () => {
+    const { container, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 10"]')!);
+    await tick();
+    await fireEvent.input(getByPlaceholderText('What should the agent change here?'), { target: { value: 'both lines' } });
+
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!, { shiftKey: true });
+    await tick();
+
+    expect(container.textContent).toContain('Comment on line 10–11');
+    expect((getByPlaceholderText('What should the agent change here?') as HTMLTextAreaElement).value).toBe('both lines');
+  });
+
   it('switches to branch scope: resolves the base, refetches, and hides staging', async () => {
     mockGroveBench.getDefaultBranch.mockResolvedValue('main');
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('src/committed.ts', { contentHash: 'c1' })], baseRef: 'main' });
@@ -266,5 +317,65 @@ describe('ChangesReviewPanel — revert warnings', () => {
   it('says reverting a staged new file deletes it', async () => {
     const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'added' })]);
     expect(await view.findByText(/is a new file, so reverting it deletes it from disk/)).toBeInTheDocument();
+  });
+});
+
+describe('ChangesReviewPanel — diff cache', () => {
+  beforeEach(() => {
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = {};
+  });
+
+  it('refetches a file that changed while it was not selected', async () => {
+    const version: Record<string, number> = { 'src/d.ts': 1 };
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) =>
+      ({ kind: 'text' as const, patch: patch(`${filePath} v${version[filePath] ?? 1}`) }));
+    const files = (dHash: string) => ['a', 'b', 'c', 'd'].map(n => entry(`src/${n}.ts`, { contentHash: n === 'd' ? dHash : n }));
+    gitStatusStore.statusBySession = { [SID]: { entries: files('d1') } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    const row = (n: string) => container.querySelector(`[data-file-key="src/${n}.ts:false"]`)!;
+
+    await fireEvent.click(row('d'));
+    await waitFor(() => expect(diffText(container)).toContain('src/d.ts v1'));
+    await fireEvent.click(row('a'));
+    await waitFor(() => expect(diffText(container)).toContain('src/a.ts v1'));
+
+    // The agent edits d.ts; the refresh reloads only a.ts and its neighbour.
+    version['src/d.ts'] = 2;
+    gitStatusStore.statusBySession = { [SID]: { entries: files('d2') } };
+    await tick();
+    await fireEvent.click(row('d'));
+
+    await waitFor(() => expect(diffText(container)).toContain('src/d.ts v2'));
+  });
+
+  it('drops a reply for the previous scope that lands after the switch', async () => {
+    let finishOld: ((v: { kind: 'text'; patch: string }) => void) | undefined;
+    // The mock's declared type omits the fourth (options) argument.
+    mockGroveBench.getFileDiff.mockImplementation(((_sid: string, filePath: string, _staged?: boolean, opts?: { base?: string }) => {
+      const scope = opts?.base ? 'branch' : 'working';
+      if (filePath === 'src/b.ts' && scope === 'working') return new Promise((res) => { finishOld = res; });
+      return Promise.resolve({ kind: 'text' as const, patch: patch(`${filePath} ${scope}`) });
+    }) as never);
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    const files = ['a', 'b', 'c', 'd', 'e'].map(n => entry(`src/${n}.ts`));
+    gitStatusStore.statusBySession = { [SID]: { entries: files } };
+    const { container, getByText } = render(ChangesReviewPanel, { sessionId: SID });
+    const row = (n: string) => container.querySelector(`[data-file-key="src/${n}.ts:false"]`)!;
+    // b.ts is fetched as a.ts's neighbour; move away while that is still out.
+    await waitFor(() => expect(finishOld).toBeDefined());
+    await fireEvent.click(row('e'));
+    await waitFor(() => expect(diffText(container)).toContain('src/e.ts working'));
+
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: files, baseRef: 'main' });
+    await fireEvent.click(getByText('Branch'));
+    await waitFor(() => expect(diffText(container)).toContain('src/e.ts branch'));
+    finishOld!({ kind: 'text', patch: patch('src/b.ts working') });
+    await tick();
+
+    await fireEvent.click(row('b'));
+    await waitFor(() => expect(diffText(container)).toContain('src/b.ts branch'));
+    expect(diffText(container)).not.toContain('src/b.ts working');
   });
 });
