@@ -2270,3 +2270,43 @@ describe('loadOlderEvents replays only messages', () => {
     expect(messageStore.getMessages(ID)).toEqual([]);
   });
 });
+
+describe('rewind', () => {
+  const ID = 'rewind-unloaded';
+  const ev = (e: Record<string, unknown>) => e as unknown as AgentEvent;
+  const user = (uuid: string, text: string) => ev({ type: 'user_message', text, uuid });
+
+  afterEach(() => {
+    messageStore.destroySession(ID);
+    checkpointStore.checkpointsBySession = {};
+  });
+
+  it('to a message in a page not loaded yet, drops everything shown and loads the shorter history', async () => {
+    messageStore.replayEvents(ID, [user('u5', 'fifth'), user('u6', 'sixth')], undefined, 200);
+    messageStore.setPagination(ID, 202, 200);
+    checkpointStore.checkpointsBySession = { [ID]: [{ uuid: 'u2', turn: 2, ref: 'r2', text: 'second prompt' }] };
+    // Main cut the history to the 150 events before u2.
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce({ events: [], totalCount: 150, startIndex: 149 } as never)
+      .mockResolvedValueOnce({ events: [user('u1', 'first')], totalCount: 150, startIndex: 0 } as never);
+
+    messageStore.ingestEvent(ID, ev({ type: 'rewind', toMessageId: 'u2' }));
+
+    await vi.waitFor(() => expect(messageStore.getMessages(ID).map((m) => (m as { text?: string }).text)).toEqual(['first']));
+    expect(messageStore.getDraft(ID)).toBe('second prompt');
+    expect(messageStore.hasOlderEvents(ID)).toBe(false);
+  });
+
+  it('conversation-only, while replaying history, keeps the edits of the turn it rewinds away', () => {
+    messageStore.replayEvents(ID, [
+      user('u1', 'edit it'),
+      ev({ type: 'assistant_tool_use', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'x', new_string: 'y' }, toolUseId: 't1', uuid: 'a1' }),
+      ev({ type: 'tool_result', toolUseId: 't1', content: 'ok' }),
+      ev({ type: 'result', subtype: 'success', isError: false }),
+      user('u2', 'more'),
+      ev({ type: 'rewind', toMessageId: 'u2', conversationOnly: true }),
+    ]);
+
+    expect(messageStore.preservedEditHistory[ID]?.map((f) => f.filePath)).toEqual(['a.ts']);
+  });
+});

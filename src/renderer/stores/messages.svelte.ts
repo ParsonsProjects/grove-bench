@@ -402,6 +402,22 @@ class MessageStore {
     });
   }
 
+  /** Replace the loaded messages with the last page of the history as main
+   *  now has it, keeping this conversation's live state (see loadOlderEvents). */
+  private async reloadHistoryTail(sessionId: string) {
+    try {
+      const { totalCount } = await window.groveBench.getEventHistoryPage(sessionId, 1);
+      // Cleared only now: events that arrived live until this point are in
+      // the history below the count, so the page brings them back once;
+      // later ones stay after it.
+      this.messagesBySession[sessionId] = [];
+      this.sourceIndexBySession.delete(sessionId);
+      this.orphanReplayEvents.delete(sessionId);
+      this.setPagination(sessionId, totalCount, totalCount);
+      await this.loadOlderEvents(sessionId);
+    } catch { /* keeps what it shows until the conversation is reopened */ }
+  }
+
   /** Remember a replayed result or answer that matched nothing loaded. */
   private noteOrphan(sessionId: string, event: AgentEvent) {
     const list = this.orphanReplayEvents.get(sessionId);
@@ -850,7 +866,8 @@ class MessageStore {
    * until the file is updated by newer edits.
    */
   getLastTurnFileChanges(sessionId: string): { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[] {
-    const msgs = this.messagesBySession[sessionId] ?? [];
+    // During replay the messages are in the replay buffer, not the store.
+    const msgs = this.getMessagesForMutation(sessionId);
     if (msgs.length === 0) return [];
 
     // Must have at least one completed turn (result message)
@@ -1887,6 +1904,14 @@ class MessageStore {
       this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
       this.setDraft(sessionId, rewindMsg.text);
       this.setActiveTab(sessionId, 'activity');
+    } else if (this._replayBuffer === null && this.sideEffects) {
+      // A live rewind to a message in a history page not loaded yet: every
+      // loaded message comes after it, and main has cut them all. Show the
+      // now shorter history from its end instead.
+      const text = checkpointStore.getCheckpoints(sessionId).find((c) => c.uuid === event.toMessageId)?.text;
+      if (text) this.setDraft(sessionId, text);
+      this.setActiveTab(sessionId, 'activity');
+      void this.reloadHistoryTail(sessionId);
     }
     this.isRunning[sessionId] = false;
     this.streamingText[sessionId] = '';
