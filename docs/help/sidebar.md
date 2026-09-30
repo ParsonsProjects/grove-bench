@@ -43,6 +43,8 @@ Right-click a conversation to access:
 - **Stop** — Shut down a live conversation's agent but keep the conversation, so you can pick it up again later
 - **Delete Conversation**: remove the conversation and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
 
+Hovering a row also shows a quick button: a power icon to stop a live conversation, or a bin to delete a stopped one (it asks first).
+
 Stopping or deleting the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
 
 Grove Bench also starts on the landing screen. The conversations you had open are listed there and under **Conversations**, and none of them starts its agent until you open it.
