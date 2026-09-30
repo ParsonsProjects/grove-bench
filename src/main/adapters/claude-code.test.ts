@@ -545,6 +545,47 @@ describe('capToolResult()', () => {
     expect(result.content.length).toBeLessThan(300_000);
     expect(result.content).toContain('characters omitted');
   });
+
+  it('passes on the images in a tool result (a screenshot, an image file read)', () => {
+    const ctx = { toolUseMap: new Map<string, string>() };
+    const events = transformMessage({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'tu1',
+          content: [
+            { type: 'text', text: 'Screenshot of the page' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } },
+            // MCP shape, in case it arrives unconverted
+            { type: 'image', data: '/9j/4', mimeType: 'image/jpeg' },
+            // Not an image type the thread can show
+            { type: 'image', source: { type: 'base64', media_type: 'image/tiff', data: 'SUkq' } },
+          ],
+        }],
+      },
+    } as any, ctx as any);
+
+    expect(events).toEqual([{
+      type: 'tool_result',
+      toolUseId: 'tu1',
+      content: 'Screenshot of the page',
+      isError: undefined,
+      imageData: [
+        { data: 'iVBOR', mediaType: 'image/png' },
+        { data: '/9j/4', mediaType: 'image/jpeg' },
+      ],
+    }]);
+  });
+
+  it('leaves imageData off a tool result without images', () => {
+    const ctx = { toolUseMap: new Map<string, string>() };
+    const events = transformMessage({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'ok' }] }] },
+    } as any, ctx as any);
+    expect(events[0]).not.toHaveProperty('imageData');
+  });
 });
 
 describe('transformMessage()', () => {

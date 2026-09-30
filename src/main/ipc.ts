@@ -17,6 +17,7 @@ import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { readImage, removeImages } from './attachments.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -502,6 +503,7 @@ export function registerHandlers() {
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
     bookmarks.removeBookmarksForSession(id); // cascade: no orphan bookmarks
+    removeImages(id); // images shown in its Activity thread
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -739,6 +741,8 @@ export function registerHandlers() {
       }
     });
   });
+
+  ipcMain.handle(IPC.AGENT_ATTACHMENT_IMAGE, (_event, sessionId: string, file: string) => readImage(sessionId, file));
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
     sessionManager.setMode(sessionId, mode);

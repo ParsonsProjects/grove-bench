@@ -3,6 +3,7 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
@@ -874,7 +875,8 @@ class AgentSessionManager {
 
     // Process event stream from the adapter
     try {
-      for await (const event of handle.events) {
+      for await (const adapterEvent of handle.events) {
+        const event = await storeToolImages(id, adapterEvent);
         if (!TRANSIENT_EVENT_TYPES.has(event.type)) {
           logger.debug(`[runQuery] session=${id} event type=${event.type}`);
         }
@@ -1153,8 +1155,14 @@ class AgentSessionManager {
 
     // Record in event history with UUID for checkpoint tracking.
     // Use emit() which handles eventHistory, disk persistence, and renderer notification.
+    // Attached images are saved to disk and the event refers to them, so the
+    // thread can show them again when the conversation is reopened.
     const uuid = crypto.randomUUID();
-    const userEvent: AgentEvent = { type: 'user_message', text: content, uuid };
+    const storedImages = images?.length ? await saveImages(id, images) : [];
+    const userEvent: AgentEvent = {
+      type: 'user_message', text: content, uuid,
+      ...(storedImages.length > 0 && { images: storedImages }),
+    };
     session.emit?.(userEvent);
 
     // Snapshot the working tree before the agent gets the prompt. The capture
@@ -2318,6 +2326,8 @@ class AgentSessionManager {
       this.historyCache.delete(id);
       this.searchIndexes.delete(id);
     }
+    // No event refers to the thread's images any more.
+    removeImages(id);
   }
 
   /** Session ids that were running when the system suspended. Captured on

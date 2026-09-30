@@ -410,7 +410,10 @@
     >
       {#if msg.kind === 'user'}
         <UserPromptBlock
+          {sessionId}
           text={msg.text}
+          files={msg.files}
+          images={msg.images}
           onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
         />
 
@@ -425,6 +428,7 @@
           result={msg.result}
           isError={msg.isError}
           pending={msg.pending}
+          images={msg.images}
           {summaryMode}
         />
 

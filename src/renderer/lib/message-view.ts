@@ -14,7 +14,7 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 /** Short description of what each mode shows, for pickers and hints. */
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
-  summary: 'Hides thinking and most tool calls (edits, writes and shell commands stay)',
+  summary: 'Hides thinking and most tool calls (edits, writes, shell commands and images stay)',
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking)',
 };
 
@@ -62,7 +62,9 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
   if (msg.kind === 'thinking') return false;
 
   if (mode === 'summary') {
-    if (msg.kind === 'tool_call') return shownInSummary(msg.toolName);
+    // A tool that returned images (a preview screenshot, an image file read)
+    // stays in view so the images do.
+    if (msg.kind === 'tool_call') return shownInSummary(msg.toolName) || !!msg.images?.length;
     return true;
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildContentBlock, displayTextFromSent, parseSentPrompt, stripFileContext } from './prompt-text.js';
+import { attachedFilesFromSent, buildContentBlock, displayTextFromSent, parseSentPrompt, stripFileContext } from './prompt-text.js';
 
 describe('parseSentPrompt', () => {
   it('reads past a closing tag inside the file content, using its length', () => {
@@ -59,5 +59,26 @@ describe('displayTextFromSent', () => {
 
   it('returns plain messages unchanged', () => {
     expect(displayTextFromSent('fix the bug')).toBe('fix the bug');
+  });
+});
+
+describe('attachedFilesFromSent', () => {
+  it('returns attached files with their content, leaving @-references in the text', () => {
+    const sent = `${buildContentBlock('file', 'notes.md', 'see </file> here')}\n${buildContentBlock('file', 'src/a.ts', 'const a = 1;')}\n\nfollow the notes for @src/a.ts`;
+    expect(attachedFilesFromSent(sent)).toEqual({
+      files: [{ path: 'notes.md', content: 'see </file> here' }],
+      typed: 'follow the notes for @src/a.ts',
+    });
+  });
+
+  it('reads the content of blocks sent before `length` was added', () => {
+    expect(attachedFilesFromSent('<file path="a.ts">\nold\n</file>\n\ntyped')).toEqual({
+      files: [{ path: 'a.ts', content: 'old' }],
+      typed: 'typed',
+    });
+  });
+
+  it('returns no files for a plain prompt', () => {
+    expect(attachedFilesFromSent('plain prompt')).toEqual({ files: [], typed: 'plain prompt' });
   });
 });

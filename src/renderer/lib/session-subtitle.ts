@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../stores/messages.svelte.js';
+import { userMessageLabel, type ChatMessage } from '../stores/messages.svelte.js';
 import { approvalRequest, toolLabel } from './tool-names.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
@@ -31,7 +31,10 @@ export function lastTextSnippet(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.kind === 'text' && m.text.trim()) return collapse(m.text);
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
+    if (m.kind === 'user' && !m.text.trim().startsWith('/')) {
+      const label = userMessageLabel(m);
+      if (label.trim()) return collapse(label);
+    }
   }
   return null;
 }
@@ -39,7 +42,10 @@ export function lastTextSnippet(messages: ChatMessage[]): string | null {
 /** First real user prompt in the loaded messages (slash commands skipped). */
 export function firstPromptSnippet(messages: ChatMessage[]): string | null {
   for (const m of messages) {
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
+    if (m.kind === 'user' && !m.text.trim().startsWith('/')) {
+      const label = userMessageLabel(m);
+      if (label.trim()) return collapse(label);
+    }
   }
   return null;
 }

@@ -1,18 +1,20 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
   AgentQueryHandle,
   AdapterConfig,
+  AdapterEvent,
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
   CliSignInDescriptor,
   ModelInfo,
   PermissionResponse,
+  ToolImageData,
   UserMessage,
 } from './types.js';
 import { getApiKey } from '../credentials.js';
@@ -181,6 +183,23 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
   return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
+const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/** The base64 images in a tool result's content: API image blocks (Read on an
+ *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
+export function toolResultImages(content: unknown[]): ToolImageData[] {
+  const images: ToolImageData[] = [];
+  for (const c of content as any[]) {
+    if (c?.type !== 'image') continue;
+    const data = c.source?.type === 'base64' ? c.source.data : c.data;
+    const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
+    if (typeof data === 'string' && data && IMAGE_MEDIA_TYPES.has(mediaType)) {
+      images.push({ data, mediaType: mediaType as ImageMediaType });
+    }
+  }
+  return images;
+}
+
 /**
  * Transform a single SDKMessage into zero or more AgentEvents.
  * This is a pure function (given a context bag) extracted from the former
@@ -189,8 +208,8 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 export function transformMessage(
   message: SDKMessage,
   ctx: MessageContext,
-): AgentEvent[] {
-  const events: AgentEvent[] = [];
+): AdapterEvent[] {
+  const events: AdapterEvent[] = [];
 
   switch (message.type) {
     case 'system': {
@@ -399,11 +418,13 @@ export function transformMessage(
             const resultContent = Array.isArray(block.content)
               ? block.content.map((c: any) => c.text || '').join('')
               : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+            const imageData = Array.isArray(block.content) ? toolResultImages(block.content) : [];
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
               content: capToolResult(resultContent),
               isError: block.is_error,
+              ...(imageData.length > 0 && { imageData }),
             });
           }
         }
@@ -1608,7 +1629,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     // Create the async event generator
-    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+    async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       for await (const message of q) {
         if (abortController.signal.aborted) break;
 
