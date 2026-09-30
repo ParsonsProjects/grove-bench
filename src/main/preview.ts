@@ -179,6 +179,19 @@ export class PreviewManager {
     ses.clearCache().catch(() => { /* best effort */ });
   }
 
+  /** Close Claude's page, e.g. when the conversation goes to sleep: nothing
+   *  drives it then, and it would keep running the page's scripts and
+   *  painting. Your page and the shared storage (logins) stay; the agent
+   *  opens a new page with preview_open. */
+  closeAgentPage(sessionId: string): void {
+    const entry = this.entries.get(sessionId);
+    const page = entry?.agent;
+    if (!entry || !page) return;
+    entry.agent = null;
+    if (!page.win.isDestroyed()) page.win.destroy();
+    this.sendState(sessionId, 'agent', null);
+  }
+
   closeAll(): void {
     for (const id of [...this.entries.keys()]) this.close(id);
   }

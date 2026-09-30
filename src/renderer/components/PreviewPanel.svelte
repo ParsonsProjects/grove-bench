@@ -11,6 +11,7 @@
   import GlobeIcon from '@lucide/svelte/icons/globe';
   import { previewStore, type PreviewMode } from '../stores/preview.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import { isCovered, sameBounds, toBounds, tooltipCovers } from '$lib/preview-viewport.js';
   import { loadErrorHint } from '$lib/preview-text.js';
   import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
@@ -27,6 +28,7 @@
   let detected = $derived(previewStore.getDetected(sessionId));
   let agentUnseen = $derived(previewStore.hasUnseenAgentActivity(sessionId));
   let agentToolsOn = $derived(settingsStore.current.previewAgentTools ?? true);
+  let asleep = $derived(store.sessions.find((s) => s.id === sessionId)?.status === 'sleeping');
 
   let address = $state('');
   let addressFocused = $state(false);
@@ -362,7 +364,9 @@
             <div class="max-w-md text-center text-muted-foreground">
               <BotIcon class="w-6 h-6 mx-auto mb-3 opacity-60" />
               <p class="text-sm text-foreground mb-1">Claude's page</p>
-              {#if agentToolsOn}
+              {#if agentToolsOn && asleep}
+                <p class="text-xs mb-4">Claude's page closes while the conversation is asleep. It opens again when Claude next uses the browser.</p>
+              {:else if agentToolsOn}
                 <p class="text-xs mb-4">When Claude checks its work in the browser, its page shows here and updates as it clicks and types. It opens local pages only. Try asking: "start the dev server and check the page in the preview".</p>
               {:else}
                 <p class="text-xs mb-4">The agent's browser tools are turned off in Settings, so Claude can't open pages here.</p>

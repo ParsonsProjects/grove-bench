@@ -72,3 +72,37 @@ describe('PreviewManager tool calls', () => {
     await expect(next).resolves.toBe('ran');
   });
 });
+
+describe('PreviewManager.closeAgentPage', () => {
+  type Internals = { entries: Map<string, { agent: unknown; user: unknown }>; window: unknown };
+
+  function setUp() {
+    const m = new PreviewManager();
+    const win = { isDestroyed: vi.fn(() => false), destroy: vi.fn() };
+    const send = vi.fn();
+    const internals = m as unknown as Internals;
+    internals.window = { isDestroyed: () => false, webContents: { send } };
+    const user = { visible: false };
+    internals.entries.set('s1', { agent: { win }, user });
+    return { m, win, send, internals, user };
+  }
+
+  it('closes Claude\'s page and tells the renderer, keeping yours', () => {
+    const { m, win, send, internals, user } = setUp();
+
+    m.closeAgentPage('s1');
+
+    expect(win.destroy).toHaveBeenCalledOnce();
+    expect(internals.entries.get('s1')).toMatchObject({ agent: null, user });
+    expect(send).toHaveBeenCalledWith('preview:state', 's1', 'agent', null);
+  });
+
+  it('does nothing without a page', () => {
+    const { m, win, send } = setUp();
+    m.closeAgentPage('s1');
+    m.closeAgentPage('s1');
+    m.closeAgentPage('unknown');
+    expect(win.destroy).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+  });
+});

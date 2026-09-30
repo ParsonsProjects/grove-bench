@@ -441,11 +441,16 @@ export function registerHandlers() {
     logger.info(`Session closed: id=${id}`);
   });
 
-  // Idle sleep: only the agent process goes. The terminal and anything
-  // running in it are left alone, so a dev server there keeps serving.
+  // Idle sleep: the agent process goes, and so does Claude's Preview page,
+  // which nothing drives while it sleeps. The terminal and anything running
+  // in it are left alone, so a dev server there keeps serving, and so is
+  // your own Preview page.
   ipcMain.handle(IPC.SESSION_SLEEP, async (_event, id: string) => {
     const slept = await sessionManager.sleepSession(id);
-    if (slept) logger.info(`Session asleep: id=${id}`);
+    if (slept) {
+      previewManager.closeAgentPage(id);
+      logger.info(`Session asleep: id=${id}`);
+    }
     return slept;
   });
 

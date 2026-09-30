@@ -31,7 +31,7 @@ const m = vi.hoisted(() => {
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
-    previewManager: fns('close', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
+    previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
     adapterRegistry: fns('get', 'getDefault', 'list'),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
@@ -388,6 +388,21 @@ describe('conversation lifecycle', () => {
     expect(m.terminalManager.killAllForSession).toHaveBeenCalledWith('s1');
     expect(m.sessionManager.closeSession).toHaveBeenCalledWith('s1');
     expect(m.worktreeManager.remove).not.toHaveBeenCalled();
+  });
+
+  it('SESSION_SLEEP closes Claude\'s preview page once the agent is asleep', async () => {
+    m.sessionManager.sleepSession.mockResolvedValue(true);
+    await expect(invoke(IPC.SESSION_SLEEP, 's1')).resolves.toBe(true);
+    expect(m.previewManager.closeAgentPage).toHaveBeenCalledWith('s1');
+    // The rest of the preview stays, like the terminal.
+    expect(m.previewManager.close).not.toHaveBeenCalled();
+    expect(m.terminalManager.killAllForSession).not.toHaveBeenCalled();
+  });
+
+  it('SESSION_SLEEP leaves the preview alone when the agent stays awake', async () => {
+    m.sessionManager.sleepSession.mockResolvedValue(false);
+    await expect(invoke(IPC.SESSION_SLEEP, 's1')).resolves.toBe(false);
+    expect(m.previewManager.closeAgentPage).not.toHaveBeenCalled();
   });
 
   it('SESSION_DESTROY stops everything before removing the worktree, then drops bookmarks', async () => {

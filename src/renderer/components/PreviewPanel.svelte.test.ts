@@ -4,6 +4,7 @@ import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/sv
 import { mockGroveBench } from '../__mocks__/setup.js';
 import PreviewPanel from './PreviewPanel.svelte';
 import { previewStore } from '../stores/preview.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
 import type { PreviewPageState } from '../../shared/types.js';
 
 const page = (over: Partial<PreviewPageState> = {}): PreviewPageState => ({
@@ -20,6 +21,14 @@ afterEach(() => {
 });
 
 describe('PreviewPanel', () => {
+  it('says Claude\'s page closed while the conversation is asleep', () => {
+    store.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'sleeping' }] as any;
+    previewStore.setMode('s1', 'agent');
+    render(PreviewPanel, { sessionId: 's1', active: true });
+    expect(screen.getByText(/closes while the conversation is asleep/)).toBeInTheDocument();
+    store.sessions = [];
+  });
+
   it('offers URLs seen in the conversation and opens them in your page', async () => {
     previewStore.noteText('s1', 'Local: http://localhost:5173/');
     render(PreviewPanel, { sessionId: 's1', active: true });

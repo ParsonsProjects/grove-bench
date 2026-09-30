@@ -44,7 +44,7 @@ These apply to every agent:
 - **Default Diff View** — Choose between unified or side-by-side diffs
 - **Desktop Notifications** — Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation. **Flash the taskbar button** controls whether the taskbar button also flashes; it stops as soon as the window regains focus
 - **Auto-install dependencies in new worktrees** — Run `npm install` automatically when a worktree is created (off by default)
-- **Sleep idle conversations**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a conversation's agent is shut down to save memory and CPU. The conversation stays in the Conversations list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running. 0 turns it off. Default 30 minutes
+- **Sleep idle conversations**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a conversation's agent is shut down to save memory and CPU. The conversation stays in the Conversations list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running; the agent's page in the Preview tab closes. 0 turns it off. Default 30 minutes
 - **Let the agent use the Preview browser** — Give the agent its own page in the [Preview tab](preview-tab.md#the-agents-browser) to open local pages, take screenshots, read, click and type in. Applies to agents started after the change (on by default)
 
 ## MCP

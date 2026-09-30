@@ -44,6 +44,7 @@ The agent can open a local page, take a screenshot, read the page's text, click,
 - Files load only from the conversation's worktree, and the agent's page only loads web files (HTML, CSS, scripts, images, fonts, media)
 - A dot on the Preview tab means the agent used its browser since you last looked
 - The page is 1280×800 unless the agent picks another size, for example a phone size
+- The agent's page closes when the conversation goes to sleep, so it isn't left running. The agent opens it again next time it uses the browser. Your page and the shared sign-ins stay
 
 Turn the agent's browser off under **Settings > General > Let the agent use the Preview browser**. The change applies to agents started after it.
 
