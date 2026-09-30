@@ -1,6 +1,6 @@
 # Getting Started
 
-Grove Bench is a multi-agent git worktree orchestrator for Claude Code. It lets you run multiple AI coding conversations at the same time, each in an isolated git worktree with its own terminal.
+Grove Bench lets you run several AI coding conversations with Claude Code at the same time, each with its own terminal. In a git project, each conversation works in its own copy of the project (a git worktree), so their changes stay apart. A folder without git works too, but its conversations edit the folder directly.
 
 ## Adding a Project
 

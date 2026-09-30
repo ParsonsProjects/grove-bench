@@ -1715,11 +1715,12 @@
                 </button>
               </div>
             {:else}
-              <div class="flex gap-2">
+              <!-- Stacked: side by side, the labels wrapped onto two lines. -->
+              <div class="flex flex-col gap-2">
                 <button
                   onclick={() => { messageStore.sendCommand(sessionId, '/compact'); contextExpanded = false; }}
                   disabled={isRunning}
-                  class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Replace the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail. (/compact)"
                 >
                   Summarise to free space
@@ -1727,7 +1728,7 @@
                 <button
                   onclick={() => confirmClear = true}
                   disabled={isRunning}
-                  class="flex-1 px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  class="w-full px-2 py-1.5 text-xs border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Clear the conversation and start again with an empty context. Asks first. (/clear)"
                 >
                   Start fresh…
