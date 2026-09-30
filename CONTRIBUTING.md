@@ -30,7 +30,9 @@ See [CLAUDE.md](./CLAUDE.md) for full project structure and commands.
 
 - Keep PRs focused — one feature or fix per PR
 - Include a clear description of what changed and why
-- Run `npm test` before submitting
+- Run `npm test` before submitting. CI runs the tests in a random order and
+  prints the seed; to repeat a failing order locally, run
+  `npx vitest run --sequence.shuffle --sequence.seed=<seed>`
 - Follow the existing code style (no linter config — just match what's there)
 
 ## Issues

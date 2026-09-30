@@ -37,7 +37,10 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Run tests
-        run: npm test
+        # In a random order, so a test that only passes after (or without)
+        # another one fails here. The log prints the seed; reproduce with
+        # npx vitest run --sequence.shuffle --sequence.seed=<seed>
+        run: npm test -- --sequence.shuffle
 
       - name: Build
         run: npm run build
