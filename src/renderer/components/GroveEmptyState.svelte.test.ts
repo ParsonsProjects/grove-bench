@@ -126,4 +126,24 @@ describe('GroveEmptyState', () => {
     expect(screen.getByText('No open conversations')).toBeInTheDocument();
     expect(screen.queryByRole('button')).toBeNull();
   });
+
+  it("swaps the lamp for the tab's own props", () => {
+    const agent = { seed: 'a', state: 'ready' as const };
+    const drawn = () => [...document.querySelectorAll('[data-scenery]')].map((g) => g.getAttribute('data-scenery'));
+
+    render(GroveEmptyState, { variant: 'agent', agent });
+    expect(drawn()).toEqual(['lamp']);
+    cleanup();
+
+    render(GroveEmptyState, { variant: 'agent', agent, tab: 'changes' });
+    expect(drawn()).toEqual(['sprout', 'watering-can']);
+    cleanup();
+
+    render(GroveEmptyState, { variant: 'agent', agent, tab: 'checkpoints' });
+    expect(drawn()).toEqual(['flag']);
+    cleanup();
+
+    render(GroveEmptyState, { variant: 'agent', agent, tab: 'preview' });
+    expect(drawn()).toEqual(['easel']);
+  });
 });

@@ -4,6 +4,8 @@ import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/sv
 import { mockGroveBench } from '../__mocks__/setup.js';
 import PreviewPanel from './PreviewPanel.svelte';
 import { previewStore } from '../stores/preview.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import type { PreviewPageState } from '../../shared/types.js';
 
 const page = (over: Partial<PreviewPageState> = {}): PreviewPageState => ({
@@ -90,5 +92,40 @@ describe('PreviewPanel', () => {
     const calls = mockGroveBench.previewAgentFrame.mock.calls.length;
     await new Promise((r) => setTimeout(r, 500));
     expect(mockGroveBench.previewAgentFrame.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('PreviewPanel with grove characters', () => {
+  beforeEach(() => {
+    store.sessions = [{ id: 's1', branch: 'feat', repoPath: '/r', status: 'running' }] as any;
+  });
+
+  afterEach(() => {
+    store.sessions = [];
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it("puts the conversation's agent on its bench above your empty page, with the seen URLs", async () => {
+    previewStore.noteText('s1', 'Local: http://localhost:5173/');
+    render(PreviewPanel, { sessionId: 's1', active: true });
+    expect(screen.getByText('Preview your app')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(document.querySelector('[data-scenery="easel"]')).not.toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'http://localhost:5173/' }));
+    expect(mockGroveBench.previewNavigate).toHaveBeenCalledWith('s1', 'user', 'http://localhost:5173/');
+  });
+
+  it("puts it above Claude's empty page too", () => {
+    previewStore.setMode('s1', 'agent');
+    render(PreviewPanel, { sessionId: 's1', active: true });
+    expect(screen.getByText(/When Claude checks its work in the browser/)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+  });
+
+  it('shows only the text when grove characters are off', () => {
+    settingsStore.current.groveCharacters = false;
+    render(PreviewPanel, { sessionId: 's1', active: true });
+    expect(screen.getByText('Preview your app')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Ready' })).toBeNull();
   });
 });
