@@ -240,30 +240,8 @@ export interface SessionCompletionResult {
 
 export const getEventsDir = () => path.join(app.getPath('userData'), 'worktrees', 'events');
 
-// Suppress unhandled rejections that the agent SDK throws while a query is
-// being torn down.  When we stop/destroy a session we close the SDK transport
-// and abort its controller; any control responses still in flight (e.g. the
-// SDK writing back a permission decision after we've resolved pending
-// permissions as denied) then fail to write to the now-closed transport.
-// The SDK's control-request handler retries the write in its catch block
-// without guarding it, so the second failure escapes as an unhandled
-// rejection.  These are all expected and safe to ignore.
-const SDK_TEARDOWN_REJECTIONS = [
-  'Operation aborted',
-  'ProcessTransport is not ready for writing',
-  'Cannot write to terminated process',
-  'Cannot write to process that exited', // followed by a variable code/signal
-  'Claude Code process aborted by user',
-];
-process.on('unhandledRejection', (reason: unknown) => {
-  const message = reason instanceof Error ? reason.message : String(reason);
-  if (SDK_TEARDOWN_REJECTIONS.some((m) => message.startsWith(m))) {
-    logger.debug(`[unhandledRejection] Suppressed expected SDK teardown error: ${message}`);
-    return;
-  }
-  // Re-throw anything else so it surfaces normally
-  console.error('Unhandled promise rejection:', reason);
-});
+// SDK teardown rejections (a query closed with control responses in flight)
+// are filtered in crash-handling.ts, which owns the process-wide handler.
 
 // The agent SDK registers a global process 'exit' handler per query() to
 // SIGTERM its child process on shutdown, but never removes it when the query
