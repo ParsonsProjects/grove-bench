@@ -6,6 +6,9 @@ vi.mock('execa', () => ({
 }));
 
 import { execa } from 'execa';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   git,
   gitVersion,
@@ -46,6 +49,10 @@ import {
   checkoutBranch,
   isWorkingTreeClean,
   getGitIdentity,
+  isRefArg,
+  listTrackedFiles,
+  resolveMergeBase,
+  revertFile,
 } from './git.js';
 
 const mockExeca = vi.mocked(execa);
@@ -557,6 +564,72 @@ describe('branchCommits()', () => {
   it('returns empty when neither ref resolves', async () => {
     mockExeca.mockRejectedValue(new Error('unknown revision'));
     expect(await branchCommits('/repo', 'main')).toEqual([]);
+  });
+
+  it('never passes a base that git would read as an option', async () => {
+    // `git log --output=<file>..HEAD` would write a file.
+    expect(await branchCommits('/repo', '--output=/tmp/x')).toEqual([]);
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveMergeBase()', () => {
+  it('never passes a base that git would read as an option', async () => {
+    expect(await resolveMergeBase('/repo', '--independent')).toBeNull();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+});
+
+describe('isRefArg()', () => {
+  it('accepts branch-like names and rejects options and non-strings', () => {
+    expect(isRefArg('main')).toBe(true);
+    expect(isRefArg('feat/a-b')).toBe(true);
+    expect(isRefArg('-x')).toBe(false);
+    expect(isRefArg('')).toBe(false);
+    expect(isRefArg(undefined)).toBe(false);
+  });
+});
+
+describe('listTrackedFiles()', () => {
+  it('splits NUL-separated output so non-ASCII paths come back unquoted', async () => {
+    mockExeca.mockResolvedValue({ stdout: 'café.ts\0src/a b.ts\0' } as any);
+    expect(await listTrackedFiles('/repo')).toEqual(['café.ts', 'src/a b.ts']);
+    expect(mockExeca).toHaveBeenCalledWith('git', ['ls-files', '-z'], { cwd: '/repo' });
+  });
+});
+
+describe('revertFile()', () => {
+  const status = (line: string) => mockExeca.mockResolvedValueOnce({ stdout: line } as any);
+  const lastArgs = () => mockExeca.mock.calls.at(-1)![1];
+
+  it('deletes a file staged as new, which isn\'t in HEAD', async () => {
+    status('A  new.ts');
+    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    await revertFile('/repo', 'new.ts', true);
+    expect(lastArgs()).toEqual(['rm', '-f', '-q', '--', 'new.ts']);
+  });
+
+  it('resets a staged change to HEAD', async () => {
+    status('M  a.ts');
+    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    await revertFile('/repo', 'a.ts', true);
+    expect(lastArgs()).toEqual(['checkout', 'HEAD', '--', 'a.ts']);
+  });
+
+  it('resets an unstaged change to the index, keeping a staged new file', async () => {
+    status('AM new.ts');
+    mockExeca.mockResolvedValueOnce({ stdout: '' } as any);
+    await revertFile('/repo', 'new.ts', false);
+    expect(lastArgs()).toEqual(['checkout', '--', 'new.ts']);
+  });
+
+  it('deletes an untracked file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gb-revert-'));
+    fs.writeFileSync(path.join(dir, 'scratch.ts'), 'x');
+    status('?? scratch.ts');
+    await revertFile(dir, 'scratch.ts', false);
+    expect(fs.existsSync(path.join(dir, 'scratch.ts'))).toBe(false);
+    expect(mockExeca).toHaveBeenCalledTimes(1);
   });
 });
 

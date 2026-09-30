@@ -1,4 +1,6 @@
 import { execa } from 'execa';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
 
 export interface GitOptions {
@@ -391,6 +393,7 @@ export async function fileDiffAgainst(cwd: string, relPath: string, ref: string)
 /** Resolve the merge base between HEAD and `base`, trying the local branch
  *  first and the remote-tracking name second (the base is often only fetched). */
 export async function resolveMergeBase(cwd: string, base: string): Promise<{ ref: string; mergeBase: string } | null> {
+  if (!isRefArg(base)) return null;
   for (const ref of [base, `origin/${base}`]) {
     try {
       const mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
@@ -429,6 +432,39 @@ export function imageExtFor(relPath: string): string | null {
   if (!m) return null;
   const ext = m[1].toLowerCase();
   return IMAGE_EXTS.has(ext) ? ext : null;
+}
+
+/** Whether a caller-supplied ref is safe as a positional git argument. A
+ *  leading dash would be read as an option (`--output=<file>` makes
+ *  `git log` write a file); real branch names can't start with one. */
+export function isRefArg(ref: unknown): ref is string {
+  return typeof ref === 'string' && ref.length > 0 && !ref.startsWith('-');
+}
+
+/** Tracked files, as real paths. `-z` because without it git quotes any
+ *  path with non-ASCII characters (`"caf\303\251.ts"`). */
+export async function listTrackedFiles(cwd: string): Promise<string[]> {
+  return (await git(['ls-files', '-z'], cwd)).split('\0').filter(Boolean);
+}
+
+/**
+ * Throw away one file's changes. Untracked files and files staged as new
+ * (not in HEAD) are deleted, since they didn't exist before; a staged change
+ * is reset to HEAD in both the index and the working tree; an unstaged change
+ * is reset to the index.
+ */
+export async function revertFile(cwd: string, relPath: string, staged: boolean): Promise<void> {
+  const status = await git(['status', '--porcelain', '--', relPath], cwd);
+  if (status.trimStart().startsWith('??')) {
+    await fs.rm(path.join(cwd, relPath), { force: true, recursive: true });
+  } else if (staged && status.startsWith('A')) {
+    // `git checkout HEAD -- <path>` fails here: the path isn't in HEAD.
+    await git(['rm', '-f', '-q', '--', relPath], cwd);
+  } else if (staged) {
+    await git(['checkout', 'HEAD', '--', relPath], cwd);
+  } else {
+    await git(['checkout', '--', relPath], cwd);
+  }
 }
 
 /** Stage a single path (git add). */
@@ -525,6 +561,7 @@ export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
 /** Commits on HEAD that aren't on the base branch, newest first.
  *  Falls back to origin/<base> when the base has no local ref. */
 export async function branchCommits(cwd: string, base: string): Promise<BranchCommit[]> {
+  if (!isRefArg(base)) return [];
   for (const ref of [base, `origin/${base}`]) {
     try {
       const raw = await git(['log', '--format=%s%x1f%b%x1e', `${ref}..HEAD`], cwd);

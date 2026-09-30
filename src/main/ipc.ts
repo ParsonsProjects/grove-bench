@@ -12,7 +12,7 @@ import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listTrackedFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -129,7 +129,8 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
       paths.add(e.filePath);
       if (e.origPath) paths.add(e.origPath);
     }
-    const numstatArgs = ['diff', base, '--numstat'];
+    // Unquoted paths, so non-ASCII names match the -z status entries.
+    const numstatArgs = ['-c', 'core.quotePath=false', 'diff', base, '--numstat'];
     if (paths.size <= 200) numstatArgs.push('--', ...paths);
     const numstatRaw = await git(numstatArgs, cwd);
     const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
@@ -852,13 +853,21 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {
+  ipcMain.handle(IPC.SESSION_PREVIEWS, async (_event, sessionIds: string[]) => {
     const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
+    // A stopped conversation's preview parses its whole event log, and the
+    // sidebar asks for all of them at startup. Yield now and then, as the
+    // cross-conversation search does, so terminals and agent output keep flowing.
+    let sliceStart = performance.now();
     for (const id of sessionIds ?? []) {
       try {
         previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
       } catch (e) {
         logger.warn(`[session-previews] preview failed for ${id}:`, e);
+      }
+      if (performance.now() - sliceStart > 16) {
+        await new Promise((resolve) => setImmediate(resolve));
+        sliceStart = performance.now();
       }
     }
     return previews;
@@ -880,8 +889,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const output = await git(['ls-files'], worktree.path);
-    const files = output.split('\n').map(l => l.trim()).filter(Boolean);
+    const files = await listTrackedFiles(worktree.path);
 
     // Extract unique directories from file paths
     const dirs = new Set<string>();
@@ -978,20 +986,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
-    // Check if the file is untracked (git checkout won't work for untracked files)
-    const statusRaw = await git(['status', '--porcelain', '--', relPath], worktree.path);
-    const isUntracked = statusRaw.trimStart().startsWith('??');
-
-    if (isUntracked) {
-      // Delete untracked file
-      await fs.rm(resolved, { force: true, recursive: true });
-    } else if (staged) {
-      // Reset both index and working tree for staged files
-      await git(['checkout', 'HEAD', '--', relPath], worktree.path);
-    } else {
-      await git(['checkout', '--', relPath], worktree.path);
-    }
+    const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    await revertFile(worktree.path, relPath, staged === true);
   });
 
   ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }): Promise<FileDiffResult> => {
@@ -1047,8 +1043,9 @@ export function registerHandlers() {
       if (staged) {
         content = await indexFileContent(worktree.path, relPath);
       } else {
+        if ((await fs.stat(resolved)).size > 4 * 1024 * 1024) return null;
         const buf = await fs.readFile(resolved);
-        if (buf.length > 4 * 1024 * 1024 || looksBinary(buf)) return null;
+        if (looksBinary(buf)) return null;
         content = buf.toString('utf-8');
       }
       const lines = content.split('\n');
@@ -1724,19 +1721,22 @@ export function registerHandlers() {
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {
       // Return a listing of tracked files under this directory
-      const output = await git(['ls-files'], worktree.path);
       const prefix = path.relative(worktree.path, resolved).replace(/\\/g, '/');
-      const entries = output.split('\n').map(l => l.trim()).filter(Boolean)
+      const entries = (await listTrackedFiles(worktree.path))
         .filter(f => f.startsWith(prefix ? prefix + '/' : ''));
       return entries.join('\n');
     }
-    const buf = await fs.readFile(resolved);
-    // Cap at 100KB
+    // Cap at 100KB, reading no more than that.
     const maxBytes = 100 * 1024;
-    if (buf.length > maxBytes) {
-      return buf.subarray(0, maxBytes).toString('utf-8') + '\n... (truncated at 100KB)';
+    const handle = await fs.open(resolved, 'r');
+    try {
+      const buf = Buffer.alloc(Math.min(stat.size, maxBytes));
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+      const text = buf.subarray(0, bytesRead).toString('utf-8');
+      return stat.size > maxBytes ? text + '\n... (truncated at 100KB)' : text;
+    } finally {
+      await handle.close();
     }
-    return buf.toString('utf-8');
   });
 
   // ─── Auto-updater ───
