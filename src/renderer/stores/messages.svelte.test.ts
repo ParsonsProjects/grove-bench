@@ -2135,3 +2135,45 @@ describe('appendToPrompt', () => {
     expect(messageStore.promptInsertBySession[SID].nonce).toBe(2);
   });
 });
+
+describe('findMessageForEvent', () => {
+  it('finds a message that arrived live by its event\'s uuid', async () => {
+    const id = 'search-live';
+    messageStore.addUserMessage(id, 'live prompt');
+    messageStore.ingestEvent(id, { type: 'user_message', text: 'live prompt', uuid: 'u-live' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'reply', uuid: 'a-live' } as AgentEvent);
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [{ type: 'user_message', text: 'live prompt', uuid: 'u-live' }], totalCount: 8, startIndex: 7,
+    } as never);
+
+    const found = await messageStore.findMessageForEvent(id, 7);
+
+    const target = messageStore.getMessages(id).find((m) => m.kind === 'user');
+    expect(found).toBe(target!.id);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledWith(id, 1, 8);
+    // Stamped: the next lookup needs no fetch.
+    expect(messageStore.getEventIndexForMessageId(id, target!.id)).toBe(7);
+    messageStore.destroySession(id);
+  });
+});
+
+describe('/clear that never happened', () => {
+  it('does not wipe the chat at a later start, and puts a follow-up back in the prompt', () => {
+    const id = 'clear-failed';
+    messageStore.addUserMessage(id, 'keep me');
+    messageStore.clearAndSend(id, 'then do this');
+
+    // Main: not delivered.
+    messageStore.ingestEvent(id, { type: 'error', message: 'Message not delivered' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'process_exit' } as AgentEvent);
+    expect(messageStore.getDraft(id)).toContain('then do this');
+
+    // Much later: a restart or wake.
+    messageStore.ingestEvent(id, { type: 'system_init', model: 'opus', tools: [], sessionId: 'p1' } as unknown as AgentEvent);
+
+    expect(messageStore.getMessages(id).some((m) => m.kind === 'user' && (m as { text: string }).text === 'keep me')).toBe(true);
+    expect(mockGroveBench.clearEventHistory).not.toHaveBeenCalled();
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalledWith(id, 'then do this');
+    messageStore.destroySession(id);
+  });
+});

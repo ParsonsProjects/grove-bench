@@ -137,7 +137,7 @@
    *  can re-resolve a stale index or fall back). */
   async function jumpToEventIndex(eventIndex: number): Promise<boolean> {
     await messageStore.loadOlderUntil(sessionId, eventIndex);
-    const id = messageStore.findMessageIdForEventIndex(sessionId, eventIndex);
+    const id = await messageStore.findMessageForEvent(sessionId, eventIndex);
     if (!id) return false;
 
     // The target may be hidden by the current view mode (thinking or a

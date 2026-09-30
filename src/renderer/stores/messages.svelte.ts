@@ -934,6 +934,38 @@ class MessageStore {
     return bestId;
   }
 
+  /**
+   * The message a search hit points at. Messages built from history carry
+   * their event index; one that arrived live doesn't, so for a hit past the
+   * last stamped index the event is fetched and matched by its uuid or tool
+   * use id (and stamped, so the next jump needs no fetch). Falls back to
+   * findMessageIdForEventIndex when nothing matches.
+   */
+  async findMessageForEvent(sessionId: string, eventIndex: number): Promise<string | null> {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    let lastStamped = -1;
+    for (const ei of idx?.values() ?? []) if (ei > lastStamped) lastStamped = ei;
+    if (eventIndex > lastStamped) {
+      try {
+        const page = await window.groveBench.getEventHistoryPage(sessionId, 1, eventIndex + 1);
+        const event = page.startIndex === eventIndex ? page.events[0] : undefined;
+        const uuid = event && 'uuid' in event ? event.uuid : undefined;
+        const toolUseId = event && 'toolUseId' in event ? event.toolUseId : undefined;
+        const match = (uuid || toolUseId)
+          ? (this.messagesBySession[sessionId] ?? []).findLast((m) =>
+            (!!uuid && 'uuid' in m && m.uuid === uuid) || (!!toolUseId && 'toolUseId' in m && m.toolUseId === toolUseId))
+          : undefined;
+        if (match) {
+          let map = this.sourceIndexBySession.get(sessionId);
+          if (!map) { map = new Map(); this.sourceIndexBySession.set(sessionId, map); }
+          map.set(match.id, eventIndex);
+          return match.id;
+        }
+      } catch { /* fall back below */ }
+    }
+    return this.findMessageIdForEventIndex(sessionId, eventIndex);
+  }
+
   /** Inverse of findMessageIdForEventIndex: the stable source event index a
    *  message was stamped with during replay/pagination, or null for live or
    *  otherwise unstamped messages. Lets bookmark capture anchor a selection to
@@ -1293,6 +1325,7 @@ class MessageStore {
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
+        this.dropPendingClear(sessionId);
         this.setIsRunning(sessionId, false);
         delete this.awaitingResponse[sessionId];
         // If the agent exited before system_init, unlock the input
@@ -1823,6 +1856,21 @@ class MessageStore {
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     window.groveBench.sendMessage(sessionId, command);
+  }
+
+  /** The agent stopped with a /clear still pending: it was not delivered (main
+   *  reports that with error + process_exit), or the agent ended before the
+   *  cleared conversation started. Either way it didn't happen, so the next
+   *  system_init (a restart or wake, maybe much later) must not wipe the chat.
+   *  A message meant for after the clear goes back to the prompt. */
+  private dropPendingClear(sessionId: string) {
+    if (!this.pendingClear[sessionId]) return;
+    delete this.pendingClear[sessionId];
+    const message = this.pendingMessageAfterClear[sessionId];
+    if (message) {
+      delete this.pendingMessageAfterClear[sessionId];
+      this.appendToPrompt(sessionId, message);
+    }
   }
 
   /** Clear the conversation and send a message once the new session is ready. */
