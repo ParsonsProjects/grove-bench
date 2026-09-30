@@ -520,7 +520,12 @@ describe('ChangesReviewPanel with grove characters', () => {
 });
 
 describe('ChangesReviewPanel — commit and push errors', () => {
-  afterEach(() => prStore.clear(SID));
+  afterEach(() => {
+    prStore.clear(SID);
+    // A good commit schedules a git status refresh. Cancel it, or it lands in
+    // a later test and swaps that test's files for the mock's empty list.
+    gitStatusStore.clear(SID);
+  });
 
   function renderStaged() {
     gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { staged: true })] } };
