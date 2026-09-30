@@ -31,7 +31,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
@@ -175,6 +175,9 @@ export function registerHandlers() {
     // A folder outside any repository comes back as 'folder' and is added
     // as a plain folder.
     const picked = await inspectProjectFolder(result.filePaths[0]);
+    // Remembered from the start, so it survives a restart before it has
+    // any conversations.
+    rememberProject(picked.path);
 
     if (picked.kind === 'git') {
       // Clean up any orphan worktrees from previous crashes
@@ -206,6 +209,7 @@ export function registerHandlers() {
     if (activeSessions.length > 0) {
       throw new Error('Cannot remove a project while it has active conversations');
     }
+    forgetProject(repoPath);
 
     if (await projectKind(repoPath) === 'git') {
       const orphans = await worktreeManager.cleanupOrphans(repoPath);
@@ -646,7 +650,7 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.WORKTREE_LIST_REPOS, async () => {
-    return worktreeManager.listRepos();
+    return listProjects(await worktreeManager.listRepos());
   });
 
   // ─── Prerequisites ───

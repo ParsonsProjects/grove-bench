@@ -17,11 +17,12 @@
 
 Everything below is what the code does now, so the plan can be checked against it.
 
-- **A project has no identity of its own.** The sidebar's project list is derived
-  from the worktree manifest: `listRepos()` in `src/main/worktree-manager.ts`
-  collects the distinct `repoPath` values of manifest entries. A repository with
-  no conversations disappears on restart; the renderer only keeps it in memory
-  (`addRepo` in `src/renderer/stores/sessions.svelte.ts`).
+- **A project is only a remembered path.** `app-state.json` keeps the list of
+  added projects in order (`projects`, via `rememberProject()` and
+  `listProjects()` in `src/main/app-state.ts`), merged with the distinct
+  `repoPath` values of manifest entries (`listRepos()` in
+  `src/main/worktree-manager.ts`). A project with no conversations stays until
+  it is removed. There is still no record with a name, kind or settings.
 - **Adding a project no longer requires git.** The folder picker in
   `src/main/ipc.ts` calls `inspectProjectFolder()` (`src/main/project-path.ts`),
   which returns a git repository's top level or a plain `folder`. The renderer
@@ -146,11 +147,12 @@ A minimal version, without the `Project` record:
   rewind dialog resets only the conversation; git status, sync and PR lookups
   return empty for `noGit` conversations. A missing or too-old git is warned
   about only at the top of the Changes tab (`GitNotice`), not app-wide.
-- **Orphan sweep.** Phase 3 of the startup sweep keeps a `noGit` entry while its
-  folder exists, instead of dropping it for not being a repository.
-- **Not done.** No `Project` record, so a folder project with no conversations
-  is still forgotten at restart, like a git one. Git projects also get a
-  heads-up on the draft screen when git has no name and email.
+- **Orphan sweep.** Phase 3 of the startup sweep drops a direct entry only when
+  its folder is gone, so a `noGit` entry isn't dropped for not being a
+  repository, and a broken git at launch drops nothing.
+- **Not done.** No `Project` record with a kind or settings; the path list in
+  `app-state.json` stands in for it. Git projects also get a heads-up on the
+  draft screen when git has no name and email.
 
 ## Goal 2: one conversation, several repositories
 
