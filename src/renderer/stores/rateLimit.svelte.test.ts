@@ -12,6 +12,15 @@ describe('rateLimitStore', () => {
     expect(rateLimitStore.get('unknown')).toBeNull();
   });
 
+  it('drops a status once its window has reset, such as one replayed from old history', () => {
+    const now = Math.floor(Date.now() / 1000);
+    rateLimitStore.set(SID, { status: 'rejected', resetsAt: now - 3600 });
+    expect(rateLimitStore.get(SID)).toBeNull();
+
+    rateLimitStore.set(SID, { status: 'rejected', resetsAt: now + 3600 });
+    expect(rateLimitStore.get(SID)?.status).toBe('rejected');
+  });
+
   it('stores and returns rate limit state', () => {
     rateLimitStore.set(SID, { status: 'allowed_warning', utilization: 0.85 });
     const rl = rateLimitStore.get(SID);
