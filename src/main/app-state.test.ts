@@ -14,7 +14,7 @@ vi.mock('node:fs', () => ({
 
 import {
   loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
-  saveKnownSkills, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
+  saveKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog,
   mergeProjects, listProjects, rememberProject, forgetProject,
 } from './app-state.js';
@@ -83,6 +83,12 @@ describe('validateAppState', () => {
     expect(s.unreadSessionIds).toEqual(['u1']);
   });
 
+  it('keeps known collapsed-panel flags and drops the rest', () => {
+    const s = validateAppState({ collapsedPanels: { sidebar: true, changesFiles: 'yes', later: true } });
+    expect(s.collapsedPanels).toEqual({ sidebar: true });
+    expect(validateAppState({ collapsedPanels: 'all' }).collapsedPanels).toBeUndefined();
+  });
+
   it('drops activeTabId, which older versions saved', () => {
     expect(validateAppState({ activeTabId: 'a', openTabIds: ['a'] })).not.toHaveProperty('activeTabId');
   });
@@ -136,6 +142,18 @@ describe('debounced writers', () => {
     saveUnreadSessionIds(['s1', 's2']);
     flushPendingSaves();
     expect(loadUnreadSessionIds()).toEqual(['s1', 's2']);
+  });
+
+  it('saves collapsed panels, cleaned, and ignores junk from the renderer', () => {
+    useDisk(undefined);
+    saveCollapsedPanels({ sidebar: true, bogus: true });
+    flushPendingSaves();
+    expect(loadAppState().collapsedPanels).toEqual({ sidebar: true });
+
+    mockWriteFileSync.mockClear();
+    saveCollapsedPanels('everything');
+    flushPendingSaves();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
   it('write-through helpers merge into the existing file', () => {

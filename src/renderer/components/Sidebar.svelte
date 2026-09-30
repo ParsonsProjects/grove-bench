@@ -34,6 +34,8 @@
   import AgentSprite from './AgentSprite.svelte';
   import StatusDot from './StatusDot.svelte';
   import { mapLimit } from '../lib/map-limit.js';
+  import PanelToggle from './PanelToggle.svelte';
+  import { panelStore } from '../stores/panels.svelte.js';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
   import { onMount, untrack } from 'svelte';
 
@@ -53,6 +55,11 @@
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
   let resizing = $state(false);
+  // Folded down to a rail: the open conversations' status marks and the
+  // footer's buttons. The full sidebar stays mounted (hidden) so its scroll
+  // position and filters are still there when it opens again.
+  const RAIL_WIDTH = 48;
+  let collapsed = $derived(panelStore.isCollapsed('sidebar'));
 
   onMount(async () => {
     let savedWidth: number | null;
@@ -674,8 +681,57 @@
 
 <aside
   class="relative border-r border-sidebar-border flex flex-col bg-sidebar shrink-0"
-  style="width: {sidebarWidth}px"
+  style="width: {collapsed ? RAIL_WIDTH : sidebarWidth}px"
 >
+  <!-- Bookmarks, memory, clean-up and settings: in the footer, or down the rail -->
+  {#snippet footerTools()}
+    <Button
+      onclick={() => bookmarkStore.toggleDrawer()}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Bookmarks (Ctrl+B)"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+    </Button>
+    <Button
+      onclick={() => memoryStore.panelOpen = true}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Project Memory"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
+    </Button>
+    <Button
+      onclick={openCleanup}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Clean up old conversations"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
+    </Button>
+    <Button
+      onclick={() => showSettings = true}
+      variant="ghost"
+      size="sm"
+      class="px-2 shrink-0"
+      title="Settings"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </Button>
+  {/snippet}
+
+  <!-- A conversation's status: its grove character, or a dot in the same colour -->
+  {#snippet statusMark(session: (typeof store.sessions)[number], isDestroying: boolean, repoColor: string | null)}
+    {#if settingsStore.current.groveCharacters}
+      <AgentSprite state={sessionSpriteState(session, isDestroying)} seed={session.id} projectColor={repoColor} />
+    {:else}
+      <StatusDot state={sessionSpriteState(session, isDestroying)} />
+    {/if}
+  {/snippet}
+
   <!-- Reusable session row, shared by the Conversations list and the Projects tree -->
   {#snippet sessionRow(session: (typeof store.sessions)[number], showProject: boolean, labelOverride: string | null)}
     {@const isDestroying = destroying.has(session.id)}
@@ -684,7 +740,6 @@
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
     {@const changedCount = isStopped ? 0 : gitStatusStore.getStatus(session.id).entries.length}
-    {@const spriteState = sessionSpriteState(session, isDestroying)}
     {@const label = labelOverride ?? sessionRowLabel(session)}
     <!-- PR data is only polled for open tabs; anything else would be stale, so it stays neutral. -->
     {@const pr = store.isOpenTab(session) ? prStore.getPr(session.id) : null}
@@ -705,11 +760,7 @@
       >
         <!-- Line 1 is the conversation's name, so it gets the width; the project goes on line 2. -->
         <div class="w-full flex items-center gap-2 min-w-0">
-          {#if settingsStore.current.groveCharacters}
-            <AgentSprite state={spriteState} seed={session.id} projectColor={repoColor} />
-          {:else}
-            <StatusDot state={spriteState} />
-          {/if}
+          {@render statusMark(session, isDestroying, repoColor)}
           {#if session.direct}
             <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2z"/><path d="M12 8h6v2h-6z"/></svg>
           {:else}
@@ -792,20 +843,81 @@
     </button>
   {/snippet}
 
+  {#if collapsed}
+    <!-- Rail: expand, search, the open conversations, the footer's buttons -->
+    <div class="flex flex-col items-center gap-1 pt-3 pb-2 shrink-0 border-b border-sidebar-border" data-rail>
+      <PanelToggle panel="sidebar" label="sidebar" />
+      <button
+        onclick={() => store.finderOpen = true}
+        class="p-1.5 text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
+        title="Search conversations (Ctrl+R)"
+        aria-label="Search conversations"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto overflow-x-hidden py-2">
+      {#if draftStore.draft}
+        <button
+          type="button"
+          onclick={() => draftStore.show()}
+          class="w-full flex justify-center py-2 transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          title="New conversation, not started yet"
+          aria-label="New conversation, not started yet"
+        >
+          <span class="w-2 h-2 border border-dashed border-muted-foreground"></span>
+        </button>
+      {/if}
+      <!-- Every open conversation: the triage filter isn't on the rail to explain a shorter list. -->
+      {#each store.openConversations as session (session.id)}
+        {@const isDestroying = destroying.has(session.id)}
+        {@const subtitle = rowSubtitle(session)}
+        {@const name = `${store.repoDisplayName(session.repoPath)} / ${sessionRowLabel(session)}`}
+        <button
+          onclick={() => { if (!isDestroying) focusSession(session.id); }}
+          oncontextmenu={(e) => { if (isDestroying) { e.preventDefault(); return; } openContextMenu(e, session.id); }}
+          disabled={isDestroying}
+          title={subtitle ? `${name}\n${subtitle.text}` : name}
+          aria-label={name}
+          data-rail-session={session.id}
+          class="w-full flex justify-center py-2 transition-colors
+            {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+        >
+          {@render statusMark(session, isDestroying, getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors))}
+        </button>
+      {/each}
+    </div>
+    <div class="py-3 border-t border-sidebar-border flex flex-col items-center gap-1 shrink-0">
+      <Button
+        onclick={() => openNewAgent()}
+        disabled={!store.canCreate}
+        size="sm"
+        class="px-2"
+        title="New conversation (Ctrl+N)"
+        aria-label="New conversation"
+      >
+        <MessageSquarePlusIcon aria-hidden="true" />
+      </Button>
+      <div class="w-8"><AddRepoButton compact /></div>
+      {@render footerTools()}
+    </div>
+  {/if}
+
   <!-- Search: opens the session finder (titles + full conversation content) -->
-  <div class="px-3 pt-3">
+  <div class="px-3 pt-3 {collapsed ? 'hidden' : 'flex'} items-center gap-1">
     <button
       onclick={() => store.finderOpen = true}
-      class="w-full flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
+      class="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 bg-sidebar-accent/40 border border-sidebar-border text-muted-foreground/70 hover:text-foreground hover:bg-sidebar-accent transition-colors"
       title="Search conversations (Ctrl+R)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <span class="text-xs truncate">Search conversations…</span>
       <span class="ml-auto text-[10px] text-muted-foreground/40 shrink-0">Ctrl+R</span>
     </button>
+    <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
 
-  <div class="flex-1 overflow-auto px-3 py-3">
+  <div class="flex-1 overflow-auto px-3 py-3 {collapsed ? 'hidden' : ''}">
     <!-- Triage filter: what needs me, what is working, what finished while I was away.
          Click a chip to show only those; click it again to show all. -->
     <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter conversations">
@@ -896,18 +1008,18 @@
       {@const branchGroups = getBranchGroups(repo)}
       {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
       {@const rc = repoCounts(repo)}
-      {@const collapsed = isRepoCollapsed(collapsedRepos, repo)}
+      {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
       <div class="mb-3">
         <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
         <div class="flex items-center justify-between group px-1 py-1">
           <button
             type="button"
             onclick={() => toggleRepoCollapsed(repo)}
-            aria-expanded={!collapsed}
+            aria-expanded={!repoCollapsed}
             class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
-            title={collapsed ? 'Expand project' : 'Collapse project'}
+            title={repoCollapsed ? 'Expand project' : 'Collapse project'}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={collapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={repoCollapsed ? 'transform: rotate(-90deg)' : ''}><path d="m6 9 6 6 6-6"/></svg>
             {#if repoColor}
               <span class="w-2 h-2 shrink-0" style="background-color: {repoColor}"></span>
             {/if}
@@ -951,7 +1063,7 @@
         </div>
 
         <!-- The project's conversations, grouped by branch -->
-        {#if !collapsed}
+        {#if !repoCollapsed}
           {#each branchGroups as [branch, sessions] (branch)}
             {#if sessions.length === 1}
               {@render sessionRow(sessions[0], false, null)}
@@ -990,7 +1102,7 @@
   </div>
 
   <!-- Bottom controls -->
-  <div class="px-3 py-3 border-t border-sidebar-border flex flex-col gap-2">
+  <div class="px-3 py-3 border-t border-sidebar-border {collapsed ? 'hidden' : 'flex'} flex-col gap-2">
     <div class="flex gap-2">
       <div class="flex-1 min-w-0">
         <AddRepoButton {compact} />
@@ -1011,42 +1123,7 @@
       </Button>
     </div>
     <div class="flex justify-between px-1">
-      <Button
-        onclick={() => bookmarkStore.toggleDrawer()}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Bookmarks (Ctrl+B)"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
-      </Button>
-      <Button
-        onclick={() => memoryStore.panelOpen = true}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Project Memory"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c-1.5 0-3 .8-4 2s-1.5 3-2.5 3.5C4 8.5 3 10 3 12c0 1.5.5 3 1.5 4s1 2.5.5 3.5c.5 1.5 2 2.5 3.5 2.5H12"/><path d="M12 2c1.5 0 3 .8 4 2s1.5 2.5 2.5 3c1.5 1 2 2.5 2 4"/><path d="M12 2v20"/><path d="M12 8h5"/><path d="M12 14h4"/><circle cx="17.5" cy="8" r="1.2" fill="currentColor"/><circle cx="16.5" cy="14" r="1.2" fill="currentColor"/></svg>
-      </Button>
-      <Button
-        onclick={openCleanup}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Clean up old conversations"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 11 9-9"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2Z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.4-1.4"/></svg>
-      </Button>
-      <Button
-        onclick={() => showSettings = true}
-        variant="ghost"
-        size="sm"
-        class="px-2 shrink-0"
-        title="Settings"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-      </Button>
+      {@render footerTools()}
     </div>
   </div>
 
@@ -1054,7 +1131,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     onpointerdown={startResize}
-    class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-10 -mr-0.5
+    class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-10 -mr-0.5 {collapsed ? 'hidden' : ''}
       {resizing ? 'bg-primary/40' : 'hover:bg-primary/25'} transition-colors"
     title="Drag to resize sidebar"
   ></div>

@@ -313,6 +313,7 @@ const api: Record<string, unknown> = {
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
   getSidebarWidth: async () => 320,
+  getCollapsedPanels: async () => ({}),
   getUnreadSessions: async () => [],
   setUnreadSessions: () => {},
   onAppError: () => () => {},

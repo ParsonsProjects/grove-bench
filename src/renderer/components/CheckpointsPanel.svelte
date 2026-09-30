@@ -5,6 +5,8 @@
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { conversationAgent } from '../lib/session-sprite-state.js';
+  import { panelStore } from '../stores/panels.svelte.js';
+  import PanelToggle from './PanelToggle.svelte';
   import type { DiffStats, GitStatusEntry } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -20,6 +22,8 @@
   let diffMode = $derived(checkpointStore.getDiffMode(sessionId));
   /** The conversation's agent on its bench above the empty messages. */
   let groveAgent = $derived(settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null);
+  /** The turn list folded down to a rail of turn numbers. */
+  let listCollapsed = $derived(panelStore.isCollapsed('checkpointList'));
   let rewinding = $state(false);
   let error = $state('');
 
@@ -72,9 +76,13 @@
   let comparisonLabel = $derived(
     isFullThread ? 'all turns' : `checkpoint #${selectedCheckpoint?.turn ?? '?'}, ${diffMode === 'turn' ? 'this turn' : 'since here'}`,
   );
+  // The first load has no file list yet: say so in the diff pane, next to the
+  // (empty) file sidebar, rather than swapping the whole layout out.
   let emptyTitle = $derived(
-    files?.scopeError
-      ?? (isFullThread ? 'No file changes in this conversation' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
+    isDiffLoading && !files
+      ? 'Loading diff...'
+      : files?.scopeError
+        ?? (isFullThread ? 'No file changes in this conversation' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
   );
 </script>
 
@@ -105,55 +113,91 @@
 {:else}
   <div class="flex-1 flex overflow-hidden">
     <!-- Left: Checkpoint list -->
-    <div class="w-56 flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden">
-      <div class="border-b border-border px-3 py-2 shrink-0">
-        <span class="text-xs text-muted-foreground">{checkpoints.length} checkpoint{checkpoints.length !== 1 ? 's' : ''}</span>
-      </div>
-
-      <!-- Full-thread cumulative diff entry -->
-      <button
-        onclick={() => checkpointStore.selectFullThread(sessionId)}
-        class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border transition-colors
-          {isFullThread ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
-        title="Cumulative diff of everything changed since the conversation started"
-      >
-        <svg class="w-3 h-3 shrink-0 mt-0.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
-        </svg>
-        <span class="flex-1 min-w-0 truncate text-foreground/80 leading-tight font-medium">All turns</span>
-        {#if hasAnyChanges}
-          {@render statsBadge(history.total)}
-        {/if}
-      </button>
-
-      <div class="flex-1 overflow-y-auto">
-        {#each checkpoints as cp, i (cp.uuid)}
-          {@const isSelected = cp.uuid === selectedUuid}
-          {@const text = getMessageText(cp.uuid)}
-          {@const stats = statsByUuid.get(cp.uuid)}
-          {#if i === firstBeforeClearIdx}
-            <div
-              class="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70 bg-muted/30 border-b border-border/50"
-              title="Turns from a conversation that was cleared with /clear. Their files can still be restored."
+    <div class="{listCollapsed ? 'w-9' : 'w-56'} flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden">
+      {#if listCollapsed}
+        <!-- Rail: expand button, All turns, one turn number per checkpoint -->
+        <div class="border-b border-border py-1.5 shrink-0 flex justify-center">
+          <PanelToggle panel="checkpointList" label="checkpoint list" />
+        </div>
+        <button
+          onclick={() => checkpointStore.selectFullThread(sessionId)}
+          class="w-full h-7 flex items-center justify-center border-b border-border border-l-2 transition-colors
+            {isFullThread ? 'bg-sidebar-accent border-l-primary' : 'border-l-transparent hover:bg-accent/30'}"
+          title="All turns: everything changed since the conversation started"
+          aria-label="All turns"
+        >
+          <svg class="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
+          </svg>
+        </button>
+        <div class="flex-1 overflow-y-auto">
+          {#each checkpoints as cp, i (cp.uuid)}
+            {#if i === firstBeforeClearIdx}
+              <div class="h-1 bg-muted/60" title="Turns below are from before /clear"></div>
+            {/if}
+            <button
+              onclick={() => checkpointStore.selectCheckpoint(sessionId, cp.uuid)}
+              class="w-full h-7 flex items-center justify-center text-[10px] font-mono border-b border-border/50 border-l-2 transition-colors
+                {cp.uuid === selectedUuid ? 'bg-sidebar-accent border-l-primary text-foreground' : 'border-l-transparent hover:bg-accent/30 text-muted-foreground'}
+                {cp.beforeClear && cp.uuid !== selectedUuid ? 'opacity-60' : ''}"
+              title="#{cp.turn}: {getMessageText(cp.uuid)}"
+              data-turn={cp.turn}
             >
-              Before /clear
-            </div>
+              {cp.turn}
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <div class="border-b border-border pl-3 pr-1.5 py-1.5 shrink-0 flex items-center justify-between">
+          <span class="text-xs text-muted-foreground">{checkpoints.length} checkpoint{checkpoints.length !== 1 ? 's' : ''}</span>
+          <PanelToggle panel="checkpointList" label="checkpoint list" />
+        </div>
+
+        <!-- Full-thread cumulative diff entry -->
+        <button
+          onclick={() => checkpointStore.selectFullThread(sessionId)}
+          class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border transition-colors
+            {isFullThread ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
+          title="Cumulative diff of everything changed since the conversation started"
+        >
+          <svg class="w-3 h-3 shrink-0 mt-0.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
+          </svg>
+          <span class="flex-1 min-w-0 truncate text-foreground/80 leading-tight font-medium">All turns</span>
+          {#if hasAnyChanges}
+            {@render statsBadge(history.total)}
           {/if}
-          <button
-            onclick={() => checkpointStore.selectCheckpoint(sessionId, cp.uuid)}
-            class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border/50 transition-colors
-              {isSelected ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
-          >
-            <span class="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-mono leading-none mt-0.5">
-              #{cp.turn}
-            </span>
-            <span class="flex-1 min-w-0 truncate leading-tight {cp.beforeClear ? 'text-muted-foreground' : 'text-foreground/80'}">
-              {text.length > 80 ? text.slice(0, 80) + '...' : text}
-            </span>
-            {@render statsBadge(stats)}
-          </button>
-        {/each}
-      </div>
+        </button>
+
+        <div class="flex-1 overflow-y-auto">
+          {#each checkpoints as cp, i (cp.uuid)}
+            {@const isSelected = cp.uuid === selectedUuid}
+            {@const text = getMessageText(cp.uuid)}
+            {@const stats = statsByUuid.get(cp.uuid)}
+            {#if i === firstBeforeClearIdx}
+              <div
+                class="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70 bg-muted/30 border-b border-border/50"
+                title="Turns from a conversation that was cleared with /clear. Their files can still be restored."
+              >
+                Before /clear
+              </div>
+            {/if}
+            <button
+              onclick={() => checkpointStore.selectCheckpoint(sessionId, cp.uuid)}
+              class="w-full flex items-start gap-2 px-3 py-2 text-left text-xs border-b border-border/50 transition-colors
+                {isSelected ? 'bg-sidebar-accent border-l-2 border-l-primary' : 'hover:bg-accent/30'}"
+            >
+              <span class="shrink-0 bg-muted text-muted-foreground px-1.5 py-0.5 text-[10px] font-mono leading-none mt-0.5">
+                #{cp.turn}
+              </span>
+              <span class="flex-1 min-w-0 truncate leading-tight {cp.beforeClear ? 'text-muted-foreground' : 'text-foreground/80'}">
+                {text.length > 80 ? text.slice(0, 80) + '...' : text}
+              </span>
+              {@render statsBadge(stats)}
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
 
     <!-- Right: Detail pane -->
@@ -249,25 +293,20 @@
         {/if}
 
         <!-- Diff content: the shared review panel (file sidebar + diff) -->
-        {#if isDiffLoading && !files}
-          <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-            Loading diff...
-          </div>
-        {:else}
-          <ReviewDiffPanel
-            {sessionId}
-            {sourceKey}
-            entries={files?.entries ?? []}
-            loading={isDiffLoading}
-            changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
-            {loadDiff}
-            {loadFileLines}
-            onRefresh={() => checkpointStore.reloadFiles(sessionId)}
-            commentContext={comparisonLabel}
-            {emptyTitle}
-            emptyScene="checkpoints"
-          />
-        {/if}
+        <ReviewDiffPanel
+          {sessionId}
+          {sourceKey}
+          entries={files?.entries ?? []}
+          loading={isDiffLoading}
+          changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
+          {loadDiff}
+          {loadFileLines}
+          onRefresh={() => checkpointStore.reloadFiles(sessionId)}
+          commentContext={comparisonLabel}
+          {emptyTitle}
+          emptyScene="checkpoints"
+          panel="checkpointFiles"
+        />
       {/if}
     </div>
   </div>

@@ -108,6 +108,19 @@ vi.mock('./skill-suggestions.js', () => ({
   getCachedSuggestions: vi.fn(() => [{ id: 'cached' }]),
 }));
 
+// Images are saved by content hash in real use; here each gets a fixed name.
+const attachments = vi.hoisted(() => ({
+  saveImages: vi.fn(async (_id: string, images: { name?: string }[]) =>
+    images.map((img, i) => ({ file: `img${i}.png`, ...(img.name ? { name: img.name } : {}) }))),
+  removeImages: vi.fn(async () => {}),
+  pruneImages: vi.fn(async () => {}),
+  storeToolImages: vi.fn(async (_id: string, event: any) => {
+    const { imageData, ...rest } = event;
+    return { ...rest, images: imageData.map((_: unknown, i: number) => ({ file: `tool${i}.png` })) };
+  }),
+}));
+vi.mock('./attachments.js', () => attachments);
+
 // ─── Mock Adapter ───
 
 interface MockQueryControl {
@@ -770,6 +783,8 @@ describe('AgentSessionManager event processing', () => {
 
     expect(session.checkpoints.markCleared).toHaveBeenCalledWith('test-clear-cp', expect.any(String));
     expect(session.checkpoints.cleanup).not.toHaveBeenCalled();
+    // No event refers to the thread's images any more.
+    expect(attachments.removeImages).toHaveBeenCalledWith('test-clear-cp');
 
     await sessionManager.destroySession('test-clear-cp');
   });
@@ -1900,6 +1915,60 @@ describe('AgentSessionManager.sendMessage()', () => {
     await sessionManager.destroySession('test-send');
   });
 
+  it('saves attached images and records references to them, not the image data', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-send-images',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const images = [{ data: 'iVBOR', mediaType: 'image/png' as const, name: 'shot.png' }];
+    expect(await sessionManager.sendMessage('test-send-images', 'What is this?', images)).toBe(true);
+
+    expect(attachments.saveImages).toHaveBeenCalledWith('test-send-images', images);
+    const userMsgs = sessionManager.getEventHistory('test-send-images').filter((e) => e.type === 'user_message');
+    expect(userMsgs[0]).toMatchObject({ text: 'What is this?', images: [{ file: 'img0.png', name: 'shot.png' }] });
+    // The agent still gets the image data itself.
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'What is this?', images });
+
+    await sessionManager.destroySession('test-send-images');
+  });
+
+  it('records a tool result with references to the images the tool returned', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-tool-images',
+      branch: 'main',
+      cwd: '/repo',
+      repoPath: '/repo',
+      window: win,
+      adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({
+      type: 'tool_result', toolUseId: 'tu1', content: '', imageData: [{ data: 'iVBOR', mediaType: 'image/png' }],
+    } as any);
+
+    await vi.waitFor(() => {
+      const results = sessionManager.getEventHistory('test-tool-images').filter((e) => e.type === 'tool_result');
+      expect(results).toEqual([{ type: 'tool_result', toolUseId: 'tu1', content: '', images: [{ file: 'tool0.png' }] }]);
+    });
+    // Only tool results with images go through the save.
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Looks fine', uuid: 'a1' });
+    await vi.waitFor(() => expect(sessionManager.getEventHistory('test-tool-images').some((e) => e.type === 'assistant_text')).toBe(true));
+    expect(attachments.storeToolImages).toHaveBeenCalledTimes(1);
+
+    await sessionManager.destroySession('test-tool-images');
+  });
+
   it('returns false for non-existent session', async () => {
     expect(await sessionManager.sendMessage('nonexistent', 'hello')).toBe(false);
   });
@@ -2147,6 +2216,11 @@ describe('AgentSessionManager.rewindFiles()', () => {
     const remainingUserMsgs = session!.eventHistory.filter((e) => e.type === 'user_message');
     expect(remainingUserMsgs).toHaveLength(1);
     expect((remainingUserMsgs[0] as any).text).toBe('First message');
+
+    // Images only the rewound turns showed are deleted: pruned against what's left.
+    const [prunedId, keptEvents] = attachments.pruneImages.mock.calls.at(-1) as unknown as [string, AgentEvent[]];
+    expect(prunedId).toBe('test-rewind-history');
+    expect(keptEvents.filter((e) => e.type === 'user_message').map((e: any) => e.text)).toEqual(['First message']);
 
     await sessionManager.destroySession('test-rewind-history');
   });

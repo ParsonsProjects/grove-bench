@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
+import { userMessageLabel } from './message-label.js';
 import { approvalRequest, toolLabel } from './tool-names.js';
 import { oneLine, plainSnippet } from '../../shared/plain-text.js';
 
@@ -32,7 +33,11 @@ export function pendingPermissionTool(messages: ChatMessage[]): string | null {
 export function lastTextSnippet(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    const text = m.kind === 'text' || (m.kind === 'user' && !m.text.trim().startsWith('/')) ? snippet(m.text) : null;
+    // A user message reads as the chat shows it: attachment names, then the text.
+    const text =
+      m.kind === 'text' ? snippet(m.text)
+      : m.kind === 'user' && !m.text.trim().startsWith('/') ? snippet(userMessageLabel(m))
+      : null;
     if (text) return text;
   }
   return null;
@@ -42,7 +47,7 @@ export function lastTextSnippet(messages: ChatMessage[]): string | null {
  *  `maxLen` defaults to the sidebar row's length. */
 export function firstPromptSnippet(messages: ChatMessage[], maxLen = MAX_LEN): string | null {
   for (const m of messages) {
-    const text = m.kind === 'user' && !m.text.trim().startsWith('/') ? snippet(m.text, maxLen) : null;
+    const text = m.kind === 'user' && !m.text.trim().startsWith('/') ? snippet(userMessageLabel(m), maxLen) : null;
     if (text) return text;
   }
   return null;

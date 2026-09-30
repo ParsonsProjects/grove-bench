@@ -4,7 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment } from '../../shared/types.js';
+import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -171,10 +171,24 @@ export interface AdapterConfig {
 
 // ─── Running Query Handle ───
 
+/** Image data a tool returned, before the session manager saves it. */
+export interface ToolImageData {
+  /** base64-encoded image data (no data: prefix) */
+  data: string;
+  mediaType: ImageMediaType;
+}
+
+/** An event as an adapter yields it: an AgentEvent, except that a tool_result
+ *  carries the image data its tool returned. The session manager saves those
+ *  images and passes the event on with references instead (attachments.ts). */
+export type AdapterEvent =
+  | Exclude<AgentEvent, { type: 'tool_result' }>
+  | (Omit<Extract<AgentEvent, { type: 'tool_result' }>, 'images'> & { imageData?: ToolImageData[] });
+
 /** Represents a running agent query. Returned by adapter.start(). */
 export interface AgentQueryHandle {
   /** Async iterable of events from the agent */
-  events: AsyncIterable<AgentEvent>;
+  events: AsyncIterable<AdapterEvent>;
   /** Send a follow-up user message into the conversation */
   sendMessage(message: UserMessage): void;
   /** Abort the current query */

@@ -175,7 +175,7 @@ export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
   | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[] }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string }
@@ -185,7 +185,7 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string }
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
   | { type: 'status'; message: string }
   | { type: 'error'; message: string }
   | { type: 'process_exit'; exitCode?: number }
@@ -813,11 +813,22 @@ export interface SpellcheckMenuRequest {
 
 // ─── Image Attachment ───
 
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */
   data: string;
-  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  mediaType: ImageMediaType;
   name: string;
+}
+
+/** An image saved in a conversation's attachments folder (main/attachments.ts).
+ *  Events carry this instead of the image data so the event log stays small. */
+export interface StoredImage {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. Absent for images a tool returned. */
+  name?: string;
 }
 
 // ─── Plugins ───
@@ -853,6 +864,13 @@ export interface SessionSortState {
   key: 'name' | 'age';
   dir: 'asc' | 'desc';
 }
+
+/** Sidebars that fold down to a thin rail. The Changes and Checkpoints file
+ *  lists are separate so each tab keeps its own. */
+export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles'] as const;
+export type CollapsiblePanel = (typeof COLLAPSIBLE_PANELS)[number];
+/** Which panels are collapsed (persisted via app-state). Absent = open. */
+export type CollapsedPanels = Partial<Record<CollapsiblePanel, boolean>>;
 
 // ─── IPC API (exposed via contextBridge) ───
 
@@ -1182,6 +1200,8 @@ export interface GroveBenchAPI {
   setSessionSort(sort: SessionSortState): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
+  getCollapsedPanels(): Promise<CollapsedPanels>;
+  setCollapsedPanels(panels: CollapsedPanels): void;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
@@ -1637,6 +1657,8 @@ export const IPC = {
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
+  APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   /** Main → renderer: an uncaught main-process error. */

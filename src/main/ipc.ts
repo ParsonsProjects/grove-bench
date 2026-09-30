@@ -17,6 +17,7 @@ import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { removeImages } from './attachments.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -31,7 +32,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
@@ -483,6 +484,7 @@ export function registerHandlers() {
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
     bookmarks.removeBookmarksForSession(id); // cascade: no orphan bookmarks
+    void removeImages(id); // images shown in its Activity thread
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -705,20 +707,24 @@ export function registerHandlers() {
   // ─── Agent I/O ───
 
   ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
-    sessionManager.sendMessage(sessionId, content, images).then((ok) => {
-      if (!ok) {
-        // Session is dead or never connected — tell the user the prompt was
-        // not delivered, then unlock the renderer so it doesn't stay stuck in
-        // "Writing message".
-        const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
-        if (event.sender.isDestroyed()) return;
-        event.sender.send(channel, {
-          type: 'error',
-          message: 'Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.',
-        } as import('../shared/types.js').AgentEvent);
-        event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
-      }
-    });
+    // Tell the user the prompt was not delivered, then unlock the renderer
+    // so it doesn't stay stuck in "Writing message".
+    const notDelivered = (message: string) => {
+      const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+      if (event.sender.isDestroyed()) return;
+      event.sender.send(channel, { type: 'error', message } as import('../shared/types.js').AgentEvent);
+      event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
+    };
+    sessionManager.sendMessage(sessionId, content, images).then(
+      (ok) => {
+        // Session is dead or never connected
+        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.');
+      },
+      (err) => {
+        logger.warn(`[AGENT_SEND] session=${sessionId} failed:`, err);
+        notDelivered('Message not delivered: sending it failed. See the log for details, then send it again.');
+      },
+    );
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
@@ -1680,6 +1686,15 @@ export function registerHandlers() {
     if (typeof width === 'number' && Number.isFinite(width)) {
       saveSidebarWidth(Math.round(width));
     }
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => {
+    flushPendingSaves();
+    return loadAppState().collapsedPanels ?? {};
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
+    saveCollapsedPanels(panels);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {
