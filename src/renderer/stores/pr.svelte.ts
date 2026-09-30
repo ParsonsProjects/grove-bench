@@ -67,8 +67,10 @@ class PrStore {
   /** Watch state per session, per PR number. Kept per PR so switching the
    *  primary back and forth doesn't replay a PR's old feedback as new. */
   private watchStates = new Map<string, Map<number, PrWatchState>>();
-  /** Auto-fix attempts on the current head commit of the primary PR, per session. */
-  private autoFixAttempts = new Map<string, { prNumber: number; sha: string; attempts: number }>();
+  /** Auto-fix attempts on the primary PR since its CI was last green, per
+   *  session. Counted per PR, not per commit: each fix the agent pushes is a
+   *  new commit, so a per-commit count would never reach the limit. */
+  private autoFixAttempts = new Map<string, { prNumber: number; attempts: number }>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private sweeping = false;
   private getPolledSessionIds: (() => string[]) | null = null;
@@ -311,6 +313,11 @@ class PrStore {
     // whatever the previous primary had seen.
     const pr = this.getPr(sessionId);
     if (!pr) return;
+    // CI green again: auto-fix gets its full set of attempts back.
+    const checks = pr.checks;
+    if (checks && checks.failed === 0 && checks.pending === 0 && this.autoFixAttempts.get(sessionId)?.prNumber === pr.number) {
+      this.autoFixAttempts.delete(sessionId);
+    }
     let states = this.watchStates.get(sessionId);
     if (!states) {
       states = new Map();
@@ -333,18 +340,17 @@ class PrStore {
 
     if (event.kind === 'ci_failed') {
       if (auto.fixCi) {
-        const sha = this.getPr(sessionId)?.headSha ?? 'unknown';
         const prev = this.autoFixAttempts.get(sessionId);
-        const attempts = prev?.prNumber === prNumber && prev.sha === sha ? prev.attempts : 0;
+        const attempts = prev?.prNumber === prNumber ? prev.attempts : 0;
         if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
           this.addAlert(sessionId, prNumber, {
             kind: 'needs_human',
-            reason: `Auto-fix attempted ${attempts}× on this commit without CI going green — take a look`,
+            reason: `Auto-fix tried ${attempts} times on this PR and CI is still failing. Take a look`,
           });
           return;
         }
         if (this.fixCiWithAgent(sessionId)) {
-          this.autoFixAttempts.set(sessionId, { prNumber, sha, attempts: attempts + 1 });
+          this.autoFixAttempts.set(sessionId, { prNumber, attempts: attempts + 1 });
           return;
         }
       }

@@ -1464,7 +1464,7 @@
             <span class="text-muted-foreground w-14 shrink-0">Auto</span>
             <label
               class="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
-              title="When CI fails on a new commit, send a fix turn automatically — max 2 attempts per commit, then it asks for you"
+              title="When CI fails, send a fix turn automatically. After 2 tries without CI going green, it asks for you"
             >
               <Checkbox
                 class="size-3.5"
