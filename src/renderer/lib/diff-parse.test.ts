@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDiffLines } from './DiffView.svelte';
+import { parseDiffLines } from './diff-parse.js';
 
 describe('parseDiffLines', () => {
   it('keeps changed lines that start with --- or +++', () => {
