@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
+import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, canonicalizePowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint } from './agent-utils.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
@@ -300,6 +300,29 @@ describe('splitPowerShellCommand()', () => {
   });
 });
 
+describe('canonicalizePowerShellCommand()', () => {
+  it('swaps a leading alias, in any case, for the command it stands for', () => {
+    expect(canonicalizePowerShellCommand('rm -r ~')).toBe('Remove-Item -r ~');
+    expect(canonicalizePowerShellCommand('DEL ~')).toBe('Remove-Item ~');
+    expect(canonicalizePowerShellCommand('gci -Recurse')).toBe('Get-ChildItem -Recurse');
+    expect(canonicalizePowerShellCommand('% FullName')).toBe('ForEach-Object FullName');
+    expect(canonicalizePowerShellCommand('? Name -eq x')).toBe('Where-Object Name -eq x');
+    expect(canonicalizePowerShellCommand('  iex $payload')).toBe('  Invoke-Expression $payload');
+    expect(canonicalizePowerShellCommand('ls')).toBe('Get-ChildItem');
+  });
+
+  it('returns null when the first word is not an alias', () => {
+    expect(canonicalizePowerShellCommand('Remove-Item ~')).toBeNull();
+    expect(canonicalizePowerShellCommand('git status')).toBeNull();
+    expect(canonicalizePowerShellCommand('rmx ~')).toBeNull();
+    expect(canonicalizePowerShellCommand('')).toBeNull();
+  });
+
+  it('only swaps the first word', () => {
+    expect(canonicalizePowerShellCommand('echo rm ~')).toBe('Write-Output rm ~');
+  });
+});
+
 describe('checkToolRules()', () => {
   const rules = (...patterns: string[]) => patterns.map((pattern) => ({ pattern }));
   const shell = (allow: string[], deny: string[], command: string) =>
@@ -339,6 +362,11 @@ describe('checkToolRules()', () => {
 
   it('still denies an unsplittable command that a deny rule matches as a whole', () => {
     expect(shell(['shell'], ['shell(rm *)'], 'rm -rf $(pwd)')).toEqual({ behavior: 'deny', pattern: 'shell(rm *)' });
+  });
+
+  it('leaves Bash deny rules exact: no PowerShell aliases, case-sensitive', () => {
+    expect(shell([], ['shell(Remove-Item *)'], 'rm -rf ~')).toBeNull();
+    expect(shell([], ['shell(git push *)'], 'GIT PUSH origin')).toBeNull();
   });
 
   it('lets a rule for every shell command approve an unsplittable one, unless a deny rule could apply', () => {
@@ -388,6 +416,54 @@ describe('checkToolRules()', () => {
       expect(ps(['PowerShell'], [], loop)).toEqual({ behavior: 'allow' });
       expect(ps(['shell(*)'], [], loop)).toEqual({ behavior: 'allow' });
       expect(ps(['PowerShell'], ['PowerShell(Remove-Item *)'], loop)).toBeNull();
+    });
+
+    it('lets a deny rule for a cmdlet catch its aliases, in any case', () => {
+      for (const command of ['rm ~', 'del ~', 'ri ~', 'rd ~', 'erase ~', 'rmdir ~', 'remove-item ~', 'REMOVE-ITEM ~', 'Del ~']) {
+        expect(ps(['shell'], ['shell(Remove-Item *)'], command), command)
+          .toEqual({ behavior: 'deny', pattern: 'shell(Remove-Item *)' });
+        expect(ps(['PowerShell'], ['PowerShell(Remove-Item *)'], command), command)
+          .toEqual({ behavior: 'deny', pattern: 'PowerShell(Remove-Item *)' });
+      }
+      expect(ps(['shell'], ['shell(Get-ChildItem *)'], 'gci -Recurse')).toEqual({ behavior: 'deny', pattern: 'shell(Get-ChildItem *)' });
+      expect(ps(['shell'], ['shell(Get-ChildItem *)'], 'ls src')).toEqual({ behavior: 'deny', pattern: 'shell(Get-ChildItem *)' });
+      expect(ps(['shell'], ['shell(Get-ChildItem *)'], 'dir src')).toEqual({ behavior: 'deny', pattern: 'shell(Get-ChildItem *)' });
+      expect(ps(['shell'], ['shell(Get-Content *)'], 'type .env')).toEqual({ behavior: 'deny', pattern: 'shell(Get-Content *)' });
+      expect(ps(['shell'], ['shell(Invoke-Expression *)'], 'iex $payload')).toEqual({ behavior: 'deny', pattern: 'shell(Invoke-Expression *)' });
+    });
+
+    it('checks every command in a chain for aliases', () => {
+      expect(ps(['shell'], ['shell(Remove-Item *)'], 'npm test; del -Recurse ~'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(Remove-Item *)' });
+      expect(ps(['shell'], ['shell(ForEach-Object *)'], 'Get-ChildItem | % FullName'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(ForEach-Object *)' });
+      expect(ps(['shell'], ['shell(Where-Object *)'], 'Get-Process | ? Name -eq node'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(Where-Object *)' });
+    });
+
+    it('checks an unsplittable command for aliases as a whole', () => {
+      expect(ps(['shell'], ['shell(Remove-Item *)'], 'rm (Resolve-Path ~)'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(Remove-Item *)' });
+    });
+
+    it('still matches a deny rule written with the alias itself, in any case', () => {
+      expect(ps(['shell'], ['shell(rm *)'], 'RM -r ~')).toEqual({ behavior: 'deny', pattern: 'shell(rm *)' });
+      expect(ps(['shell'], ['shell(git push --force*)'], 'git push --FORCE origin'))
+        .toEqual({ behavior: 'deny', pattern: 'shell(git push --force*)' });
+    });
+
+    it('only expands an alias in the command name', () => {
+      expect(ps(['shell'], ['shell(Remove-Item *)'], 'echo rm ~')).toEqual({ behavior: 'allow' });
+      expect(ps(['shell'], ['shell(Remove-Item *)'], 'rmx ~')).toEqual({ behavior: 'allow' });
+    });
+
+    it('keeps allow rules exact: no alias expansion, case-sensitive', () => {
+      expect(ps(['shell(Get-ChildItem *)'], [], 'Get-ChildItem src')).toEqual({ behavior: 'allow' });
+      expect(ps(['shell(Get-ChildItem *)'], [], 'ls src')).toBeNull();
+      expect(ps(['shell(Get-ChildItem *)'], [], 'get-childitem src')).toBeNull();
+      expect(ps(['shell(git checkout -b *)'], [], 'git checkout -B main')).toBeNull();
+      // sc is Set-Content only in Windows PowerShell 5.1; PowerShell 7 runs sc.exe.
+      expect(ps(['shell(Set-Content *)'], [], 'sc stop MyService')).toBeNull();
     });
 
     it('does not apply PowerShell(...) rules to Bash', () => {
