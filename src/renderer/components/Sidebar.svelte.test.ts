@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import Sidebar from './Sidebar.svelte';
@@ -9,6 +9,7 @@ import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 
@@ -511,4 +512,35 @@ describe('Sidebar rows for folder projects without git', () => {
     expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toBeInTheDocument();
   });
 });
+});
+
+describe('Sidebar rail', () => {
+  afterEach(() => {
+    panelStore.collapsed = {};
+  });
+
+  it('folds to a rail of open conversations that still switches between them', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Fix login' },
+    ] as any;
+    const { container } = render(Sidebar);
+    const aside = container.querySelector('aside')!;
+    expect(container.querySelector('[data-rail-session]')).toBeNull();
+
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ sidebar: true });
+    expect(aside.style.width).toBe('48px');
+    const s2 = container.querySelector('[data-rail-session="s2"]') as HTMLButtonElement;
+    expect(s2.getAttribute('aria-label')).toBe('repo-a / Fix login');
+
+    await fireEvent.click(s2);
+    expect(store.activeSessionId).toBe('s2');
+    expect(s2.className).toContain('bg-sidebar-accent');
+
+    // The full sidebar stays mounted but hidden, so use the rail's own button.
+    await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));
+    expect(container.querySelector('[data-rail-session]')).toBeNull();
+    expect(aside.style.width).toBe('300px');
+  });
 });

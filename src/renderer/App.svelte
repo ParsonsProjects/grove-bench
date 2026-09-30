@@ -31,6 +31,7 @@
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
@@ -342,6 +343,7 @@
     prerequisitesStore.init();
     settingsStore.load();
     bookmarkStore.load();
+    panelStore.load();
     memoryStore.init();
     previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {

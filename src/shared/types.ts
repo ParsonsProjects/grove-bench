@@ -858,6 +858,13 @@ export interface SessionSortState {
   dir: 'asc' | 'desc';
 }
 
+/** Sidebars that fold down to a thin rail. The Changes and Checkpoints file
+ *  lists are separate so each tab keeps its own. */
+export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles'] as const;
+export type CollapsiblePanel = (typeof COLLAPSIBLE_PANELS)[number];
+/** Which panels are collapsed (persisted via app-state). Absent = open. */
+export type CollapsedPanels = Partial<Record<CollapsiblePanel, boolean>>;
+
 // ─── IPC API (exposed via contextBridge) ───
 
 // ─── Preview tab ───
@@ -1186,6 +1193,8 @@ export interface GroveBenchAPI {
   setSessionSort(sort: SessionSortState): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
+  getCollapsedPanels(): Promise<CollapsedPanels>;
+  setCollapsedPanels(panels: CollapsedPanels): void;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
@@ -1641,6 +1650,8 @@ export const IPC = {
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
+  APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   /** Main → renderer: an uncaught main-process error. */

@@ -25,6 +25,10 @@ Click any file to see its diff. Two view modes are available:
 
 Use the **Filter files** box at the top of the file list to filter files by name. This is helpful when the agent has modified many files.
 
+## Collapsing the file list
+
+Click the panel button next to **Filter files** to fold the file list down to a thin rail, which gives the diff more room. The rail shows one status letter per file (M, A, D and so on). Click a letter to open that file, or use the arrow keys, and hover it to see the path. Click the panel button at the top of the rail to open the list again. The Changes and Checkpoints tabs remember this separately.
+
 ## Edit History
 
 When viewing a file that was modified by the agent during the current turn, an edit count (for example **3 edits**) appears in the diff header. Click it to expand the edit history for that file, showing each individual change the agent made.

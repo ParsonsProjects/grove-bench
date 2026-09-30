@@ -10,6 +10,8 @@ The left panel shows a numbered list of checkpoints. Each entry includes a brief
 
 At the top of the list, **All turns** shows the cumulative diff of everything that changed since the conversation started — the full thread diff across every turn.
 
+Click the panel button next to the checkpoint count to fold the list down to a thin rail of turn numbers. Click a number to preview that turn (hover it to see the message), or the icon at the top for **All turns**. The file list next to the diff folds the same way (see the Changes tab help). Both remember whether they were collapsed.
+
 ## Diff Preview
 
 When you select a checkpoint, the right panel shows a diff with two modes:

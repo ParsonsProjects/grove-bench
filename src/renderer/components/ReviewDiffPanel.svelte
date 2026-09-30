@@ -15,6 +15,9 @@
   import GroveEmptyState from './GroveEmptyState.svelte';
   import { conversationAgent } from '../lib/session-sprite-state.js';
   import type { GroveTab } from '../lib/agent-sprite.js';
+  import type { CollapsiblePanel } from '../../shared/types.js';
+  import { panelStore } from '../stores/panels.svelte.js';
+  import PanelToggle from './PanelToggle.svelte';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -42,6 +45,7 @@
     emptyTitle,
     emptyHint,
     emptyScene,
+    panel,
     sidebarTop,
     sidebarSummaryExtra,
     sidebarFooter,
@@ -73,6 +77,8 @@
     emptyHint?: string;
     /** Which tab's props the grove scene over the empty message shows. */
     emptyScene?: GroveTab;
+    /** Which saved flag folds the file sidebar down to a rail. */
+    panel: CollapsiblePanel;
     sidebarTop?: Snippet;
     sidebarSummaryExtra?: Snippet;
     sidebarFooter?: Snippet;
@@ -89,6 +95,11 @@
   let stagedEntries = $derived(entries.filter(e => e.staged));
   let unstagedEntries = $derived(entries.filter(e => !e.staged && e.status !== 'untracked'));
   let untrackedEntries = $derived(entries.filter(e => e.status === 'untracked'));
+
+  // Folded down to a rail: one status letter per file, in section order. The
+  // search box and section headers are hidden there, so neither filters it.
+  let collapsed = $derived(panelStore.isCollapsed(panel));
+  let railEntries = $derived([...stagedEntries, ...unstagedEntries, ...untrackedEntries]);
 
   // ── Viewed tracking ──
   let reviewState = $derived(reviewStore.bySession[sessionId]);
@@ -208,8 +219,9 @@
   // Collapsed sections
   let collapsedSections = $state<Set<string>>(new Set());
 
-  // Flat list of visible entries (respects collapsed sections and search)
-  let visibleEntries = $derived([
+  // Flat list of the files on screen, in order: the rail's, or the sections'
+  // (respects collapsed sections and search). Arrow keys walk this.
+  let visibleEntries = $derived(collapsed ? railEntries : [
     ...(collapsedSections.has('staged') ? [] : filteredStagedEntries),
     ...(collapsedSections.has('unstaged') ? [] : filteredUnstagedEntries),
     ...(collapsedSections.has('untracked') ? [] : filteredUntrackedEntries),
@@ -651,126 +663,156 @@
 <div class="flex-1 flex overflow-hidden">
   <!-- Left: File sidebar -->
   <div
-    class="w-56 flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
+    class="{collapsed ? 'w-9' : 'w-56'} flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
     role="listbox"
     aria-label="Changed files"
     tabindex="0"
     onkeydown={handleFileListKeydown}
   >
-    <!-- Sidebar header: search + summary -->
-    <div class="border-b border-border px-3 py-2 shrink-0">
-      <div class="relative">
-        <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          bind:this={searchInputEl}
-          bind:value={searchQuery}
-          onfocus={() => searchFocused = true}
-          onblur={() => { setTimeout(() => searchFocused = false, 150); }}
-          onkeydown={handleSearchKeydown}
-          type="text"
-          placeholder="Filter files..."
-          class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-        />
-        {#if searchQuery}
+    {#if collapsed}
+      <!-- Rail: expand button, file count, one status letter per file -->
+      <div class="border-b border-border py-1.5 shrink-0 flex flex-col items-center gap-1">
+        <PanelToggle {panel} label="file list" />
+        <span class="text-[10px] text-muted-foreground tabular-nums" title="{entries.length} change{entries.length !== 1 ? 's' : ''}">{entries.length}</span>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        {#each railEntries as entry (fileKey(entry))}
+          {@const key = fileKey(entry)}
+          {@const badge = statusBadge(entry.status)}
+          {@const isSelected = key === selectedFileKey}
+          {@const viewed = isViewed(entry)}
           <button
-            onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
-            class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            aria-label="Clear filter"
-            title="Clear filter"
+            onclick={() => selectFile(entry)}
+            data-file-key={key}
+            data-viewed={viewed ? 'true' : undefined}
+            title="{entry.filePath}{entry.staged ? ' (staged)' : ''}"
+            class="w-full h-6 flex items-center justify-center text-xs font-bold border-l-2 transition-colors
+              {isSelected ? 'bg-sidebar-accent border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}
+              {viewed && !isSelected ? 'opacity-60' : ''}"
           >
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <span class={badge.color}>{badge.label}</span>
           </button>
-        {/if}
-
-        <!-- Dropdown -->
-        {#if showDropdown}
-          <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border shadow-lg max-h-56 overflow-y-auto z-50">
-            {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
-              {@const badge = statusBadge(entry.status)}
+        {/each}
+      </div>
+    {:else}
+      <!-- Sidebar header: search + summary -->
+      <div class="border-b border-border px-3 py-2 shrink-0">
+        <div class="flex items-center gap-1">
+          <div class="relative flex-1 min-w-0">
+            <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              bind:this={searchInputEl}
+              bind:value={searchQuery}
+              onfocus={() => searchFocused = true}
+              onblur={() => { setTimeout(() => searchFocused = false, 150); }}
+              onkeydown={handleSearchKeydown}
+              type="text"
+              placeholder="Filter files..."
+              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+            />
+            {#if searchQuery}
               <button
-                onmousedown={() => selectDropdownEntry(entry)}
-                onmouseenter={() => dropdownIndex = i}
-                class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
+                onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear filter"
+                title="Clear filter"
               >
-                <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
-                <span class="truncate">
-                  <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
-                </span>
-                {#if entry.staged}
-                  <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
-                {/if}
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
-            {/each}
+            {/if}
+
+            <!-- Dropdown -->
+            {#if showDropdown}
+              <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border shadow-lg max-h-56 overflow-y-auto z-50">
+                {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
+                  {@const badge = statusBadge(entry.status)}
+                  <button
+                    onmousedown={() => selectDropdownEntry(entry)}
+                    onmouseenter={() => dropdownIndex = i}
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
+                  >
+                    <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
+                    <span class="truncate">
+                      <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
+                    </span>
+                    {#if entry.staged}
+                      <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <PanelToggle {panel} label="file list" class="-mr-1.5" />
+        </div>
+        {#if searchQuery && filteredTotal !== entries.length && !showDropdown}
+          <div class="text-[10px] text-muted-foreground mt-1">
+            {filteredTotal} of {entries.length} files
+          </div>
+        {/if}
+        {#if sidebarTop}
+          <div class="mt-1.5 flex items-center gap-2">{@render sidebarTop()}</div>
+        {/if}
+        <div class="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
+          {#if sidebarSummaryExtra}{@render sidebarSummaryExtra()}{/if}
+          <span>{entries.length} change{entries.length !== 1 ? 's' : ''}</span>
+          {#if stagedEntries.length > 0}
+            <span class="text-green-400">{stagedEntries.length}S</span>
+          {/if}
+          {#if unstagedEntries.length > 0}
+            <span class="text-yellow-400">{unstagedEntries.length}M</span>
+          {/if}
+          {#if untrackedEntries.length > 0}
+            <span class="text-muted-foreground/60">{untrackedEntries.length}?</span>
+          {/if}
+        </div>
+        {#if viewedCount > 0}
+          <div class="text-[10px] text-green-400/80 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+            {viewedCount} of {entries.length} viewed
           </div>
         {/if}
       </div>
-      {#if searchQuery && filteredTotal !== entries.length && !showDropdown}
-        <div class="text-[10px] text-muted-foreground mt-1">
-          {filteredTotal} of {entries.length} files
-        </div>
-      {/if}
-      {#if sidebarTop}
-        <div class="mt-1.5 flex items-center gap-2">{@render sidebarTop()}</div>
-      {/if}
-      <div class="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-2 whitespace-nowrap">
-        {#if sidebarSummaryExtra}{@render sidebarSummaryExtra()}{/if}
-        <span>{entries.length} change{entries.length !== 1 ? 's' : ''}</span>
-        {#if stagedEntries.length > 0}
-          <span class="text-green-400">{stagedEntries.length}S</span>
+
+      <!-- Scrollable file list -->
+      <div class="flex-1 overflow-y-auto">
+        <!-- Staged -->
+        {#if filteredStagedEntries.length > 0}
+          {@render sidebarSectionHeader('Staged', 'staged', filteredStagedEntries.length, 'text-green-400', filteredStagedEntries, 'unstage')}
+          {#if !collapsedSections.has('staged')}
+            {#each filteredStagedEntries as entry (entry.filePath + ':staged')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
         {/if}
-        {#if unstagedEntries.length > 0}
-          <span class="text-yellow-400">{unstagedEntries.length}M</span>
+
+        <!-- Unstaged (or, in branch scope, everything tracked since the base) -->
+        {#if filteredUnstagedEntries.length > 0}
+          {@render sidebarSectionHeader(changesLabel, 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400', filteredUnstagedEntries, hasStaging ? 'stage' : 'none')}
+          {#if !collapsedSections.has('unstaged')}
+            {#each filteredUnstagedEntries as entry (entry.filePath + ':unstaged')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
         {/if}
-        {#if untrackedEntries.length > 0}
-          <span class="text-muted-foreground/60">{untrackedEntries.length}?</span>
+
+        <!-- Untracked -->
+        {#if filteredUntrackedEntries.length > 0}
+          {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground', filteredUntrackedEntries, hasStaging ? 'stage' : 'none')}
+          {#if !collapsedSections.has('untracked')}
+            {#each filteredUntrackedEntries as entry (entry.filePath + ':untracked')}
+              {@render sidebarFileItem(entry)}
+            {/each}
+          {/if}
         {/if}
       </div>
-      {#if viewedCount > 0}
-        <div class="text-[10px] text-green-400/80 mt-1 flex items-center gap-1" title="Files marked viewed (press x on the selected file)">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
-          {viewedCount} of {entries.length} viewed
-        </div>
-      {/if}
-    </div>
 
-    <!-- Scrollable file list -->
-    <div class="flex-1 overflow-y-auto">
-      <!-- Staged -->
-      {#if filteredStagedEntries.length > 0}
-        {@render sidebarSectionHeader('Staged', 'staged', filteredStagedEntries.length, 'text-green-400', filteredStagedEntries, 'unstage')}
-        {#if !collapsedSections.has('staged')}
-          {#each filteredStagedEntries as entry (entry.filePath + ':staged')}
-            {@render sidebarFileItem(entry)}
-          {/each}
-        {/if}
-      {/if}
-
-      <!-- Unstaged (or, in branch scope, everything tracked since the base) -->
-      {#if filteredUnstagedEntries.length > 0}
-        {@render sidebarSectionHeader(changesLabel, 'unstaged', filteredUnstagedEntries.length, 'text-yellow-400', filteredUnstagedEntries, hasStaging ? 'stage' : 'none')}
-        {#if !collapsedSections.has('unstaged')}
-          {#each filteredUnstagedEntries as entry (entry.filePath + ':unstaged')}
-            {@render sidebarFileItem(entry)}
-          {/each}
-        {/if}
-      {/if}
-
-      <!-- Untracked -->
-      {#if filteredUntrackedEntries.length > 0}
-        {@render sidebarSectionHeader('Untracked', 'untracked', filteredUntrackedEntries.length, 'text-muted-foreground', filteredUntrackedEntries, hasStaging ? 'stage' : 'none')}
-        {#if !collapsedSections.has('untracked')}
-          {#each filteredUntrackedEntries as entry (entry.filePath + ':untracked')}
-            {@render sidebarFileItem(entry)}
-          {/each}
-        {/if}
-      {/if}
-    </div>
-
-    {#if sidebarFooter}{@render sidebarFooter()}{/if}
+      {#if sidebarFooter}{@render sidebarFooter()}{/if}
+    {/if}
   </div>
 
   <!-- Right: Diff viewer -->

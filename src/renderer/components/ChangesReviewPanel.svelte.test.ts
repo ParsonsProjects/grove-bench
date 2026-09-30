@@ -119,6 +119,7 @@ describe('ChangesReviewPanel — live diff while the agent is running', () => {
 
 import { fireEvent } from '@testing-library/svelte';
 import { reviewStore } from '../stores/review.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
 
 function hunkPatch(): string {
   // One hunk starting at line 10 of a longer file, so context can be expanded above and below.
@@ -135,6 +136,7 @@ function hunkPatch(): string {
 
 describe('ChangesReviewPanel — review features', () => {
   beforeEach(() => {
+    panelStore.collapsed = {};
     reviewStore.clear(SID);
     localStorage.clear();
     gitStatusStore.scopeBySession = {};
@@ -231,6 +233,29 @@ describe('ChangesReviewPanel — review features', () => {
     expect(getByText('Changed on branch')).toBeInTheDocument();
     // Per-file diffs are fetched against the base in branch scope.
     await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/committed.ts', false, { base: 'main' }));
+  });
+
+  it('folds the file list to a rail of status letters, remembered per tab', async () => {
+    const { container, getByLabelText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const sidebar = getByLabelText('Changed files');
+
+    await fireEvent.click(getByLabelText('Collapse file list'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ changesFiles: true });
+    expect(queryByPlaceholderText('Filter files...')).toBeNull();
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    const b = sidebar.querySelector('[data-file-key="src/b.ts:false"]') as HTMLButtonElement;
+    expect(b.textContent?.trim()).toBe('M');
+    expect(b.title).toBe('src/b.ts');
+
+    // Still a working file list: picking a letter opens that file, arrows walk the rail.
+    await fireEvent.click(b);
+    expect(b.className).toContain('border-primary');
+    await fireEvent.keyDown(sidebar, { key: 'ArrowUp' });
+    expect(sidebar.querySelector('[data-file-key="src/a.ts:false"]')!.className).toContain('border-primary');
+
+    await fireEvent.click(getByLabelText('Expand file list'));
+    expect(queryByPlaceholderText('Filter files...')).not.toBeNull();
   });
 
   it('shows the scope toggle and a branch message in the empty state', async () => {

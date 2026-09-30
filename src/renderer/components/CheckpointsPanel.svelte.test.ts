@@ -9,11 +9,14 @@ import { messageStore } from '../stores/messages.svelte.js';
 import { reviewStore } from '../stores/review.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
+import type { GitStatusResult } from '../../shared/types.js';
 
 const SID = 'cp-session';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  panelStore.collapsed = {};
   checkpointStore.clear(SID);
   reviewStore.clear(SID);
   localStorage.clear();
@@ -84,7 +87,7 @@ describe('CheckpointsPanel on the shared review panel', () => {
   });
 
   it('shows the file sidebar while the first diff loads', async () => {
-    let resolveFiles: ((v: { entries: unknown[] }) => void) | undefined;
+    let resolveFiles: ((v: GitStatusResult) => void) | undefined;
     mockGroveBench.getCheckpointFiles.mockImplementation(() => new Promise((res) => { resolveFiles = res; }));
     const { container, getByText, getByLabelText } = render(CheckpointsPanel, { sessionId: SID });
 
@@ -95,6 +98,24 @@ describe('CheckpointsPanel on the shared review panel', () => {
     resolveFiles!({ entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] });
     await waitFor(() => expect(container.querySelector('[data-file-key="src/a.ts:false"]')).not.toBeNull());
     expect(getByLabelText('Changed files')).toBe(sidebar);
+  });
+
+  it('folds the turn list to a rail of turn numbers that still selects turns', async () => {
+    mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [] });
+    const { getByLabelText, getByTitle, queryByText, container } = render(CheckpointsPanel, { sessionId: SID });
+
+    await fireEvent.click(getByLabelText('Collapse checkpoint list'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ checkpointList: true });
+    expect(queryByText('Add polling')).toBeNull();
+
+    await fireEvent.click(getByTitle('#1: Initial change'));
+    expect(mockGroveBench.getCheckpointFiles).toHaveBeenCalledWith(SID, 'u1', 'turn');
+    expect(container.querySelector('[data-turn="1"]')!.className).toContain('border-l-primary');
+    // The turn's file list keeps its own flag, so it is still open.
+    await waitFor(() => expect(getByLabelText('Collapse file list')).toBeInTheDocument());
+
+    await fireEvent.click(getByLabelText('Expand checkpoint list'));
+    expect(queryByText('Add polling')).not.toBeNull();
   });
 
   it('tags review comments with the checkpoint they were written against', async () => {
