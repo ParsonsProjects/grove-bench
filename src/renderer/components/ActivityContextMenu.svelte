@@ -73,7 +73,7 @@
     <ContextMenu
       x={menu.x}
       y={menu.y}
-      label="Activity actions"
+      label="Thread actions"
       items={menu.entries.map((entry) => ({ label: entry.label, separator: entry.separator, action: () => run(entry.action) }))}
       onclose={() => menu = null}
     />
