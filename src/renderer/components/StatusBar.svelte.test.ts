@@ -270,6 +270,12 @@ describe('StatusBar PR', () => {
     expect(pill.getAttribute('title')).toContain('PR #42: CI failing');
   });
 
+  it('says in the tooltip when auto turns are on, since they are saved', async () => {
+    prStore.setAuto(ACTIVE, { fixCi: true });
+    const pill = await renderWithPrs(pr());
+    expect(pill.getAttribute('title')).toContain('auto: fix CI');
+  });
+
   it('closes the popover on Escape and hands focus back to the pill', async () => {
     const pill = await renderWithPrs(pr());
     await fireEvent.click(pill);
@@ -359,9 +365,23 @@ describe('StatusBar PR', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '↑2' }));
     expect(await screen.findByText('push failed')).toBeTruthy();
 
-    // The agent (or a terminal) pushed it.
-    prStore.syncBySession = { ...prStore.syncBySession, [ACTIVE]: { upstream: 'origin/feat-a', ahead: 0, behind: 0 } };
+    // The agent (or a terminal) pushed it; the next poll sees nothing to push.
+    vi.mocked(window.groveBench.getGitSyncStatus).mockResolvedValue({ upstream: 'origin/feat-a', ahead: 0, behind: 0 });
+    await prStore.refresh(ACTIVE, true);
 
     await waitFor(() => expect(screen.queryByText('push failed')).toBeNull());
+  });
+
+  it('shows a push that failed in the Changes tab, and dismisses it on click', async () => {
+    vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    // The Changes tab's "& Push" goes through the same store call.
+    await prStore.push(ACTIVE).catch(() => {});
+
+    const note = await screen.findByRole('button', { name: 'push failed' });
+    expect(note.getAttribute('title')).toContain('rejected: non-fast-forward');
+    await fireEvent.click(note);
+
+    expect(screen.queryByText('push failed')).toBeNull();
   });
 });

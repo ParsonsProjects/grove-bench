@@ -419,3 +419,88 @@ describe('auto-fix CI limit', () => {
     expect(prStore.getAlerts(SID).some((a) => a.kind === 'needs_human')).toBe(false);
   });
 });
+
+describe('push errors', () => {
+  const IPC_WRAPPED = "Error invoking remote method 'git:push': Error: ! [rejected] feat/x -> feat/x (fetch first)";
+
+  async function failPush() {
+    mockGroveBench.push.mockRejectedValueOnce(new Error(IPC_WRAPPED));
+    await expect(prStore.push(SID)).rejects.toThrow();
+  }
+
+  it("keeps git's own words, without Electron's IPC wrapper", async () => {
+    setStatus('running');
+    await failPush();
+    expect(prStore.getPushError(SID)).toBe('! [rejected] feat/x -> feat/x (fetch first)');
+  });
+
+  it('clears on the next successful push', async () => {
+    setStatus('running');
+    await failPush();
+    await prStore.push(SID);
+    expect(prStore.getPushError(SID)).toBe('');
+  });
+
+  it('clears once the branch has nothing left to push (pushed from elsewhere)', async () => {
+    setStatus('running');
+    await failPush();
+    mockGroveBench.getGitSyncStatus.mockResolvedValueOnce({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
+    await prStore.refresh(SID, true);
+    expect(prStore.getPushError(SID)).toBe('');
+  });
+
+  it('is not cleared by a poll that started before the push failed', async () => {
+    setStatus('running');
+    let finishSync!: (v: { upstream: string; ahead: number; behind: number }) => void;
+    mockGroveBench.getGitSyncStatus.mockReturnValueOnce(new Promise((r) => { finishSync = r; }));
+    const poll = prStore.refresh(SID, true); // counted before the new commit
+
+    await failPush();
+    finishSync({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
+    await poll;
+
+    expect(prStore.getPushError(SID)).toContain('rejected');
+  });
+
+  it('stays for a branch that was never pushed, which also reports ahead 0', async () => {
+    setStatus('running');
+    await failPush();
+    mockGroveBench.getGitSyncStatus.mockResolvedValueOnce({ upstream: null, ahead: 0, behind: 0 });
+    await prStore.refresh(SID, true);
+    expect(prStore.getPushError(SID)).toContain('rejected');
+  });
+
+  it('only applies to the branch it was pushing', async () => {
+    setStatus('running');
+    await failPush();
+    sessionStore.sessions = [{ id: SID, branch: 'feat/y', repoPath: 'C:/repo', status: 'running' }];
+    expect(prStore.getPushError(SID)).toBe('');
+  });
+});
+
+describe('auto toggles', () => {
+  const OTHER = 'pr-test-restored';
+  afterEach(() => prStore.clear(OTHER));
+
+  it('are saved per conversation', () => {
+    prStore.setAuto(SID, { fixCi: true });
+    expect(JSON.parse(localStorage.getItem(`grove-bench:pr-auto:${SID}`)!)).toEqual({ fixCi: true, addressReviews: false });
+    expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: false });
+  });
+
+  it('come back after a restart', () => {
+    localStorage.setItem(`grove-bench:pr-auto:${OTHER}`, JSON.stringify({ addressReviews: true }));
+    expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: true });
+  });
+
+  it('are forgotten when turned off or the conversation is deleted', () => {
+    prStore.setAuto(SID, { fixCi: true });
+    prStore.setAuto(SID, { fixCi: false });
+    expect(localStorage.getItem(`grove-bench:pr-auto:${SID}`)).toBeNull();
+
+    prStore.setAuto(OTHER, { addressReviews: true });
+    prStore.clear(OTHER);
+    expect(localStorage.getItem(`grove-bench:pr-auto:${OTHER}`)).toBeNull();
+    expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: false });
+  });
+});

@@ -41,22 +41,17 @@
   const loadCreatePrDialog = lazyComponent(() => import('./CreatePrDialog.svelte'));
   const loadAddSkillDialog = lazyComponent(() => import('./AddSkillDialog.svelte'));
   let pushing = $state(false);
-  let pushError = $state('');
-
-  // Nothing left to push (the agent or a terminal pushed it): an earlier
-  // failure no longer applies, and the ↑N button that would retry is gone.
-  $effect(() => {
-    if (gitSync.ahead === 0) pushError = '';
-  });
+  /** The last failed push from here or the Changes tab. The store drops it
+   *  once nothing is left to push or the branch changes. */
+  let pushError = $derived(prStore.getPushError(sessionId));
 
   async function doPush() {
     if (pushing) return;
     pushing = true;
-    pushError = '';
     try {
       await prStore.push(sessionId);
-    } catch (e: any) {
-      pushError = e?.message || 'Push failed';
+    } catch {
+      // Kept in prStore and shown as "push failed".
     } finally {
       pushing = false;
     }
@@ -96,6 +91,9 @@
     const parts = [`PR #${prInfo.number}: ${prHealthInfo.label}`];
     if (prAlerts.length > 0) parts.push('new activity');
     if (prFetchFailed) parts.push('may be out of date, the last GitHub fetch failed');
+    // Saved across restarts, so say when it is on rather than leave it hidden.
+    const auto = [prAuto.fixCi && 'fix CI', prAuto.addressReviews && 'address reviews'].filter(Boolean);
+    if (prOpen && auto.length > 0) parts.push(`auto: ${auto.join(' + ')}`);
     if (otherPrs.length > 0) parts.push(`+${otherPrs.length} more in this conversation`);
     return `${prInfo.title ? `${prInfo.title}\n` : ''}${parts.join(', ')}. Click for checks, reviews, and automation`;
   });
@@ -1318,7 +1316,13 @@
         {/if}
 
         {#if pushError}
-          <span class="text-red-400 truncate max-w-32" title={pushError}>push failed</span>
+          <button
+            onclick={() => prStore.dismissPushError(sessionId)}
+            class="text-red-400 hover:text-red-300 truncate max-w-32 transition-colors"
+            title={`${pushError}\n\nClick to dismiss`}
+          >
+            push failed
+          </button>
         {/if}
 
         {#if prInfo}

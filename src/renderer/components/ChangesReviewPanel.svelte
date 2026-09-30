@@ -122,12 +122,21 @@
         await prStore.push(sessionId);
       }
     } catch (e: any) {
-      commitError = e?.message || (committed ? 'Push failed' : 'Commit failed');
+      // A failed push after a good commit is kept by prStore and shown in
+      // the status bar as "push failed": the commit box disappears once
+      // nothing is staged, so an error here would never be seen.
+      if (!committed) commitError = e?.message || 'Commit failed';
     } finally {
       committing = false;
       pushing = false;
     }
   }
+
+  // With nothing staged the commit box is hidden. Drop any error then, so it
+  // can't come back, out of date, with the next staged file.
+  $effect(() => {
+    if (stagedEntries.length === 0) commitError = '';
+  });
 
   // ── Revert / discard (destructive, confirmed first) ──
   let confirmEntry = $state<GitStatusEntry | null>(null);

@@ -9,6 +9,7 @@ import { messageStore } from '../stores/messages.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { prStore } from '../stores/pr.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
 // Counts syntax-highlight calls; otherwise the real module.
@@ -515,5 +516,42 @@ describe('ChangesReviewPanel with grove characters', () => {
     const { getByText, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
     expect(getByText('Working tree clean')).toBeInTheDocument();
     expect(queryByRole('img', { name: 'Ready' })).toBeNull();
+  });
+});
+
+describe('ChangesReviewPanel — commit and push errors', () => {
+  afterEach(() => prStore.clear(SID));
+
+  function renderStaged() {
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { staged: true })] } };
+    return render(ChangesReviewPanel, { sessionId: SID });
+  }
+
+  it('hands a push that fails after a good commit to the status bar, not the commit box', async () => {
+    mockGroveBench.push.mockRejectedValueOnce(new Error('! [rejected] feat -> feat (fetch first)'));
+    const { getByPlaceholderText, getByRole, queryByText } = renderStaged();
+
+    await fireEvent.input(getByPlaceholderText('Commit message…'), { target: { value: 'Fix it' } });
+    await fireEvent.click(getByRole('button', { name: '& Push' }));
+
+    await waitFor(() => expect(prStore.getPushError(SID)).toContain('rejected'));
+    expect(mockGroveBench.commit).toHaveBeenCalledWith(SID, 'Fix it');
+    expect(queryByText(/rejected/)).toBeNull();
+  });
+
+  it('drops a commit error once nothing is staged, so it cannot come back with the next file', async () => {
+    mockGroveBench.commit.mockRejectedValueOnce(new Error('pre-commit hook failed'));
+    const { getByPlaceholderText, getByRole, findByText, queryByText } = renderStaged();
+
+    await fireEvent.input(getByPlaceholderText('Commit message…'), { target: { value: 'Fix it' } });
+    await fireEvent.click(getByRole('button', { name: 'Commit 1 file' }));
+    expect(await findByText('pre-commit hook failed')).toBeInTheDocument();
+
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    await tick();
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/b.ts', { staged: true })] } };
+    await tick();
+
+    expect(queryByText('pre-commit hook failed')).toBeNull();
   });
 });

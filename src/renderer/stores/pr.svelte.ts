@@ -5,6 +5,7 @@ import { buildFixCiPrompt, buildAddressReviewsPrompt } from '../lib/pr-prompt.js
 import { notifyOs } from '../lib/os-notify.js';
 import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr-watch.js';
 import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
+import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
 
 const POLL_MS = 60_000;
 /** Conversations the user hasn't looked at for a while are refreshed this
@@ -39,6 +40,41 @@ export interface PrAutoConfig {
   addressReviews: boolean;
 }
 
+const AUTO_OFF: PrAutoConfig = { fixCi: false, addressReviews: false };
+
+/** The Auto toggles are kept per conversation in localStorage, so a restart
+ *  keeps them (the key is dropped when both are off, or the conversation is
+ *  deleted). */
+const AUTO_STORAGE_PREFIX = 'grove-bench:pr-auto:';
+
+function loadAuto(sessionId: string): PrAutoConfig {
+  try {
+    const raw = localStorage.getItem(AUTO_STORAGE_PREFIX + sessionId);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PrAutoConfig>;
+      return { fixCi: parsed.fixCi === true, addressReviews: parsed.addressReviews === true };
+    }
+  } catch { /* storage unavailable or corrupt: start with both off */ }
+  return AUTO_OFF;
+}
+
+function persistAuto(sessionId: string, auto: PrAutoConfig): void {
+  try {
+    if (!auto.fixCi && !auto.addressReviews) localStorage.removeItem(AUTO_STORAGE_PREFIX + sessionId);
+    else localStorage.setItem(AUTO_STORAGE_PREFIX + sessionId, JSON.stringify(auto));
+  } catch { /* best-effort */ }
+}
+
+/** A failed push, and the branch it was pushing. The error only applies
+ *  while the conversation is still on that branch. */
+interface PushError {
+  message: string;
+  branch: string;
+  /** The last sync fetch started before it failed (see syncFetches), so
+   *  that fetch landing late can't clear it with a count from before. */
+  afterFetch: number;
+}
+
 /** PR + branch-sync state per session. Polls all sessions once App starts the
  *  global sweep; detects new CI failures / review feedback and either surfaces
  *  an alert or (when auto mode is on) sends a fix turn to the session's agent.
@@ -60,7 +96,15 @@ class PrStore {
   /** True after the gh fetch fails — the displayed PR data may be stale. A
    *  local sync failure doesn't count: the PR data didn't come from it. */
   fetchFailedBySession = $state<Record<string, boolean>>({});
+  /** The last failed push per session, whichever button started it (the
+   *  status bar's ↑N or the Changes tab's "& Push"), so both agree. */
+  pushErrorBySession = $state<Record<string, PushError>>({});
 
+  /** Auto toggles read from storage but not changed since. Kept outside the
+   *  reactive record so a read from inside a $derived never mutates state. */
+  private loadedAuto = new Map<string, PrAutoConfig>();
+  /** Sync fetches started so far, across sessions (see PushError.afterFetch). */
+  private syncFetches = 0;
   private lastFetch = new Map<string, number>();
   /** When the user last had each session on screen (see setViewing). */
   private lastViewed = new Map<string, number>();
@@ -114,14 +158,36 @@ class PrStore {
   }
 
   getAuto(sessionId: string): PrAutoConfig {
-    return this.autoBySession[sessionId] ?? { fixCi: false, addressReviews: false };
+    const live = this.autoBySession[sessionId];
+    if (live) return live;
+    let saved = this.loadedAuto.get(sessionId);
+    if (!saved) {
+      saved = loadAuto(sessionId);
+      this.loadedAuto.set(sessionId, saved);
+    }
+    return saved;
   }
 
   setAuto(sessionId: string, patch: Partial<PrAutoConfig>): void {
-    this.autoBySession = {
-      ...this.autoBySession,
-      [sessionId]: { ...this.getAuto(sessionId), ...patch },
-    };
+    const next = { ...this.getAuto(sessionId), ...patch };
+    this.loadedAuto.set(sessionId, next);
+    this.autoBySession = { ...this.autoBySession, [sessionId]: next };
+    persistAuto(sessionId, next);
+  }
+
+  /** The last push error, while the conversation is still on the branch it
+   *  was pushing; '' when there is none. */
+  getPushError(sessionId: string): string {
+    const err = this.pushErrorBySession[sessionId];
+    if (!err) return '';
+    const branch = sessionStore.sessions.find((s) => s.id === sessionId)?.branch ?? '';
+    return err.branch === branch ? err.message : '';
+  }
+
+  dismissPushError(sessionId: string): void {
+    if (!(sessionId in this.pushErrorBySession)) return;
+    const { [sessionId]: _drop, ...rest } = this.pushErrorBySession;
+    this.pushErrorBySession = rest;
   }
 
   dismissAlert(sessionId: string, id: number): void {
@@ -153,12 +219,19 @@ class PrStore {
     // must not discard a fresh local sync count, and vice versa. Whatever
     // succeeded is stored; a failure keeps the previous snapshot and flags
     // it stale rather than showing "no PR" for a branch that has one.
+    const fetchNo = ++this.syncFetches;
     const [pr, sync] = await Promise.allSettled([
       window.groveBench.getPrs(sessionId),
       window.groveBench.getGitSyncStatus(sessionId),
     ]);
     if (sync.status === 'fulfilled') {
       this.syncBySession = { ...this.syncBySession, [sessionId]: sync.value };
+      // Nothing left to push (the agent or a terminal pushed it), so an
+      // earlier failure no longer applies. Needs an upstream: a branch that
+      // was never pushed also reports ahead 0. Only a failure from before
+      // this fetch started: one that landed during it is newer than the count.
+      const pushErr = this.pushErrorBySession[sessionId];
+      if (pushErr && pushErr.afterFetch < fetchNo && sync.value.upstream && sync.value.ahead === 0) this.dismissPushError(sessionId);
     }
     if (pr.status === 'fulfilled') {
       this.prsBySession = { ...this.prsBySession, [sessionId]: pr.value };
@@ -259,9 +332,18 @@ class PrStore {
     return () => {};
   }
 
-  /** Push the session branch to origin (sets upstream on first push). */
+  /** Push the session branch to origin (sets upstream on first push). A
+   *  failure is kept for the status bar (see getPushError) and rethrown. */
   async push(sessionId: string): Promise<void> {
-    await window.groveBench.push(sessionId);
+    const branch = sessionStore.sessions.find((s) => s.id === sessionId)?.branch ?? '';
+    this.dismissPushError(sessionId);
+    try {
+      await window.groveBench.push(sessionId);
+    } catch (e) {
+      const message = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Push failed';
+      this.pushErrorBySession = { ...this.pushErrorBySession, [sessionId]: { message, branch, afterFetch: this.syncFetches } };
+      throw e;
+    }
     await this.refresh(sessionId, true);
   }
 
@@ -440,8 +522,11 @@ class PrStore {
     this.alertsBySession = restAlerts;
     const { [sessionId]: _c, ...restAuto } = this.autoBySession;
     this.autoBySession = restAuto;
+    this.loadedAuto.delete(sessionId);
+    persistAuto(sessionId, AUTO_OFF); // drops the saved toggles
     const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
     this.fetchFailedBySession = restFailed;
+    this.dismissPushError(sessionId);
   }
 }
 
