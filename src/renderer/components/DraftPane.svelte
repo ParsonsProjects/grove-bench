@@ -62,14 +62,14 @@
       && (start?.kind !== 'existing' || !!start.branch),
   );
 
-  /** One line on what sending will do, so nothing about it is a surprise. */
-  /** A project that isn't a git repository. */
+  /** A project used without git: not a repository, or git isn't installed. */
   const folderProject = $derived(!!draft && store.isFolderProject(draft.repoPath));
 
+  /** One line on what sending will do, so nothing about it is a surprise. */
   const plan = $derived.by(() => {
     if (!start) return '';
     if (start.kind === 'folder' && folderProject) {
-      return 'The agent will work in the project folder itself. This project isn\'t a git repository, so its edits land in place and can\'t be rewound.';
+      return 'The agent will work in the project folder itself, without git, so its edits land in place and can\'t be rewound.';
     }
     if (start.kind === 'folder') return 'The agent will work in the project folder itself, on the branch it has checked out.';
     if (start.kind === 'existing') {

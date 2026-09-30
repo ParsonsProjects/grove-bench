@@ -84,7 +84,7 @@
       <Dialog.Title>Rewind to Checkpoint</Dialog.Title>
       <Dialog.Description>
         {#if noGit}
-          Select a message to rewind the conversation to. This project isn't a git repository, so files on disk stay as
+          Select a message to rewind the conversation to. This conversation runs without git, so files on disk stay as
           they are: the agent's edits after that point are not undone.
         {:else}
           Select a message to rewind to. Files on disk will be restored to their state at that point.

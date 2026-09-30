@@ -25,7 +25,7 @@ Everything below is what the code does now, so the plan can be checked against i
 - **Adding a project no longer requires git.** The folder picker in
   `src/main/ipc.ts` calls `inspectProjectFolder()` (`src/main/project-path.ts`),
   which returns a git repository's top level or a plain `folder`. The renderer
-  then offers to set git up there or to use the folder as it is.
+  adds a `folder` as it is.
 - **A conversation has exactly one checkout.** `SessionInfo` and
   `CreateSessionOpts` in `src/shared/types.ts` carry a single `repoPath`,
   `branch` and `worktreePath`. The adapter gets one `cwd`.
@@ -129,10 +129,10 @@ The manifest already has a precedent for this kind of migration
 
 A minimal version, without the `Project` record:
 
-- **Adding.** `REPO_SELECT` returns `{ kind: 'git' | 'folder', ... }`.
-  `FolderProjectDialog` offers **Set up git** (`initGitRepo()`: `git init` and
-  an "Initial commit" of the folder, refused with a clear message when git has
-  no name and email) or **Use without git**.
+- **Adding.** `REPO_SELECT` returns `{ kind: 'git' | 'folder', path }` and a
+  `folder` is added straight away, with no extra step. There is no in-app
+  "set up git"; the user runs `git init` themselves. When git isn't installed,
+  every pick is a `folder`.
 - **Knowing the kind.** The renderer keeps `folderRepos` in memory and rebuilds
   it at launch from `repoKind()` (`git`, `folder` or `missing`).
 - **Conversations.** A folder project's draft only offers the project folder.
@@ -141,7 +141,8 @@ A minimal version, without the `Project` record:
   `AgentSessionManager` uses `noGitCheckpoints` for such a folder.
 - **What the UI hides.** Changes and Checkpoints show why they need git; the
   rewind dialog resets only the conversation; git status, sync and PR lookups
-  return empty for `noGit` conversations.
+  return empty for `noGit` conversations. A missing or too-old git is warned
+  about only at the top of the Changes tab (`GitNotice`), not app-wide.
 - **Orphan sweep.** Phase 3 of the startup sweep keeps a `noGit` entry while its
   folder exists, instead of dropping it for not being a repository.
 - **Not done.** No `Project` record, so a folder project with no conversations

@@ -288,9 +288,8 @@ const api: Record<string, unknown> = {
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
-  // Adding a project picks a folder without git, so the demo shows the choice.
-  addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes', gitAvailable: true }),
-  initGitRepo: async () => ({ ok: true }),
+  // Adding a project picks a folder without git.
+  addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
   repoKind: async () => 'git',
   hasGitIdentity: async () => true,
   listSessions: async () => [],

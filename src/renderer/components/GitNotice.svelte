@@ -3,12 +3,10 @@
   import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
   import { gitReady } from '../../shared/prerequisites.js';
 
-  // Git only gates git-backed features, so a missing or old git gets a
-  // dismissible strip instead of blocking the app.
-  let dismissed = $state(false);
-
+  // Shown at the top of the Changes tab. Git only gates git-backed features,
+  // so a missing or old git is a warning there rather than a blocker.
   const git = $derived(store.prerequisites?.git);
-  const visible = $derived(!dismissed && !!store.prerequisites && !gitReady(store.prerequisites));
+  const visible = $derived(!!store.prerequisites && !gitReady(store.prerequisites));
 </script>
 
 {#if visible && git}
@@ -18,8 +16,8 @@
       {#if git.available}
         Git is too old ({git.version}). Separate copies, branches and rewinding need Git 2.17 or later.
       {:else}
-        Git was not found. Without it, projects are plain folders: the agent edits your files in place and its edits
-        can't be rewound. Git 2.17 or later is recommended.
+        Git isn't installed. Without it, the agent edits your project folder in place and its edits can't be
+        rewound.
       {/if}
     </span>
     <button
@@ -36,14 +34,6 @@
       onclick={() => prerequisitesStore.refresh()}
     >
       {prerequisitesStore.checking ? 'Checking…' : 'Re-check'}
-    </button>
-    <button
-      type="button"
-      class="text-muted-foreground hover:text-foreground shrink-0 px-1"
-      aria-label="Dismiss"
-      onclick={() => (dismissed = true)}
-    >
-      &#x2715;
     </button>
   </div>
 {/if}

@@ -12,11 +12,10 @@ export interface WorktreeConfig {
 }
 
 /** A folder the user picked to add as a project. A folder outside any git
- *  repository comes back as `folder`: the user then chooses to set git up
- *  there or to use it as a plain folder. */
+ *  repository comes back as `folder` and is added as a plain folder. */
 export type PickedProject =
   | { kind: 'git'; path: string }
-  | { kind: 'folder'; path: string; gitAvailable: boolean };
+  | { kind: 'folder'; path: string };
 
 /** What a project path is now: a git repository, a plain folder (projects
  *  without git), or gone. */
@@ -905,7 +904,6 @@ export interface GroveBenchAPI {
   /** Pick a folder to add as a project. Null when cancelled. */
   addRepo(): Promise<PickedProject | null>;
   /** Run `git init` and a first commit in a folder, so it can be a git project. */
-  initGitRepo(path: string): Promise<{ ok: true } | { ok: false; error: string }>;
   /** Whether a project path is a git repository, a plain folder, or gone. */
   repoKind(path: string): Promise<ProjectKind>;
   /** Whether git has a user.name and user.email for commits in this folder. */
@@ -1529,7 +1527,6 @@ export const IPC = {
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
-  REPO_INIT_GIT: 'repo:initGit',
   REPO_KIND: 'repo:kind',
   GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',

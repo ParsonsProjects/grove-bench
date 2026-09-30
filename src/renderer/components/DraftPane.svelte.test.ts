@@ -218,7 +218,7 @@ describe('DraftPane git identity heads-up', () => {
     render(DraftPane);
     await settle();
     expect(mockGroveBench.hasGitIdentity).not.toHaveBeenCalled();
-    expect(screen.getByText(/This project isn't a git repository, so its edits land in place/)).toBeInTheDocument();
+    expect(screen.getByText(/project folder itself, without git, so its edits land in place/)).toBeInTheDocument();
     expect(screen.getByText('Change the agent, model or mode in the bar below before you send.')).toBeInTheDocument();
     store.setFolderProject('/repo/one', false);
   });

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import { inspectProjectFolder, projectKind, initGitRepo } from './project-path.js';
+import { inspectProjectFolder, projectKind } from './project-path.js';
 
 // Real git in a temp folder: what counts as "in a repository" is git's call.
 
@@ -43,8 +43,8 @@ describe('inspectProjectFolder', () => {
     expect(path.resolve(picked.path)).toBe(path.resolve(root));
   });
 
-  it('offers a folder outside any repository as a plain folder', async () => {
-    expect(await inspectProjectFolder(root)).toEqual({ kind: 'folder', path: root, gitAvailable: true });
+  it('adds a folder outside any repository as a plain folder', async () => {
+    expect(await inspectProjectFolder(root)).toEqual({ kind: 'folder', path: root });
   });
 
   it('turns down a .git folder and says to pick the folder that contains it', async () => {
@@ -72,54 +72,5 @@ describe('projectKind', () => {
     await execa('git', ['init', '-q'], { cwd: root });
     expect(await projectKind(root)).toBe('git');
     expect(await projectKind(path.join(root, 'gone'))).toBe('missing');
-  });
-});
-
-describe('initGitRepo', () => {
-  function useGlobalConfig(contents: string) {
-    const file = path.join(root, '..', `${path.basename(root)}.gitconfig`);
-    fs.writeFileSync(file, contents);
-    process.env.GIT_CONFIG_GLOBAL = file;
-    process.env.GIT_CONFIG_NOSYSTEM = '1';
-    return file;
-  }
-
-  it('sets up git and commits what is in the folder, leaving out ignored files', async () => {
-    const cfg = useGlobalConfig('[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n');
-    try {
-      fs.writeFileSync(path.join(root, 'notes.md'), '# notes\n');
-      fs.writeFileSync(path.join(root, '.gitignore'), 'secret.txt\n');
-      fs.writeFileSync(path.join(root, 'secret.txt'), 'hunter2\n');
-
-      expect(await initGitRepo(root)).toEqual({ ok: true });
-
-      const files = (await execa('git', ['ls-files'], { cwd: root })).stdout.split('\n').sort();
-      expect(files).toEqual(['.gitignore', 'notes.md']);
-      expect(await projectKind(root)).toBe('git');
-    } finally {
-      fs.rmSync(cfg, { force: true });
-    }
-  });
-
-  it('works in an empty folder too', async () => {
-    const cfg = useGlobalConfig('[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n');
-    try {
-      expect(await initGitRepo(root)).toEqual({ ok: true });
-      expect((await execa('git', ['rev-list', '--count', 'HEAD'], { cwd: root })).stdout).toBe('1');
-    } finally {
-      fs.rmSync(cfg, { force: true });
-    }
-  });
-
-  it('changes nothing and says how to fix it when git has no name and email', async () => {
-    const cfg = useGlobalConfig('');
-    try {
-      const result = await initGitRepo(root);
-      expect(result).toMatchObject({ ok: false });
-      expect((result as { error: string }).error).toMatch(/name and email.*git config --global user\.name/);
-      expect(fs.existsSync(path.join(root, '.git'))).toBe(false);
-    } finally {
-      fs.rmSync(cfg, { force: true });
-    }
   });
 });

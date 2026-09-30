@@ -31,9 +31,6 @@ class SessionStore {
   repos = $state<string[]>([]);
   /** Projects that are plain folders, not git repositories. */
   folderRepos = $state<string[]>([]);
-  /** A picked folder that isn't a git repository, waiting for the user to
-   *  set git up there or use it as it is (FolderProjectDialog). */
-  pendingFolder = $state<{ path: string; gitAvailable: boolean } | null>(null);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);

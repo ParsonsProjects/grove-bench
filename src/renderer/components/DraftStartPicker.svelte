@@ -221,7 +221,7 @@
       <p class="text-muted-foreground/70 mt-2">Picking a pull request starts in Plan mode, so a review doesn't edit the branch.</p>
     {:else if folderProject}
       <p class="text-muted-foreground">
-        This project isn't a git repository, so conversations run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
+        This project is used without git, so conversations run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
       </p>
       <p class="text-muted-foreground/70 mt-2">
         For a separate copy per conversation and undo, run <code class="text-foreground">git init</code> in the folder, commit its files, then remove and add the project again.

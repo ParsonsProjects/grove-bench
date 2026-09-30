@@ -13,6 +13,7 @@
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
   import RewindDialog from './RewindDialog.svelte';
+  import GitNotice from './GitNotice.svelte';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -167,8 +168,8 @@
       messageStore.setHistoryLoaded(sessionId, true);
     }
 
-    // Single git status refresh after replay
-    gitStatusStore.refresh(sessionId);
+    // Single git status refresh after replay (none without git)
+    if (!noGit) gitStatusStore.refresh(sessionId);
   });
 
   onDestroy(() => {
@@ -181,7 +182,7 @@
   <div class="flex-1 flex items-center justify-center p-6">
     <div class="max-w-md text-center">
       <p class="text-sm text-foreground">{tab} needs git</p>
-      <p class="text-xs text-muted-foreground mt-1">This project isn't a git repository, so {why}</p>
+      <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
     </div>
   </div>
 {/snippet}
@@ -270,6 +271,7 @@
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
+    <GitNotice />
     {#if noGit}
       {@render noGitNote('Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
     {:else}

@@ -41,14 +41,23 @@ describe('GroveEmptyState', () => {
     store.clearError();
   });
 
-  it('asks what to do with a folder that is not a git repository instead of adding it', async () => {
+  it('adds a folder that is not a git repository straight away, as a plain folder', async () => {
     store.repos = [];
-    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'folder', path: 'C:\\notes', gitAvailable: true });
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'folder', path: 'C:\\notes' });
     render(GroveEmptyState, { variant: 'empty' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
-    await waitFor(() => expect(store.pendingFolder).toEqual({ path: 'C:\\notes', gitAvailable: true }));
-    expect(store.repos).toEqual([]);
-    store.pendingFolder = null;
+    await waitFor(() => expect(store.repos).toEqual(['C:\\notes']));
+    expect(store.isFolderProject('C:\\notes')).toBe(true);
+    store.setFolderProject('C:\\notes', false);
+  });
+
+  it('adds a git repository as a git project', async () => {
+    store.repos = [];
+    mockGroveBench.addRepo.mockResolvedValueOnce({ kind: 'git', path: '/repo/new' });
+    render(GroveEmptyState, { variant: 'empty' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.repos).toEqual(['/repo/new']));
+    expect(store.isFolderProject('/repo/new')).toBe(false);
   });
 
   it('offers to start a conversation once a project exists', async () => {

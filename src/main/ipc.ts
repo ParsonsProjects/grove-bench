@@ -13,7 +13,7 @@ import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, isGitRepo } from './git.js';
-import { inspectProjectFolder, projectKind, initGitRepo } from './project-path.js';
+import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -172,8 +172,8 @@ export function registerHandlers() {
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
-    // A folder outside any repository comes back as 'folder'; the renderer
-    // asks whether to set git up there or use it as it is.
+    // A folder outside any repository comes back as 'folder' and is added
+    // as a plain folder.
     const picked = await inspectProjectFolder(result.filePaths[0]);
 
     if (picked.kind === 'git') {
@@ -194,12 +194,6 @@ export function registerHandlers() {
   ipcMain.handle(IPC.REPO_KIND, async (_event, repoPath: string) => {
     if (typeof repoPath !== 'string' || !repoPath) return 'missing';
     return projectKind(repoPath);
-  });
-
-  ipcMain.handle(IPC.REPO_INIT_GIT, async (_event, dir: string) => {
-    if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, error: 'Not a folder path.' };
-    logger.info(`Setting up git in ${dir}`);
-    return initGitRepo(dir);
   });
 
   ipcMain.handle(IPC.GIT_HAS_IDENTITY, async (_event, dir: string) => {

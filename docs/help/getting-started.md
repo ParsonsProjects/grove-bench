@@ -6,12 +6,7 @@ Grove Bench is a multi-agent git worktree orchestrator for Claude Code. It lets 
 
 Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to your project's folder and select it. The project will appear in the sidebar, ready for new conversations. Pick a folder inside a git repository and the repository's top-level folder is added.
 
-If the folder isn't a git repository, Grove Bench asks what to do:
-
-- **Set up git** (recommended) — Runs `git init` and commits the folder's files as a first commit. Files listed in a `.gitignore` are left out, so check the folder has nothing you wouldn't commit, such as passwords or keys. Git needs your name and email for that commit; if it has none, Grove Bench tells you the two `git config` commands to run. The project then works like any other git project.
-- **Use without git** — The folder is added as it is. Each conversation works in the folder itself: there is no separate copy and no branch, the agent edits your files in place, and its edits can't be rewound. The **Changes** and **Checkpoints** tabs say they need git, and rewinding a message only resets the conversation.
-
-If git isn't installed, only **Use without git** is offered, with a link to download git.
+A folder that isn't a git repository (or any folder, when git isn't installed) is added as it is. Each conversation in it works in the folder itself: there is no separate copy and no branch, the agent edits your files in place, and its edits can't be rewound. The **Changes** and **Checkpoints** tabs say they need git, and rewinding a message only resets the conversation. To get separate copies, branches and rewinding, run `git init` in the folder and make a first commit; new conversations use git after Grove Bench next starts.
 
 ## Starting a Conversation
 

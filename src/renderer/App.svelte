@@ -19,12 +19,10 @@
   import ErrorToast from './components/ErrorToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
-  import GitNotice from './components/GitNotice.svelte';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import SessionFinder from './components/SessionFinder.svelte';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
   import FirstSteps from './components/FirstSteps.svelte';
-  import FolderProjectDialog from './components/FolderProjectDialog.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
@@ -438,7 +436,6 @@
 
 <div class="flex flex-col h-screen bg-background text-foreground font-mono">
 <TitleBar />
-<GitNotice />
 <div class="flex flex-1 min-h-0">
   <svelte:boundary onerror={sidebarError}>
     <Sidebar />
@@ -547,7 +544,6 @@
 {/if}
 
 <ErrorToast />
-<FolderProjectDialog />
 <MemoryToast />
 
 <BookmarksDrawer />
