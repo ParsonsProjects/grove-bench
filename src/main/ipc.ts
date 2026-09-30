@@ -32,6 +32,7 @@ import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
+import { installDependencies } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
@@ -283,7 +284,10 @@ export function registerHandlers() {
     };
 
     // Return fast — the dialog can close and a tab can open
-    // Run the heavy work (worktree, npm install, agent start) in the background
+    // Run the heavy work (worktree, npm install, agent start) in the background.
+    // Deleting the conversation meanwhile aborts it (see destroySession).
+    const setupAbort = new AbortController();
+    const { signal } = setupAbort;
     const setupPromise = (async () => {
       try {
         emitPrelaunch({ type: 'status', message: 'Creating worktree…' });
@@ -296,6 +300,7 @@ export function registerHandlers() {
           id,
           adapterType: opts.adapterType,
         });
+        signal.throwIfAborted();
 
         // Auto-copy untracked files (.env, etc.)
         try {
@@ -320,9 +325,10 @@ export function registerHandlers() {
             const npmCache = await worktreeManager.getNpmCachePath(opts.repoPath);
             emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
             logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
-            await execa('npm', ['install', '--prefer-offline', '--cache', npmCache], { cwd: worktree.path });
+            await installDependencies(worktree.path, npmCache, signal);
             logger.info(`npm install completed for worktree ${worktree.id}`);
           } catch (e) {
+            if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
               const stderr = (e as any).stderr || (e as any).message || String(e);
               logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
@@ -332,6 +338,7 @@ export function registerHandlers() {
         }
 
         // Start agent in the worktree
+        signal.throwIfAborted();
         emitPrelaunch({ type: 'status', message: 'Starting agent…' });
         await sessionManager.createSession({
           id: worktree.id,
@@ -347,6 +354,10 @@ export function registerHandlers() {
 
         logger.info(`Session created: id=${worktree.id}`);
       } catch (err: any) {
+        if (signal.aborted) {
+          logger.info(`Session setup stopped for ${id}: the conversation was deleted`);
+          return;
+        }
         const msg = err.message || String(err);
         logger.error(`Session setup failed for ${id}:`, msg);
         emitPrelaunch({ type: 'error', message: msg });
@@ -363,7 +374,7 @@ export function registerHandlers() {
     // Don't await — let it run in the background
     setupPromise.catch(() => {}); // prevent unhandled rejection
     // Prompts sent to the new tab while setup runs wait for it to finish.
-    sessionManager.trackPendingSetup(id, setupPromise);
+    sessionManager.trackPendingSetup(id, setupPromise, setupAbort);
 
     return { id, branch };
   });

@@ -1514,6 +1514,30 @@ describe('AgentSessionManager close/destroy during setup', () => {
     expect(session.checkpoints.cleanup).toHaveBeenCalledWith('test-destroy-setup', '/repo');
   });
 
+  it('deleting a conversation stops a setup that can stop', async () => {
+    const abort = new AbortController();
+    // Like a setup killed mid-install: it settles once aborted.
+    const setup = new Promise<void>((resolve) => abort.signal.addEventListener('abort', () => resolve()));
+    sessionManager.trackPendingSetup('test-destroy-abort', setup, abort);
+
+    await sessionManager.destroySession('test-destroy-abort');
+
+    expect(abort.signal.aborted).toBe(true);
+  });
+
+  it('closing a conversation lets its setup finish instead of stopping it', async () => {
+    const abort = new AbortController();
+    let release!: () => void;
+    const setup = new Promise<void>((r) => { release = r; });
+    sessionManager.trackPendingSetup('test-close-noabort', setup, abort);
+
+    const closing = sessionManager.closeSession('test-close-noabort');
+    release();
+    await closing;
+
+    expect(abort.signal.aborted).toBe(false);
+  });
+
   it('a failed setup leaves nothing to close', async () => {
     sessionManager.trackPendingSetup('test-close-failed', Promise.reject(new Error('worktree failed')));
     await expect(sessionManager.closeSession('test-close-failed')).resolves.toBeUndefined();

@@ -281,6 +281,8 @@ class AgentSessionManager {
    *  the pane and its input the moment it has an id, so sendMessage() waits
    *  on these instead of bouncing a prompt typed before the session exists. */
   private pendingSetups = new Map<string, Promise<void>>();
+  /** Cancels a pending setup, for setups that can stop part-way. */
+  private pendingSetupAborts = new Map<string, AbortController>();
   /** Sessions closeSession() is still shutting down, keyed by id. They are
    *  already out of `sessions`; reopening or destroying one waits on this. */
   private closing = new Map<string, Promise<void>>();
@@ -1064,13 +1066,18 @@ class AgentSessionManager {
   /**
    * Register an in-flight session setup so prompts sent for `id` before
    * createSession() has run are held until it settles. The entry clears
-   * itself once the setup resolves or rejects.
+   * itself once the setup resolves or rejects. `abort`, when given, is how
+   * deleting the conversation stops the setup.
    */
-  trackPendingSetup(id: string, setup: Promise<unknown>): void {
+  trackPendingSetup(id: string, setup: Promise<unknown>, abort?: AbortController): void {
     const settled = setup.then(() => undefined, () => undefined);
     this.pendingSetups.set(id, settled);
+    if (abort) this.pendingSetupAborts.set(id, abort);
+    else this.pendingSetupAborts.delete(id);
     settled.then(() => {
-      if (this.pendingSetups.get(id) === settled) this.pendingSetups.delete(id);
+      if (this.pendingSetups.get(id) !== settled) return;
+      this.pendingSetups.delete(id);
+      if (this.pendingSetupAborts.get(id) === abort) this.pendingSetupAborts.delete(id);
     });
   }
 
@@ -1808,8 +1815,10 @@ class AgentSessionManager {
   }
 
   async destroySession(id: string): Promise<void> {
-    // Setup still running (new worktree, dependency install, resume): let it
-    // finish, or it would start an agent for a deleted conversation.
+    // Setup still running (new worktree, dependency install, resume): stop
+    // it where it can stop (a deleted conversation needs no install or agent)
+    // and wait for it, so it can't start an agent afterwards.
+    this.pendingSetupAborts.get(id)?.abort();
     await this.pendingSetups.get(id);
     // A close still shutting the agent down finishes first.
     await this.closing.get(id);
