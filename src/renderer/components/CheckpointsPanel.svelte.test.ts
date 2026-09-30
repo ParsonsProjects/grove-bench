@@ -63,6 +63,40 @@ describe('CheckpointsPanel on the shared review panel', () => {
     await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
   });
 
+  it('keeps the file sidebar for a turn without file changes, so switching turns does not move the layout', async () => {
+    mockGroveBench.getCheckpointFiles.mockImplementation(async (_sid: string, uuid: string) =>
+      uuid === 'u2' ? { entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] } : { entries: [] });
+    mockGroveBench.getCheckpointFileDiff.mockResolvedValue({ kind: 'text', patch: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old line\n+new line\n' });
+    const { container, getByText, getByLabelText, queryByText } = render(CheckpointsPanel, { sessionId: SID });
+
+    await fireEvent.click(getByText('Initial change'));
+    await waitFor(() => expect(getByText('No file changes in this turn')).toBeInTheDocument());
+    const sidebar = getByLabelText('Changed files');
+    expect(getByText('0 changes')).toBeInTheDocument();
+    expect(sidebar.contains(getByText('No file changes in this turn'))).toBe(false);
+
+    await fireEvent.click(getByText('Add polling'));
+    await waitFor(() => expect(container.textContent).toContain('new line'));
+    // Same sidebar element: it was not torn down and rebuilt.
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    expect(sidebar.querySelector('[data-file-key="src/a.ts:false"]')).not.toBeNull();
+    expect(queryByText('No file changes in this turn')).toBeNull();
+  });
+
+  it('shows the file sidebar while the first diff loads', async () => {
+    let resolveFiles: ((v: { entries: unknown[] }) => void) | undefined;
+    mockGroveBench.getCheckpointFiles.mockImplementation(() => new Promise((res) => { resolveFiles = res; }));
+    const { container, getByText, getByLabelText } = render(CheckpointsPanel, { sessionId: SID });
+
+    await fireEvent.click(getByText('Add polling'));
+    await waitFor(() => expect(getByText('Loading diff...')).toBeInTheDocument());
+    const sidebar = getByLabelText('Changed files');
+
+    resolveFiles!({ entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] });
+    await waitFor(() => expect(container.querySelector('[data-file-key="src/a.ts:false"]')).not.toBeNull());
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+  });
+
   it('tags review comments with the checkpoint they were written against', async () => {
     mockGroveBench.getCheckpointFiles.mockResolvedValue({ entries: [{ filePath: 'src/a.ts', status: 'modified', staged: false }] });
     mockGroveBench.getCheckpointFileDiff.mockResolvedValue({ kind: 'text', patch: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old line\n+new line\n' });

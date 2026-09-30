@@ -72,9 +72,13 @@
   let comparisonLabel = $derived(
     isFullThread ? 'all turns' : `checkpoint #${selectedCheckpoint?.turn ?? '?'}, ${diffMode === 'turn' ? 'this turn' : 'since here'}`,
   );
+  // The first load has no file list yet: say so in the diff pane, next to the
+  // (empty) file sidebar, rather than swapping the whole layout out.
   let emptyTitle = $derived(
-    files?.scopeError
-      ?? (isFullThread ? 'No file changes in this conversation' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
+    isDiffLoading && !files
+      ? 'Loading diff...'
+      : files?.scopeError
+        ?? (isFullThread ? 'No file changes in this conversation' : diffMode === 'turn' ? 'No file changes in this turn' : 'No file changes since this checkpoint'),
   );
 </script>
 
@@ -249,25 +253,19 @@
         {/if}
 
         <!-- Diff content: the shared review panel (file sidebar + diff) -->
-        {#if isDiffLoading && !files}
-          <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-            Loading diff...
-          </div>
-        {:else}
-          <ReviewDiffPanel
-            {sessionId}
-            {sourceKey}
-            entries={files?.entries ?? []}
-            loading={isDiffLoading}
-            changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
-            {loadDiff}
-            {loadFileLines}
-            onRefresh={() => checkpointStore.reloadFiles(sessionId)}
-            commentContext={comparisonLabel}
-            {emptyTitle}
-            emptyScene="checkpoints"
-          />
-        {/if}
+        <ReviewDiffPanel
+          {sessionId}
+          {sourceKey}
+          entries={files?.entries ?? []}
+          loading={isDiffLoading}
+          changesLabel={isFullThread ? 'Changed this conversation' : diffMode === 'turn' ? 'Changed this turn' : 'Changed since checkpoint'}
+          {loadDiff}
+          {loadFileLines}
+          onRefresh={() => checkpointStore.reloadFiles(sessionId)}
+          commentContext={comparisonLabel}
+          {emptyTitle}
+          emptyScene="checkpoints"
+        />
       {/if}
     </div>
   </div>

@@ -302,7 +302,6 @@
   {emptyTitle}
   emptyHint={isRunning ? 'Edits show up here as the agent makes them' : undefined}
   emptyScene="changes"
-  keepSidebar
   {sidebarTop}
   {sidebarSummaryExtra}
   sidebarFooter={commitBox}
