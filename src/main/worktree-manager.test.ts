@@ -18,6 +18,7 @@ vi.mock('node:fs/promises', () => ({
 
 // Mock git functions to avoid real git calls
 vi.mock('./git.js', () => ({
+  FETCH_TIMEOUT_MS: 30_000,
   git: vi.fn(),
   isGitRepo: vi.fn().mockResolvedValue(true),
   renameBranch: vi.fn(),
@@ -46,6 +47,9 @@ const mockFsUtils = vi.hoisted(() => ({
   removeDirectory: vi.fn(),
   removeDirectoryWithRetry: vi.fn(),
   pathExists: vi.fn(),
+  // Pass through to the mocked fs so tests can script manifest reads/writes.
+  readFileWithRetry: vi.fn((p: string) => mockFs.readFile(p, 'utf-8')),
+  writeFileAtomic: vi.fn((p: string, data: string) => mockFs.writeFile(p, data)),
 }));
 vi.mock('./fs-utils.js', () => mockFsUtils);
 
@@ -67,7 +71,7 @@ beforeEach(() => {
   vi.mocked(worktreeBranches).mockResolvedValue(new Map());
 
   // Default: empty manifest
-  mockFs.readFile.mockRejectedValue(new Error('ENOENT'));
+  mockFs.readFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
   mockFs.writeFile.mockImplementation(async (_path: string, data: string) => {
     savedManifest = JSON.parse(data);
   });
@@ -1063,5 +1067,105 @@ describe('remove: default branch guard', () => {
     await manager.remove('wt-a', true);
 
     expect(mockGit).toHaveBeenCalledWith(['branch', '-d', 'feat-a'], '/repo');
+  });
+});
+
+describe('manifest safety', () => {
+  const crypto = require('node:crypto') as typeof import('node:crypto');
+  const wtPathFor = (repo: string, id: string) =>
+    `/mock/userData/worktrees/${crypto.createHash('sha256').update(repo).digest('hex').slice(0, 8)}/${id}`;
+  const errno = (code: string) => Object.assign(new Error(code), { code });
+
+  it('refuses to write over a corrupt manifest', async () => {
+    mockFs.readFile.mockResolvedValue('{"wt-1": {"repoPath": "/re');
+
+    await expect(manager.saveProviderSessionId('wt-1', 'prov')).rejects.toThrow('corrupt');
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses to write when the manifest cannot be read', async () => {
+    mockFs.readFile.mockRejectedValue(errno('EBUSY'));
+
+    await expect(manager.saveDisplayName('wt-1', 'x')).rejects.toThrow('Could not read the worktree manifest');
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('the sweep deletes nothing when the manifest is corrupt', async () => {
+    mockFs.readFile.mockResolvedValue('not json');
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockResolvedValue(['abcd1234']);
+    mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+
+    await expect(manager.sweepStaleWorktrees()).rejects.toThrow('corrupt');
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('writes the manifest atomically', async () => {
+    await manager.registerDirect('/repo', 'main');
+    expect(mockFsUtils.writeFileAtomic).toHaveBeenCalledWith('/mock/userData/worktrees/manifest.json', expect.any(String));
+  });
+
+  it('keeps an entry whose directory can\'t be checked, rather than calling it an orphan', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'b', createdAt: 1 } }));
+    mockGit.mockResolvedValue('');
+    mockFs.access.mockRejectedValue(errno('EPERM'));
+
+    expect(await manager.cleanupOrphans('/repo')).toBe(0);
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+    expect(savedManifest).toHaveProperty('wt-1');
+  });
+
+  it('matches git\'s worktree paths without regard to case on Windows', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFile.mockResolvedValue(JSON.stringify({ 'wt-1': { repoPath: '/repo', branch: 'b', createdAt: 1 } }));
+      mockGit.mockResolvedValue(`worktree ${wtPathFor('/repo', 'wt-1').toUpperCase()}\nbranch refs/heads/b\n`);
+      mockFs.access.mockResolvedValue(undefined);
+
+      expect(await manager.cleanupOrphans('/repo')).toBe(0);
+      expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+      expect((await manager.list('/repo')).map((w) => w.id)).toEqual(['wt-1']);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
+  it('the sweep leaves a worktree that is still being created', async () => {
+    const wtPath = wtPathFor('/repo', 'newid001');
+    const hashDir = wtPath.slice(0, wtPath.lastIndexOf('/'));
+    let finishAdd!: () => void;
+    mockGit.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'add') await new Promise<void>((r) => { finishAdd = r; });
+      return '';
+    });
+    mockFs.access.mockResolvedValue(undefined);
+    mockFs.readdir.mockImplementation(async (p: string) => (p === hashDir ? ['newid001'] : [hashDir.split('/').pop()]));
+    mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+
+    const creating = manager.create({ repoPath: '/repo', branchName: 'feat', id: 'newid001' });
+    await vi.waitFor(() => expect(finishAdd).toBeDefined());
+    await manager.sweepStaleWorktrees();
+    finishAdd();
+    await creating;
+
+    expect(mockFsUtils.removeDirectory).not.toHaveBeenCalled();
+    expect(savedManifest).toHaveProperty('newid001');
+  });
+
+  it('a taken branch name fails the create without deleting anything', async () => {
+    // Taken after the IPC check passed (two creates racing on one name).
+    vi.mocked(branchExists).mockResolvedValue(true);
+    mockGit.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'list') return 'worktree /mock/userData/worktrees/x/other\nbranch refs/heads/feat\n';
+      if (args[0] === 'worktree' && args[1] === 'add') throw new Error("fatal: a branch named 'feat' already exists");
+      return '';
+    });
+
+    await expect(manager.create({ repoPath: '/repo', branchName: 'feat', id: 'dup00001' })).rejects.toThrow('already exists');
+    const ran = mockGit.mock.calls.map((c) => c[0].join(' '));
+    expect(ran.some((c) => c.startsWith('branch -D') || c.startsWith('worktree remove'))).toBe(false);
+    expect(savedManifest).not.toHaveProperty('dup00001');
   });
 });
