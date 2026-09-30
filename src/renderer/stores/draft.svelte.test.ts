@@ -248,3 +248,40 @@ describe('draftStore review fixes', () => {
     expect(createSessionMock()).not.toHaveBeenCalled();
   });
 });
+
+describe('draftStore.start while it is still starting', () => {
+  it('files the conversation under the project it started in, even if the picker changes', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    draftStore.setText('hello');
+    await settle();
+
+    const started = draftStore.start();
+    await settle();
+    draftStore.setRepo('/repo/two');
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+    await started;
+
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/one' }));
+    expect(store.sessions.find((s) => s.id === 'new1')?.repoPath).toBe('/repo/one');
+  });
+
+  it('leaves a new draft opened meanwhile alone', async () => {
+    let finish!: (v: unknown) => void;
+    createSessionMock().mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    draftStore.open('/repo/one');
+    draftStore.setText('first');
+    await settle();
+
+    const started = draftStore.start();
+    await settle();
+    draftStore.discard();
+    draftStore.open('/repo/two');
+    draftStore.setText('second, still being typed');
+    finish({ id: 'new1', branch: 'grove/new1', agentType: 'claude-code' });
+    await started;
+
+    expect(draftStore.draft?.text).toBe('second, still being typed');
+  });
+});

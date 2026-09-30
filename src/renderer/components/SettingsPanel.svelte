@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { pluginStore } from '../stores/plugins.svelte.js';
   import { mcpConfigStore } from '../stores/mcpConfig.svelte.js';
@@ -62,11 +63,15 @@
   }
 
   $effect(() => {
-    if (open) {
+    if (!open) return;
+    // Untracked: the loads read store state (agentsStore.loaded), and a
+    // change there, such as an agent reporting new models, would re-run
+    // this and replace unsaved edits with the saved settings.
+    untrack(() => {
       settingsStore.load();
       pluginStore.refresh();
       agentsStore.load();
-    }
+    });
   });
 
   // ─── MCP servers tab ───
@@ -74,7 +79,9 @@
   // Listing health-checks every server (slow, e.g. `claude mcp list`), so load lazily on
   // first visit to the MCP tab rather than on every settings open.
   $effect(() => {
-    if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
+    // Keyed on `attempted`, not `loaded`: a listing that fails (no CLI on
+    // PATH, a deleted project) would otherwise start another straight away.
+    if (open && tab === 'mcp' && !mcpConfigStore.attempted && !mcpConfigStore.loading) {
       // Start with the open conversation's agent (if it can edit MCP config)
       // and project: project and local servers only list for one project.
       const active = store.activeSession;

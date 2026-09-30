@@ -18,6 +18,9 @@ class GitStatusStore {
   private suppressedSessions = new Set<string>();
 
   private lastFetch = new Map<string, number>();
+  /** Latest request per session. A slower, older response (the previous
+   *  scope, or a conversation deleted meanwhile) is dropped. */
+  private requestSeq = new Map<string, number>();
   private pendingTimeout = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** Suppress refresh triggers for a session (call before replaying its history). */
@@ -58,6 +61,8 @@ class GitStatusStore {
     if (now - last < THROTTLE_MS) return;
 
     this.lastFetch.set(sessionId, now);
+    const seq = (this.requestSeq.get(sessionId) ?? 0) + 1;
+    this.requestSeq.set(sessionId, seq);
     this.loadingBySession = { ...this.loadingBySession, [sessionId]: true };
     // Whatever changed the files may have switched branches too.
     void sessionStore.syncBranch(sessionId);
@@ -67,11 +72,14 @@ class GitStatusStore {
       const result = scope === 'branch'
         ? await window.groveBench.getGitStatus(sessionId, { scope, base })
         : await window.groveBench.getGitStatus(sessionId);
+      if (this.requestSeq.get(sessionId) !== seq) return;
       this.statusBySession = { ...this.statusBySession, [sessionId]: result };
     } catch (e) {
       console.error('Failed to fetch git status:', e);
     } finally {
-      this.loadingBySession = { ...this.loadingBySession, [sessionId]: false };
+      if (this.requestSeq.get(sessionId) === seq) {
+        this.loadingBySession = { ...this.loadingBySession, [sessionId]: false };
+      }
     }
   }
 
@@ -124,6 +132,7 @@ class GitStatusStore {
     if (timeout) clearTimeout(timeout);
     this.pendingTimeout.delete(sessionId);
     this.lastFetch.delete(sessionId);
+    this.requestSeq.delete(sessionId);
     this.suppressedSessions.delete(sessionId);
     const { [sessionId]: _s, ...restStatus } = this.statusBySession;
     this.statusBySession = restStatus;

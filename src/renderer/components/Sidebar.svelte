@@ -3,9 +3,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
-  import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
-  import { previewStore } from '../stores/preview.svelte.js';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
@@ -28,6 +26,7 @@
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { prStateFlag, isPrMerged, prHealth } from '../lib/pr-state.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import { forgetConversation } from '$lib/forget-conversation.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import AgentSprite from './AgentSprite.svelte';
   import type { SessionSortState, PrInfo } from '../../shared/types.js';
@@ -370,7 +369,7 @@
   }
 
   /** Full teardown of one session: main-process destroy plus all per-session
-   *  renderer state (messages + IPC listener, checkpoints, terminal). Shared
+   *  renderer state (see forgetConversation). Shared
    *  by the per-row destroy flow and the bulk clean-up dialog. */
   async function destroySessionById(id: string, deleteBranch: boolean): Promise<boolean> {
     destroying = new Set([...destroying, id]);
@@ -385,14 +384,7 @@
     try {
       await window.groveBench.destroySession(id, deleteBranch);
       trackEvent('session_destroyed');
-      store.removeSession(id);
-      gitStatusStore.clear(id);
-      messageStore.destroySession(id);
-      checkpointStore.clear(id);
-      terminalStore.destroySession(id);
-      previewStore.forget(id);
-      bookmarkStore.dropSessionLocal(id);
-      sessionPreviewStore.invalidate(id);
+      forgetConversation(id);
       return true;
     } catch (e: any) {
       store.setError(e.message || String(e));

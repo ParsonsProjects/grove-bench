@@ -218,6 +218,26 @@ describe('ingestEvent — text streaming', () => {
     expect(messageStore.getIsRunning(SID)).toBe(true);
   });
 
+  it('keeps a stopped reply in one piece, buffered tail included', () => {
+    const id = 'stop-fragment';
+    vi.useFakeTimers();
+    try {
+      messageStore.ingestEvent(id, { type: 'partial_text', text: 'Hello ' } as AgentEvent);
+      messageStore.flushStreamBuffers();
+      messageStore.ingestEvent(id, { type: 'partial_text', text: 'world' } as AgentEvent);
+
+      messageStore.markSessionStopped(id);
+      vi.advanceTimersByTime(200);
+
+      const texts = messageStore.getMessages(id).filter((m) => m.kind === 'text').map((m) => (m as { text: string }).text);
+      expect(texts).toEqual(['Hello world']);
+      expect(messageStore.getStreamingText(id)).toBe('');
+    } finally {
+      vi.useRealTimers();
+      messageStore.destroySession(id);
+    }
+  });
+
   it('applies buffered deltas before a non-streaming event is processed', () => {
     messageStore.ingestEvent(SID, { type: 'partial_text', text: 'buffered' } as AgentEvent);
     messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' } as AgentEvent);

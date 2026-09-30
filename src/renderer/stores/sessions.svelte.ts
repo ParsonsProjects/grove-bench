@@ -204,6 +204,7 @@ class SessionStore {
 
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
+    this.removeFromRecentlyClosed(id);
     this.clearNeedsAttention(id);
     this.clearDeferredResume(id);
     // Back to the landing screen rather than jumping into another conversation.

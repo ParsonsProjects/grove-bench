@@ -1061,6 +1061,9 @@ class MessageStore {
 
   /** Reset running state for a session (e.g. after stop is clicked) */
   markSessionStopped(sessionId: string) {
+    // Apply deltas still waiting on the stream timer first, or they would
+    // show up after the stop as a new fragment of the stopped reply.
+    this.settleStreamBuffer(sessionId, 'process_exit');
     this.flushStreamingText(sessionId);
     this.streamingThinking[sessionId] = '';
     this.setIsRunning(sessionId, false);
