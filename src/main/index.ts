@@ -14,6 +14,7 @@ import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
 import { installSpellcheckMenu } from './spellcheck.js';
+import { lockToAppPage } from './window-guard.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -79,6 +80,7 @@ function createWindow() {
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);
+  lockToAppPage(mainWindow.webContents);
 
   if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
