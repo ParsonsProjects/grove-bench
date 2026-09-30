@@ -7,6 +7,7 @@ import CheckpointsPanel from './CheckpointsPanel.svelte';
 import { checkpointStore } from '../stores/checkpoints.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { reviewStore } from '../stores/review.svelte.js';
+import { store as sessionStore } from '../stores/sessions.svelte.js';
 
 const SID = 'cp-session';
 
@@ -16,6 +17,9 @@ beforeEach(() => {
   reviewStore.clear(SID);
   localStorage.clear();
   messageStore.messagesBySession = { [SID]: [] };
+  // The panel under test is on screen.
+  sessionStore.activeSessionId = SID;
+  messageStore.setActiveTab(SID, 'checkpoints');
   checkpointStore.checkpointsBySession = {
     [SID]: [
       { uuid: 'u2', turn: 2, ref: 'r2', text: 'Add polling' },

@@ -25,6 +25,7 @@
     sessionId,
     sourceKey,
     entries,
+    active = true,
     loading = false,
     changesLabel = 'Changes',
     loadDiff: fetchDiff,
@@ -50,6 +51,10 @@
      *  cache (diffs, expansions, composer) resets. */
     sourceKey: string;
     entries: GitStatusEntry[];
+    /** Whether this panel is on screen. Hidden, it doesn't fetch diffs on
+     *  each status refresh (one runs after every file edit); it fetches
+     *  them when shown again. */
+    active?: boolean;
     loading?: boolean;
     /** Heading for the unstaged section. */
     changesLabel?: string;
@@ -247,7 +252,7 @@
         selectedFileKey = null;
       }
 
-      loadSelectedAndNeighbors(true);
+      refreshDiffs(true);
     });
   });
 
@@ -262,7 +267,22 @@
       // The open comment box holds only a side and line: left open, it would
       // save its draft against the same line of the next file.
       composer = null;
-      loadSelectedAndNeighbors(false);
+      refreshDiffs(false);
+    });
+  });
+
+  // Set while hidden when a load was skipped; shown again, reload then.
+  let reloadWhenShown = false;
+  function refreshDiffs(forceReload: boolean) {
+    if (!active) { reloadWhenShown = true; return; }
+    loadSelectedAndNeighbors(forceReload);
+  }
+  $effect(() => {
+    if (!active) return;
+    untrack(() => {
+      if (!reloadWhenShown) return;
+      reloadWhenShown = false;
+      loadSelectedAndNeighbors(true);
     });
   });
 
@@ -374,11 +394,14 @@
   // prefetches and git-status refreshes reassign `fileDiffs` several times per
   // selection, and each reassignment would otherwise reparse (and re-highlight)
   // the whole patch.
+  // Keyed on the file key, a string: every status refresh hands back new
+  // entry objects, and reading the entry here would rebuild the lines below
+  // (and re-render every row of the diff) even when the patch is the same.
+  let selectedKey = $derived(selectedEntry ? fileKey(selectedEntry) : null);
   let parsedDiff: { key: string; patch: string; lines: DiffLine[] } | null = null;
   let selectedDiffLines = $derived.by((): DiffLine[] => {
-    const entry = selectedEntry;
-    if (!entry) return [];
-    const key = fileKey(entry);
+    const key = selectedKey;
+    if (key === null) return [];
     const result = fileDiffs[key];
     if (!result || result.kind !== 'text' || !result.patch) return [];
     if (parsedDiff && parsedDiff.key === key && parsedDiff.patch === result.patch) return parsedDiff.lines;
@@ -409,9 +432,8 @@
     });
   });
   let displayLines = $derived.by((): DiffLine[] => {
-    const entry = selectedEntry;
-    if (!entry) return [];
-    const key = fileKey(entry);
+    const key = selectedKey;
+    if (key === null) return [];
     return withExpandableContext(selectedDiffLines, fileLinesByKey[key] ?? null, revealedByKey[key] ?? []);
   });
 

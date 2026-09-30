@@ -7,7 +7,21 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import ChangesReviewPanel from './ChangesReviewPanel.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { store as sessionStore } from '../stores/sessions.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
+
+// Counts syntax-highlight calls; otherwise the real module.
+const highlights = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/diff-highlight.js')>();
+  return {
+    ...actual,
+    highlightLine: (...args: Parameters<typeof actual.highlightLine>) => {
+      highlights.count++;
+      return actual.highlightLine(...args);
+    },
+  };
+});
 
 const SID = 'changes-session';
 
@@ -29,6 +43,9 @@ beforeEach(() => {
   gitStatusStore.statusBySession = {};
   messageStore.messagesBySession = { [SID]: [] };
   messageStore.setIsRunning(SID, false);
+  // The panel under test is on screen.
+  sessionStore.activeSessionId = SID;
+  messageStore.setActiveTab(SID, 'changes');
 });
 
 afterEach(() => cleanup());
@@ -377,5 +394,47 @@ describe('ChangesReviewPanel — diff cache', () => {
     await fireEvent.click(row('b'));
     await waitFor(() => expect(diffText(container)).toContain('src/b.ts branch'));
     expect(diffText(container)).not.toContain('src/b.ts working');
+  });
+});
+
+describe('ChangesReviewPanel — rendering cost', () => {
+  beforeEach(() => {
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = {};
+  });
+
+  it('does not redraw the diff when a status refresh brings back the same patch', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: hunkPatch() });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const calls = mockGroveBench.getFileDiff.mock.calls.length;
+    highlights.count = 0;
+
+    // Same file, same content, new objects (as every refresh returns).
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    await waitFor(() => expect(mockGroveBench.getFileDiff.mock.calls.length).toBeGreaterThan(calls));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(highlights.count).toBe(0);
+    expect(diffText(container)).toContain('bar');
+  });
+
+  it('fetches no diffs while hidden, and catches up when shown', async () => {
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) => ({ kind: 'text' as const, patch: patch(`${filePath} now`) }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('src/a.ts now'));
+
+    messageStore.setActiveTab(SID, 'activity');
+    await tick();
+    mockGroveBench.getFileDiff.mockClear();
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h2' }), entry('src/b.ts')] } };
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGroveBench.getFileDiff).not.toHaveBeenCalled();
+
+    messageStore.setActiveTab(SID, 'changes');
+    await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/a.ts', false, undefined));
   });
 });
