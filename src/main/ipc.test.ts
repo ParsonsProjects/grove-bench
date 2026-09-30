@@ -195,13 +195,13 @@ describe('repos', () => {
     expect(m.worktreeManager.cleanupOrphans).toHaveBeenCalledWith('/repo');
   });
 
-  it('REPO_SELECT returns null for a cancelled pick or a folder that is not a repo', async () => {
+  it('REPO_SELECT returns null for a cancelled pick and says why a folder that is not a repo was refused', async () => {
     vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] });
     expect(await invoke(IPC.REPO_SELECT)).toBeNull();
 
     vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ['/not-a-repo'] });
     m.worktreeManager.validateRepo.mockResolvedValue(false);
-    expect(await invoke(IPC.REPO_SELECT)).toBeNull();
+    await expect(invoke(IPC.REPO_SELECT)).rejects.toThrow('/not-a-repo is not a git repository');
     expect(m.worktreeManager.cleanupOrphans).not.toHaveBeenCalled();
   });
 

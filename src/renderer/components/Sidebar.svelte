@@ -471,20 +471,25 @@
   }
 
   async function confirmRename() {
-    if (!renamingSessionId) return;
+    // Held across the save: the dialog can close (or open on another
+    // conversation) before it returns, and the name is saved either way.
+    const id = renamingSessionId;
+    if (!id) return;
     const newName = renameValue.trim();
     if (!newName) { renamingSessionId = null; return; }
 
-    const session = store.sessions.find(s => s.id === renamingSessionId);
+    const session = store.sessions.find(s => s.id === id);
     if (session && newName === sessionLabel(session)) { renamingSessionId = null; return; }
 
     try {
-      await window.groveBench.renameSession(renamingSessionId, newName);
-      store.updateDisplayName(renamingSessionId, newName);
-      renamingSessionId = null;
-      renameError = null;
+      await window.groveBench.renameSession(id, newName);
+      store.updateDisplayName(id, newName);
+      if (renamingSessionId === id) {
+        renamingSessionId = null;
+        renameError = null;
+      }
     } catch (e: any) {
-      renameError = e.message || String(e);
+      if (renamingSessionId === id) renameError = e.message || String(e);
     }
   }
 

@@ -342,7 +342,9 @@
   $effect(() => {
     const defaults = settingsStore.draft.defaultModels ?? {};
     void modelsVersion;
-    if (open && tab === 'agent') loadAgentGroups(defaults);
+    // Untracked: the load reads agentsStore.loaded, which a models-changed
+    // refresh flips twice, and each re-run would fetch every agent's models.
+    if (open && tab === 'agent') untrack(() => loadAgentGroups(defaults));
   });
 
   function controlValue(adapterId: string, control: ControlDescriptor): string {

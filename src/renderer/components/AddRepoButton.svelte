@@ -2,12 +2,20 @@
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import FolderPlusIcon from '@lucide/svelte/icons/folder-plus';
+  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
 
   /** Icon-only rendering for narrow sidebars; the label moves to the tooltip. */
   let { compact = false }: { compact?: boolean } = $props();
 
   async function addRepo() {
-    const selected = await window.groveBench.addRepo();
+    let selected: string | null;
+    try {
+      selected = await window.groveBench.addRepo();
+    } catch (e) {
+      // e.g. the folder isn't a git repository
+      store.setError(stripIpcErrorPrefix(e instanceof Error ? e.message : String(e)));
+      return;
+    }
     if (selected) {
       store.addRepo(selected);
       store.clearError();

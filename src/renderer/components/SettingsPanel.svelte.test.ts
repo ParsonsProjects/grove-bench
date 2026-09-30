@@ -139,6 +139,22 @@ describe('SettingsPanel loading', () => {
     expect(settingsStore.draft.theme).toBe('dark');
   });
 
+  it('fetches the Agent tab\'s models once per models-changed event', async () => {
+    let fire!: () => void;
+    mockGroveBench.onModelsChanged.mockImplementation(((cb: () => void) => { fire = cb; return () => {}; }) as never);
+    mockGroveBench.listAdapters.mockResolvedValue([claude]);
+    await openAgentTab();
+    await waitFor(() => expect(mockGroveBench.getModels).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    mockGroveBench.getModels.mockClear();
+
+    fire();
+    await waitFor(() => expect(mockGroveBench.getModels).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockGroveBench.getModels).toHaveBeenCalledTimes(1);
+  });
+
   it('does not retry a failed MCP listing in a loop', async () => {
     agentsStore.list = [{ ...claude, capabilities: { mcpConfig: true } }];
     mcpConfigStore.loaded = false;

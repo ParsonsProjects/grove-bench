@@ -289,6 +289,26 @@ describe('Sidebar bottom buttons', () => {
   });
 });
 
+describe('Sidebar rename', () => {
+  it('shows a saved name even if the dialog closed before the save returned', async () => {
+    let finish!: () => void;
+    const bridge = mockGroveBench as unknown as Record<string, unknown>;
+    bridge.renameSession = vi.fn(() => new Promise<void>((r) => { finish = r; }));
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
+    await fireEvent.click(await screen.findByText('Rename'));
+    const input = await screen.findByDisplayValue('Sidebar revamp');
+    await fireEvent.input(input, { target: { value: 'Faster sidebar' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    finish();
+
+    expect(await screen.findByText('Faster sidebar')).toBeInTheDocument();
+    delete bridge.renameSession;
+  });
+});
+
 describe('Sidebar clean-up dialog', () => {
   const DAY = 86_400_000;
   const longAgo = Date.now() - 30 * DAY;

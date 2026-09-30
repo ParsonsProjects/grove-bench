@@ -174,8 +174,9 @@ export function registerHandlers() {
     if (result.canceled || result.filePaths.length === 0) return null;
     const repoPath = result.filePaths[0];
 
+    // Not null: that means Cancel, and this pick needs saying why it failed.
     const valid = await worktreeManager.validateRepo(repoPath);
-    if (!valid) return null;
+    if (!valid) throw new Error(`${repoPath} is not a git repository, so it can't be added as a project.`);
 
     // Clean up any orphan worktrees from previous crashes
     const orphans = await worktreeManager.cleanupOrphans(repoPath);
