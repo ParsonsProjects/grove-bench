@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { GroveBenchAPI } from '../../shared/types.js';
 
 // ─── localStorage mock ───
 const localStorageMock = (() => {
@@ -139,7 +140,65 @@ const mockGroveBench = {
   previewGetStates: vi.fn(() => Promise.resolve({} as Record<string, { user: import('../../shared/types.js').PreviewPageState | null; agent: import('../../shared/types.js').PreviewPageState | null }>)),
   onPreviewState: vi.fn((_cb: (sessionId: string, page: import('../../shared/types.js').PreviewPageKind, state: import('../../shared/types.js').PreviewPageState | null) => void) => () => {}),
   onPreviewKey: vi.fn((_cb: (sessionId: string, key: import('../../shared/types.js').PreviewKeyForward) => void) => () => {}),
+
+  // The rest of the bridge: harmless defaults, so a component that calls one
+  // in a test gets an answer rather than "is not a function". Tests that care
+  // override them. Calls whose answer has no sensible default reject.
+  addRepo: vi.fn(() => Promise.resolve(null as string | null)),
+  removeRepo: vi.fn(() => Promise.resolve()),
+  createSession: vi.fn(() => notMocked('createSession')),
+  closeSession: vi.fn(() => Promise.resolve()),
+  destroySession: vi.fn(() => Promise.resolve()),
+  stopSession: vi.fn(() => Promise.resolve()),
+  sleepSession: vi.fn(() => Promise.resolve(true)),
+  wakeSession: vi.fn(() => Promise.resolve()),
+  renameSession: vi.fn((_sessionId: string, _displayName: string) => Promise.resolve()),
+  renameBranch: vi.fn(() => notMocked('renameBranch')),
+  openSessionFolder: vi.fn(() => Promise.resolve()),
+  getOpenTabs: vi.fn(() => Promise.resolve([] as string[])),
+  setOpenTabs: vi.fn(),
+  onSessionStatus: vi.fn(() => () => {}),
+  onFocusSession: vi.fn(() => () => {}),
+  onPowerResume: vi.fn(() => () => {}),
+  onAppClosing: vi.fn(() => () => {}),
+  getEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').AgentEvent[])),
+  getEventHistoryCount: vi.fn(() => Promise.resolve(0)),
+  getImageDiffContent: vi.fn(() => Promise.resolve({ working: null, head: null } as import('../../shared/types.js').ImageDiffContent)),
+  readFile: vi.fn(() => Promise.resolve('')),
+  ptySpawn: vi.fn(() => Promise.resolve(true)),
+  ptyWrite: vi.fn(),
+  ptyResize: vi.fn(),
+  ptyKill: vi.fn(() => Promise.resolve()),
+  ptyIsAlive: vi.fn(() => Promise.resolve(false)),
+  onPtyData: vi.fn(() => () => {}),
+  onPtyExit: vi.fn(() => () => {}),
+  listSkills: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SkillInfo[])),
+  addSkill: vi.fn(() => notMocked('addSkill')),
+  getSkillSuggestions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SkillSuggestion[])),
+  analyzeSkillSuggestions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SkillSuggestion[])),
+  dismissSkillSuggestion: vi.fn(() => Promise.resolve()),
+  pluginList: vi.fn(() => Promise.resolve({ installed: [], available: [] } as import('../../shared/types.js').PluginListResult)),
+  pluginInstall: vi.fn(() => Promise.resolve()),
+  pluginUninstall: vi.fn(() => Promise.resolve()),
+  pluginEnable: vi.fn(() => Promise.resolve()),
+  pluginDisable: vi.fn(() => Promise.resolve()),
+  checkForUpdate: vi.fn(() => Promise.resolve()),
+  downloadUpdate: vi.fn(() => Promise.resolve()),
+  installUpdate: vi.fn(),
+  onUpdateStatus: vi.fn(() => () => {}),
+  winMinimize: vi.fn(),
+  winMaximize: vi.fn(),
+  winClose: vi.fn(),
+  winIsMaximized: vi.fn(() => Promise.resolve(false)),
 };
+
+function notMocked(name: string): Promise<never> {
+  return Promise.reject(new Error(`window.groveBench.${name} is not mocked in this test`));
+}
+
+// Fails the type check when the bridge gains a method the mock lacks.
+const coversBridge: Record<keyof GroveBenchAPI, unknown> = mockGroveBench;
+void coversBridge;
 // Attach the IPC bridge onto the existing (jsdom) window rather than replacing
 // it — replacing window wipes addEventListener/dispatchEvent and breaks any
 // component test that mounts a component using window event listeners.

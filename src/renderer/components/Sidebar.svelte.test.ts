@@ -292,8 +292,7 @@ describe('Sidebar bottom buttons', () => {
 describe('Sidebar rename', () => {
   it('shows a saved name even if the dialog closed before the save returned', async () => {
     let finish!: () => void;
-    const bridge = mockGroveBench as unknown as Record<string, unknown>;
-    bridge.renameSession = vi.fn(() => new Promise<void>((r) => { finish = r; }));
+    mockGroveBench.renameSession.mockImplementationOnce(() => new Promise<void>((r) => { finish = r; }));
     render(Sidebar);
     await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
     await fireEvent.click(await screen.findByText('Rename'));
@@ -305,7 +304,6 @@ describe('Sidebar rename', () => {
     finish();
 
     expect(await screen.findByText('Faster sidebar')).toBeInTheDocument();
-    delete bridge.renameSession;
   });
 });
 

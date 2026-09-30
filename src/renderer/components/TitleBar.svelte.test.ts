@@ -5,21 +5,16 @@ import { render, cleanup } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import TitleBar from './TitleBar.svelte';
 
-const bridge = mockGroveBench as unknown as Record<string, unknown>;
-
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  delete bridge.winIsMaximized;
-  delete bridge.onUpdateStatus;
 });
 
 describe('TitleBar', () => {
   it('asks main whether the window is maximized once a resize settles, not per event', async () => {
     vi.useFakeTimers();
-    const isMaximized = vi.fn().mockResolvedValue(false);
-    bridge.winIsMaximized = isMaximized;
-    bridge.onUpdateStatus = () => () => {};
+    const isMaximized = mockGroveBench.winIsMaximized;
+    isMaximized.mockClear();
     render(TitleBar);
     expect(isMaximized).toHaveBeenCalledTimes(1);
 

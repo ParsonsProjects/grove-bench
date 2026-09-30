@@ -26,6 +26,10 @@ const mockFs = vi.mocked(fs);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued mockResolvedValueOnce answers: one a test
+  // didn't use would be handed to the next test's git call.
+  mockGit.mockReset();
+  mockGitEnv.mockReset();
 });
 
 describe('CheckpointManager', () => {
