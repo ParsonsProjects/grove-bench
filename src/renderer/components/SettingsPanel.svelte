@@ -812,9 +812,9 @@
 
           <Separator />
 
-          <!-- Default Conversation View -->
+          <!-- Default Thread View -->
           <div>
-            <Label class="mb-1 block">Default Conversation View</Label>
+            <Label class="mb-1 block">Default Thread View</Label>
             <Select.Root type="single" value={settingsStore.draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
               <Select.Trigger class="w-48">
                 {VIEW_MODE_LABELS[settingsStore.draft.defaultActivityView] ?? 'Summary'}

@@ -114,7 +114,7 @@ describe('StatusBar rate limit', () => {
     const { getByTestId, getByRole } = render(StatusBar, { props: { sessionId: ACTIVE } });
     const warning = getByTestId('rate-limit');
     expect(warning.textContent).toMatch(/rate warning\s+\(85%\)/);
-    expect(getByRole('button', { name: /^Conversation view:/ }).nextElementSibling).toBe(warning);
+    expect(getByRole('button', { name: /^Thread view:/ }).nextElementSibling).toBe(warning);
   });
 
   it('shows nothing while requests are allowed', () => {

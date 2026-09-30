@@ -656,15 +656,15 @@
   <span class="w-px self-stretch bg-border"></span>
 
   <!-- Activity view toggle (cycles Summary → Focus → Detailed). Per session;
-       the default for new sessions is set in Settings → Default Conversation View.
+       the default for new sessions is set in Settings → Default Thread View.
        The rate-limit warning sits underneath. -->
   <div class="flex flex-col gap-px leading-snug">
   <button
     onclick={() => messageStore.setViewMode(sessionId, NEXT_VIEW_MODE[viewMode])}
     class="flex items-center gap-1 transition-colors
       {viewMode === 'detailed' ? 'text-muted-foreground hover:text-foreground' : 'text-primary hover:text-primary/80'}"
-    title="Conversation view: {VIEW_MODE_LABELS[viewMode]}. {VIEW_MODE_HINTS[viewMode]}"
-    aria-label="Conversation view: {VIEW_MODE_LABELS[viewMode]}"
+    title="Thread view: {VIEW_MODE_LABELS[viewMode]}. {VIEW_MODE_HINTS[viewMode]}"
+    aria-label="Thread view: {VIEW_MODE_LABELS[viewMode]}"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
       {#if viewMode === 'detailed'}
@@ -1754,7 +1754,7 @@
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
           <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
           <div class="flex justify-between"><span>Cycle effort level</span><kbd class="text-foreground">Alt+E</kbd></div>
-          <div class="flex justify-between"><span>Conversation tab</span><kbd class="text-foreground">Alt+1</kbd></div>
+          <div class="flex justify-between"><span>Thread tab</span><kbd class="text-foreground">Alt+1</kbd></div>
           <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
           <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>
         </div>

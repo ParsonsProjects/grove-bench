@@ -213,7 +213,7 @@
     >
       <!-- A pixel chat bubble: two lines of text, tail at the bottom left. -->
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
-      Conversation
+      Thread
       {#if hasPendingPermission}
         <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
       {:else if isRunning}
@@ -296,7 +296,7 @@
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
     {#if noGit}
-      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in the Conversation tab; files stay as they are.')}
+      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in the Thread tab; files stay as they are.')}
     {:else}
       <CheckpointsPanel {sessionId} />
     {/if}
@@ -325,7 +325,7 @@
         onclick={() => switchTab('activity')}
         class="text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        Switch to Conversation to send messages (Alt+1)
+        Switch to Thread to send messages (Alt+1)
       </button>
     </div>
   {/if}

@@ -79,12 +79,12 @@ describe('WorkspacePane in a conversation without git', () => {
     expect(document.querySelectorAll('[data-scenery="watering-can"]')).toHaveLength(1);
   });
 
-  it('calls the chat tab Conversation, and points back to it from other tabs', async () => {
+  it('calls the chat tab Thread, and points back to it from other tabs', async () => {
     store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
     messageStore.setActiveTab('n1', 'checkpoints');
     render(WorkspacePane, { sessionId: 'n1' });
-    expect(await screen.findByRole('button', { name: /^Conversation\s+Alt\+1/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Thread\s+Alt\+1/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Activity/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Switch to Conversation to send messages (Alt+1)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Switch to Thread to send messages (Alt+1)' })).toBeInTheDocument();
   });
 });

@@ -38,7 +38,7 @@ Once a conversation is running, type your instructions in the **prompt editor** 
 3. Make changes, run commands, and iterate
 4. Ask for permission before potentially destructive actions
 
-You can monitor progress in the **Conversation** tab and review file changes in the **Changes** tab.
+You can monitor progress in the **Thread** tab and review file changes in the **Changes** tab.
 
 ## Finishing a Conversation
 
