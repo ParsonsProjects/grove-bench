@@ -116,6 +116,13 @@
    *  (undefined in the store: the default agent). */
   let mcpAgents = $derived(agentsStore.supporting('mcpConfig'));
   let mcpAgent = $derived(agentsStore.get(mcpConfigStore.adapterType ?? agentsStore.defaultId));
+  /** Scopes for an agent that doesn't describe its own. */
+  const DEFAULT_MCP_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [
+    { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
+    { value: 'project', label: 'Project', description: 'Shared with the team in the project repository' },
+    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
+  ];
+
   /** The agent's own scopes, wording and name rule for configured servers. */
   let mcpRules = $derived(mcpAgent?.mcp?.config);
   let mcpScopes = $derived(mcpRules?.scopes ?? DEFAULT_MCP_SCOPES);
@@ -141,13 +148,6 @@
     { value: 'stdio', label: 'stdio (local command)' },
     { value: 'http', label: 'HTTP' },
     { value: 'sse', label: 'SSE' },
-  ];
-
-  /** Scopes for an agent that doesn't describe its own. */
-  const DEFAULT_MCP_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [
-    { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
-    { value: 'project', label: 'Project', description: 'Shared with the team in the project repository' },
-    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
   ];
 
   const mcpCanAdd = $derived(

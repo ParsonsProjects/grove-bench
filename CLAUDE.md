@@ -71,6 +71,7 @@ TODO.md                # Gap analysis vs competitors
 npm start              # Run in dev mode (Vite dev server + Electron)
 npm run build          # Build main, preload, and renderer
 npm run dist           # Build + package NSIS installer into out/ (unsigned, never publishes)
+npm run typecheck      # tsc, then svelte-check for .svelte components (CI runs both)
 npm test               # Run all tests (vitest run)
 npm run test:watch     # Watch mode
 npm run test:coverage  # Run tests with coverage
