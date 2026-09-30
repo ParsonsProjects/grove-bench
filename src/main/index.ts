@@ -102,7 +102,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    // Claude's Preview pages are hidden windows; close them so the app quits.
+    // The agent's Preview pages are hidden windows; close them so the app quits.
     previewManager.setWindow(null);
     previewManager.closeAll();
   });

@@ -239,12 +239,12 @@
       class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
-      title="Browse your app, and watch Claude's page when it checks its work"
+      title="Browse your app, and watch the agent's page when it checks its work"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><rect x="3" y="4" width="18" height="16"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="6" y1="6.5" x2="7" y2="6.5"/></svg>
       Preview
       {#if previewUnseen}
-        <span class="inline-block w-2 h-2 bg-primary" title="Claude used the browser"></span>
+        <span class="inline-block w-2 h-2 bg-primary" title="The agent used the browser"></span>
       {:else if previewLoading}
         <span class="inline-block w-2 h-2 bg-primary/60 animate-pulse"></span>
       {/if}

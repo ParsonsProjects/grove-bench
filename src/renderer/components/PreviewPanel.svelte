@@ -141,7 +141,7 @@
     };
   });
 
-  // ─── Claude's page: poll for changed frames while it's on screen ───
+  // ─── The agent's page: poll for changed frames while it's on screen ───
 
   $effect(() => {
     if (!active || mode !== 'agent') return;
@@ -206,7 +206,7 @@
     if (await go('user', agent.url)) setMode('user');
   }
 
-  async function openForClaude(url: string) {
+  async function openForAgent(url: string) {
     if (await go('agent', url)) setMode('agent');
   }
 
@@ -243,11 +243,11 @@
       <button
         onclick={() => setMode('agent')}
         class="flex items-center gap-1 px-2 py-0.5 text-xs transition-colors {mode === 'agent' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        title="Claude's page: what the agent opened with its browser tools"
+        title="The agent's page: what it opened with its browser tools"
         aria-pressed={mode === 'agent'}
       >
         <BotIcon class="w-3 h-3" />
-        Claude's
+        Agent's
         {#if agentUnseen && mode !== 'agent'}
           <span class="inline-block w-1.5 h-1.5 bg-primary" aria-label="New activity"></span>
         {/if}
@@ -280,7 +280,7 @@
         type="text"
         spellcheck="false"
         autocomplete="off"
-        placeholder={mode === 'user' ? 'localhost:3000, a URL, or a file in this worktree (Ctrl+L)' : "Local URL for Claude's page, e.g. localhost:5173"}
+        placeholder={mode === 'user' ? 'localhost:3000, a URL, or a file in this worktree (Ctrl+L)' : "Local URL for the agent's page, e.g. localhost:5173"}
         aria-label="Address"
         class="w-full bg-background border border-border px-2 py-0.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/60"
       />
@@ -326,7 +326,7 @@
                   {/each}
                 </div>
               {:else}
-                <p class="text-xs">Start a dev server in the Terminal tab (Alt+4), or ask Claude to, and its address will show up here.</p>
+                <p class="text-xs">Start a dev server in the Terminal tab (Alt+4), or ask the agent to, and its address will show up here.</p>
               {/if}
             </div>
           </div>
@@ -363,19 +363,19 @@
           <div class="pixel-bg flex-1 flex items-center justify-center p-6 overflow-auto">
             <div class="max-w-md text-center text-muted-foreground">
               <BotIcon class="w-6 h-6 mx-auto mb-3 opacity-60" />
-              <p class="text-sm text-foreground mb-1">Claude's page</p>
+              <p class="text-sm text-foreground mb-1">The agent's page</p>
               {#if agentToolsOn && asleep}
-                <p class="text-xs mb-4">Claude's page closes while the conversation is asleep. It opens again when Claude next uses the browser.</p>
+                <p class="text-xs mb-4">The agent's page closes while the conversation is asleep. It opens again when the agent next uses the browser.</p>
               {:else if agentToolsOn}
-                <p class="text-xs mb-4">When Claude checks its work in the browser, its page shows here and updates as it clicks and types. It opens local pages only. Try asking: "start the dev server and check the page in the preview".</p>
+                <p class="text-xs mb-4">When the agent checks its work in the browser, its page shows here and updates as it clicks and types. It opens local pages only. Try asking: "start the dev server and check the page in the preview".</p>
               {:else}
-                <p class="text-xs mb-4">The agent's browser tools are turned off in Settings, so Claude can't open pages here.</p>
+                <p class="text-xs mb-4">The agent's browser tools are turned off in Settings, so the agent can't open pages here.</p>
               {/if}
               {#if detected.length > 0}
-                <p class="text-[10px] uppercase tracking-wide mb-2">Open for Claude</p>
+                <p class="text-[10px] uppercase tracking-wide mb-2">Open for the agent</p>
                 <div class="flex flex-col gap-1 items-stretch">
                   {#each [...detected].reverse() as url (url)}
-                    <button onclick={() => openForClaude(url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
+                    <button onclick={() => openForAgent(url)} class="px-3 py-1 text-xs font-mono border border-border bg-card hover:border-primary/60 hover:text-foreground truncate">
                       {url}
                     </button>
                   {/each}
@@ -387,12 +387,12 @@
           <div class="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden">
             {#if agent.error}
               <div class="max-w-md text-center">
-                <p class="text-sm text-foreground mb-1">Claude's page couldn't load</p>
+                <p class="text-sm text-foreground mb-1">The agent's page couldn't load</p>
                 <p class="text-xs text-muted-foreground mb-1 break-all font-mono">{agent.error.url}</p>
                 <p class="text-xs text-muted-foreground">{loadErrorHint(agent.error)}</p>
               </div>
             {:else if agentFrame}
-              <img src={agentFrame} alt="Claude's page" class="max-w-full max-h-full object-contain border border-border shadow-sm" draggable="false" />
+              <img src={agentFrame} alt="The agent's page" class="max-w-full max-h-full object-contain border border-border shadow-sm" draggable="false" />
             {:else}
               <span class="text-xs text-muted-foreground">Loading…</span>
             {/if}

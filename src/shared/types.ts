@@ -849,9 +849,9 @@ export interface PreviewPageState {
   error: { code: number; description: string; url: string } | null;
   /** The page's process died. Reload to recover. */
   crashed: boolean;
-  /** Claude's page only: its last action and when it happened. */
+  /** The agent's page only: its last action and when it happened. */
   lastAction?: { text: string; at: number } | null;
-  /** Claude's page only: viewport size in CSS pixels. */
+  /** The agent's page only: viewport size in CSS pixels. */
   size?: { width: number; height: number };
 }
 
@@ -1070,7 +1070,7 @@ export interface GroveBenchAPI {
   previewSetViewport(sessionId: string, bounds: PreviewBounds | null): void;
   /** A picture of your page (JPEG data URL), shown while an overlay covers it. */
   previewSnapshot(sessionId: string): Promise<string | null>;
-  /** Claude's page as a JPEG data URL, or null when it hasn't changed since
+  /** The agent's page as a JPEG data URL, or null when it hasn't changed since
    *  `sinceVersion` (or doesn't exist). */
   previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
   /** Every conversation's open pages, for the renderer to catch up after a reload. */

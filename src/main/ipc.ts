@@ -441,7 +441,7 @@ export function registerHandlers() {
     logger.info(`Session closed: id=${id}`);
   });
 
-  // Idle sleep: the agent process goes, and so does Claude's Preview page,
+  // Idle sleep: the agent process goes, and so does the agent's Preview page,
   // which nothing drives while it sleeps. The terminal and anything running
   // in it are left alone, so a dev server there keeps serving, and so is
   // your own Preview page.

@@ -34,7 +34,7 @@ src/
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     git-status-parser.ts
-    preview.ts         # Preview tab: your page (WebContentsView) + Claude's (offscreen)
+    preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports

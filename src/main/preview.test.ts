@@ -87,7 +87,7 @@ describe('PreviewManager.closeAgentPage', () => {
     return { m, win, send, internals, user };
   }
 
-  it('closes Claude\'s page and tells the renderer, keeping yours', () => {
+  it('closes the agent\'s page and tells the renderer, keeping yours', () => {
     const { m, win, send, internals, user } = setUp();
 
     m.closeAgentPage('s1');

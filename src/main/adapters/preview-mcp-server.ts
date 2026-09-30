@@ -3,7 +3,7 @@
  * agent as SDK MCP tools. Claude Code adapter-specific: wraps the generic
  * PreviewOperations interface into an in-process SDK MCP server.
  *
- * The tools drive "Claude's page", separate from the page the user browses,
+ * The tools drive "the agent's page", separate from the page the user browses,
  * and only open local URLs. The user can watch it in the Preview tab.
  */
 import type { PreviewOperations } from './types.js';

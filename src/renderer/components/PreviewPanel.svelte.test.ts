@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe('PreviewPanel', () => {
-  it('says Claude\'s page closed while the conversation is asleep', () => {
+  it('says the agent\'s page closed while the conversation is asleep', () => {
     store.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'sleeping' }] as any;
     previewStore.setMode('s1', 'agent');
     render(PreviewPanel, { sessionId: 's1', active: true });
@@ -70,11 +70,11 @@ describe('PreviewPanel', () => {
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
   });
 
-  it("shows Claude's page with its last action and can open it in yours", async () => {
+  it("shows the agent's page with its last action and can open it in yours", async () => {
     previewStore.applyState('s1', 'agent', page({ url: 'http://localhost:5173/login', size: { width: 1280, height: 800 }, lastAction: { text: 'Clicked <button> "sign in"', at: Date.now() } }));
     render(PreviewPanel, { sessionId: 's1', active: true });
-    // Claude's first action switched the tab to its page.
-    expect(screen.getByRole('button', { name: /Claude's/ })).toHaveAttribute('aria-pressed', 'true');
+    // The agent's first action switched the tab to its page.
+    expect(screen.getByRole('button', { name: /Agent's/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('1280×800')).toBeInTheDocument();
     expect(screen.getByText(/Clicked <button> "sign in"/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: /Open in yours/ }));
@@ -82,16 +82,16 @@ describe('PreviewPanel', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Yours/ })).toHaveAttribute('aria-pressed', 'true'));
   });
 
-  it("explains Claude's empty page and lets you open a seen URL for it", async () => {
+  it("explains the agent's empty page and lets you open a seen URL for it", async () => {
     previewStore.setMode('s1', 'agent');
     previewStore.noteText('s1', 'http://localhost:3000/');
     render(PreviewPanel, { sessionId: 's1', active: true });
-    expect(screen.getByText(/When Claude checks its work in the browser/)).toBeInTheDocument();
+    expect(screen.getByText(/When the agent checks its work in the browser/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'http://localhost:3000/' }));
     expect(mockGroveBench.previewNavigate).toHaveBeenCalledWith('s1', 'agent', 'http://localhost:3000/');
   });
 
-  it("polls Claude's page for frames only while it's shown", async () => {
+  it("polls the agent's page for frames only while it's shown", async () => {
     previewStore.setMode('s1', 'agent');
     const { rerender } = render(PreviewPanel, { sessionId: 's1', active: true });
     await waitFor(() => expect(mockGroveBench.previewAgentFrame).toHaveBeenCalled());

@@ -1,5 +1,5 @@
 /**
- * Scripts the agent's browser tools run inside Claude's Preview page.
+ * Scripts the agent's browser tools run inside its Preview page.
  *
  * Each builder returns a self-contained expression for
  * webContents.executeJavaScript. Agent input is embedded as JSON, never
