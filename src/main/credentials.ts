@@ -1,8 +1,8 @@
 import { app, safeStorage } from 'electron';
-import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { logger } from './logger.js';
+import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 
 /**
  * API keys the user enters in the app, one per adapter id. Each key is
@@ -30,24 +30,20 @@ function getCredentialsPath(): string {
 
 /**
  * The saved keys. A missing file, or one that isn't valid, reads as empty
- * (saving a key then replaces a corrupt file). Any other read error, such as
- * the file being briefly locked by antivirus, throws, so a passing failure
- * isn't mistaken for "no keys saved".
+ * (saving a key then replaces a corrupt file). A file that can't be read,
+ * such as one locked by antivirus for longer than the retries wait, throws,
+ * so a passing failure isn't mistaken for "no keys saved".
  */
 function readCredentials(): CredentialsFile {
-  let text: string;
-  try {
-    text = fs.readFileSync(getCredentialsPath(), 'utf-8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { apiKeys: {} };
-    throw err;
-  }
-  try {
-    return credentialsFileSchema.parse(JSON.parse(text));
-  } catch (err) {
-    logger.warn('[credentials] credentials.json is not valid; treating it as empty:', err);
+  const read = readJsonFile(getCredentialsPath());
+  if (read.kind === 'unreadable') throw read.error;
+  if (read.kind !== 'ok') return { apiKeys: {} };
+  const parsed = credentialsFileSchema.safeParse(read.value);
+  if (!parsed.success) {
+    logger.warn('[credentials] credentials.json is not valid; treating it as empty:', parsed.error);
     return { apiKeys: {} };
   }
+  return parsed.data;
 }
 
 /** readCredentials for save and clear, which must not overwrite a file they
@@ -62,7 +58,7 @@ function readCredentialsForUpdate(): CredentialsFile {
 }
 
 function writeCredentials(data: CredentialsFile): void {
-  fs.writeFileSync(getCredentialsPath(), JSON.stringify(data), { mode: 0o600 });
+  writeFileAtomicSync(getCredentialsPath(), JSON.stringify(data), 0o600);
 }
 
 /** Decrypted keys by adapter id (null = none saved), filled on first read.

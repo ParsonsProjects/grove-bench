@@ -22,6 +22,7 @@ src/
     git.ts             # Git CLI wrapper (execa)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
+    session-*.ts       # Session types, event log + history, permission prompts, skills, agent config
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
@@ -33,7 +34,7 @@ src/
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     git-status-parser.ts
-    preview.ts         # Preview tab: your page (WebContentsView) + Claude's (offscreen)
+    preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
     adapters/          # Agent adapter pattern
       index.ts         # Adapter exports
@@ -71,6 +72,7 @@ TODO.md                # Gap analysis vs competitors
 npm start              # Run in dev mode (Vite dev server + Electron)
 npm run build          # Build main, preload, and renderer
 npm run dist           # Build + package NSIS installer into out/ (unsigned, never publishes)
+npm run typecheck      # tsc, then svelte-check for .svelte components (CI runs both)
 npm test               # Run all tests (vitest run)
 npm run test:watch     # Watch mode
 npm run test:coverage  # Run tests with coverage
@@ -83,6 +85,7 @@ npm run test:renderer  # Tests for renderer only
 User-facing names and internal names differ on purpose:
 
 - **Conversation** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`).
+- **Thread tab** (UI, help, docs) = the `'activity'` workspace tab in code (`WorkspaceTab`, `setActiveTab`), and its view modes are `ActivityViewMode` / `defaultActivityView`. It was called Activity before; the code names stay so saved settings keep working.
 - **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
 
 Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.
@@ -95,8 +98,17 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
+- Panels, dialogs and tabs that open on demand load on first use via
+  `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
+  (and libraries only they use, such as xterm) out of the startup bundle
 
 ## Key Dependencies
+
+Vite bundles the renderer and nearly all of the main process, so
+`dependencies` in package.json holds only what main loads from
+`node_modules` at run time: the agent SDK, `electron-updater` and `node-pty`.
+Everything else goes in `devDependencies`, or it ships in the installer
+unused. `scripts/smoke-deps.mjs` checks the packaged app (Package workflow).
 
 - `@anthropic-ai/claude-agent-sdk` — Claude Code agent integration
 - `@xterm/xterm` — Terminal emulation in renderer

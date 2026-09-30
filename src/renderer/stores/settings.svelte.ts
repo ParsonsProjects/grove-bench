@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoSkillSuggestions: false,
   defaultModels: {},
   adapterDefaults: {},
+  showThinkingSummaries: true,
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -79,28 +80,44 @@ class SettingsStore {
     this.error = null;
   }
 
+  /** Immediate saves in flight, run one at a time (see updateNow). */
+  private saveChain: Promise<void> = Promise.resolve();
+
   /** Persist a partial change immediately (status-bar toggles), keeping any
-   *  unrelated unsaved Settings-panel edits in the draft intact. */
-  async updateNow(patch: Partial<GroveBenchSettings>) {
-    const next = { ...($state.snapshot(this.current) as GroveBenchSettings), ...patch };
-    this.error = null;
-    try {
-      await window.groveBench.saveSettings(next);
-      this.current = next;
-      this.draft = { ...($state.snapshot(this.draft) as GroveBenchSettings), ...patch };
-    } catch (e: any) {
-      this.error = e.message || String(e);
-      throw e;
-    }
+   *  unrelated unsaved Settings-panel edits in the draft intact. Saves run one
+   *  at a time, each on the settings the last one left: main replaces the
+   *  whole file, so two overlapping saves built from the same starting point
+   *  would drop the first one's change. `patch` may be a function of the
+   *  current settings for changes that depend on them. */
+  updateNow(patch: Partial<GroveBenchSettings> | ((current: GroveBenchSettings) => Partial<GroveBenchSettings>)): Promise<void> {
+    const run = this.saveChain.then(async () => {
+      const current = $state.snapshot(this.current) as GroveBenchSettings;
+      const changes = typeof patch === 'function' ? patch(current) : patch;
+      const next = { ...current, ...changes };
+      this.error = null;
+      try {
+        await window.groveBench.saveSettings(next);
+        this.current = next;
+        this.draft = { ...($state.snapshot(this.draft) as GroveBenchSettings), ...changes };
+      } catch (e: any) {
+        this.error = e.message || String(e);
+        throw e;
+      }
+    });
+    this.saveChain = run.catch(() => {});
+    return run;
   }
 
   /** Toggle one skill's disabled state and persist right away. */
   async setSkillDisabled(name: string, disabled: boolean) {
-    const list = this.current.disabledSkills ?? [];
-    const next = disabled
-      ? (list.includes(name) ? list : [...list, name])
-      : list.filter((n) => n !== name);
-    await this.updateNow({ disabledSkills: next });
+    await this.updateNow((current) => {
+      const list = current.disabledSkills ?? [];
+      return {
+        disabledSkills: disabled
+          ? (list.includes(name) ? list : [...list, name])
+          : list.filter((n) => n !== name),
+      };
+    });
   }
 
   // ─── List helpers ───

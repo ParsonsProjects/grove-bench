@@ -1,10 +1,10 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
-import type { PrerequisiteStatus, SessionSortState, SkillSuggestion } from '../shared/types.js';
+import { COLLAPSIBLE_PANELS, type CollapsedPanels, type PrerequisiteStatus, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
+import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 
 export interface PrerequisiteCache {
   status: PrerequisiteStatus;
@@ -29,6 +29,8 @@ export interface AppState {
   sessionSort: SessionSortState;
   /** Sidebar width in px (user-resizable). Null/absent = renderer default. */
   sidebarWidth?: number | null;
+  /** Sidebars folded down to a rail. Absent = all open. */
+  collapsedPanels?: CollapsedPanels;
   /** Skill names each repo's sessions have ever reported (union, per repo
    *  path). Lets the disabled-skills allowlist include plugin-provided skills
    *  that the on-disk scan can't discover, even on the first query after an
@@ -46,6 +48,10 @@ export interface AppState {
    *  Shown at the next launch until the agent reports its list again. The
    *  shape of `models` belongs to the adapter, which validates it on load. */
   modelCatalogs?: Record<string, ModelCatalogCache>;
+  /** Projects the user added, in the order they were added. The manifest
+   *  only knows projects that have conversations, so without this a project
+   *  with none was forgotten at restart. Absent until first listed. */
+  projects?: string[];
 }
 
 const DEFAULT_STATE: AppState = {
@@ -71,12 +77,24 @@ export const APP_STATE_MIGRATIONS: readonly Migration[] = [
 
 // ─── Validation ───
 
+/** Keeps the known panels' flags and drops anything else, so one bad entry
+ *  (or a panel a newer version added) doesn't reset the rest. */
+const collapsedPanelsSchema = z.record(z.string(), z.unknown()).transform((raw): CollapsedPanels => {
+  const panels: CollapsedPanels = {};
+  for (const key of COLLAPSIBLE_PANELS) {
+    const value = raw[key];
+    if (typeof value === 'boolean') panels[key] = value;
+  }
+  return panels;
+});
+
 /** Per-field fallback: a corrupt value resets that field only. */
 const appStateSchema = z.object({
   openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
   collapsedRepos: z.record(z.string(), z.boolean()).catch(DEFAULT_STATE.collapsedRepos),
   sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
   sidebarWidth: z.number().finite().nullable().optional().catch(null),
+  collapsedPanels: collapsedPanelsSchema.optional().catch(undefined),
   knownSkills: z.record(z.string(), z.array(z.string())).optional().catch(undefined),
   skillSuggestions: z.record(z.string(), z.object({
     suggestions: z.array(z.custom<SkillSuggestion>((v) => typeof v === 'object' && v !== null)),
@@ -92,6 +110,7 @@ const appStateSchema = z.object({
     models: z.array(z.unknown()),
     fetchedAt: z.number(),
   })).optional().catch(undefined),
+  projects: z.array(z.string()).optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -115,27 +134,33 @@ function getStatePath(): string {
 }
 
 function writeAppState(state: AppState): void {
-  fs.writeFileSync(getStatePath(), JSON.stringify(stampSchemaVersion(state, APP_STATE_SCHEMA_VERSION)));
+  writeFileAtomicSync(getStatePath(), JSON.stringify(stampSchemaVersion(state, APP_STATE_SCHEMA_VERSION)));
+}
+
+/** The saved state (defaults when missing or damaged), or null when the file
+ *  exists but can't be read right now. */
+function readAppState(): AppState | null {
+  const read = readJsonFile(getStatePath());
+  if (read.kind === 'unreadable') return null;
+  if (read.kind !== 'ok') return { ...DEFAULT_STATE };
+  const { state, migrated } = upgradeAppState(read.value);
+  if (migrated) {
+    try { writeAppState(state); } catch { /* ignore */ }
+  }
+  return state;
 }
 
 export function loadAppState(): AppState {
-  try {
-    const data = fs.readFileSync(getStatePath(), 'utf-8');
-    const { state, migrated } = upgradeAppState(JSON.parse(data));
-    if (migrated) {
-      try { writeAppState(state); } catch { /* ignore */ }
-    }
-    return state;
-  } catch {
-    return { ...DEFAULT_STATE };
-  }
+  return readAppState() ?? { ...DEFAULT_STATE };
 }
 
-/** Read-modify-write the state file. Write errors are ignored (best-effort
- *  persistence, same as before versioning). */
+/** Read-modify-write the state file. Skipped when the file can't be read, so
+ *  a passing lock doesn't replace everything in it with defaults. Write
+ *  errors are ignored (best-effort persistence, same as before versioning). */
 function updateAppState(mutate: (state: AppState) => void): void {
   try {
-    const state = loadAppState();
+    const state = readAppState();
+    if (!state) return;
     mutate(state);
     writeAppState(state);
   } catch { /* ignore */ }
@@ -186,6 +211,7 @@ const openTabsWriter = debouncedWriter<string[]>((s, v) => { s.openTabIds = v; }
 const collapsedReposWriter = debouncedWriter<Record<string, boolean>>((s, v) => { s.collapsedRepos = v; });
 const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessionSort = v; });
 const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
+const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.collapsedPanels = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
 
 export function saveOpenTabs(ids: string[]): void {
@@ -202,6 +228,11 @@ export function saveSessionSort(sort: SessionSortState): void {
 
 export function saveSidebarWidth(width: number): void {
   sidebarWidthWriter.save(width);
+}
+
+export function saveCollapsedPanels(panels: unknown): void {
+  const parsed = collapsedPanelsSchema.safeParse(panels);
+  if (parsed.success) collapsedPanelsWriter.save(parsed.data);
 }
 
 export function loadUnreadSessionIds(): string[] {
@@ -265,4 +296,43 @@ export function saveModelCatalog(adapterId: string, models: unknown[]): void {
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */
 export function flushPendingSaves(): void {
   for (const w of writers) w.flush();
+}
+
+// ─── Projects ───
+
+/**
+ * The project list: remembered projects in the order they were added, then
+ * any project the manifest knows that isn't remembered yet (one with
+ * conversations from before projects were remembered). Exported for tests.
+ */
+export function mergeProjects(remembered: string[] | undefined, fromManifest: string[]): string[] {
+  const list = [...(remembered ?? [])];
+  for (const repo of fromManifest) {
+    if (!list.includes(repo)) list.push(repo);
+  }
+  return list;
+}
+
+/** Every project to show, remembering any the manifest adds. */
+export function listProjects(fromManifest: string[]): string[] {
+  const remembered = loadAppState().projects;
+  const merged = mergeProjects(remembered, fromManifest);
+  if (!remembered || merged.length !== remembered.length) {
+    updateAppState((state) => { state.projects = merged; });
+  }
+  return merged;
+}
+
+/** Write-through — projects are added by hand. */
+export function rememberProject(repoPath: string): void {
+  updateAppState((state) => {
+    const list = state.projects ?? [];
+    if (!list.includes(repoPath)) state.projects = [...list, repoPath];
+  });
+}
+
+export function forgetProject(repoPath: string): void {
+  updateAppState((state) => {
+    if (state.projects) state.projects = state.projects.filter((p) => p !== repoPath);
+  });
 }

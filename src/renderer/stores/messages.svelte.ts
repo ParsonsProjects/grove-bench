@@ -1,6 +1,7 @@
-import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls } from '../../shared/types.js';
+import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredImage } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
-import { displayTextFromSent } from '../../shared/prompt-text.js';
+import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
 import { notifyOs } from '../lib/os-notify.js';
 import { checkpointStore } from './checkpoints.svelte.js';
@@ -10,6 +11,8 @@ import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
+import type { AttachedFile } from '../lib/file-attachments.js';
+import { approvalRequest } from '../lib/tool-names.js';
 
 // ─── Chat message types ───
 
@@ -34,12 +37,22 @@ export interface ChatToolCallMessage {
   awaitingPermission?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** Images the tool returned (a screenshot, an image file it read). */
+  images?: StoredImage[];
 }
+
+/** An image shown in the thread: inline while the app still has its data
+ *  (just sent), otherwise a file in the conversation's attachments folder. */
+export type ThreadImage = { name: string; dataUrl: string } | StoredImage;
 
 export interface ChatUserMessage {
   kind: 'user';
   id: string;
+  /** What the user typed. Attachments are in `files` and `images`. */
   text: string;
+  /** Text files attached to the message, with their content. */
+  files?: SentBlock[];
+  images?: ThreadImage[];
   /** SDK user message UUID — used as checkpoint ID for /rewind */
   uuid?: string;
 }
@@ -48,6 +61,7 @@ export interface ChatSystemMessage {
   kind: 'system';
   id: string;
   text: string;
+  level?: 'warning';
 }
 
 export interface ChatErrorMessage {
@@ -82,6 +96,8 @@ export interface ChatPermissionMessage {
   toolUseId: string;
   resolved: boolean;
   decision?: 'allow' | 'deny';
+  /** Denied because nobody answered in time, not by the user. */
+  timedOut?: boolean;
   decisionReason?: string;
   suggestions?: unknown[];
   /** Set by the adapter when this permission is for executing a plan. */
@@ -120,6 +136,8 @@ export interface ChatQuestionMessage {
   response?: string;
   /** Exact labels that were selected, for accurate resolved-state rendering */
   selectedLabels?: string[];
+  /** Closed because nobody answered in time. */
+  timedOut?: boolean;
 }
 
 /** An MCP server asking the user for input (a form or a page to open). */
@@ -151,6 +169,15 @@ export type ChatMessage =
 let msgCounter = 0;
 /** A prompt the user submitted while the agent was busy (connecting or mid-turn).
  *  Held in the renderer until the session is idle so it can still be removed. */
+const NOTHING_PENDING = Object.freeze({ permission: false, question: false });
+
+export interface PromptInsert {
+  text: string;
+  nonce: number;
+  replace?: boolean;
+  attachments?: AttachedFile[];
+}
+
 export interface QueuedMessage {
   id: string;
   /** Text shown in the thread once sent (includes attachment names). */
@@ -160,13 +187,34 @@ export interface QueuedMessage {
   images?: ImageAttachment[];
   /** Slash command — dispatched through sendCommand rather than as a prompt. */
   isCommand?: boolean;
+  /** The prompt as typed and attached, so Edit can put it back as it was
+   *  (displayText carries the attachment names, outgoing their contents). */
+  typed?: { text: string; attachments: AttachedFile[] };
 }
 
 function nextId(): string {
   return `msg_${++msgCounter}_${Date.now()}`;
 }
 
+/** A user message from the text as sent to the agent, plus its images. */
+function userMessage(sent: string, images?: ThreadImage[]): ChatUserMessage {
+  const { files, typed } = attachedFilesFromSent(sent);
+  return {
+    kind: 'user',
+    id: nextId(),
+    text: typed,
+    ...(files.length > 0 ? { files } : {}),
+    ...(images?.length ? { images } : {}),
+  };
+}
+
 class MessageStore {
+  /** False for the scratch store an older history page is built in (see
+   *  loadOlderEvents): it only makes messages, so it must not touch other
+   *  stores (background tasks, rate limits, usage, git status, checkpoints,
+   *  the Preview tab). This store's own state is the scratch instance's. */
+  constructor(private readonly sideEffects = true) {}
+
   /** All finalized messages per session */
   messagesBySession = $state<Record<string, ChatMessage[]>>({});
 
@@ -236,6 +284,9 @@ class MessageStore {
 
   /** Draft input text per session (survives tab switches and component remounts) */
   draftBySession = $state<Record<string, string>>({});
+  /** Files attached to the draft, kept for the same reason: the prompt box
+   *  unmounts on the Terminal and Checkpoints tabs. */
+  attachmentsBySession = $state<Record<string, AttachedFile[]>>({});
 
   /** Prompts waiting to be sent, oldest first. Dispatched one per turn once the
    *  session is connected and idle. See submitMessage / flushQueue. */
@@ -271,6 +322,10 @@ class MessageStore {
 
   /** When true, pushMessage appends to a temporary array instead of triggering reactive updates. */
   private _replayBuffer: ChatMessage[] | null = null;
+  /** Replayed tool results and permission answers whose tool call or prompt
+   *  was not loaded (it sits in an older history page). Applied when that
+   *  page is loaded; cleared once the whole history is. */
+  private orphanReplayEvents = new Map<string, AgentEvent[]>();
   private _replaySessionId: string | null = null;
 
   /** Absolute (prelaunch-prefixed) index of the event currently being replayed,
@@ -309,7 +364,13 @@ class MessageStore {
     this.paginationBySession[sessionId] = { totalCount, loadedFromIndex, loading: false };
   }
 
-  /** Load an older page of events and prepend them to the message list. */
+  /**
+   * Load an older page of events and prepend its messages. The page is
+   * replayed in a scratch store, so only its messages come back: replaying
+   * old events here would set this conversation's running state, mode, model,
+   * usage and background tasks back to what they were then. Tool results and
+   * answers from newer events whose calls are in this page are applied to it.
+   */
   async loadOlderEvents(sessionId: string, pageSize = 200) {
     const p = this.paginationBySession[sessionId];
     if (!p || p.loadedFromIndex <= 0 || p.loading) return;
@@ -320,33 +381,43 @@ class MessageStore {
         'partial_text', 'activity', 'tool_progress', 'usage',
       ]);
       const page = await window.groveBench.getEventHistoryPage(sessionId, pageSize, p.loadedFromIndex);
+      // Cleared (/clear, delete, a fresh replay) while this loaded: the page
+      // no longer fits. (State reads come back as proxies, so compare fields.)
+      const now = this.paginationBySession[sessionId];
+      if (!now?.loading || now.loadedFromIndex !== p.loadedFromIndex) return;
 
-      // Process the older events in batch mode to build messages
-      this._replayBuffer = [];
-      this._replaySessionId = sessionId;
-      try {
-        for (let i = 0; i < page.events.length; i++) {
-          const event = page.events[i];
-          if (skipDuringReplay.has(event.type)) continue;
-          this._currentEventIndex = page.startIndex + i;
-          this.ingestEvent(sessionId, event);
-        }
-      } finally {
-        this._currentEventIndex = null;
-        const buffer = this._replayBuffer;
-        this._replayBuffer = null;
-        this._replaySessionId = null;
-        if (buffer && buffer.length > 0) {
-          // Prepend older messages before existing ones
-          const existing = this.messagesBySession[sessionId] ?? [];
-          this.messagesBySession[sessionId] = [...buffer, ...existing];
-        }
+      const scratch = new MessageStore(false);
+      scratch._replayBuffer = [];
+      scratch._replaySessionId = sessionId;
+      for (let i = 0; i < page.events.length; i++) {
+        const event = page.events[i];
+        if (skipDuringReplay.has(event.type)) continue;
+        scratch._currentEventIndex = page.startIndex + i;
+        scratch.ingestEvent(sessionId, event);
+      }
+      scratch._currentEventIndex = null;
+      // Newer results and answers, in order, after this page's own events.
+      for (const event of this.orphanReplayEvents.get(sessionId) ?? []) {
+        scratch.ingestEvent(sessionId, event);
+      }
+      const older = scratch._replayBuffer;
+
+      // What still has no match waits for the next page.
+      const stillOrphaned = page.startIndex > 0 ? scratch.orphanReplayEvents.get(sessionId) : undefined;
+      if (stillOrphaned?.length) this.orphanReplayEvents.set(sessionId, stillOrphaned);
+      else this.orphanReplayEvents.delete(sessionId);
+
+      const stamps = scratch.sourceIndexBySession.get(sessionId);
+      if (stamps) {
+        let own = this.sourceIndexBySession.get(sessionId);
+        if (!own) { own = new Map(); this.sourceIndexBySession.set(sessionId, own); }
+        for (const [id, index] of stamps) own.set(id, index);
       }
 
-      // Resolve stale tool calls/permissions in the prepended messages
-      this.resolveStaleToolCalls(sessionId);
-      this.resolveReplayedPermissions(sessionId);
-
+      const existing = this.messagesBySession[sessionId] ?? [];
+      if (older.length > 0) {
+        this.messagesBySession[sessionId] = [...this.settleOlderPage(sessionId, older, existing), ...existing];
+      }
       this.paginationBySession[sessionId] = { totalCount: p.totalCount, loadedFromIndex: page.startIndex, loading: false };
     } finally {
       // Ensure loading is cleared even on error
@@ -355,6 +426,47 @@ class MessageStore {
         this.paginationBySession[sessionId] = { ...cur, loading: false };
       }
     }
+  }
+
+  /**
+   * Tool calls, prompts and questions in an older page that nothing answered
+   * are over: they were stopped, timed out or cut off. The exception is a
+   * page that may hold the start of a turn that is still running, which is
+   * when no user message has been loaded after it yet.
+   */
+  private settleOlderPage(sessionId: string, older: ChatMessage[], newer: ChatMessage[]): ChatMessage[] {
+    const liveTurnMayBeHere = this.getIsRunning(sessionId) && !newer.some((m) => m.kind === 'user');
+    if (liveTurnMayBeHere) return older;
+    return older.map((m) => {
+      if (m.kind === 'tool_call' && (m.pending || m.awaitingPermission)) return { ...m, pending: false, awaitingPermission: false };
+      if (m.kind === 'permission' && !m.resolved) return { ...m, resolved: true as const, decision: 'deny' as const };
+      if (m.kind === 'question' && !m.resolved) return { ...m, resolved: true as const };
+      if (m.kind === 'elicitation' && !m.resolved) return { ...m, resolved: true as const, action: 'cancel' as const };
+      return m;
+    });
+  }
+
+  /** Replace the loaded messages with the last page of the history as main
+   *  now has it, keeping this conversation's live state (see loadOlderEvents). */
+  private async reloadHistoryTail(sessionId: string) {
+    try {
+      const { totalCount } = await window.groveBench.getEventHistoryPage(sessionId, 1);
+      // Cleared only now: events that arrived live until this point are in
+      // the history below the count, so the page brings them back once;
+      // later ones stay after it.
+      this.messagesBySession[sessionId] = [];
+      this.sourceIndexBySession.delete(sessionId);
+      this.orphanReplayEvents.delete(sessionId);
+      this.setPagination(sessionId, totalCount, totalCount);
+      await this.loadOlderEvents(sessionId);
+    } catch { /* keeps what it shows until the conversation is reopened */ }
+  }
+
+  /** Remember a replayed result or answer that matched nothing loaded. */
+  private noteOrphan(sessionId: string, event: AgentEvent) {
+    const list = this.orphanReplayEvents.get(sessionId);
+    if (list) list.push(event);
+    else this.orphanReplayEvents.set(sessionId, [event]);
   }
 
   /** Page older events until the given absolute event index is loaded into the
@@ -490,18 +602,39 @@ class MessageStore {
     this.historyLoaded = { ...this.historyLoaded, [sessionId]: value };
   }
 
+  /** What a message list is waiting on, per list. A list is replaced on
+   *  every change, never edited in place, so each is scanned once however
+   *  often it's asked: the taskbar badge and the sidebar ask for every
+   *  conversation each time any of them gets a message. */
+  private pendingInputByList = new WeakMap<ChatMessage[], { permission: boolean; question: boolean }>();
+
+  private pendingInput(sessionId: string): { permission: boolean; question: boolean } {
+    const msgs = this.messagesBySession[sessionId];
+    if (!msgs) return NOTHING_PENDING;
+    let pending = this.pendingInputByList.get(msgs);
+    if (!pending) {
+      pending = { permission: false, question: false };
+      for (const m of msgs) {
+        if (m.kind === 'permission') {
+          if (!(m as ChatPermissionMessage).resolved) pending.permission = true;
+        } else if (m.kind === 'question' || m.kind === 'elicitation') {
+          if (!m.resolved) pending.question = true;
+        }
+        if (pending.permission && pending.question) break;
+      }
+      this.pendingInputByList.set(msgs, pending);
+    }
+    return pending;
+  }
+
   /** Whether a session has any unresolved permission requests */
   hasPendingPermission(sessionId: string): boolean {
-    return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => m.kind === 'permission' && !(m as ChatPermissionMessage).resolved,
-    );
+    return this.pendingInput(sessionId).permission;
   }
 
   /** Whether the agent is blocked on an unanswered question or MCP elicitation */
   hasPendingQuestion(sessionId: string): boolean {
-    return (this.messagesBySession[sessionId] ?? []).some(
-      (m) => (m.kind === 'question' || m.kind === 'elicitation') && !(m as { resolved?: boolean }).resolved,
-    );
+    return this.pendingInput(sessionId).question;
   }
 
   /** Whether the session is waiting on the user for anything (permission or question) */
@@ -641,6 +774,15 @@ class MessageStore {
     this.draftBySession[sessionId] = text;
   }
 
+  getAttachments(sessionId: string): AttachedFile[] {
+    return this.attachmentsBySession[sessionId] ?? [];
+  }
+
+  setAttachments(sessionId: string, files: AttachedFile[]) {
+    if (files.length > 0) this.attachmentsBySession[sessionId] = files;
+    else delete this.attachmentsBySession[sessionId];
+  }
+
   getPromptSuggestions(sessionId: string): string[] {
     return this.promptSuggestionsBySession[sessionId] ?? [];
   }
@@ -676,7 +818,7 @@ class MessageStore {
   }
 
   /** Submit a prompt: send it now if the agent is idle, otherwise queue it. */
-  submitMessage(sessionId: string, msg: { displayText: string; outgoing: string; images?: ImageAttachment[] }): 'sent' | 'queued' {
+  submitMessage(sessionId: string, msg: Pick<QueuedMessage, 'displayText' | 'outgoing' | 'images' | 'typed'>): 'sent' | 'queued' {
     return this.submitOrQueue(sessionId, { ...msg, isCommand: false });
   }
 
@@ -721,7 +863,7 @@ class MessageStore {
     const item = this.getQueue(sessionId).find((m) => m.id === id);
     if (!item) return false;
     this.removeQueuedMessage(sessionId, id);
-    this.appendToPrompt(sessionId, item.displayText);
+    this.appendToPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments);
     return true;
   }
 
@@ -755,7 +897,11 @@ class MessageStore {
       this.sendCommand(sessionId, item.outgoing);
       return;
     }
-    this.addUserMessage(sessionId, item.displayText);
+    this.addUserMessage(
+      sessionId,
+      item.outgoing,
+      item.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
+    );
     window.groveBench.sendMessage(sessionId, item.outgoing, item.images?.length ? item.images : undefined);
     sessionStore.updateLastActive(sessionId);
   }
@@ -798,7 +944,8 @@ class MessageStore {
    * until the file is updated by newer edits.
    */
   getLastTurnFileChanges(sessionId: string): { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[] {
-    const msgs = this.messagesBySession[sessionId] ?? [];
+    // During replay the messages are in the replay buffer, not the store.
+    const msgs = this.getMessagesForMutation(sessionId);
     if (msgs.length === 0) return [];
 
     // Must have at least one completed turn (result message)
@@ -933,6 +1080,38 @@ class MessageStore {
     return bestId;
   }
 
+  /**
+   * The message a search hit points at. Messages built from history carry
+   * their event index; one that arrived live doesn't, so for a hit past the
+   * last stamped index the event is fetched and matched by its uuid or tool
+   * use id (and stamped, so the next jump needs no fetch). Falls back to
+   * findMessageIdForEventIndex when nothing matches.
+   */
+  async findMessageForEvent(sessionId: string, eventIndex: number): Promise<string | null> {
+    const idx = this.sourceIndexBySession.get(sessionId);
+    let lastStamped = -1;
+    for (const ei of idx?.values() ?? []) if (ei > lastStamped) lastStamped = ei;
+    if (eventIndex > lastStamped) {
+      try {
+        const page = await window.groveBench.getEventHistoryPage(sessionId, 1, eventIndex + 1);
+        const event = page.startIndex === eventIndex ? page.events[0] : undefined;
+        const uuid = event && 'uuid' in event ? event.uuid : undefined;
+        const toolUseId = event && 'toolUseId' in event ? event.toolUseId : undefined;
+        const match = (uuid || toolUseId)
+          ? (this.messagesBySession[sessionId] ?? []).findLast((m) =>
+            (!!uuid && 'uuid' in m && m.uuid === uuid) || (!!toolUseId && 'toolUseId' in m && m.toolUseId === toolUseId))
+          : undefined;
+        if (match) {
+          let map = this.sourceIndexBySession.get(sessionId);
+          if (!map) { map = new Map(); this.sourceIndexBySession.set(sessionId, map); }
+          map.set(match.id, eventIndex);
+          return match.id;
+        }
+      } catch { /* fall back below */ }
+    }
+    return this.findMessageIdForEventIndex(sessionId, eventIndex);
+  }
+
   /** Inverse of findMessageIdForEventIndex: the stable source event index a
    *  message was stamped with during replay/pagination, or null for live or
    *  otherwise unstamped messages. Lets bookmark capture anchor a selection to
@@ -961,14 +1140,16 @@ class MessageStore {
 
   /** One-shot "insert this text into the prompt" requests (e.g. the activity
    *  thread's "copy selection to prompt" action). The mounted PromptEditor
-   *  appends `text` to its input whenever `nonce` increments. */
-  promptInsertBySession = $state<Record<string, { text: string; nonce: number }>>({});
+   *  appends `text` to its input whenever `nonce` increments, or puts it in
+   *  place of the input when `replace` is set. `attachments` join the
+   *  editor's own. */
+  promptInsertBySession = $state<Record<string, PromptInsert>>({});
 
-  requestPromptInsert(sessionId: string, text: string) {
+  requestPromptInsert(sessionId: string, text: string, opts: Omit<PromptInsert, 'text' | 'nonce'> = {}) {
     const prev = this.promptInsertBySession[sessionId]?.nonce ?? 0;
     this.promptInsertBySession = {
       ...this.promptInsertBySession,
-      [sessionId]: { text, nonce: prev + 1 },
+      [sessionId]: { text, nonce: prev + 1, ...opts },
     };
   }
 
@@ -978,10 +1159,17 @@ class MessageStore {
    *  is raised for one that is already showing; the mounted editor's own
    *  draft sync then writes the same combined text back, so the two paths
    *  never double up. */
-  appendToPrompt(sessionId: string, text: string) {
+  appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
     const draft = this.getDraft(sessionId);
     this.setDraft(sessionId, draft ? `${draft}\n${text}` : text);
-    this.requestPromptInsert(sessionId, text);
+    // Attachments live only in a mounted editor; the draft can't carry them.
+    this.requestPromptInsert(sessionId, text, attachments?.length ? { attachments } : {});
+  }
+
+  /** Like appendToPrompt, but `text` takes the place of the prompt. */
+  replacePrompt(sessionId: string, text: string) {
+    this.setDraft(sessionId, text);
+    this.requestPromptInsert(sessionId, text, { replace: true });
   }
 
   private flushStreamingText(sessionId: string) {
@@ -1060,6 +1248,9 @@ class MessageStore {
 
   /** Reset running state for a session (e.g. after stop is clicked) */
   markSessionStopped(sessionId: string) {
+    // Apply deltas still waiting on the stream timer first, or they would
+    // show up after the stop as a new fragment of the stopped reply.
+    this.settleStreamBuffer(sessionId, 'process_exit');
     this.flushStreamingText(sessionId);
     this.streamingThinking[sessionId] = '';
     this.setIsRunning(sessionId, false);
@@ -1097,13 +1288,10 @@ class MessageStore {
     }
   }
 
-  /** Add a user message to the display */
-  addUserMessage(sessionId: string, text: string) {
-    this.pushMessage(sessionId, {
-      kind: 'user',
-      id: nextId(),
-      text,
-    });
+  /** Add a user message to the display. `sent` is the text as sent to the
+   *  agent: attached files' content blocks come off it and show as chips. */
+  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[]) {
+    this.pushMessage(sessionId, userMessage(sent, images));
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
@@ -1179,7 +1367,7 @@ class MessageStore {
       case 'tool_result':
         this.onToolResult(sessionId, event);
         // Dev servers print their URL; offer it in the Preview tab.
-        previewStore.noteText(sessionId, event.content);
+        if (this.sideEffects) previewStore.noteText(sessionId, event.content);
         break;
 
       case 'permission_request':
@@ -1193,6 +1381,10 @@ class MessageStore {
       case 'thinking':
         this.setIsRunning(sessionId, true);
         this.streamingThinking[sessionId] = '';
+        // Thinking the API returned without text (display 'omitted', e.g.
+        // conversations recorded before we asked for summaries) has nothing
+        // to show.
+        if (!event.thinking.trim()) break;
         this.pushMessage(sessionId, {
           kind: 'thinking',
           id: nextId(),
@@ -1204,7 +1396,7 @@ class MessageStore {
         this.onResult(sessionId, event);
         // A finished turn is the cheapest moment to learn what it cost the
         // plan; the store throttles so back-to-back turns don't spam the SDK.
-        usageStore.refresh(sessionId).catch(() => {});
+        if (this.sideEffects) usageStore.refresh(sessionId).catch(() => {});
         break;
 
       case 'error':
@@ -1228,6 +1420,7 @@ class MessageStore {
           kind: 'system',
           id: nextId(),
           text: event.message,
+          ...(event.level ? { level: event.level } : {}),
         });
         break;
 
@@ -1288,6 +1481,7 @@ class MessageStore {
       case 'process_exit':
         this.flushStreamingText(sessionId);
         this.streamingThinking[sessionId] = '';
+        this.dropPendingClear(sessionId);
         this.setIsRunning(sessionId, false);
         delete this.awaitingResponse[sessionId];
         // If the agent exited before system_init, unlock the input
@@ -1295,18 +1489,22 @@ class MessageStore {
           this.setIsReady(sessionId, true);
         }
         this.activityBySession[sessionId] = { activity: 'idle' };
-        backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
-        gitStatusStore.scheduleRefresh(sessionId, 100);
+        if (this.sideEffects) {
+          backgroundTaskStore.resolveStale(sessionId, this.getIsRunning(sessionId));
+          gitStatusStore.scheduleRefresh(sessionId, 100);
+        }
         break;
 
       case 'rate_limit':
-        rateLimitStore.set(sessionId, {
-          status: event.status,
-          resetsAt: event.resetsAt,
-          utilization: event.utilization,
-          rateLimitType: event.rateLimitType,
-        });
-        usageStore.applyRateLimitEvent(sessionId, event);
+        if (this.sideEffects) {
+          rateLimitStore.set(sessionId, {
+            status: event.status,
+            resetsAt: event.resetsAt,
+            utilization: event.utilization,
+            rateLimitType: event.rateLimitType,
+          });
+          usageStore.applyRateLimitEvent(sessionId, event);
+        }
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {
             kind: 'system',
@@ -1324,7 +1522,7 @@ class MessageStore {
         break;
 
       case 'task_started':
-        backgroundTaskStore.start(sessionId, event);
+        if (this.sideEffects) backgroundTaskStore.start(sessionId, event);
         this.pushMessage(sessionId, {
           kind: 'system',
           id: nextId(),
@@ -1333,11 +1531,11 @@ class MessageStore {
         break;
 
       case 'task_progress':
-        backgroundTaskStore.progress(sessionId, event);
+        if (this.sideEffects) backgroundTaskStore.progress(sessionId, event);
         break;
 
       case 'background_tasks_changed':
-        backgroundTaskStore.reconcile(sessionId, event);
+        if (this.sideEffects) backgroundTaskStore.reconcile(sessionId, event);
         break;
 
       case 'task_notification':
@@ -1436,6 +1634,7 @@ class MessageStore {
       delete this.usageBySession[sessionId];
       delete this.turnsBySession[sessionId];
       delete this.paginationBySession[sessionId];
+      this.orphanReplayEvents.delete(sessionId);
       delete this.pendingClear[sessionId];
       // Drop the checkpoint selection (its message is gone) but keep the
       // list: main keeps the git refs and flags earlier turns as
@@ -1496,7 +1695,10 @@ class MessageStore {
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
         changed = true;
         matchedToolName = m.toolName;
-        return { ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false };
+        return {
+          ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false,
+          ...(event.images?.length ? { images: event.images } : {}),
+        };
       }
       // Fallback: if a tool_result exists, the tool ran, so the permission
       // was allowed. permission_resolved is the primary path but this catches
@@ -1513,6 +1715,8 @@ class MessageStore {
     });
     if (changed) {
       this.setMessagesForMutation(sessionId, updated);
+    } else if (this._replayBuffer !== null) {
+      this.noteOrphan(sessionId, event);
     }
     // Clear tool progress for this tool
     const prog = this.toolProgressBySession[sessionId];
@@ -1521,7 +1725,7 @@ class MessageStore {
       this.toolProgressBySession[sessionId] = { ...prog };
     }
     // Refresh git status after file-modifying tool calls
-    if (matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit'].includes(matchedToolName)) {
+    if (this.sideEffects && matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit'].includes(matchedToolName)) {
       gitStatusStore.scheduleRefresh(sessionId, 300);
     }
   }
@@ -1624,13 +1828,17 @@ class MessageStore {
     const updated = msgs.map((m) => {
       if (m.kind === 'permission' && (m as ChatPermissionMessage).requestId === event.requestId && !m.resolved) {
         changed = true;
-        return { ...m, resolved: true as const, decision: event.decision };
+        return { ...m, resolved: true as const, decision: event.decision, ...(event.reason === 'timeout' ? { timedOut: true } : {}) };
       }
       if (m.kind === 'question' && m.requestId === event.requestId && !m.resolved) {
         changed = true;
         // On replay the optimistic resolveQuestion() update never ran, so the
         // reply only exists on the event.
-        return { ...m, resolved: true as const, response: m.response ?? event.message };
+        return {
+          ...m,
+          resolved: true as const,
+          ...(event.reason === 'timeout' ? { timedOut: true } : { response: m.response ?? event.message }),
+        };
       }
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId && m.awaitingPermission) {
         changed = true;
@@ -1640,6 +1848,8 @@ class MessageStore {
     });
     if (changed) {
       this.setMessagesForMutation(sessionId, updated);
+    } else if (this._replayBuffer !== null) {
+      this.noteOrphan(sessionId, event);
     }
   }
 
@@ -1680,7 +1890,7 @@ class MessageStore {
     // Background tasks are not resolved here: they outlive the turn (and an
     // interrupt), and the SDK reports their end via task_notification /
     // background_tasks_changed. Only process_exit drops them as stale.
-    gitStatusStore.scheduleRefresh(sessionId, 100);
+    if (this.sideEffects) gitStatusStore.scheduleRefresh(sessionId, 100);
 
     // Turn finished — the agent is free for the next queued prompt.
     this.flushQueue(sessionId);
@@ -1700,29 +1910,32 @@ class MessageStore {
       );
       if (existingIdx >= 0) {
         const updated = [...msgs];
-        updated[existingIdx] = { ...updated[existingIdx], uuid: event.uuid } as ChatUserMessage;
+        const msg = updated[existingIdx] as ChatUserMessage;
+        // Main has saved the images: show them from disk and let go of the
+        // inline data. Only when every one was saved, so the two lists line up.
+        const saved = event.images?.length && event.images.length === msg.images?.length ? { images: event.images } : {};
+        updated[existingIdx] = { ...msg, uuid: event.uuid, ...saved };
         this.setMessagesForMutation(sessionId, updated);
         // Schedule checkpoint refresh so the Checkpoints tab picks up the new checkpoint
-        checkpointStore.scheduleRefresh(sessionId);
+        if (this.sideEffects) checkpointStore.scheduleRefresh(sessionId);
         return;
       }
     }
     // Replayed from history: the event holds the text as sent (file content
     // blocks first), so rebuild what the chat showed when it was sent.
-    this.pushMessage(sessionId, {
-      kind: 'user',
-      id: nextId(),
-      text: displayTextFromSent(event.text),
-      uuid: event.uuid,
-    });
+    this.pushMessage(sessionId, { ...userMessage(event.text, event.images), uuid: event.uuid });
     // Schedule checkpoint list refresh so the Checkpoints tab updates
-    if (event.uuid) {
+    if (event.uuid && this.sideEffects) {
       checkpointStore.scheduleRefresh(sessionId);
     }
   }
 
   private onTaskNotification(sessionId: string, event: Extract<AgentEvent, { type: 'task_notification' }>) {
-    const { label, text } = backgroundTaskStore.notify(sessionId, event);
+    // The scratch store for an older page only needs the wording, not to
+    // mark a long-finished task done again.
+    const { label, text } = this.sideEffects
+      ? backgroundTaskStore.notify(sessionId, event)
+      : { label: event.taskStatus === 'completed' ? 'completed' : event.taskStatus === 'failed' ? 'failed' : 'stopped', text: event.summary || event.taskId };
     this.pushMessage(sessionId, {
       kind: 'system',
       id: nextId(),
@@ -1758,8 +1971,10 @@ class MessageStore {
     // Files-only restore (a checkpoint from before /clear): the conversation
     // is untouched, only the working tree moved.
     if (event.filesOnly) {
-      gitStatusStore.refresh(sessionId);
-      checkpointStore.scheduleRefresh(sessionId);
+      if (this.sideEffects) {
+        gitStatusStore.refresh(sessionId);
+        checkpointStore.scheduleRefresh(sessionId);
+      }
       return;
     }
     // Snapshot edit history before truncation if conversation-only rewind
@@ -1781,8 +1996,19 @@ class MessageStore {
       // Remove the rewind target message and place its text into the input
       const rewindMsg = msgs[rewindIdx] as ChatUserMessage;
       this.setMessagesForMutation(sessionId, msgs.slice(0, rewindIdx));
-      this.setDraft(sessionId, rewindMsg.text);
+      // Live, the prompt box may be showing: it keeps its own copy of the
+      // text, so tell it too. A replayed rewind is old news: only the draft.
+      if (this._replayBuffer === null && this.sideEffects) this.replacePrompt(sessionId, rewindMsg.text);
+      else this.setDraft(sessionId, rewindMsg.text);
       this.setActiveTab(sessionId, 'activity');
+    } else if (this._replayBuffer === null && this.sideEffects) {
+      // A live rewind to a message in a history page not loaded yet: every
+      // loaded message comes after it, and main has cut them all. Show the
+      // now shorter history from its end instead.
+      const text = checkpointStore.getCheckpoints(sessionId).find((c) => c.uuid === event.toMessageId)?.text;
+      if (text) this.replacePrompt(sessionId, text);
+      this.setActiveTab(sessionId, 'activity');
+      void this.reloadHistoryTail(sessionId);
     }
     this.isRunning[sessionId] = false;
     this.streamingText[sessionId] = '';
@@ -1790,7 +2016,7 @@ class MessageStore {
     // A rewind rewrites history; queued follow-ups may no longer make sense.
     this.pauseQueue(sessionId);
     // Refresh git status since files may have changed on disk
-    gitStatusStore.refresh(sessionId);
+    if (this.sideEffects) gitStatusStore.refresh(sessionId);
   }
 
   /** Send a slash command (e.g. /compact, /clear, /rewind) */
@@ -1820,6 +2046,21 @@ class MessageStore {
     window.groveBench.sendMessage(sessionId, command);
   }
 
+  /** The agent stopped with a /clear still pending: it was not delivered (main
+   *  reports that with error + process_exit), or the agent ended before the
+   *  cleared conversation started. Either way it didn't happen, so the next
+   *  system_init (a restart or wake, maybe much later) must not wipe the chat.
+   *  A message meant for after the clear goes back to the prompt. */
+  private dropPendingClear(sessionId: string) {
+    if (!this.pendingClear[sessionId]) return;
+    delete this.pendingClear[sessionId];
+    const message = this.pendingMessageAfterClear[sessionId];
+    if (message) {
+      delete this.pendingMessageAfterClear[sessionId];
+      this.appendToPrompt(sessionId, message);
+    }
+  }
+
   /** Clear the conversation and send a message once the new session is ready. */
   clearAndSend(sessionId: string, message: string) {
     this.pendingMessageAfterClear[sessionId] = message;
@@ -1831,8 +2072,10 @@ class MessageStore {
    *  tool error output, which is how it receives the user's answer. */
   resolveQuestion(sessionId: string, requestId: string, response: string, selectedLabels?: string[]) {
     const msgs = this.messagesBySession[sessionId] ?? [];
-    const idx = msgs.findIndex(
-      (m) => m.kind === 'question' && m.requestId === requestId,
+    // The open one: older history can hold an answered question with the
+    // same id (ids once restarted with the conversation's process).
+    const idx = msgs.findLastIndex(
+      (m) => m.kind === 'question' && m.requestId === requestId && !m.resolved,
     );
     if (idx >= 0) {
       const updated = { ...(msgs[idx] as ChatQuestionMessage) };
@@ -1974,7 +2217,7 @@ class MessageStore {
       if (m.kind === 'user' && (m as ChatUserMessage).uuid) {
         points.push({
           uuid: (m as ChatUserMessage).uuid!,
-          text: m.text,
+          text: userMessageLabel(m),
           index: i,
         });
       }
@@ -2023,6 +2266,10 @@ class MessageStore {
     this.toolProgressBySession[sessionId] = {};
     backgroundTaskStore.clear(sessionId);
     this.sourceIndexBySession.delete(sessionId);
+    this.orphanReplayEvents.delete(sessionId);
+    // The replay that follows sets it again; an older page still loading
+    // for the old history sees it gone and is dropped.
+    delete this.paginationBySession[sessionId];
     delete this.stoppingSession[sessionId];
     delete this.awaitingResponse[sessionId];
     delete this.userExplicitMode[sessionId];
@@ -2039,7 +2286,27 @@ class MessageStore {
 
     // Delete every per-session entry. Reassign each $state record so Svelte
     // reliably drops derived subscriptions referencing this session.
-    for (const record of [
+    for (const record of this.perSessionRecords()) delete record[sessionId];
+    for (const map of this.perSessionMaps()) map.delete(sessionId);
+
+    // Extracted stores own their own per-session teardown.
+    backgroundTaskStore.destroy(sessionId);
+    rateLimitStore.destroy(sessionId);
+  }
+
+  /** destroySession for every conversation the store holds anything for.
+   *  Tests share this one store, so each starts from a clean one. */
+  destroyAllSessions() {
+    const ids = new Set<string>();
+    for (const record of this.perSessionRecords()) for (const id of Object.keys(record)) ids.add(id);
+    for (const map of this.perSessionMaps()) for (const id of map.keys()) ids.add(id);
+    for (const id of this.cleanups.keys()) ids.add(id);
+    for (const id of ids) this.destroySession(id);
+  }
+
+  /** Every record keyed by session id, reactive and plain. */
+  private perSessionRecords(): Record<string, unknown>[] {
+    return [
       this.messagesBySession, this.streamingText, this.streamingThinking,
       this.isRunning, this.pendingClear, this.activityBySession,
       this.toolProgressBySession, this.isReady, this.historyLoaded, this.modelBySession,
@@ -2047,25 +2314,16 @@ class MessageStore {
       this.systemInfoBySession, this.contextWindowBySession, this.turnsBySession,
       this.promptSuggestionsBySession,
       this.activeTabBySession, this.viewModeBySession,
-      this.draftBySession, this.preservedEditHistory, this.paginationBySession,
+      this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
       this.queuedBySession, this.queuePausedBySession,
-    ] as Record<string, unknown>[]) {
-      delete record[sessionId];
-    }
+      // Plain (non-reactive) bookkeeping
+      this.pendingMessageAfterClear, this.stoppingSession, this.awaitingResponse, this.userExplicitMode,
+    ] as Record<string, unknown>[];
+  }
 
-    this.sourceIndexBySession.delete(sessionId);
-    this.streamBuf.delete(sessionId);
-
-    // Extracted stores own their own per-session teardown.
-    backgroundTaskStore.destroy(sessionId);
-    rateLimitStore.destroy(sessionId);
-
-    // Plain (non-reactive) bookkeeping records
-    delete this.pendingMessageAfterClear[sessionId];
-    delete this.stoppingSession[sessionId];
-    delete this.awaitingResponse[sessionId];
-    delete this.userExplicitMode[sessionId];
+  private perSessionMaps(): Map<string, unknown>[] {
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf];
   }
 
   /** Subscribe to events from the main process for a session */
@@ -2153,7 +2411,7 @@ class MessageStore {
 function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
   if (event.isPlanExecution) return 'A plan is ready for review';
   if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
-  return `${event.toolName} is waiting for permission`;
+  return `The agent ${approvalRequest(event.toolName)}`;
 }
 
 export const messageStore = new MessageStore();

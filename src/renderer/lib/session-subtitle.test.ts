@@ -13,7 +13,7 @@ describe('sessionSubtitle', () => {
       lastText: 'previous answer',
       firstPrompt: 'do things',
     });
-    expect(s).toEqual({ text: 'Waiting for approval — Bash', tone: 'waiting' });
+    expect(s).toEqual({ text: 'Wants to run a command', tone: 'waiting' });
   });
 
   it('phrases a pending question as waiting for an answer', () => {
@@ -30,6 +30,17 @@ describe('sessionSubtitle', () => {
       firstPrompt: null,
     });
     expect(s).toEqual({ text: 'Bash: npm run build', tone: 'working' });
+  });
+
+  it('names the plan and MCP tools in plain words', () => {
+    const plan = sessionSubtitle({ isRunning: true, activity: IDLE, pendingTool: 'ExitPlanMode', lastText: null, firstPrompt: null });
+    expect(plan).toEqual({ text: 'Has a plan for you to approve', tone: 'waiting' });
+    const mcp = sessionSubtitle({
+      isRunning: true,
+      activity: { activity: 'tool_starting', toolName: 'mcp__linear__create_issue' },
+      pendingTool: null, lastText: null, firstPrompt: null,
+    });
+    expect(mcp).toEqual({ text: 'Running create issue (linear)…', tone: 'working' });
   });
 
   it('shows a generic running label without a tool summary', () => {
@@ -85,6 +96,27 @@ describe('message helpers', () => {
 
   it('lastTextSnippet returns the most recent text', () => {
     expect(lastTextSnippet(messages)).toBe('Done — sidebar fixed');
+  });
+
+  it('lastTextSnippet drops markdown syntax', () => {
+    const md: ChatMessage[] = [{ kind: 'text', id: 'm1', text: '## Investigation summary\n\nThe **flakiness** came from `retry-helper.ts`', uuid: '' }];
+    expect(lastTextSnippet(md)).toBe('Investigation summary The flakiness came from retry-helper.ts');
+  });
+
+  it('skips a message that is only markdown syntax', () => {
+    const md: ChatMessage[] = [
+      { kind: 'user', id: 'u1', text: '***' },
+      { kind: 'user', id: 'u2', text: 'the real prompt' },
+      { kind: 'text', id: 'm1', text: 'the real answer', uuid: '' },
+      { kind: 'text', id: 'm2', text: '---', uuid: '' },
+    ];
+    expect(lastTextSnippet(md)).toBe('the real answer');
+    expect(firstPromptSnippet(md)).toBe('the real prompt');
+  });
+
+  it('firstPromptSnippet drops markdown syntax', () => {
+    const md: ChatMessage[] = [{ kind: 'user', id: 'u1', text: '# Task\n1. fix [the bug](https://x.test)' }];
+    expect(firstPromptSnippet(md)).toBe('Task fix the bug');
   });
 
   it('pendingPermissionTool ignores resolved permissions', () => {

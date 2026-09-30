@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -15,8 +15,14 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
+  import ActivityContextMenu from './ActivityContextMenu.svelte';
+  import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
-  import { filterVisibleMessages } from '$lib/message-view.js';
+  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { filterVisibleMessages, hasAgentReply } from '$lib/message-view.js';
+  import { sessionRepoColor } from '$lib/session-repo-color.js';
+  import { sessionSpriteState } from '$lib/session-sprite-state.js';
   import type { EventSearchHit } from '../../shared/types.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -26,6 +32,10 @@
 
   let allMessages = $derived(messageStore.getMessages(sessionId));
   let streamingText = $derived(messageStore.getStreamingText(sessionId));
+  // Every conversation's pane stays mounted, hidden but for the open one.
+  // A hidden one skips drawing its live reply (re-parsed on every flush);
+  // shown again, it draws what has arrived so far.
+  let paneShown = $derived(store.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'activity');
   let streamingThinking = $derived(messageStore.getStreamingThinking(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let activity = $derived(messageStore.getActivity(sessionId));
@@ -55,6 +65,33 @@
   let hasUnloadedEvents = $derived(messageStore.hasOlderEvents(sessionId));
   let unloadedEventCount = $derived(messageStore.olderEventCount(sessionId));
   let isLoadingOlderEvents = $derived(messageStore.isLoadingOlder(sessionId));
+
+  // ─── First turn: the agent walks to its bench (stores/arrivalScene) ───
+  // Stands in for the empty chat and the working row until the first reply
+  // shows, as the view mode shows it: in Summary, say, a first turn of reads
+  // keeps the scene up. Live thinking doesn't end it; the caption says
+  // "Thinking..." instead.
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+  let agentLive = $derived(session?.status === 'starting' || session?.status === 'installing' || session?.status === 'running');
+  let replied = $derived(hasAgentReply(filteredMessages) || !!streamingText || hasUnloadedEvents);
+  let arrival = $derived(
+    settingsStore.current.groveCharacters && agentLive && !replied ? arrivalScene.for(sessionId) : null,
+  );
+
+  // Starting a conversation with a message begins the scene (see
+  // draftStore.start): the message only shows once the agent is ready, so
+  // there is nothing here to go on before then. A first message sent later,
+  // in a conversation started without one, begins it here. It ends at the
+  // reply, or when the agent stops or goes to sleep without one; Stop ends
+  // it too (PromptEditor).
+  $effect(() => {
+    if (replied || !agentLive) {
+      untrack(() => arrivalScene.end(sessionId));
+    } else if (isRunning && allMessages.some((m) => m.kind === 'user')) {
+      untrack(() => arrivalScene.begin(sessionId));
+    }
+  });
+  onDestroy(() => arrivalScene.end(sessionId));
 
   // Reset visible count when switching sessions
   $effect(() => {
@@ -105,7 +142,7 @@
    *  can re-resolve a stale index or fall back). */
   async function jumpToEventIndex(eventIndex: number): Promise<boolean> {
     await messageStore.loadOlderUntil(sessionId, eventIndex);
-    const id = messageStore.findMessageIdForEventIndex(sessionId, eventIndex);
+    const id = await messageStore.findMessageForEvent(sessionId, eventIndex);
     if (!id) return false;
 
     // The target may be hidden by the current view mode (thinking or a
@@ -123,6 +160,9 @@
       await tick();
     }
     currentMatchId = id;
+    // Stop following new output, or the next streamed chunk snaps back to the
+    // bottom before the smooth scroll has moved far enough to say so itself.
+    shouldAutoScroll = false;
     requestAnimationFrame(() => {
       const el = scrollContainer?.querySelector(`[data-msg-id="${id}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -154,14 +194,31 @@
     jumpInFlight = true;
     (async () => {
       try {
-        await resolveBookmarkJump(req);
+        let next: JumpRequest | undefined = req;
+        while (next) {
+          await resolveBookmarkJump(next);
+          // A jump asked for while this one ran was skipped above: take it now.
+          const pending: JumpRequest | undefined = messageStore.pendingJumpBySession[sessionId];
+          next = pending && !sameJump(pending, next) && store.activeSessionId === sessionId ? pending : undefined;
+        }
       } finally {
         jumpInFlight = false;
       }
     })();
   });
 
-  async function resolveBookmarkJump(req: { eventIndex: number | null; uuid: string | null; bookmarkId: string }) {
+  type JumpRequest = { eventIndex: number | null; uuid: string | null; bookmarkId: string };
+  // By fields: search hits all share bookmarkId ''.
+  function sameJump(a: JumpRequest, b: JumpRequest): boolean {
+    return a.eventIndex === b.eventIndex && a.uuid === b.uuid && a.bookmarkId === b.bookmarkId;
+  }
+  /** Clear `req` once handled, but not a newer request that replaced it. */
+  function finishJump(req: JumpRequest) {
+    const pending = messageStore.pendingJumpBySession[sessionId];
+    if (pending && sameJump(pending, req)) messageStore.clearJump(sessionId);
+  }
+
+  async function resolveBookmarkJump(req: JumpRequest) {
     // Resolve to a concrete event index — cached first, then via the durable uuid.
     let eventIndex = req.eventIndex;
     if (eventIndex == null && req.uuid) {
@@ -170,13 +227,13 @@
     }
     if (eventIndex == null) {
       showBookmarkFallback(req.bookmarkId);
-      messageStore.clearJump(sessionId);
+      finishJump(req);
       return;
     }
 
     if (await jumpToEventIndex(eventIndex)) {
       clearHighlightOnInteraction = true;
-      messageStore.clearJump(sessionId);
+      finishJump(req);
       return;
     }
 
@@ -187,7 +244,7 @@
         bookmarkStore.patchEventIndex(req.bookmarkId, ei);
         if (await jumpToEventIndex(ei)) {
           clearHighlightOnInteraction = true;
-          messageStore.clearJump(sessionId);
+          finishJump(req);
           return;
         }
       }
@@ -198,7 +255,7 @@
     // source is genuinely gone (e.g. cleared history) → show the stored text.
     if (messageStore.getMessages(sessionId).length === 0) return;
     showBookmarkFallback(req.bookmarkId);
-    messageStore.clearJump(sessionId);
+    finishJump(req);
   }
 
   function showBookmarkFallback(bookmarkId: string) {
@@ -216,8 +273,10 @@
 
   function handleSearchKeydown(e: KeyboardEvent) {
     // Inactive session panes stay mounted (hidden via CSS); only the active
-    // session should toggle its search bar on Ctrl/Cmd+F.
+    // session should toggle its search bar on Ctrl/Cmd+F, and only while its
+    // Activity tab is showing (other tabs hide this pane the same way).
     if (store.activeSessionId !== sessionId) return;
+    if (messageStore.getActiveTab(sessionId) !== 'activity') return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       searchOpen = !searchOpen;
@@ -247,7 +306,11 @@
     if (len > prevMsgCount) {
       const last = filteredMessages[len - 1];
       if (last?.kind === 'user') {
-        shouldAutoScroll = true;
+        untrack(followLatest);
+      } else if (!untrack(() => shouldAutoScroll) && untrack(() => hasOlderMessages)) {
+        // Scrolled up to read: grow the window instead of sliding it, so the
+        // oldest rendered message (maybe the one being read) stays put.
+        untrack(() => { visibleCount += len - prevMsgCount; });
       }
     }
     prevMsgCount = len;
@@ -283,6 +346,19 @@
     return () => observer.disconnect();
   });
 
+  // Thread images (attachments, tool screenshots) load after the scroll
+  // above and make the content taller without resizing the container, so
+  // the observer doesn't see them. Stay at the bottom when following. A
+  // frame later, so a failed image's placeholder has replaced it by then.
+  function followImageLoad(e: Event) {
+    if (!(e.target instanceof HTMLImageElement)) return;
+    requestAnimationFrame(() => {
+      if (shouldAutoScroll && scrollContainer && scrollContainer.clientHeight > 0) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+  }
+
   function handleScroll() {
     if (!scrollContainer) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
@@ -293,9 +369,19 @@
 
   function scrollToBottom() {
     if (scrollContainer) {
+      followLatest();
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      shouldAutoScroll = true;
     }
+  }
+
+  /** Back to the live end: follow new output and render only the latest page
+   *  again, so a window grown by reading back (loading older messages, or
+   *  output arriving while scrolled up) doesn't stay large for the rest of
+   *  the session. Only on a deliberate return (sending, Scroll to bottom):
+   *  a jump's smooth scroll passes near the bottom and would lose its target. */
+  function followLatest() {
+    shouldAutoScroll = true;
+    visibleCount = PAGE_SIZE;
   }
 </script>
 
@@ -307,24 +393,32 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="pixel-bg h-full overflow-y-auto overflow-x-hidden px-4 py-3 relative"
+  class:flex={arrival !== null}
+  class:flex-col={arrival !== null}
   bind:this={scrollContainer}
   onscroll={handleScroll}
+  onloadcapture={followImageLoad}
+  onerrorcapture={followImageLoad}
   onmousedown={maybeClearHighlight}
   onwheel={maybeClearHighlight}
 >
-  {#each Array(20) as _, i}
-    <span
-      class="blue-pixel absolute"
-      style="
-        width: 4px; height: 4px;
-        top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
-        left: {Math.round((5 + (((i * 53 + 7) * 11) % 90)) / 100 * 1400 / 6) * 6}px;
-        animation-delay: {(i * 1.3) % 6}s;
-      "
-    ></span>
-  {/each}
+  <!-- Clipped to the view: the dots reach 726px down, and unclipped they
+       made a short chat scroll, so following it hid the first messages. -->
+  <div class="absolute inset-0 overflow-hidden pointer-events-none">
+    {#each Array(20) as _, i}
+      <span
+        class="blue-pixel absolute"
+        style="
+          width: 4px; height: 4px;
+          top: {Math.round((8 + (((i * 37 + 13) * 7) % 84)) / 100 * 800 / 6) * 6}px;
+          left: {Math.round((5 + (((i * 53 + 7) * 11) % 90)) / 100 * 1400 / 6) * 6}px;
+          animation-delay: {(i * 1.3) % 6}s;
+        "
+      ></span>
+    {/each}
+  </div>
 
-  {#if messages.length === 0 && !streamingText}
+  {#if messages.length === 0 && !streamingText && arrival === null}
     <div class="flex items-center justify-center h-full text-muted-foreground">
       <div class="text-center relative z-10">
         <p class="text-sm mb-1 opacity-60">Waiting for input...</p>
@@ -372,7 +466,10 @@
     >
       {#if msg.kind === 'user'}
         <UserPromptBlock
+          {sessionId}
           text={msg.text}
+          files={msg.files}
+          images={msg.images}
           onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
         />
 
@@ -387,6 +484,7 @@
           result={msg.result}
           isError={msg.isError}
           pending={msg.pending}
+          images={msg.images}
           {summaryMode}
         />
 
@@ -398,8 +496,8 @@
           toolInput={msg.toolInput}
           resolved={msg.resolved}
           decision={msg.decision}
+          timedOut={msg.timedOut}
           decisionReason={msg.decisionReason}
-          suggestions={msg.suggestions}
           isPlanExecution={msg.isPlanExecution}
           toolCategory={msg.toolCategory}
           planText={msg.planText}
@@ -413,6 +511,7 @@
           resolved={msg.resolved}
           response={msg.response}
           selectedLabels={msg.selectedLabels}
+          timedOut={msg.timedOut}
         />
 
       {:else if msg.kind === 'elicitation'}
@@ -428,7 +527,7 @@
         <ThinkingBlock thinking={msg.thinking} />
 
       {:else if msg.kind === 'system'}
-        <SystemBlock text={msg.text} />
+        <SystemBlock text={msg.text} variant={msg.level === 'warning' ? 'warning' : 'info'} />
 
       {:else if msg.kind === 'error'}
         <SystemBlock text={msg.text} variant="error" />
@@ -457,7 +556,7 @@
   {/each}
 
   <!-- Streaming thinking (live) — suppressed in focus mode -->
-  {#if streamingThinking && viewMode !== 'focus'}
+  {#if streamingThinking && viewMode !== 'focus' && arrival === null}
     {@const trimmed = streamingThinking.trimEnd()}
     {@const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() || 'thinking...'}
     <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
@@ -469,25 +568,50 @@
   <!-- Streaming text (live) -->
   {#if streamingText}
     <div class="py-1 text-sm text-foreground">
-      <MarkdownBlock content={streamingText} streaming />
+      {#if paneShown}<MarkdownBlock content={streamingText} streaming />{/if}
       <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
+    </div>
+  {:else if arrival !== null}
+    <!-- The first turn: the agent walks up to its bench and gets to work.
+         Only the open conversation draws it, so it picks up from its start
+         time when shown again rather than replaying a stale animation. -->
+    <div class="flex-1 flex items-center justify-center py-6">
+      {#if store.activeSessionId === sessionId}
+        <GroveWalk seed={sessionId} projectColor={sessionRepoColor(sessionId)} spriteState={session ? sessionSpriteState(session) : 'starting'} {arrival}>
+          {#snippet caption()}
+            <p class="text-sm mt-4 text-muted-foreground">
+              {#if session?.status === 'installing'}
+                Installing dependencies...
+              {:else if session?.status === 'starting' || !isRunning}
+                Starting agent...
+              {:else}
+                {@render activityLabel()}
+              {/if}
+            </p>
+          {/snippet}
+        </GroveWalk>
+      {/if}
     </div>
   {:else if isRunning && (!streamingThinking || viewMode === 'focus')}
     <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
       <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget"></span>
-      {#if activity.activity === 'thinking'}
-        <span class="text-purple-400">Thinking...</span>
-      {:else if activity.activity === 'tool_starting'}
-        <span class="text-yellow-400">
-          Running {activity.toolName ?? 'tool'}{#if activity.toolSummary}&nbsp;<span class="text-muted-foreground">{activity.toolSummary}</span>{/if}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
-        </span>
-      {:else if activity.activity === 'generating'}
-        <span class="text-primary">Writing...</span>
-      {:else}
-        <span>Working...</span>
-      {/if}
+      {@render activityLabel()}
     </div>
   {/if}
+
+  {#snippet activityLabel()}
+    {#if activity.activity === 'thinking'}
+      <span class="text-purple-400">Thinking...</span>
+    {:else if activity.activity === 'tool_starting'}
+      <span class="text-yellow-400">
+        Running {activity.toolName ?? 'tool'}{#if activity.toolSummary}&nbsp;<span class="text-muted-foreground">{activity.toolSummary}</span>{/if}{#if activity.elapsedSeconds && activity.elapsedSeconds > 0}&nbsp;({Math.round(activity.elapsedSeconds)}s){/if}
+      </span>
+    {:else if activity.activity === 'generating'}
+      <span class="text-primary">Writing...</span>
+    {:else}
+      <span>Working...</span>
+    {/if}
+  {/snippet}
 
   <div class="h-1"></div>
 </div>
@@ -519,3 +643,4 @@
 </div>
 
 <SelectionMenu {sessionId} container={scrollContainer} />
+<ActivityContextMenu {sessionId} container={scrollContainer} />

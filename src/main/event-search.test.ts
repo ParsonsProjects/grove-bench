@@ -245,6 +245,14 @@ describe('findEventIndexByUuid', () => {
 });
 
 describe('extractSessionPreview', () => {
+  it('lists attached images with the prompt, as the thread labels it', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'fix it', images: [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }] },
+    ];
+    expect(extractSessionPreview(events).firstPrompt).toBe('[shot.png] fix it');
+    expect(searchableEventText(events[0])).toBe('[shot.png] fix it');
+  });
+
   it('returns the first real user prompt and the latest text', () => {
     const events: AgentEvent[] = [
       { type: 'status', message: 'creating worktree' },
@@ -267,6 +275,24 @@ describe('extractSessionPreview', () => {
     const preview = extractSessionPreview(events);
     expect(preview.firstPrompt).toBe('first prompt');
     expect(preview.lastText).toBe('first prompt');
+  });
+
+  it('shows messages as plain text, without markdown syntax', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '## Plan\n\n- fix **the** parser' },
+      { type: 'assistant_text', text: '## Investigation summary\n\n| Test | Rate |\n| --- | --- |\n| e2e | 18% |', uuid: '' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'Plan fix the parser', lastText: 'Investigation summary Test · Rate e2e · 18%' });
+  });
+
+  it('skips a message that is only markdown syntax', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '---' },
+      { type: 'user_message', text: 'real prompt' },
+      { type: 'assistant_text', text: 'real answer', uuid: '' },
+      { type: 'assistant_text', text: '|---|---|', uuid: '' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'real prompt', lastText: 'real answer' });
   });
 
   it('uses tool_use_summary text when it is the latest', () => {

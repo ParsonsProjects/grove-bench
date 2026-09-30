@@ -45,6 +45,20 @@ function parseNumstat(output: string): DiffStats {
   return stats;
 }
 
+/** The worktree's own index file: `.git/index` in a main checkout, or the
+ *  `index` in the gitdir a linked worktree's `.git` file points to. Null when
+ *  it can't be found. */
+function realIndexPath(cwd: string): string | null {
+  try {
+    const dotGit = path.join(cwd, '.git');
+    if (fs.statSync(dotGit).isDirectory()) return path.join(dotGit, 'index');
+    const gitdir = fs.readFileSync(dotGit, 'utf-8').match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+    return gitdir ? path.join(path.resolve(cwd, gitdir), 'index') : null;
+  } catch {
+    return null;
+  }
+}
+
 interface CheckpointRef {
   ref: string;
   turn: number;
@@ -166,23 +180,7 @@ export class CheckpointManager {
     const tmpIndex = path.join(os.tmpdir(), `grove-idx-${sessionId}-${turn}-${Date.now()}`);
 
     try {
-      const env = { GIT_INDEX_FILE: tmpIndex };
-
-      // Seed temp index from HEAD. A repo whose branch has no commits yet has
-      // no HEAD to read; start from an empty index so the snapshot still
-      // records the working tree instead of failing every capture.
-      try {
-        await gitEnv(['read-tree', 'HEAD'], cwd, env);
-      } catch (err) {
-        logger.debug(`[checkpoints] read-tree HEAD failed session=${sessionId}, using empty index:`, err);
-        await gitEnv(['read-tree', '--empty'], cwd, env);
-      }
-
-      // Stage all working tree changes (including untracked files)
-      await gitEnv(['add', '-A'], cwd, env);
-
-      // Write the tree object
-      const treeOid = (await gitEnv(['write-tree'], cwd, env)).trim();
+      const treeOid = await this.snapshotTree(sessionId, cwd, tmpIndex);
 
       // Encode message text into commit message so list() can display it
       // without depending on in-memory messages. Truncate to keep refs light.
@@ -214,6 +212,42 @@ export class CheckpointManager {
       // Always clean up temp index
       try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
     }
+  }
+
+  /**
+   * Write the working tree (tracked and untracked files, not ignored ones) as
+   * a tree object, staged through the temp index `tmpIndex`, and return its
+   * oid. The temp index starts as a copy of the worktree's own index, whose
+   * file stat data lets `git add -A` re-hash only the files that changed.
+   * Starting from `read-tree HEAD` (no stat data) hashes every file, about
+   * 10x slower on a 20k-file repo. Falls back to HEAD, then to an empty index
+   * on a branch with no commits yet.
+   *
+   * A copied index keeps skip-worktree and assume-unchanged bits: sparse
+   * checkouts snapshot correctly, but a file the user marked
+   * assume-unchanged is recorded as it is in the index.
+   */
+  private async snapshotTree(sessionId: string, cwd: string, tmpIndex: string): Promise<string> {
+    const env = { GIT_INDEX_FILE: tmpIndex };
+    const realIndex = realIndexPath(cwd);
+    if (realIndex) {
+      try {
+        fs.copyFileSync(realIndex, tmpIndex);
+        await gitEnv(['add', '-A'], cwd, env);
+        return (await gitEnv(['write-tree'], cwd, env)).trim();
+      } catch (err) {
+        logger.debug(`[checkpoints] snapshot from the worktree index failed session=${sessionId}, reading HEAD instead:`, err);
+        try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ }
+      }
+    }
+    try {
+      await gitEnv(['read-tree', 'HEAD'], cwd, env);
+    } catch (err) {
+      logger.debug(`[checkpoints] read-tree HEAD failed session=${sessionId}, using empty index:`, err);
+      await gitEnv(['read-tree', '--empty'], cwd, env);
+    }
+    await gitEnv(['add', '-A'], cwd, env);
+    return (await gitEnv(['write-tree'], cwd, env)).trim();
   }
 
   /**
@@ -308,10 +342,7 @@ export class CheckpointManager {
     if (reuseRecent && memo && Date.now() - memo.at < CheckpointManager.WORKING_TREE_REUSE_MS) return memo.oid;
     const tmpIndex = path.join(os.tmpdir(), `grove-diff-${sessionId}-${Date.now()}`);
     try {
-      const env = { GIT_INDEX_FILE: tmpIndex };
-      await gitEnv(['read-tree', 'HEAD'], cwd, env);
-      await gitEnv(['add', '-A'], cwd, env);
-      const oid = (await gitEnv(['write-tree'], cwd, env)).trim();
+      const oid = await this.snapshotTree(sessionId, cwd, tmpIndex);
       this.workingTreeMemo.set(sessionId, { oid, at: Date.now() });
       return oid;
     } finally {

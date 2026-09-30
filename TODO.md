@@ -28,6 +28,10 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Per-turn diff viewing (what changed in each turn)
 - [x] Revert workspace to any previous turn's checkpoint
 - [x] Preserve checkpoints across `/clear` — the git refs are kept and a `__clear__` sentinel checkpoint marks the boundary; `list()` flags earlier turns `beforeClear`, the Checkpoints tab shows them under a "Before /clear" divider with a files-only Restore (the conversation they belonged to is gone, so no conversation rewind is offered)
+- [ ] Checkpoints for projects used without git. Today a folder project has none (`noGitCheckpoints` in `src/main/no-git-checkpoints.ts`), so only the conversation can be rewound. Grove takes the snapshot itself before each message, so any option below works for every agent and catches Bash edits (unlike the SDK's own `enableFileCheckpointing`, which is Claude-only and tracks only its file editing tools). First decide who it's for: users with git whose folder isn't a repository, or users with no git at all.
+  1. Git kept outside the folder: a hidden repository in the app's data folder with the project as its work tree. Needs git installed; closest to `checkpoints.ts`, so the smallest change.
+  2. isomorphic-git (pure JavaScript git): no git install, same format as 1. No diff command, so diffs come from the `diff` package; 4.9 MB; its README says it is run by two volunteers who "don't write much code".
+  3. Own snapshots: hashed file copies plus a file list per turn. No dependency, byte-exact restores, Node's built-in hashing; we own storage, cleanup, ignore rules (`ignore` package) and Windows edge cases. Preferred if the goal is users with no git.
 
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)
@@ -72,7 +76,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Multiple PRs per session — every PR on the session's branch and on branches checked out in it (via the HEAD reflog) is listed; one primary PR (open first, newest first, or user-picked) drives alerts and auto turns
 - [x] One-click fix turns — clickable failing-checks / changes-requested badges send the agent to read CI logs or review comments and fix
 - [x] New-failure / new-comment detection with pulsing alert chips (baseline seeded on startup, one alert per pushed commit)
-- [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 attempts per commit then "needs human", collaborator-authored comments only)
+- [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 fix attempts per PR until CI goes green, then "needs human"; collaborator-authored comments only)
 - [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
 
 ### Session Search
@@ -80,7 +84,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Filter/search within message history (Ctrl+F with highlighting)
 
 ### Help System
-- [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md` and HelpPanel is mounted; missing piece is the F1 shortcut
+- [x] Keybinding documentation (F1 or similar) — `F1` opens Help, and the empty state links to Getting Started
 - [ ] Context-aware footer showing relevant keyboard shortcuts
 
 ### Cost & Usage Dashboard
@@ -120,10 +124,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Maintenance & Hygiene
 - [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
-- [ ] Tests for the IPC layer (`ipc.ts` currently has zero coverage)
+- [x] Tests for the IPC layer: `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
 - [ ] Component tests (5 of 42 Svelte components covered) and E2E tests (Playwright)
 - [ ] In-app log viewer or "open logs folder" action; configurable log level
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
+- [ ] Measure live conversation memory: a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
 - [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)

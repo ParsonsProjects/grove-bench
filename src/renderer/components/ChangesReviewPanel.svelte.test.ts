@@ -7,7 +7,22 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import ChangesReviewPanel from './ChangesReviewPanel.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
+import { store } from '../stores/sessions.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
+
+// Counts syntax-highlight calls; otherwise the real module.
+const highlights = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../lib/diff-highlight.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/diff-highlight.js')>();
+  return {
+    ...actual,
+    highlightLine: (...args: Parameters<typeof actual.highlightLine>) => {
+      highlights.count++;
+      return actual.highlightLine(...args);
+    },
+  };
+});
 
 const SID = 'changes-session';
 
@@ -27,8 +42,12 @@ function diffText(container: HTMLElement): string {
 beforeEach(() => {
   vi.clearAllMocks();
   gitStatusStore.statusBySession = {};
+  gitStatusStore.scopeBySession = {};
   messageStore.messagesBySession = { [SID]: [] };
   messageStore.setIsRunning(SID, false);
+  // The panel under test is on screen.
+  store.activeSessionId = SID;
+  messageStore.setActiveTab(SID, 'changes');
 });
 
 afterEach(() => cleanup());
@@ -117,6 +136,7 @@ describe('ChangesReviewPanel — live diff while the agent is running', () => {
 
 import { fireEvent } from '@testing-library/svelte';
 import { reviewStore } from '../stores/review.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
 
 function hunkPatch(): string {
   // One hunk starting at line 10 of a longer file, so context can be expanded above and below.
@@ -133,6 +153,7 @@ function hunkPatch(): string {
 
 describe('ChangesReviewPanel — review features', () => {
   beforeEach(() => {
+    panelStore.collapsed = {};
     reviewStore.clear(SID);
     localStorage.clear();
     gitStatusStore.scopeBySession = {};
@@ -214,6 +235,57 @@ describe('ChangesReviewPanel — review features', () => {
     submit.mockRestore();
   });
 
+  it('closes an open comment box when another file is selected', async () => {
+    const { container, getByPlaceholderText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!);
+    await tick();
+    await fireEvent.input(getByPlaceholderText('What should the agent change here?'), { target: { value: 'meant for a.ts' } });
+
+    await fireEvent.click(container.querySelector('[data-file-key="src/b.ts:false"]')!);
+    await tick();
+    await waitFor(() => expect(container.querySelector('[data-file-key="src/b.ts:false"]')!.className).toContain('border-primary'));
+
+    expect(queryByPlaceholderText('What should the agent change here?')).toBeNull();
+    expect(reviewStore.getComments(SID)).toEqual([]);
+  });
+
+  it('scrolls its own file list, not a hidden panel showing the same file', async () => {
+    const OTHER = 'other-session';
+    messageStore.messagesBySession[OTHER] = [];
+    gitStatusStore.statusBySession = { ...gitStatusStore.statusBySession, [OTHER]: gitStatusStore.statusBySession[SID] };
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    try {
+      render(ChangesReviewPanel, { sessionId: OTHER }); // first in the page
+      const { container } = render(ChangesReviewPanel, { sessionId: SID });
+      await waitFor(() => expect(diffText(container)).toContain('bar'));
+
+      // Ticking "Viewed" moves on to b.ts and scrolls it into view.
+      await fireEvent.click(container.querySelector('input[type="checkbox"]')!);
+      await waitFor(() => expect(scrolled.length).toBeGreaterThan(0));
+      const mine = container.querySelector('[data-file-key="src/b.ts:false"]')!;
+
+      expect(scrolled.at(-1)).toBe(mine);
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    }
+  });
+
+  it('keeps the typed comment when Shift+click widens its range', async () => {
+    const { container, getByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 10"]')!);
+    await tick();
+    await fireEvent.input(getByPlaceholderText('What should the agent change here?'), { target: { value: 'both lines' } });
+
+    await fireEvent.click(container.querySelector('button[data-side="new"][aria-label="Add comment on line 11"]')!, { shiftKey: true });
+    await tick();
+
+    expect(container.textContent).toContain('Comment on line 10–11');
+    expect((getByPlaceholderText('What should the agent change here?') as HTMLTextAreaElement).value).toBe('both lines');
+  });
+
   it('switches to branch scope: resolves the base, refetches, and hides staging', async () => {
     mockGroveBench.getDefaultBranch.mockResolvedValue('main');
     mockGroveBench.getGitStatus.mockResolvedValue({ entries: [entry('src/committed.ts', { contentHash: 'c1' })], baseRef: 'main' });
@@ -231,6 +303,29 @@ describe('ChangesReviewPanel — review features', () => {
     await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/committed.ts', false, { base: 'main' }));
   });
 
+  it('folds the file list to a rail of status letters, remembered per tab', async () => {
+    const { container, getByLabelText, queryByPlaceholderText } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const sidebar = getByLabelText('Changed files');
+
+    await fireEvent.click(getByLabelText('Collapse file list'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ changesFiles: true });
+    expect(queryByPlaceholderText('Filter files...')).toBeNull();
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    const b = sidebar.querySelector('[data-file-key="src/b.ts:false"]') as HTMLButtonElement;
+    expect(b.textContent?.trim()).toBe('M');
+    expect(b.title).toBe('src/b.ts');
+
+    // Still a working file list: picking a letter opens that file, arrows walk the rail.
+    await fireEvent.click(b);
+    expect(b.className).toContain('border-primary');
+    await fireEvent.keyDown(sidebar, { key: 'ArrowUp' });
+    expect(sidebar.querySelector('[data-file-key="src/a.ts:false"]')!.className).toContain('border-primary');
+
+    await fireEvent.click(getByLabelText('Expand file list'));
+    expect(queryByPlaceholderText('Filter files...')).not.toBeNull();
+  });
+
   it('shows the scope toggle and a branch message in the empty state', async () => {
     gitStatusStore.statusBySession = { [SID]: { entries: [] } };
     mockGroveBench.getDefaultBranch.mockResolvedValue('main');
@@ -239,5 +334,186 @@ describe('ChangesReviewPanel — review features', () => {
     expect(getByText('Working tree clean')).toBeInTheDocument();
     await fireEvent.click(getByText('Branch'));
     await waitFor(() => expect(getByText('No merge base with main')).toBeInTheDocument());
+  });
+});
+
+describe('ChangesReviewPanel — revert warnings', () => {
+  async function openRevertFor(entries: GitStatusEntry[]) {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('x') });
+    gitStatusStore.scopeBySession = {}; // an earlier test leaves branch scope, which hides Revert
+    gitStatusStore.statusBySession = { [SID]: { entries } };
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    const button = await waitFor(() => {
+      const b = view.getAllByRole('button').find((el) => /^(Revert|Discard)$/.test(el.textContent?.trim() ?? ''));
+      if (!b) throw new Error('no revert button yet');
+      return b;
+    });
+    button.click();
+    await tick();
+    return view;
+  }
+
+  it('says a staged revert also drops the file\'s unstaged edits', async () => {
+    const view = await openRevertFor([entry('src/a.ts', { staged: true }), entry('src/a.ts', { staged: false })]);
+    expect(await view.findByText(/its unstaged edits too/)).toBeInTheDocument();
+  });
+
+  it('says reverting a staged new file deletes it', async () => {
+    const view = await openRevertFor([entry('src/new.ts', { staged: true, status: 'added' })]);
+    expect(await view.findByText(/is a new file, so reverting it deletes it from disk/)).toBeInTheDocument();
+  });
+});
+
+describe('ChangesReviewPanel — diff cache', () => {
+  beforeEach(() => {
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = {};
+  });
+
+  it('refetches a file that changed while it was not selected', async () => {
+    const version: Record<string, number> = { 'src/d.ts': 1 };
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) =>
+      ({ kind: 'text' as const, patch: patch(`${filePath} v${version[filePath] ?? 1}`) }));
+    const files = (dHash: string) => ['a', 'b', 'c', 'd'].map(n => entry(`src/${n}.ts`, { contentHash: n === 'd' ? dHash : n }));
+    gitStatusStore.statusBySession = { [SID]: { entries: files('d1') } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    const row = (n: string) => container.querySelector(`[data-file-key="src/${n}.ts:false"]`)!;
+
+    await fireEvent.click(row('d'));
+    await waitFor(() => expect(diffText(container)).toContain('src/d.ts v1'));
+    await fireEvent.click(row('a'));
+    await waitFor(() => expect(diffText(container)).toContain('src/a.ts v1'));
+
+    // The agent edits d.ts; the refresh reloads only a.ts and its neighbour.
+    version['src/d.ts'] = 2;
+    gitStatusStore.statusBySession = { [SID]: { entries: files('d2') } };
+    await tick();
+    await fireEvent.click(row('d'));
+
+    await waitFor(() => expect(diffText(container)).toContain('src/d.ts v2'));
+  });
+
+  it('drops a reply for the previous scope that lands after the switch', async () => {
+    let finishOld: ((v: { kind: 'text'; patch: string }) => void) | undefined;
+    // The mock's declared type omits the fourth (options) argument.
+    mockGroveBench.getFileDiff.mockImplementation(((_sid: string, filePath: string, _staged?: boolean, opts?: { base?: string }) => {
+      const scope = opts?.base ? 'branch' : 'working';
+      if (filePath === 'src/b.ts' && scope === 'working') return new Promise((res) => { finishOld = res; });
+      return Promise.resolve({ kind: 'text' as const, patch: patch(`${filePath} ${scope}`) });
+    }) as never);
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    const files = ['a', 'b', 'c', 'd', 'e'].map(n => entry(`src/${n}.ts`));
+    gitStatusStore.statusBySession = { [SID]: { entries: files } };
+    const { container, getByText } = render(ChangesReviewPanel, { sessionId: SID });
+    const row = (n: string) => container.querySelector(`[data-file-key="src/${n}.ts:false"]`)!;
+    // b.ts is fetched as a.ts's neighbour; move away while that is still out.
+    await waitFor(() => expect(finishOld).toBeDefined());
+    await fireEvent.click(row('e'));
+    await waitFor(() => expect(diffText(container)).toContain('src/e.ts working'));
+
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: files, baseRef: 'main' });
+    await fireEvent.click(getByText('Branch'));
+    await waitFor(() => expect(diffText(container)).toContain('src/e.ts branch'));
+    finishOld!({ kind: 'text', patch: patch('src/b.ts working') });
+    await tick();
+
+    await fireEvent.click(row('b'));
+    await waitFor(() => expect(diffText(container)).toContain('src/b.ts branch'));
+    expect(diffText(container)).not.toContain('src/b.ts working');
+  });
+});
+
+describe('ChangesReviewPanel — rendering cost', () => {
+  beforeEach(() => {
+    reviewStore.clear(SID);
+    localStorage.clear();
+    gitStatusStore.scopeBySession = {};
+  });
+
+  it('does not redraw the diff when a status refresh brings back the same patch', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: hunkPatch() });
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('bar'));
+    const calls = mockGroveBench.getFileDiff.mock.calls.length;
+    highlights.count = 0;
+
+    // Same file, same content, new objects (as every refresh returns).
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    await waitFor(() => expect(mockGroveBench.getFileDiff.mock.calls.length).toBeGreaterThan(calls));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(highlights.count).toBe(0);
+    expect(diffText(container)).toContain('bar');
+  });
+
+  it('fetches no diffs while hidden, and catches up when shown', async () => {
+    mockGroveBench.getFileDiff.mockImplementation(async (_sid, filePath) => ({ kind: 'text' as const, patch: patch(`${filePath} now`) }));
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h1' })] } };
+    const { container } = render(ChangesReviewPanel, { sessionId: SID });
+    await waitFor(() => expect(diffText(container)).toContain('src/a.ts now'));
+
+    messageStore.setActiveTab(SID, 'activity');
+    await tick();
+    mockGroveBench.getFileDiff.mockClear();
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts', { contentHash: 'h2' }), entry('src/b.ts')] } };
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGroveBench.getFileDiff).not.toHaveBeenCalled();
+
+    messageStore.setActiveTab(SID, 'changes');
+    await waitFor(() => expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'src/a.ts', false, undefined));
+  });
+});
+
+describe('ChangesReviewPanel with grove characters', () => {
+  beforeEach(() => {
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/r', status: 'running' }] as any;
+    gitStatusStore.scopeBySession = {};
+  });
+
+  afterEach(() => {
+    store.sessions = [];
+    settingsStore.current.groveCharacters = true;
+  });
+
+  it("puts the conversation's agent on its bench above the empty message, typing while it works", async () => {
+    const { getByText, getByRole, findByRole, container } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(getByRole('img', { name: 'Ready' })).toBeInTheDocument();
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    messageStore.setIsRunning(SID, true);
+    expect(await findByRole('img', { name: 'Working' })).toBeInTheDocument();
+    expect(getByText('Edits show up here as the agent makes them')).toBeInTheDocument();
+    // The scope toggle stays in the sidebar.
+    expect(getByText('Branch')).toBeInTheDocument();
+  });
+
+  it('keeps the file sidebar with nothing to list, so the first change does not move the layout', async () => {
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('first') });
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    const { getByText, getByLabelText, queryByText, container } = render(ChangesReviewPanel, { sessionId: SID });
+
+    const sidebar = getByLabelText('Changed files');
+    expect(getByText('0 changes')).toBeInTheDocument();
+    // The scene sits in the diff pane, next to the sidebar.
+    expect(sidebar.contains(getByText('Working tree clean'))).toBe(false);
+    expect(container.querySelector('[data-scenery="watering-can"]')).not.toBeNull();
+
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/a.ts')] } };
+    await waitFor(() => expect(diffText(container)).toContain('first'));
+    // Same sidebar element: it was not torn down and rebuilt.
+    expect(getByLabelText('Changed files')).toBe(sidebar);
+    expect(getByText('1 change')).toBeInTheDocument();
+    expect(queryByText('Working tree clean')).toBeNull();
+    expect(container.querySelector('[data-scenery="watering-can"]')).toBeNull();
+  });
+
+  it('shows only the message when grove characters are off', () => {
+    settingsStore.current.groveCharacters = false;
+    const { getByText, queryByRole } = render(ChangesReviewPanel, { sessionId: SID });
+    expect(getByText('Working tree clean')).toBeInTheDocument();
+    expect(queryByRole('img', { name: 'Ready' })).toBeNull();
   });
 });

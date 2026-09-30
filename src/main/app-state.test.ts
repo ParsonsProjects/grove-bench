@@ -1,31 +1,43 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { mockReadFileSync, mockWriteFileSync } = vi.hoisted(() => ({
+const { mockReadFileSync, mockWriteFileSync, mockRenameSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  mockRenameSync: vi.fn(),
 }));
 
 vi.mock('node:fs', () => ({
   default: {
     readFileSync: mockReadFileSync,
     writeFileSync: mockWriteFileSync,
+    renameSync: mockRenameSync,
+    copyFileSync: vi.fn(),
+    rmSync: vi.fn(),
   },
+}));
+
+vi.mock('./logger.js', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 import {
   loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
-  saveKnownSkills, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
+  saveKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog,
+  mergeProjects, listProjects, rememberProject, forgetProject,
 } from './app-state.js';
 
 /** The file as the last write left it, so read-modify-write chains see their own updates. */
 function useDisk(initial: unknown) {
   let disk = initial === undefined ? null : JSON.stringify(initial);
+  const temp = new Map<string, string>();
   mockReadFileSync.mockImplementation(() => {
-    if (disk === null) throw new Error('ENOENT');
+    if (disk === null) throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
     return disk;
   });
-  mockWriteFileSync.mockImplementation((_p: string, data: string) => { disk = data; });
+  // Writes land in a temp file; the rename puts them in place.
+  mockWriteFileSync.mockImplementation((p: string, data: string) => { temp.set(p, data); });
+  mockRenameSync.mockImplementation((from: string) => { disk = temp.get(from) ?? null; temp.delete(from); });
   return { get: () => (disk === null ? null : JSON.parse(disk)) };
 }
 
@@ -80,6 +92,12 @@ describe('validateAppState', () => {
     expect(s.sessionSort).toEqual({ key: 'name', dir: 'asc' });
     expect(s.sidebarWidth).toBeNull();
     expect(s.unreadSessionIds).toEqual(['u1']);
+  });
+
+  it('keeps known collapsed-panel flags and drops the rest', () => {
+    const s = validateAppState({ collapsedPanels: { sidebar: true, changesFiles: 'yes', later: true } });
+    expect(s.collapsedPanels).toEqual({ sidebar: true });
+    expect(validateAppState({ collapsedPanels: 'all' }).collapsedPanels).toBeUndefined();
   });
 
   it('drops activeTabId, which older versions saved', () => {
@@ -137,10 +155,35 @@ describe('debounced writers', () => {
     expect(loadUnreadSessionIds()).toEqual(['s1', 's2']);
   });
 
+  it('saves collapsed panels, cleaned, and ignores junk from the renderer', () => {
+    useDisk(undefined);
+    saveCollapsedPanels({ sidebar: true, bogus: true });
+    flushPendingSaves();
+    expect(loadAppState().collapsedPanels).toEqual({ sidebar: true });
+
+    mockWriteFileSync.mockClear();
+    saveCollapsedPanels('everything');
+    flushPendingSaves();
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
   it('write-through helpers merge into the existing file', () => {
     const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, knownSkills: { '/a': ['x'] } });
     saveKnownSkills('/b', ['y']);
     expect(disk.get().knownSkills).toEqual({ '/a': ['x'], '/b': ['y'] });
+  });
+
+  it('skips a save rather than write defaults over a file it can\'t read', () => {
+    const saved = { schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['keep'], knownSkills: { '/a': ['x'] } };
+    const disk = useDisk(saved);
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); });
+
+    saveKnownSkills('/b', ['y']);
+    saveOpenTabs(['new']);
+    flushPendingSaves();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(disk.get()).toEqual(saved);
   });
 });
 
@@ -170,3 +213,39 @@ describe('model catalogs', () => {
     expect(loadModelCatalog('missing')).toBeNull();
   });
 });
+
+describe('projects', () => {
+  it('keeps a project with no conversations across a restart', () => {
+    const disk = useDisk({ projects: [] });
+    rememberProject('C:\\notes');
+    // At the next launch the manifest knows nothing about it.
+    expect(listProjects([])).toEqual(['C:\\notes']);
+    expect(disk.get().projects).toEqual(['C:\\notes']);
+  });
+
+  it('adds projects the manifest knows once, after the remembered ones, in order', () => {
+    expect(mergeProjects(['/b'], ['/a', '/b', '/c'])).toEqual(['/b', '/a', '/c']);
+    expect(mergeProjects(undefined, ['/a', '/b'])).toEqual(['/a', '/b']);
+  });
+
+  it('starts the list from the manifest the first time, keeping its order', () => {
+    const disk = useDisk({});
+    expect(listProjects(['/a', '/b'])).toEqual(['/a', '/b']);
+    expect(disk.get().projects).toEqual(['/a', '/b']);
+    rememberProject('/c');
+    rememberProject('/a');
+    expect(disk.get().projects).toEqual(['/a', '/b', '/c']);
+  });
+
+  it('forgets a removed project', () => {
+    const disk = useDisk({ projects: ['/a', '/b'] });
+    forgetProject('/a');
+    expect(disk.get().projects).toEqual(['/b']);
+    expect(listProjects([])).toEqual(['/b']);
+  });
+
+  it('drops a malformed project list', () => {
+    expect(validateAppState({ projects: 'nope' }).projects).toBeUndefined();
+  });
+});
+

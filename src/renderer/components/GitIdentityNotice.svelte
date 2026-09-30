@@ -1,6 +1,9 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
 
+  /** Shown on the new conversation screen, before there is a conversation. */
+  let { beforeStart = false }: { beforeStart?: boolean } = $props();
+
   // Placeholders: the user swaps in their own name and email before running.
   const commands = [
     'git config --global user.name "Your Name"',
@@ -11,7 +14,11 @@
 <div class="my-1 px-3 py-2 text-xs border-l-4 border-yellow-500 bg-yellow-500/10" role="note">
   <p class="text-foreground/80">
     Git doesn't have your name and email for this project, so it will likely refuse the agent's commits.
-    Run these in a terminal with your own details. There's no need to restart the conversation.
+    {#if beforeStart}
+      Run these in a terminal with your own details, before or after you start.
+    {:else}
+      Run these in a terminal with your own details. There's no need to restart the conversation.
+    {/if}
   </p>
   <ul class="mt-1.5 space-y-0.5">
     {#each commands as command (command)}

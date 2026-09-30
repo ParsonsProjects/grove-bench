@@ -1,6 +1,6 @@
 /**
  * Preview tab state per conversation: the two pages the main process runs
- * (yours and Claude's), which one the tab shows, and local URLs spotted in the
+ * (yours and the agent's), which one the tab shows, and local URLs spotted in the
  * conversation's output so they can be opened with one click.
  */
 import type { PreviewCommand, PreviewKeyForward, PreviewPageKind, PreviewPageState } from '../../shared/types.js';
@@ -18,13 +18,13 @@ class PreviewStore {
   agentBySession = $state<Record<string, PreviewPageState | null>>({});
   modeBySession = $state<Record<string, PreviewMode>>({});
   detectedBySession = $state<Record<string, string[]>>({});
-  /** Claude did something on its page that the user hasn't looked at yet. */
+  /** The agent did something on its page that the user hasn't looked at yet. */
   agentUnseenBySession = $state<Record<string, boolean>>({});
 
   private streamTails = new Map<string, string>();
   private focusAddressHandlers = new Map<string, () => void>();
   private started = false;
-  /** Whether the user is looking at Claude's page right now (set by the panel). */
+  /** Whether the user is looking at the agent's page right now (set by the panel). */
   private watchingAgent = new Set<string>();
 
   /** Subscribe to page state and forwarded keys. Safe to call more than once. */
@@ -67,7 +67,7 @@ class PreviewStore {
     return this.agentUnseenBySession[sessionId] ?? false;
   }
 
-  /** The panel reports whether Claude's page is on screen, which clears the
+  /** The panel reports whether the agent's page is on screen, which clears the
    *  unseen-activity dot and keeps it from coming back while watched. */
   setWatchingAgent(sessionId: string, watching: boolean): void {
     if (watching) {
@@ -87,7 +87,7 @@ class PreviewStore {
     this.agentBySession[sessionId] = state;
     const acted = state?.lastAction && state.lastAction.at !== before?.lastAction?.at;
     if (!acted) return;
-    // Claude's first page, with nothing open on yours: show Claude's.
+    // The agent's first page, with nothing open on yours: show the agent's.
     if (!before?.lastAction && !this.getUser(sessionId)?.url) this.modeBySession[sessionId] = 'agent';
     if (!this.watchingAgent.has(sessionId)) this.agentUnseenBySession[sessionId] = true;
   }

@@ -6,13 +6,14 @@
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import OutputPanel from './OutputPanel.svelte';
-  import ChangesReviewPanel from './ChangesReviewPanel.svelte';
-  import CheckpointsPanel from './CheckpointsPanel.svelte';
-  import TerminalPanel from './TerminalPanel.svelte';
-  import PreviewPanel from './PreviewPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import PromptEditor from './PromptEditor.svelte';
-  import RewindDialog from './RewindDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
+  import GitNotice from './GitNotice.svelte';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { conversationAgent } from '$lib/session-sprite-state.js';
+  import type { GroveTab } from '$lib/agent-sprite.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -29,6 +30,10 @@
   let previewLoading = $derived(!!previewStore.getUser(sessionId)?.loading || !!previewStore.getAgent(sessionId)?.loading);
   let previewUnseen = $derived(previewStore.hasUnseenAgentActivity(sessionId));
   let previewVisible = $derived(activeTab === 'preview' && store.activeSessionId === sessionId);
+  /** A conversation in a folder without git: nothing to diff, commit or
+   *  checkpoint, so those tabs say why instead of loading. */
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+  let noGit = $derived(!!session?.noGit);
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
@@ -41,9 +46,29 @@
     if (activeTab === 'terminal') terminalMounted = true;
   });
 
+  // The terminal (and xterm, its largest library) loads on first visit.
+  const loadTerminalPanel = lazyComponent(() => import('./TerminalPanel.svelte'));
+
+  // The Changes and Checkpoints tabs load and mount on first visit too: their
+  // data lives in stores, so nothing is lost before then, and until visited
+  // their code stays out of startup.
+  const loadChangesPanel = lazyComponent(() => import('./ChangesReviewPanel.svelte'));
+  const loadCheckpointsPanel = lazyComponent(() => import('./CheckpointsPanel.svelte'));
+  let changesMounted = $state(false);
+  let checkpointsMounted = $state(false);
+  $effect(() => {
+    if (activeTab === 'changes') changesMounted = true;
+    if (activeTab === 'checkpoints') checkpointsMounted = true;
+  });
+
   // The Preview panel mounts on first open too. Its pages live in the main
   // process, so nothing is lost before then.
   let previewMounted = $state(false);
+  // Loaded when first needed: the Preview tab's first visit, the first rewind.
+  const loadPreviewPanel = lazyComponent(() => import('./PreviewPanel.svelte'));
+  const loadRewindDialog = lazyComponent(() => import('./RewindDialog.svelte'));
+  let rewindOpened = $state(false);
+  $effect(() => { if (messageStore.rewindDialogOpen[sessionId]) rewindOpened = true; });
   $effect(() => {
     if (activeTab === 'preview') previewMounted = true;
   });
@@ -51,6 +76,7 @@
   function switchTab(tab: WorkspaceTab) {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
+    if (noGit) return;
     if (tab === 'changes') {
       gitStatusStore.refresh(sessionId);
     }
@@ -163,8 +189,8 @@
       messageStore.setHistoryLoaded(sessionId, true);
     }
 
-    // Single git status refresh after replay
-    gitStatusStore.refresh(sessionId);
+    // Single git status refresh after replay (none without git)
+    if (!noGit) gitStatusStore.refresh(sessionId);
   });
 
   onDestroy(() => {
@@ -172,6 +198,25 @@
     messageStore.unsubscribe(sessionId);
   });
 </script>
+
+{#snippet noGitNote(scene: GroveTab, tab: string, why: string)}
+  {@const agent = settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null}
+  <div class="flex-1 flex items-center justify-center p-6">
+    {#if agent}
+      <!-- The conversation's agent on its bench, as in the sidebar: typing
+           while it edits your files in place, sitting when it's idle. -->
+      <GroveEmptyState variant="agent" {agent} tab={scene}>
+        <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
+      </GroveEmptyState>
+    {:else}
+      <div class="max-w-md text-center">
+        <p class="text-sm text-foreground">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <div class="flex flex-col h-full bg-background">
   <!-- Tab bar -->
@@ -182,8 +227,9 @@
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
-      Activity
+      <!-- A pixel chat bubble: two lines of text, tail at the bottom left. -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
+      Thread
       {#if hasPendingPermission}
         <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
       {:else if isRunning}
@@ -239,12 +285,12 @@
       class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
-      title="Browse your app, and watch Claude's page when it checks its work"
+      title="Browse your app, and watch the agent's page when it checks its work"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><rect x="3" y="4" width="18" height="16"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="6" y1="6.5" x2="7" y2="6.5"/></svg>
       Preview
       {#if previewUnseen}
-        <span class="inline-block w-2 h-2 bg-primary" title="Claude used the browser"></span>
+        <span class="inline-block w-2 h-2 bg-primary" title="The agent used the browser"></span>
       {:else if previewLoading}
         <span class="inline-block w-2 h-2 bg-primary/60 animate-pulse"></span>
       {/if}
@@ -257,19 +303,36 @@
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
-    <ChangesReviewPanel {sessionId} />
+    <GitNotice />
+    {#if noGit}
+      {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
+    {:else if changesMounted}
+      {#await loadChangesPanel() then ChangesReviewPanel}
+        <ChangesReviewPanel {sessionId} />
+      {/await}
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
-    <CheckpointsPanel {sessionId} />
+    {#if noGit}
+      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in the Thread tab; files stay as they are.')}
+    {:else if checkpointsMounted}
+      {#await loadCheckpointsPanel() then CheckpointsPanel}
+        <CheckpointsPanel {sessionId} />
+      {/await}
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     {#if terminalMounted}
-      <TerminalPanel {sessionId} />
+      {#await loadTerminalPanel() then TerminalPanel}
+        <TerminalPanel {sessionId} />
+      {/await}
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
     {#if previewMounted}
-      <PreviewPanel {sessionId} active={previewVisible} />
+      {#await loadPreviewPanel() then PreviewPanel}
+        <PreviewPanel {sessionId} active={previewVisible} />
+      {/await}
     {/if}
   </div>
 
@@ -286,9 +349,13 @@
         onclick={() => switchTab('activity')}
         class="text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        Switch to Activity to send messages (Alt+1)
+        Switch to Thread to send messages (Alt+1)
       </button>
     </div>
   {/if}
-  <RewindDialog {sessionId} />
+  {#if rewindOpened}
+    {#await loadRewindDialog() then RewindDialog}
+      <RewindDialog {sessionId} />
+    {/await}
+  {/if}
 </div>

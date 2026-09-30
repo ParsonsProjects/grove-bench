@@ -22,7 +22,7 @@ beforeEach(async () => {
   agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { permissionModes: true }, isDefault: true }];
   agentsStore.loaded = true;
   mockGroveBench.getAdapterControls.mockResolvedValue([
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }] },
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }] },
   ]);
   mockGroveBench.listBranches.mockResolvedValue(['main', 'feat/a', 'fix/b', 'taken']);
   mockGroveBench.listOpenPrs.mockResolvedValue([

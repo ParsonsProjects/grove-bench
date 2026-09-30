@@ -1,16 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.hoisted ensures these are available when the mock factory runs
-const { mockReadFileSync, mockWriteFileSync } = vi.hoisted(() => ({
+const { mockReadFileSync, mockWriteFileSync, mockRenameSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  mockRenameSync: vi.fn(),
 }));
 
 vi.mock('node:fs', () => ({
   default: {
     readFileSync: mockReadFileSync,
     writeFileSync: mockWriteFileSync,
+    renameSync: mockRenameSync,
+    copyFileSync: vi.fn(),
+    rmSync: vi.fn(),
   },
+}));
+
+vi.mock('./logger.js', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 import {
@@ -20,6 +28,7 @@ import {
   removeBookmark,
   updateBookmark,
   removeBookmarksForSession,
+  resetBookmarksCache,
 } from './bookmarks.js';
 
 // Simulated disk so writeFileSync -> readFileSync round-trips work.
@@ -27,13 +36,14 @@ let disk: string | null;
 
 function wireDisk() {
   disk = null;
+  const temp = new Map<string, string>();
   mockReadFileSync.mockImplementation(() => {
-    if (disk == null) throw new Error('ENOENT');
+    if (disk == null) throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
     return disk;
   });
-  mockWriteFileSync.mockImplementation((_path: string, data: string) => {
-    disk = data;
-  });
+  // Writes land in a temp file; the rename puts them in place.
+  mockWriteFileSync.mockImplementation((p: string, data: string) => { temp.set(p, data); });
+  mockRenameSync.mockImplementation((from: string) => { disk = temp.get(from) ?? null; temp.delete(from); });
 }
 
 const base = {
@@ -156,5 +166,31 @@ describe('persistence round-trip', () => {
     expect(reloaded).toHaveLength(1);
     expect(reloaded[0].id).toBe(created.id);
     expect(reloaded[0].selectedText).toBe('const x = 1;');
+  });
+});
+
+describe('when the file exists but can\'t be read', () => {
+  const lock = () => mockReadFileSync.mockImplementation(() => {
+    throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+  });
+
+  it('refuses changes at start-up rather than save over the saved list', () => {
+    addBookmark(base);
+    const saved = disk;
+    resetBookmarksCache();
+    lock();
+
+    expect(getBookmarks()).toEqual([]);
+    expect(() => addBookmark({ ...base, messageUuid: 'u2' })).toThrow(/nothing was changed/);
+    expect(() => removeBookmarksForSession('s1')).toThrow(/nothing was changed/);
+    expect(disk).toBe(saved);
+  });
+
+  it('keeps the list it already has', () => {
+    const b = addBookmark(base);
+    lock();
+    expect(loadBookmarks()).toEqual([b]);
+    expect(addBookmark({ ...base, messageUuid: 'u2' }).messageUuid).toBe('u2');
+    expect(JSON.parse(disk!)).toHaveLength(2);
   });
 });

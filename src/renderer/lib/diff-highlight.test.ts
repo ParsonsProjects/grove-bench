@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { languageForPath, highlightLine, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
+import { RecentCache, languageForPath, highlightLine, wordDiffSegments, hunkLineIndices } from './diff-highlight.js';
 import type { DiffLine } from './diff-types.js';
 
 describe('languageForPath', () => {
@@ -106,5 +106,29 @@ describe('textFingerprint', () => {
   it('differs for different text and is stable', () => {
     expect(textFingerprint('a')).toBe(textFingerprint('a'));
     expect(textFingerprint('a')).not.toBe(textFingerprint('b'));
+  });
+});
+
+describe('RecentCache', () => {
+  it('works a value out once, then serves it from the cache', () => {
+    const cache = new RecentCache<number>(10);
+    let made = 0;
+    expect(cache.get('a', () => ++made)).toBe(1);
+    expect(cache.get('a', () => ++made)).toBe(1);
+    expect(made).toBe(1);
+  });
+
+  it('when full, drops the least recently used tenth, not everything', () => {
+    const cache = new RecentCache<string>(10);
+    for (let i = 0; i < 10; i++) cache.get(`k${i}`, () => `v${i}`);
+    cache.get('k0', () => 'again'); // k0 is now the most recent
+    cache.get('k10', () => 'v10'); // full: k1 goes
+
+    expect(cache.size).toBe(10);
+    let remade = '';
+    expect(cache.get('k0', () => (remade = 'k0'))).toBe('v0');
+    expect(cache.get('k2', () => (remade = 'k2'))).toBe('v2');
+    expect(remade).toBe('');
+    expect(cache.get('k1', () => 'remade')).toBe('remade');
   });
 });

@@ -10,6 +10,7 @@
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { wakeScene } from './stores/wakeScene.svelte.js';
+  import { arrivalScene } from './stores/arrivalScene.svelte.js';
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
   import { sessionSpriteState } from './lib/session-sprite-state.js';
@@ -19,10 +20,10 @@
   import ErrorToast from './components/ErrorToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
-  import GitNotice from './components/GitNotice.svelte';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
-  import SessionFinder from './components/SessionFinder.svelte';
+  import { lazyComponent } from './lib/lazy-component.js';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
+  import FirstSteps from './components/FirstSteps.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
@@ -30,6 +31,7 @@
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
@@ -37,6 +39,8 @@
   import DraftPane from './components/DraftPane.svelte';
 
   let showAnalyticsConsent = $state(false);
+  // Loaded the first time it opens (Ctrl+R or the search button).
+  const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -220,12 +224,15 @@
   });
 
   function reopenLastClosedTab() {
-    const id = store.popRecentlyClosed();
-    if (!id) return;
-    const session = store.sessions.find((s) => s.id === id);
-    if (!session || session.status !== 'stopped') return;
-    // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
-    store.activeSessionId = id;
+    // Skip entries reopened since they were closed, so one press always
+    // reopens something when anything is left to reopen.
+    for (let id = store.popRecentlyClosed(); id; id = store.popRecentlyClosed()) {
+      const session = store.sessions.find((s) => s.id === id);
+      if (session?.status !== 'stopped') continue;
+      // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
+      store.activeSessionId = id;
+      return;
+    }
   }
 
   /** Any key skips the wake-up scene, and still does its usual job. Runs in
@@ -323,6 +330,14 @@
     }
   });
 
+  // PR status polls at the full rate for the conversation on screen and ones
+  // seen recently; the rest slow down (see prStore.setViewing). Untracked: the
+  // refresh it may start reads store state that must not re-run this effect.
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    untrack(() => prStore.setViewing(activeId));
+  });
+
   onMount(() => {
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
     const uninstallTooltips = installTooltips();
@@ -333,6 +348,7 @@
     prerequisitesStore.init();
     settingsStore.load();
     bookmarkStore.load();
+    panelStore.load();
     memoryStore.init();
     previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
@@ -436,7 +452,6 @@
 
 <div class="flex flex-col h-screen bg-background text-foreground font-mono">
 <TitleBar />
-<GitNotice />
 <div class="flex flex-1 min-h-0">
   <svelte:boundary onerror={sidebarError}>
     <Sidebar />
@@ -464,9 +479,8 @@
         {#if settingsStore.current.groveCharacters}
           <GroveEmptyState variant="empty" />
         {:else}
-          <div class="text-center relative z-10">
-            <p class="text-sm mb-2">No active agents</p>
-            <p class="text-xs">Add a project and start a conversation to get started.</p>
+          <div class="text-center relative z-10 flex flex-col items-center">
+            <FirstSteps />
           </div>
         {/if}
       </div>
@@ -495,6 +509,9 @@
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}
         {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
+        <!-- A new conversation's chat shows its own walk (OutputPanel) from
+             the start, so the loading walk would only cut in on it. -->
+        {@const arriving = settingsStore.current.groveCharacters && arrivalScene.for(session.id) !== null}
         <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
           {#if live}
             <!-- A render/effect error in one session's pane must not take the
@@ -509,7 +526,7 @@
           <!-- The walk: while a stopped conversation reconnects, and over the
                chat (kept mounted underneath) while its history loads or the
                wake-up scene plays. -->
-          {#if !live || scene || loading}
+          {#if !live || scene || (loading && !arriving)}
             <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
             <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
@@ -542,7 +559,9 @@
 </div>
 
 {#if store.finderOpen}
-  <SessionFinder onclose={() => store.finderOpen = false} />
+  {#await loadSessionFinder() then SessionFinder}
+    <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
 {/if}
 
 <ErrorToast />

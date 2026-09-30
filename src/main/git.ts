@@ -1,5 +1,11 @@
 import { execa } from 'execa';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import type { BranchCommit, CommitEntry, GitOpResult, GitSyncStatus } from '../shared/types.js';
+
+/** Cap on network git commands (fetch): a dead network must not leave git
+ *  processes hanging or block what waits on them. */
+export const FETCH_TIMEOUT_MS = 30_000;
 
 export interface GitOptions {
   /** Kill the git process after this many ms (for network commands that can hang). */
@@ -90,7 +96,7 @@ export async function getDefaultBranch(cwd: string): Promise<string> {
 export async function listBranches(cwd: string, opts: { fetch?: boolean } = {}): Promise<string[]> {
   // Fetch latest remote refs (non-blocking — proceed with local cache on failure)
   if (opts.fetch !== false) {
-    try { await git(['fetch', '--prune'], cwd); } catch { /* offline or no remote */ }
+    try { await git(['fetch', '--prune'], cwd, { timeout: FETCH_TIMEOUT_MS }); } catch { /* offline or no remote */ }
   }
 
   // Get remote names so we can strip their prefix from remote-tracking branches
@@ -248,21 +254,23 @@ export async function squashSince(cwd: string, base: string, message: string): P
   if (!message.trim()) return { success: false, error: 'A commit message is required.' };
   const dirty = await requireCleanTree(cwd);
   if (dirty) return dirty;
-  let mergeBase: string;
-  try {
-    mergeBase = (await git(['merge-base', base, 'HEAD'], cwd)).trim();
-  } catch (e: any) {
-    return { success: false, error: `Cannot find a merge base with ${base}: ${e?.stderr?.trim() || e?.message || e}` };
-  }
+  const resolved = await resolveMergeBase(cwd, base);
+  if (!resolved) return { success: false, error: `Cannot find a merge base with ${base}.` };
+  const { mergeBase } = resolved;
   const count = parseInt((await git(['rev-list', '--count', `${mergeBase}..HEAD`], cwd)).trim(), 10);
   if (!count || count < 2) {
     return { success: false, error: count === 1 ? 'Only one commit since the base — nothing to squash.' : 'No commits since the base.' };
   }
+  const head = (await git(['rev-parse', 'HEAD'], cwd)).trim();
   try {
     await git(['reset', '--soft', mergeBase], cwd);
     await git(['commit', '-m', message], cwd);
     return { success: true };
   } catch (e: any) {
+    // The commit can fail after the reset (a commit-msg or pre-commit hook,
+    // signing): put the branch back, or its commits would be left folded
+    // into staged changes. The tree was clean, so this restores it exactly.
+    await git(['reset', '--soft', head], cwd).catch(() => {});
     return { success: false, error: e?.stderr?.trim() || e?.message || 'squash failed' };
   }
 }
@@ -388,16 +396,39 @@ export async function fileDiffAgainst(cwd: string, relPath: string, ref: string)
   return git(['diff', ref, '--', relPath], cwd);
 }
 
-/** Resolve the merge base between HEAD and `base`, trying the local branch
- *  first and the remote-tracking name second (the base is often only fetched). */
+/**
+ * Resolve the merge base between HEAD and `base`, from whichever of the local
+ * branch and `origin/<base>` gives the newer one. A local base that is behind
+ * origin (a new worktree starts from origin when the local branch can't be
+ * fast-forwarded) would otherwise count the upstream commits the branch
+ * started from as its own: in the branch diff, and in what a squash folds in.
+ * When they have diverged, the local branch wins.
+ */
 export async function resolveMergeBase(cwd: string, base: string): Promise<{ ref: string; mergeBase: string } | null> {
+  if (!isRefArg(base)) return null;
+  let best: { ref: string; mergeBase: string } | null = null;
   for (const ref of [base, `origin/${base}`]) {
+    let mergeBase: string;
     try {
-      const mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
-      if (mergeBase) return { ref, mergeBase };
-    } catch { /* ref missing — try the next name */ }
+      mergeBase = (await git(['merge-base', ref, 'HEAD'], cwd)).trim();
+    } catch { continue; /* ref missing */ }
+    if (!mergeBase) continue;
+    if (!best) {
+      best = { ref, mergeBase };
+    } else if (mergeBase !== best.mergeBase && (await isAncestor(cwd, best.mergeBase, mergeBase))) {
+      best = { ref, mergeBase };
+    }
   }
-  return null;
+  return best;
+}
+
+async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(['merge-base', '--is-ancestor', ancestor, descendant], cwd);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Working-tree content of a file as the index sees it (`git show :path`). */
@@ -429,6 +460,42 @@ export function imageExtFor(relPath: string): string | null {
   if (!m) return null;
   const ext = m[1].toLowerCase();
   return IMAGE_EXTS.has(ext) ? ext : null;
+}
+
+/** Whether a caller-supplied ref is safe as a positional git argument. A
+ *  leading dash would be read as an option (`--output=<file>` makes
+ *  `git log` write a file); real branch names can't start with one. */
+export function isRefArg(ref: unknown): ref is string {
+  return typeof ref === 'string' && ref.length > 0 && !ref.startsWith('-');
+}
+
+/** Tracked files plus untracked ones that aren't ignored (new files the
+ *  agent hasn't added yet), as real paths. `-z` because without it git quotes
+ *  any path with non-ASCII characters (`"caf\303\251.ts"`). */
+export async function listProjectFiles(cwd: string): Promise<string[]> {
+  const out = await git(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd);
+  // A file in a merge conflict is listed once per stage.
+  return [...new Set(out.split('\0').filter(Boolean))];
+}
+
+/**
+ * Throw away one file's changes. Untracked files and files staged as new
+ * (not in HEAD) are deleted, since they didn't exist before; a staged change
+ * is reset to HEAD in both the index and the working tree; an unstaged change
+ * is reset to the index.
+ */
+export async function revertFile(cwd: string, relPath: string, staged: boolean): Promise<void> {
+  const status = await git(['status', '--porcelain', '--', relPath], cwd);
+  if (status.trimStart().startsWith('??')) {
+    await fs.rm(path.join(cwd, relPath), { force: true, recursive: true });
+  } else if (staged && status.startsWith('A')) {
+    // `git checkout HEAD -- <path>` fails here: the path isn't in HEAD.
+    await git(['rm', '-f', '-q', '--', relPath], cwd);
+  } else if (staged) {
+    await git(['checkout', 'HEAD', '--', relPath], cwd);
+  } else {
+    await git(['checkout', '--', relPath], cwd);
+  }
 }
 
 /** Stage a single path (git add). */
@@ -522,16 +589,17 @@ export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
   }
 }
 
-/** Commits on HEAD that aren't on the base branch, newest first.
- *  Falls back to origin/<base> when the base has no local ref. */
+/** Commits on HEAD that aren't on the base branch, newest first. The base
+ *  is the local branch or origin/<base>, whichever is further ahead. */
 export async function branchCommits(cwd: string, base: string): Promise<BranchCommit[]> {
-  for (const ref of [base, `origin/${base}`]) {
-    try {
-      const raw = await git(['log', '--format=%s%x1f%b%x1e', `${ref}..HEAD`], cwd);
-      return parseBranchCommits(raw);
-    } catch { /* ref missing — try the remote-tracking name */ }
+  // The local base or origin/<base>, whichever is further ahead (see resolveMergeBase).
+  const resolved = await resolveMergeBase(cwd, base);
+  if (!resolved) return [];
+  try {
+    return parseBranchCommits(await git(['log', '--format=%s%x1f%b%x1e', `${resolved.ref}..HEAD`], cwd));
+  } catch {
+    return [];
   }
-  return [];
 }
 
 export function parseBranchCommits(raw: string): BranchCommit[] {

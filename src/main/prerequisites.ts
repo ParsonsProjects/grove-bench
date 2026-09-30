@@ -74,6 +74,7 @@ export function apiKeyState(adapter: AgentAdapter): AgentPrerequisiteStatus['api
   return {
     label: adapter.apiKey.label,
     helpUrl: adapter.apiKey.helpUrl,
+    ...(adapter.apiKey.billingNote ? { billingNote: adapter.apiKey.billingNote } : {}),
     saved: hasApiKey(adapter.id),
     canStore: canStoreApiKey(),
   };
@@ -102,5 +103,6 @@ function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: Agent
     errorMessage,
     authErrorMessage,
     apiKey: apiKeyState(adapter),
+    ...(adapter.cliSignIn ? { cliSignIn: { ...adapter.cliSignIn } } : {}),
   };
 }

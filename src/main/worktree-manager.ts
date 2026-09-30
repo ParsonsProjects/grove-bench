@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
-import { git, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
+import { git, FETCH_TIMEOUT_MS, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
 import { logger } from './logger.js';
-import { removeDirectory, removeDirectoryWithRetry, pathExists } from './fs-utils.js';
+import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
 import type { BranchSwitchResult, BranchSyncResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
@@ -12,9 +12,11 @@ import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './se
 const CONFIG_FILE = 'config.json';
 const MANIFEST_FILE = 'manifest.json';
 const NPM_CACHE_DIR = '.npm-cache';
+/** Where the sweep moves worktree folders it can't account for. */
+const TRASH_DIR = '.trash';
+/** How long a folder stays in the trash before it is deleted. */
+export const TRASH_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_COPY_PATTERNS = ['.env', '.env.local', '.env.development', '.npmrc', '.nvmrc'];
-/** Cap on `git fetch` when pulling the base branch — a dead network must not block session creation. */
-const FETCH_TIMEOUT_MS = 30_000;
 
 /** Entries written before the agent was recorded all ran Claude Code. */
 const LEGACY_AGENT_TYPE = 'claude-code';
@@ -37,6 +39,8 @@ interface ManifestEntry {
    *  before this was recorded, which were all Claude Code. */
   adapterType?: string;
   direct?: boolean;
+  /** Direct conversation in a folder that isn't a git repository. */
+  noGit?: boolean;
   /** Explicit checkout path for sessions that share another session's worktree
    *  (attached sessions). Absent for normal direct (repoPath) and worktree
    *  (worktreeRoot/hash/id) sessions, whose paths are derived. */
@@ -64,18 +68,23 @@ interface ManifestEntry {
 
 type Manifest = Record<string, ManifestEntry>;
 
-/** Path equality that ignores separator style and, on Windows, case: git
- *  prints worktree paths with forward slashes. */
+/** A path in comparable form: separators normalised and, on Windows, case
+ *  folded. git prints worktree paths with forward slashes, and may not use
+ *  the same letter case as the path Grove gave it. */
+function pathKey(p: string): string {
+  const resolved = path.resolve(p);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
 function samePath(a: string, b: string): boolean {
-  const norm = (p: string) => {
-    const resolved = path.resolve(p);
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  };
-  return norm(a) === norm(b);
+  return pathKey(a) === pathKey(b);
 }
 
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeInfo>();
+  /** Ids whose worktree directory is being created: on disk before it is in
+   *  the manifest or in `worktrees`, so the sweep must leave it alone. */
+  private creating = new Set<string>();
   private manifestLock = Promise.resolve();
   /** Per-repo locks to serialize git worktree operations (e.g. concurrent removes). */
   private repoLocks = new Map<string, Promise<void>>();
@@ -122,23 +131,37 @@ export class WorktreeManager {
     return crypto.createHash('sha256').update(repoPath).digest('hex').slice(0, 8);
   }
 
+  /**
+   * Read the manifest. Only a missing file reads as empty: an unreadable or
+   * corrupt one throws. Treating those as empty used to be destructive: the
+   * next write saved the empty manifest over every entry, and the sweep then
+   * deleted each worktree directory it no longer found listed.
+   */
   private async loadManifest(): Promise<Manifest> {
     const manifestPath = path.join(this.getWorktreeRoot(), MANIFEST_FILE);
+    let data: string;
     try {
-      const data = await fs.readFile(manifestPath, 'utf-8');
-      return JSON.parse(data) as Manifest;
-    } catch {
-      return {};
+      data = await readFileWithRetry(manifestPath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      throw new Error(`Could not read the worktree manifest ${manifestPath}: ${(e as Error).message}`);
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch (e) {
+      throw new Error(`The worktree manifest ${manifestPath} is corrupt: ${(e as Error).message}`);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`The worktree manifest ${manifestPath} is corrupt: not an object`);
+    }
+    return parsed as Manifest;
   }
 
   private async saveManifest(manifest: Manifest): Promise<void> {
     const root = this.getWorktreeRoot();
     await fs.mkdir(root, { recursive: true });
-    await fs.writeFile(
-      path.join(root, MANIFEST_FILE),
-      JSON.stringify(manifest, null, 2),
-    );
+    await writeFileAtomic(path.join(root, MANIFEST_FILE), JSON.stringify(manifest, null, 2));
   }
 
   async validateRepo(repoPath: string): Promise<boolean> {
@@ -152,63 +175,49 @@ export class WorktreeManager {
     const hash = this.repoHash(repoPath);
     const wtPath = path.join(this.getWorktreeRoot(), hash, id);
 
-    // Ensure parent directory exists
-    await fs.mkdir(path.dirname(wtPath), { recursive: true });
+    this.creating.add(id);
+    try {
+      // Ensure parent directory exists
+      await fs.mkdir(path.dirname(wtPath), { recursive: true });
 
-    // Create worktree: existing branch or new branch
-    if (useExisting) {
-      await git(['worktree', 'add', wtPath, branchName], repoPath);
-    } else {
-      // Pull the latest base branch so the new agent starts from what's on origin
-      const startPoint = baseBranch ? await this.pullBaseBranch(repoPath, baseBranch) : undefined;
-
-      // Delete stale branch from a previous run if it exists (e.g. orch retry)
-      const exists = await branchExists(repoPath, branchName);
-      if (exists) {
-        try {
-          // Find and force-remove any worktree using this branch
-          const wtList = await git(['worktree', 'list', '--porcelain'], repoPath);
-          let staleWtPath: string | null = null;
-          for (const block of wtList.split('\n\n')) {
-            if (block.includes(`branch refs/heads/${branchName}`)) {
-              const pathLine = block.split('\n').find(l => l.startsWith('worktree '));
-              if (pathLine) staleWtPath = pathLine.slice('worktree '.length);
-            }
-          }
-          if (staleWtPath) {
-            await git(['worktree', 'remove', '--force', staleWtPath], repoPath).catch(() => {});
-          }
-          await git(['worktree', 'prune'], repoPath);
-          await git(['branch', '-D', branchName], repoPath);
-        } catch { /* best effort */ }
+      // Create worktree: existing branch or new branch. A new branch whose
+      // name is taken fails here: git refuses, and nothing is deleted to make
+      // room (the name may belong to another conversation's worktree).
+      if (useExisting) {
+        await git(['worktree', 'add', wtPath, branchName], repoPath);
+      } else {
+        // Pull the latest base branch so the new agent starts from what's on origin
+        const startPoint = baseBranch ? await this.pullBaseBranch(repoPath, baseBranch) : undefined;
+        await git(['worktree', 'add', '-b', branchName, wtPath, ...(startPoint ? [startPoint] : [])], repoPath);
       }
-      await git(['worktree', 'add', '-b', branchName, wtPath, ...(startPoint ? [startPoint] : [])], repoPath);
-    }
 
-    // Generate agent-specific settings (e.g. .claude/settings.local.json)
-    await this.generateAdapterSettings(wtPath, repoPath, config.adapterType);
+      // Generate agent-specific settings (e.g. .claude/settings.local.json)
+      await this.generateAdapterSettings(wtPath, repoPath, config.adapterType);
 
-    const info: WorktreeInfo = {
-      id,
-      path: wtPath,
-      branch: branchName,
-      repoPath,
-      createdAt: Date.now(),
-    };
-
-    this.worktrees.set(id, info);
-
-    // Write entry to manifest
-    await this.withManifest((manifest) => {
-      manifest[id] = {
-        repoPath,
+      const info: WorktreeInfo = {
+        id,
+        path: wtPath,
         branch: branchName,
-        createdAt: info.createdAt,
-        ...(useExisting ? {} : { createdBranches: [branchName] }),
+        repoPath,
+        createdAt: Date.now(),
       };
-    });
 
-    return info;
+      this.worktrees.set(id, info);
+
+      // Write entry to manifest
+      await this.withManifest((manifest) => {
+        manifest[id] = {
+          repoPath,
+          branch: branchName,
+          createdAt: info.createdAt,
+          ...(useExisting ? {} : { createdBranches: [branchName] }),
+        };
+      });
+
+      return info;
+    } finally {
+      this.creating.delete(id);
+    }
   }
 
   /**
@@ -299,22 +308,22 @@ export class WorktreeManager {
   }
 
   /**
-   * Register a "direct" session — runs in-place on an existing checkout, no new
-   * worktree created. Defaults to the repo checkout; pass `checkoutPath` to
-   * attach the session to another session's worktree (sharing its branch).
-   * Still tracked in the manifest for session ID persistence.
+   * Register a "direct" session — runs in-place on the repo checkout, no new
+   * worktree created. Still tracked in the manifest for session ID persistence.
+   * (Older manifests may hold "attached" direct sessions that ran in another
+   * session's worktree; they carry a stored `path`, read back on restart.)
    */
-  async registerDirect(repoPath: string, branch: string, checkoutPath: string = repoPath): Promise<WorktreeInfo> {
+  async registerDirect(repoPath: string, branch: string, opts: { noGit?: boolean } = {}): Promise<WorktreeInfo> {
     const id = crypto.randomUUID().slice(0, 8);
-    const attached = checkoutPath !== repoPath;
 
     const info: WorktreeInfo = {
       id,
-      path: checkoutPath,
+      path: repoPath,
       branch,
       repoPath,
       createdAt: Date.now(),
       direct: true,
+      ...(opts.noGit ? { noGit: true } : {}),
     };
 
     this.worktrees.set(id, info);
@@ -325,9 +334,7 @@ export class WorktreeManager {
         branch,
         createdAt: info.createdAt,
         direct: true,
-        // Persist the path only for attached sessions; plain direct sessions
-        // derive it from repoPath, so storing it would be redundant.
-        ...(attached ? { path: checkoutPath } : {}),
+        ...(opts.noGit ? { noGit: true } : {}),
       };
     });
 
@@ -442,7 +449,26 @@ export class WorktreeManager {
   }
 
 
+  /**
+   * Throw when removing `id` would take its worktree from other conversations
+   * (ones started on it with New Conversation, which run in it without owning
+   * it). Removal runs `git worktree remove --force` and can delete the branch,
+   * so they'd lose their checkout and commits. Callers check before tearing
+   * anything down; remove() checks again.
+   */
+  async assertRemovable(id: string): Promise<void> {
+    const info = this.worktrees.get(id) ?? await this.getWorktreeOrManifest(id).catch(() => undefined);
+    if (!info || info.direct) return;
+    const others = (await this.sharersOfPath(id, info.path)).filter((other) => other !== id);
+    if (others.length === 0) return;
+    throw new Error(
+      `${others.length === 1 ? 'Another conversation is' : `${others.length} other conversations are`} still working in this conversation's worktree. `
+      + 'Delete them first; deleting this one would remove their checkout too.',
+    );
+  }
+
   async remove(id: string, deleteBranch = false): Promise<void> {
+    await this.assertRemovable(id);
     let info = this.worktrees.get(id);
     const createdBranches = deleteBranch ? (await this.loadManifest())[id]?.createdBranches : undefined;
 
@@ -460,6 +486,7 @@ export class WorktreeManager {
         createdAt: entry.createdAt,
         lastActiveAt: entry.lastActiveAt,
         direct: entry.direct,
+        ...(entry.noGit ? { noGit: true } : {}),
       };
     }
 
@@ -611,7 +638,9 @@ export class WorktreeManager {
   async list(repoPath: string): Promise<WorktreeInfo[]> {
     try {
       const manifest = await this.loadManifest();
-      const output = await git(['worktree', 'list', '--porcelain'], repoPath);
+      // A folder project isn't a git repository: only its direct
+      // conversations are listed, and they need no git.
+      const output = await git(['worktree', 'list', '--porcelain'], repoPath).catch(() => '');
       const blocks = output.split('\n\n').filter(Boolean);
 
       // Collect all worktree paths git knows about (normalized for cross-platform comparison)
@@ -621,7 +650,7 @@ export class WorktreeManager {
         const wtPathLine = lines.find((l) => l.startsWith('worktree '));
         if (wtPathLine) {
           const raw = wtPathLine.replace('worktree ', '');
-          gitWorktrees.set(path.resolve(raw), block);
+          gitWorktrees.set(pathKey(raw), block);
         }
       }
 
@@ -645,6 +674,7 @@ export class WorktreeManager {
             createdAt: entry.createdAt,
             lastActiveAt: entry.lastActiveAt,
             direct: true,
+            ...(entry.noGit ? { noGit: true } : {}),
             displayName: entry.displayName ?? null,
             completedAt: entry.completedAt ?? null,
             agentType: agentTypeOf(entry),
@@ -653,7 +683,7 @@ export class WorktreeManager {
         }
 
         const wtPath = path.join(this.getWorktreeRoot(), hash, id);
-        const block = gitWorktrees.get(path.resolve(wtPath));
+        const block = gitWorktrees.get(pathKey(wtPath));
         if (!block) continue;
 
         // Get branch from git porcelain output for accuracy
@@ -691,21 +721,6 @@ export class WorktreeManager {
       repos.add(entry.repoPath);
     }
     return [...repos];
-  }
-
-  async cleanupAll(): Promise<void> {
-    // Collect repo paths before removal (remove() deletes from the map)
-    const repoPaths = new Set([...this.worktrees.values()].map((w) => w.repoPath));
-    const ids = [...this.worktrees.keys()];
-    for (const id of ids) {
-      await this.remove(id, true);
-    }
-    // Final prune for any leftovers
-    for (const repoPath of repoPaths) {
-      try {
-        await git(['worktree', 'prune'], repoPath);
-      } catch { /* ignore */ }
-    }
   }
 
   async copyUntrackedFiles(worktreeId: string, files: string[]): Promise<void> {
@@ -780,15 +795,20 @@ export class WorktreeManager {
   async checkoutSharers(id: string): Promise<string[]> {
     const info = this.worktrees.get(id);
     if (!info) return [];
+    return this.sharersOfPath(id, info.path);
+  }
+
+  /** `id` plus every conversation, loaded or not, whose checkout is `checkoutPath`. */
+  private async sharersOfPath(id: string, checkoutPath: string): Promise<string[]> {
     const ids = new Set<string>([id]);
     for (const w of this.worktrees.values()) {
-      if (samePath(w.path, info.path)) ids.add(w.id);
+      if (samePath(w.path, checkoutPath)) ids.add(w.id);
     }
     const manifest = await this.loadManifest();
     for (const [otherId, entry] of Object.entries(manifest)) {
       if (entry.pendingRemoval) continue;
       const entryPath = entry.path ?? (entry.direct ? entry.repoPath : path.join(this.getWorktreeRoot(), this.repoHash(entry.repoPath), otherId));
-      if (samePath(entryPath, info.path)) ids.add(otherId);
+      if (samePath(entryPath, checkoutPath)) ids.add(otherId);
     }
     return [...ids];
   }
@@ -933,6 +953,7 @@ export class WorktreeManager {
       createdAt: entry.createdAt,
       lastActiveAt: entry.lastActiveAt,
       direct: entry.direct,
+      ...(entry.noGit ? { noGit: true } : {}),
       displayName: entry.displayName ?? null,
       completedAt: entry.completedAt ?? null,
       agentType: agentTypeOf(entry),
@@ -951,6 +972,45 @@ export class WorktreeManager {
   }
 
   /**
+   * Move a worktree folder the app can't account for into the trash instead
+   * of deleting it. Such a folder may still hold uncommitted work: a lost or
+   * deleted manifest makes every folder look unknown. purgeTrash() deletes
+   * it once TRASH_RETENTION_MS has passed. Throws when the folder is locked,
+   * like a deletion would, so the sweep retries next time.
+   */
+  private async moveToTrash(dirPath: string, now = Date.now()): Promise<string> {
+    const trash = path.join(this.getWorktreeRoot(), TRASH_DIR);
+    await fs.mkdir(trash, { recursive: true });
+    const dest = path.join(trash, `${now}-${path.basename(path.dirname(dirPath))}-${path.basename(dirPath)}`);
+    await fs.rename(dirPath, dest);
+    logger.warn(`Moved unaccounted-for worktree folder ${dirPath} to ${dest}; it will be deleted after ${TRASH_RETENTION_MS / 86_400_000} days`);
+    return dest;
+  }
+
+  /** Delete trashed folders older than TRASH_RETENTION_MS. Returns how many. */
+  async purgeTrash(now = Date.now()): Promise<number> {
+    const trash = path.join(this.getWorktreeRoot(), TRASH_DIR);
+    let names: string[];
+    try {
+      names = await fs.readdir(trash);
+    } catch {
+      return 0;
+    }
+    let purged = 0;
+    for (const name of names) {
+      const movedAt = Number(name.split('-')[0]);
+      if (!Number.isFinite(movedAt) || now - movedAt < TRASH_RETENTION_MS) continue;
+      try {
+        await removeDirectory(path.join(trash, name));
+        purged++;
+      } catch (e) {
+        logger.warn(`Could not purge ${name} from the worktree trash, will retry: ${e}`);
+      }
+    }
+    return purged;
+  }
+
+  /**
    * Detect orphan worktrees in the manifest that are no longer valid.
    * Called on startup to clean up after crashes.
    */
@@ -965,7 +1025,7 @@ export class WorktreeManager {
         const lines = block.split('\n');
         const wtPathLine = lines.find((l) => l.startsWith('worktree '));
         if (wtPathLine) {
-          gitPaths.add(path.resolve(wtPathLine.replace('worktree ', '')));
+          gitPaths.add(pathKey(wtPathLine.replace('worktree ', '')));
         }
       }
     } catch {
@@ -984,21 +1044,27 @@ export class WorktreeManager {
 
         const wtPath = path.join(this.getWorktreeRoot(), hash, id);
 
-        let dirExists = false;
+        let dirExists = true;
         try {
           await fs.access(wtPath);
-          dirExists = true;
-        } catch { /* doesn't exist */ }
+        } catch (e) {
+          // Only a missing directory is an orphan. Any other error (a lock,
+          // permissions) says nothing about it: leave the entry for next time.
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') continue;
+          dirExists = false;
+        }
 
-        const gitKnows = gitPaths.has(path.resolve(wtPath));
+        const gitKnows = gitPaths.has(pathKey(wtPath));
 
         if (!dirExists || !gitKnows) {
           logger.warn(`Found orphan worktree: ${id} (dir=${dirExists}, git=${gitKnows})`);
           if (dirExists) {
+            // git no longer lists it, but the folder may still hold work.
             try {
-              await removeDirectory(wtPath);
+              await this.moveToTrash(wtPath);
             } catch (e) {
-              logger.error(`Failed to clean orphan ${wtPath}:`, e);
+              logger.error(`Failed to move orphan ${wtPath} to the trash:`, e);
+              continue; // keep the entry; retry next sweep
             }
           }
           delete manifest[id];
@@ -1048,12 +1114,14 @@ export class WorktreeManager {
       return 0;
     }
 
-    // Phase 0: finish removals that were deferred because the directory was locked
+    // Phase 0: finish removals that were deferred because the directory was
+    // locked, and empty the trash of folders past their retention.
     try {
       totalCleaned += await this.processPendingRemovals();
     } catch (e) {
       logger.warn('Sweep: failed to process pending removals:', e);
     }
+    await this.purgeTrash();
 
     const manifest = await this.loadManifest();
 
@@ -1076,13 +1144,13 @@ export class WorktreeManager {
     }
 
     // Phase 2: scan for directories on disk that aren't tracked in the manifest at all
-    const activeIds = new Set(this.worktrees.keys());
+    const activeIds = new Set([...this.worktrees.keys(), ...this.creating]);
     const freshManifest = await this.loadManifest(); // re-read after phase 1 mutations
 
     try {
       const hashDirs = await fs.readdir(root);
       for (const hashDir of hashDirs) {
-        if (hashDir === MANIFEST_FILE) continue;
+        if (hashDir === MANIFEST_FILE || hashDir === TRASH_DIR) continue;
         const hashDirPath = path.join(root, hashDir);
         const stat = await fs.stat(hashDirPath).catch(() => null);
         if (!stat?.isDirectory()) continue;
@@ -1094,11 +1162,13 @@ export class WorktreeManager {
           const entryStat = await fs.stat(entryPath).catch(() => null);
           if (!entryStat?.isDirectory()) continue;
 
-          // If this directory ID is not in the manifest and not an active session, remove it
-          if (!freshManifest[entry] && !activeIds.has(entry)) {
-            logger.warn(`Sweep: removing untracked worktree directory: ${entryPath}`);
+          // If this directory ID is not in the manifest and not an active session, remove it.
+          // Checked live, not just against the snapshot: a conversation may
+          // have been created while this loop awaited.
+          const live = activeIds.has(entry) || this.creating.has(entry) || this.worktrees.has(entry);
+          if (!freshManifest[entry] && !live) {
             try {
-              await removeDirectory(entryPath);
+              await this.moveToTrash(entryPath);
               totalCleaned++;
             } catch (e) {
               logger.warn(`Sweep: directory busy, will retry next sweep: ${entryPath}`);
@@ -1118,13 +1188,16 @@ export class WorktreeManager {
       logger.warn('Sweep: failed to scan worktree root:', e);
     }
 
-    // Phase 3: clean stale direct entries whose repos no longer exist
+    // Phase 3: clean stale direct entries whose project folder is gone. Only
+    // the folder counts, not whether git opens it: a missing or broken git at
+    // launch must not delete conversations, and a folder project has no
+    // repository to check.
     await this.withManifest(async (m) => {
       for (const [id, entry] of Object.entries(m)) {
         if (!entry.direct) continue;
         if (activeIds.has(id)) continue;
         try {
-          const valid = await isGitRepo(entry.repoPath);
+          const valid = await fs.stat(entry.repoPath).then((st) => st.isDirectory(), () => false);
           if (!valid) {
             logger.info(`Sweep: removing stale direct entry ${id} (repo gone: ${entry.repoPath})`);
             delete m[id];

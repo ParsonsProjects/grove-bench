@@ -7,6 +7,13 @@ import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr
 import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
 
 const POLL_MS = 60_000;
+/** Conversations the user hasn't looked at for a while are refreshed this
+ *  often instead of every sweep. Each refresh is a gh call per branch, and
+ *  they all share the account's GitHub rate limit with the agents' own gh. */
+const IDLE_POLL_MS = 5 * 60_000;
+/** How long after the user last had a conversation on screen it still counts
+ *  as recently viewed, and so stays on the full rate. */
+const RECENT_VIEW_MS = 10 * 60_000;
 const THROTTLE_MS = 5_000;
 /** The sweep stops waiting on one session's fetch after this long and moves
  *  on. The main-side gh call has its own (shorter) timeout; this is the
@@ -54,11 +61,16 @@ class PrStore {
   fetchFailedBySession = $state<Record<string, boolean>>({});
 
   private lastFetch = new Map<string, number>();
+  /** When the user last had each session on screen (see setViewing). */
+  private lastViewed = new Map<string, number>();
+  private viewingId: string | null = null;
   /** Watch state per session, per PR number. Kept per PR so switching the
    *  primary back and forth doesn't replay a PR's old feedback as new. */
   private watchStates = new Map<string, Map<number, PrWatchState>>();
-  /** Auto-fix attempts on the current head commit of the primary PR, per session. */
-  private autoFixAttempts = new Map<string, { prNumber: number; sha: string; attempts: number }>();
+  /** Auto-fix attempts on the primary PR since its CI was last green, per
+   *  session. Counted per PR, not per commit: each fix the agent pushes is a
+   *  new commit, so a per-commit count would never reach the limit. */
+  private autoFixAttempts = new Map<string, { prNumber: number; attempts: number }>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private sweeping = false;
   private getPolledSessionIds: (() => string[]) | null = null;
@@ -151,7 +163,32 @@ class PrStore {
     if (pr.status === 'fulfilled') this.handleDetection(sessionId);
   }
 
-  /** Poll every open session (focused or not) — started once from App.
+  /** The conversation the user now has on screen (null for none). It is
+   *  polled every sweep, and fetched straight away when its data is older
+   *  than one poll, since it may have been on the idle cadence. The one being
+   *  left counts as viewed until now. */
+  setViewing(sessionId: string | null): void {
+    const now = Date.now();
+    if (this.viewingId) this.lastViewed.set(this.viewingId, now);
+    this.viewingId = sessionId;
+    if (!sessionId) return;
+    this.lastViewed.set(sessionId, now);
+    if (now - (this.lastFetch.get(sessionId) ?? 0) >= POLL_MS) void this.refresh(sessionId, true);
+  }
+
+  /** Refreshed on every sweep: the conversation on screen, one viewed
+   *  recently, or one with PR automation on (it acts on CI and reviews as
+   *  they land). The rest wait for IDLE_POLL_MS between refreshes. */
+  private pollsEverySweep(sessionId: string, now: number): boolean {
+    if (sessionId === this.viewingId) return true;
+    const auto = this.getAuto(sessionId);
+    if (auto.fixCi || auto.addressReviews) return true;
+    const viewed = this.lastViewed.get(sessionId);
+    return viewed !== undefined && now - viewed < RECENT_VIEW_MS;
+  }
+
+  /** Poll every open session (focused or not; idle ones less often, see
+   *  pollsEverySweep) — started once from App.
    *  Self-scheduling so a slow sweep never overlaps the next one. Sweeps are
    *  skipped while the window is hidden and one runs as soon as it is shown
    *  again, so a minimised app doesn't come back to minute-old checks. */
@@ -192,6 +229,8 @@ class PrStore {
       // session; skip the sweep entirely while the window is hidden.
       if (typeof document === 'undefined' || !document.hidden) {
         for (const id of this.getPolledSessionIds()) {
+          const now = Date.now();
+          if (!this.pollsEverySweep(id, now) && now - (this.lastFetch.get(id) ?? 0) < IDLE_POLL_MS) continue;
           await withTimeout(this.refresh(id, true), SWEEP_REFRESH_TIMEOUT_MS);
         }
       }
@@ -274,6 +313,11 @@ class PrStore {
     // whatever the previous primary had seen.
     const pr = this.getPr(sessionId);
     if (!pr) return;
+    // CI green again: auto-fix gets its full set of attempts back.
+    const checks = pr.checks;
+    if (checks && checks.failed === 0 && checks.pending === 0 && this.autoFixAttempts.get(sessionId)?.prNumber === pr.number) {
+      this.autoFixAttempts.delete(sessionId);
+    }
     let states = this.watchStates.get(sessionId);
     if (!states) {
       states = new Map();
@@ -296,18 +340,17 @@ class PrStore {
 
     if (event.kind === 'ci_failed') {
       if (auto.fixCi) {
-        const sha = this.getPr(sessionId)?.headSha ?? 'unknown';
         const prev = this.autoFixAttempts.get(sessionId);
-        const attempts = prev?.prNumber === prNumber && prev.sha === sha ? prev.attempts : 0;
+        const attempts = prev?.prNumber === prNumber ? prev.attempts : 0;
         if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
           this.addAlert(sessionId, prNumber, {
             kind: 'needs_human',
-            reason: `Auto-fix attempted ${attempts}× on this commit without CI going green — take a look`,
+            reason: `Auto-fix tried ${attempts} times on this PR and CI is still failing. Take a look`,
           });
           return;
         }
         if (this.fixCiWithAgent(sessionId)) {
-          this.autoFixAttempts.set(sessionId, { prNumber, sha, attempts: attempts + 1 });
+          this.autoFixAttempts.set(sessionId, { prNumber, attempts: attempts + 1 });
           return;
         }
       }
@@ -375,6 +418,7 @@ class PrStore {
 
   clear(sessionId: string): void {
     this.lastFetch.delete(sessionId);
+    this.lastViewed.delete(sessionId);
     this.watchStates.delete(sessionId);
     this.autoFixAttempts.delete(sessionId);
     const { [sessionId]: _p, ...restPrs } = this.prsBySession;

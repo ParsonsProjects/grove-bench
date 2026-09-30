@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import { describeError, buildReport, ForwardLimiter, handleMainError, installProcessErrorHandlers, logRendererError } from './crash-handling.js';
+import { describeError, buildReport, ForwardLimiter, handleMainError, installProcessErrorHandlers, isExpectedTeardownRejection, logRendererError } from './crash-handling.js';
 import { logger } from './logger.js';
 
 vi.mock('./logger.js', () => ({
@@ -107,6 +107,28 @@ describe('installProcessErrorHandlers', () => {
       ['uncaughtException', 'u'],
       ['unhandledRejection', 'r'],
     ]);
+  });
+});
+
+describe('SDK teardown rejections', () => {
+  it('recognises the rejections a closed query leaves behind', () => {
+    expect(isExpectedTeardownRejection(new Error('Operation aborted'))).toBe(true);
+    expect(isExpectedTeardownRejection(new Error('Cannot write to process that exited (code 1)'))).toBe(true);
+    expect(isExpectedTeardownRejection('ProcessTransport is not ready for writing')).toBe(true);
+    expect(isExpectedTeardownRejection(new Error('ENOENT: no such file'))).toBe(false);
+  });
+
+  it('logs them quietly instead of reporting them to the window', () => {
+    const handlers: Record<string, (e: unknown) => void> = {};
+    const proc = { on: vi.fn((ev: string, fn: (e: unknown) => void) => { handlers[ev] = fn; }) };
+    const win = makeWin();
+    installProcessErrorHandlers({ getWindow: () => win, proc: proc as any });
+
+    handlers.unhandledRejection(new Error('Operation aborted'));
+
+    expect(win.webContents.send).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalled();
   });
 });
 

@@ -3,6 +3,7 @@ import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { messageStore } from './messages.svelte.js';
+import { arrivalScene } from './arrivalScene.svelte.js';
 import { agentsStore } from './agents.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { resolveBaseBranch } from '../lib/base-branch.js';
@@ -45,6 +46,11 @@ export interface DraftModelOption {
 
 const newBranchStart = (): DraftStart => ({ kind: 'new', branchName: '', baseBranch: '' });
 
+/** Where a new draft in `repo` starts: a new branch, or the folder itself
+ *  for a project that isn't a git repository (the only place it can run). */
+const defaultStart = (repo: string): DraftStart =>
+  sessionStore.isFolderProject(repo) ? { kind: 'folder' } : newBranchStart();
+
 class DraftStore {
   draft = $state<Draft | null>(null);
   starting = $state(false);
@@ -83,11 +89,12 @@ class DraftStore {
       const agentId = opts.agentId || active?.agentType || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
-      this.draft = { repoPath: repo, agentId, model, controls: {}, start: newBranchStart(), text: '' };
+      this.draft = { repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo), text: '' };
       this.modeTouched = false;
       this.error = '';
       void this.prefillBaseBranch(repo);
       void this.loadAgentInfo();
+      void this.refreshKind(repo);
     }
     sessionStore.activeSessionId = null;
   }
@@ -113,13 +120,31 @@ class DraftStore {
     this.draft.repoPath = repo;
     // Branches belong to the old project.
     this.resetToNewBranch();
+    void this.refreshKind(repo);
+  }
+
+  /** Check what the project is now: git may have been installed, or
+   *  `git init` run in a folder project, since launch. When it changed, the
+   *  draft goes back to that kind of project's default start. */
+  private async refreshKind(repo: string): Promise<void> {
+    let kind: Awaited<ReturnType<typeof window.groveBench.repoKind>>;
+    try {
+      kind = await window.groveBench.repoKind(repo);
+    } catch {
+      return;
+    }
+    if (kind === 'missing') return;
+    const folder = kind === 'folder';
+    if (folder === sessionStore.isFolderProject(repo)) return;
+    sessionStore.setFolderProject(repo, folder);
+    if (this.draft?.repoPath === repo) this.resetToNewBranch();
   }
 
   /** Back to the default place to run: a new branch from the project's
    *  default branch. */
   resetToNewBranch(): void {
     if (!this.draft) return;
-    this.setStart(newBranchStart());
+    this.setStart(defaultStart(this.draft.repoPath));
     void this.prefillBaseBranch(this.draft.repoPath);
   }
 
@@ -187,6 +212,8 @@ class DraftStore {
   }
 
   private async prefillBaseBranch(repo: string): Promise<void> {
+    // A folder without git has no branches to start from.
+    if (sessionStore.isFolderProject(repo)) return;
     const base = await resolveBaseBranch(repo);
     const d = this.draft;
     if (d && d.repoPath === repo && d.start.kind === 'new' && !d.start.baseBranch) {
@@ -248,8 +275,11 @@ class DraftStore {
   /** Create the conversation and send the draft's message as its first turn.
    *  Returns whether it started; on failure the draft stays with the error. */
   async start(): Promise<boolean> {
-    const d = this.draft;
-    if (!d || this.starting) return false;
+    const draft = this.draft;
+    if (!draft || this.starting) return false;
+    // A copy: the pickers stay usable while this awaits, and changes made
+    // meanwhile must not leak into the conversation being created.
+    const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project in the bar below.';
@@ -288,15 +318,20 @@ class DraftStore {
         agentType: result.agentType,
         createdAt: Date.now(),
         ...(direct ? { direct: true } : {}),
+        ...(result.noGit ? { noGit: true } : {}),
         ...(placeholderName ? { displayName: placeholderName } : {}),
       });
       // Main holds a prompt sent during setup until the agent is ready.
       if (text) {
+        // The chat shows the agent walking to its bench until the first reply.
+        arrivalScene.begin(result.id);
         messageStore.addUserMessage(result.id, text);
         window.groveBench.sendMessage(result.id, text);
         sessionStore.updateLastActive(result.id);
       }
-      this.discard();
+      // Discarded (and maybe replaced by a new draft) while this ran: leave
+      // the new one alone.
+      if (this.draft === draft) this.discard();
       return true;
     } catch (e: any) {
       this.error = e?.message || String(e);

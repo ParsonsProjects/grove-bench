@@ -1,32 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.hoisted ensures these are available when the factory runs
-const { mockReadFileSync, mockWriteFileSync } = vi.hoisted(() => ({
+const { mockReadFileSync, mockWriteFileSync, mockRenameSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  mockRenameSync: vi.fn(),
 }));
 
 vi.mock('node:fs', () => ({
   default: {
     readFileSync: mockReadFileSync,
     writeFileSync: mockWriteFileSync,
+    renameSync: mockRenameSync,
+    copyFileSync: vi.fn(),
+    rmSync: vi.fn(),
   },
 }));
 
-import { loadSettings, saveSettings, getSettings, applyImmediateEffects, upgradeSettings, validateSettings, SETTINGS_SCHEMA_VERSION } from './settings.js';
+vi.mock('./logger.js', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { loadSettings, saveSettings, getSettings, applyImmediateEffects, upgradeSettings, validateSettings, resetSettingsCache, SETTINGS_SCHEMA_VERSION } from './settings.js';
 import { nativeTheme } from 'electron';
 import type { GroveBenchSettings } from '../shared/types.js';
+
+const enoent = () => Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Reset cached settings by loading fresh with defaults
-  mockReadFileSync.mockImplementation(() => { throw new Error('not found'); });
+  resetSettingsCache();
+  mockReadFileSync.mockImplementation(() => { throw enoent(); });
   loadSettings();
 });
 
 describe('loadSettings', () => {
   it('returns defaults when file does not exist', () => {
-    mockReadFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    mockReadFileSync.mockImplementation(() => { throw enoent(); });
     const s = loadSettings();
     expect(s.adapterDefaults).toEqual({});
     expect(s.theme).toBe('system');
@@ -60,6 +71,47 @@ describe('loadSettings', () => {
     const s = loadSettings();
     expect(s.theme).toBe('system');
   });
+
+  describe('when the file exists but can\'t be read', () => {
+    const locked = () => Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+
+    it('uses defaults without remembering them, so a later read gets the real file', () => {
+      resetSettingsCache(); // as at app start
+      mockReadFileSync.mockImplementation(() => { throw locked(); });
+      expect(loadSettings().theme).toBe('system');
+
+      mockReadFileSync.mockReset();
+      mockReadFileSync.mockReturnValue(JSON.stringify({ theme: 'dark' }));
+      expect(getSettings().theme).toBe('dark');
+    });
+
+    it('refuses to save over it, even once it reads again', () => {
+      resetSettingsCache();
+      mockReadFileSync.mockImplementation(() => { throw locked(); });
+      const shown = loadSettings();
+      mockReadFileSync.mockReset();
+      mockReadFileSync.mockReturnValue(JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, theme: 'dark', toolDenyRules: [{ pattern: 'Bash(rm *)' }] }));
+      getSettings();
+
+      expect(() => saveSettings({ ...shown, alwaysOnTop: true })).toThrow(/Restart Grove Bench/);
+      expect(mockWriteFileSync).not.toHaveBeenCalled();
+    });
+
+    it('keeps the settings it already has', () => {
+      mockReadFileSync.mockReturnValue(JSON.stringify({ theme: 'dark' }));
+      loadSettings();
+      mockReadFileSync.mockImplementation(() => { throw locked(); });
+      expect(loadSettings().theme).toBe('dark');
+      expect(() => saveSettings({ ...getSettings(), alwaysOnTop: true })).not.toThrow();
+    });
+
+    it('rides out a brief lock', () => {
+      mockReadFileSync
+        .mockImplementationOnce(() => { throw locked(); })
+        .mockReturnValue(JSON.stringify({ theme: 'light' }));
+      expect(loadSettings().theme).toBe('light');
+    });
+  });
 });
 
 describe('getSettings', () => {
@@ -75,6 +127,21 @@ describe('getSettings', () => {
 });
 
 describe('saveSettings', () => {
+  it('writes a temp file and renames it over settings.json', () => {
+    saveSettings({ ...loadSettings(), theme: 'dark' });
+    const [tmp, data] = mockWriteFileSync.mock.calls[0];
+    expect(tmp).toMatch(/settings\.json\.\d+\.\d+\.tmp$/);
+    expect(JSON.parse(data as string).theme).toBe('dark');
+    expect(mockRenameSync).toHaveBeenCalledWith(tmp, expect.stringMatching(/settings\.json$/));
+  });
+
+  it('reports a failed write instead of pretending it saved', () => {
+    const before = getSettings();
+    mockRenameSync.mockImplementationOnce(() => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); });
+    expect(() => saveSettings({ ...before, theme: 'dark' })).toThrow('ENOSPC');
+    expect(getSettings().theme).toBe(before.theme);
+  });
+
   it('saves valid settings', () => {
     const s = loadSettings();
     expect(() => saveSettings(s)).not.toThrow();
@@ -267,6 +334,12 @@ describe('validateSettings', () => {
     expect(s.crashReportsEnabled).toBe(false);
     expect(s.notifyTaskbarBadge).toBe(true);
     expect(s.defaultActivityView).toBe('summary');
+  });
+
+  it('shows thinking summaries unless turned off', () => {
+    expect(validateSettings({}).showThinkingSummaries).toBe(true);
+    expect(validateSettings({ showThinkingSummaries: false }).showThinkingSummaries).toBe(false);
+    expect(validateSettings({ showThinkingSummaries: 'no' }).showThinkingSummaries).toBe(true);
   });
 
   it('keeps a valid defaultActivityView', () => {

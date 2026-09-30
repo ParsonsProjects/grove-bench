@@ -1,23 +1,26 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
   AgentQueryHandle,
   AdapterConfig,
+  AdapterEvent,
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
+  CliSignInDescriptor,
   ModelInfo,
   PermissionResponse,
+  ToolImageData,
   UserMessage,
 } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
-import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -40,15 +43,16 @@ type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').Elicitatio
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
  *
- * By default the SDK launches its bundled CLI as `node <…/cli.js>`, relying on a
- * `node` binary being on PATH. A GUI-launched Electron app on Windows frequently
- * inherits a minimal PATH with no `node`, so that spawn fails with ENOENT —
- * surfaced confusingly as "Claude Code executable not found at …cli.js. Is
- * options.pathToClaudeCodeExecutable set?". Electron's own binary runs as a plain
- * Node process when ELECTRON_RUN_AS_NODE=1, and `process.execPath` is always a
- * valid path in both dev and packaged builds — so we redirect the `node`
- * invocation to ourselves and drop the PATH dependency entirely. Non-node
- * commands (e.g. a native `claude` binary) are spawned unchanged.
+ * The SDK runs its native `claude` binary, which it finds next to its own
+ * module. In the packaged app that path is inside app.asar: Electron can read
+ * files there, so the SDK sees the binary, but the OS can't run one (spawn
+ * fails with ENOTDIR or ENOENT). electron-builder unpacks the binary to
+ * app.asar.unpacked (see asarUnpack in electron-builder.yml), so it runs
+ * from there.
+ *
+ * A `node` command (older SDKs ran `node <…/cli.js>`) is redirected to
+ * Electron's own binary with ELECTRON_RUN_AS_NODE=1: a GUI-launched app on
+ * Windows often has no `node` on PATH, and `process.execPath` is always valid.
  */
 /** Tool results are kept only for display, replay and memory extraction — the
  *  model already received the full text. Cap what we retain so a test suite
@@ -64,12 +68,18 @@ export function capToolResult(content: string): string {
   return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
 }
 
-function spawnClaudeCodeProcess(
+/** `p` with an `app.asar` directory swapped for `app.asar.unpacked`, where
+ *  electron-builder puts files that must exist on disk. Unchanged otherwise. */
+export function asarUnpackedPath(p: string): string {
+  return p.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+}
+
+export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
 ): SpawnedProcess & { readonly pid?: number } {
   const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
-  const command = isNode ? process.execPath : opts.command;
+  const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
     : opts.env;
@@ -111,6 +121,7 @@ function categorizeToolName(toolName: string): ToolCategory {
     case 'MultiEdit':
       return 'edit';
     case 'Bash':
+    case 'PowerShell':
       return 'bash';
     case 'Read':
     case 'Grep':
@@ -179,6 +190,23 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
   return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
+const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/** The base64 images in a tool result's content: API image blocks (Read on an
+ *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
+export function toolResultImages(content: unknown[]): ToolImageData[] {
+  const images: ToolImageData[] = [];
+  for (const c of content as any[]) {
+    if (c?.type !== 'image') continue;
+    const data = c.source?.type === 'base64' ? c.source.data : c.data;
+    const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
+    if (typeof data === 'string' && data && IMAGE_MEDIA_TYPES.has(mediaType)) {
+      images.push({ data, mediaType: mediaType as ImageMediaType });
+    }
+  }
+  return images;
+}
+
 /**
  * Transform a single SDKMessage into zero or more AgentEvents.
  * This is a pure function (given a context bag) extracted from the former
@@ -187,8 +215,8 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 export function transformMessage(
   message: SDKMessage,
   ctx: MessageContext,
-): AgentEvent[] {
-  const events: AgentEvent[] = [];
+): AdapterEvent[] {
+  const events: AdapterEvent[] = [];
 
   switch (message.type) {
     case 'system': {
@@ -218,6 +246,13 @@ export function transformMessage(
         const modeValue = m.permissionMode ?? m.permission_mode;
         if (modeValue) {
           events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeValue, ctx), source: 'sdk' });
+        }
+      } else if (message.subtype === 'informational') {
+        // The CLI's own warnings (e.g. a sandbox that could not start) reach
+        // the user; lower levels are transcript-only chatter in the CLI too.
+        const m = message as { content?: unknown; level?: unknown };
+        if (m.level === 'warning' && typeof m.content === 'string' && m.content.trim()) {
+          events.push({ type: 'status', level: 'warning', message: m.content.trim() });
         }
       } else if (message.subtype === 'local_command_output') {
         const content = (message as any).content;
@@ -397,11 +432,13 @@ export function transformMessage(
             const resultContent = Array.isArray(block.content)
               ? block.content.map((c: any) => c.text || '').join('')
               : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+            const imageData = Array.isArray(block.content) ? toolResultImages(block.content) : [];
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
               content: capToolResult(resultContent),
               isError: block.is_error,
+              ...(imageData.length > 0 && { imageData }),
             });
           }
         }
@@ -570,17 +607,37 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
 };
 
 /**
+ * How thinking text is returned: a readable summary, or none. Opus 4.7+,
+ * Opus 5/5.5, Fable 5/5.1 and Sonnet 5/5.5 default to 'omitted' (thinking
+ * blocks with empty text), and Claude Code doesn't ask for anything else in
+ * SDK mode, so we always send one. Claude Code drops the field for models
+ * that don't take it (Haiku 4.5, Claude 3).
+ */
+export type ThinkingDisplay = 'summarized' | 'omitted';
+
+/** The display the showThinkingSummaries setting asks for (unset = on). */
+export function thinkingDisplayFor(summaries: boolean | undefined): ThinkingDisplay {
+  return summaries === false ? 'omitted' : 'summarized';
+}
+
+type ThinkingConfig =
+  | { type: 'adaptive'; display: ThinkingDisplay }
+  | { type: 'disabled' }
+  | { type: 'enabled'; budgetTokens: number; display: ThinkingDisplay };
+
+/**
  * Thinking level → the SDK's query-start `thinking` config, which (unlike the
  * deprecated runtime token control) can express adaptive thinking explicitly.
  * Returns null for 'high' (and unset) so the provider default applies.
  */
 export function thinkingConfigFor(
   level: ThinkingLevel | null | undefined,
-): { type: 'adaptive' } | { type: 'disabled' } | { type: 'enabled'; budgetTokens: number } | null {
+  display: ThinkingDisplay = 'summarized',
+): ThinkingConfig | null {
   if (!level || level === 'high') return null;
-  if (level === 'adaptive') return { type: 'adaptive' };
+  if (level === 'adaptive') return { type: 'adaptive', display };
   if (level === 'off') return { type: 'disabled' };
-  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]!, display };
 }
 
 // ─── Session controls ───
@@ -678,13 +735,13 @@ export function supportsFastMode(model: string | null | undefined, learned?: Lea
 }
 
 const PERMISSION_MODE_OPTIONS: ControlOption[] = [
-  { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
   { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
   // Grove's own mode, listed after Claude's so the divider shows it isn't one
   // of the CLI's.
-  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks. Uses an OS sandbox where one can start' },
 ];
 
 /**
@@ -768,16 +825,19 @@ export function claudeControlsFor(model?: string | null, learned?: LearnedModel)
 /**
  * The query-start `thinking` and `effort` options for recorded control values.
  * Models that reject disabled thinking get no Thinking control, so a stale
- * recorded value (e.g. 'off' carried over from another model) is not sent.
+ * recorded value (e.g. 'off' carried over from another model) is not sent;
+ * they always think adaptively, and we send that only to set the display.
  */
 export function reasoningOptionsFor(
   model: string | null | undefined,
   controls: Record<string, string> | null | undefined,
   learned?: LearnedModel,
+  display: ThinkingDisplay = 'summarized',
 ): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
-  const thinking = claudeModelCaps(model, learned).thinkingOff
-    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
-    : null;
+  const caps = claudeModelCaps(model, learned);
+  const thinking = caps.thinkingOff
+    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined, display)
+    : caps.adaptiveThinking ? thinkingConfigFor('adaptive', display) : null;
   return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort], learned) };
 }
 
@@ -1096,6 +1156,27 @@ export function validateMcpName(name: string): void {
   }
 }
 
+/** Plugin ids as the CLI lists them (`name@marketplace`). The claude CLI runs
+ *  through the shell (a .cmd shim on Windows), and ids reach it from the
+ *  renderer and, before that, from marketplace listings that may be
+ *  third-party, so only shell-inert characters are accepted, and no leading
+ *  dash (it would read as a CLI option). */
+export function validatePluginId(id: unknown): string {
+  if (typeof id !== 'string' || id.startsWith('-') || !/^[A-Za-z0-9._\/:@+-]+$/.test(id)) {
+    throw new Error(`Invalid plugin id: ${String(id).slice(0, 80)}`);
+  }
+  return id;
+}
+
+const CONFIG_SCOPES: ReadonlySet<string> = new Set<McpConfigScope>(['local', 'user', 'project']);
+const MCP_TRANSPORTS: ReadonlySet<string> = new Set(['stdio', 'http', 'sse']);
+
+/** A settings scope for the claude CLI's -s/--scope; anything else throws. */
+export function validateConfigScope(scope: unknown): McpConfigScope {
+  if (typeof scope !== 'string' || !CONFIG_SCOPES.has(scope)) throw new Error(`Invalid scope: ${String(scope).slice(0, 40)}`);
+  return scope as McpConfigScope;
+}
+
 /**
  * Quote a single argument for execFile with `shell: true` (cmd.exe on
  * Windows joins args with spaces and does NOT quote them). Values that could
@@ -1166,7 +1247,8 @@ interface McpAuthenticateResponse {
 /** Build the `claude mcp add ...` argument list for the given options. */
 export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   validateMcpName(opts.name);
-  const args = ['mcp', 'add', '-s', opts.scope, '-t', opts.transport];
+  if (!MCP_TRANSPORTS.has(opts.transport)) throw new Error(`Invalid transport: ${String(opts.transport).slice(0, 40)}`);
+  const args = ['mcp', 'add', '-s', validateConfigScope(opts.scope), '-t', opts.transport];
   for (const [key, value] of Object.entries(opts.env ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       throw new Error(`Invalid environment variable name: ${key}`);
@@ -1223,11 +1305,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude" in a terminal and sign in, then try again.';
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
     helpUrl: 'https://platform.claude.com/',
+    // https://support.claude.com/en/articles/9876003
+    billingNote: 'Billed per use by Anthropic, separately from any Claude plan.',
+  };
+  // Anthropic's own sign-in in its own CLI; Grove only reads `claude auth
+  // status` (DESIGN.md, "Allowed: the user's own Claude subscription").
+  readonly cliSignIn: CliSignInDescriptor = {
+    accountLabel: 'Claude plan',
+    accountDetail: 'Pro, Max, Team or Enterprise',
+    cliName: 'Claude Code',
+    command: 'claude',
+    setupUrl: 'https://code.claude.com/docs/en/setup',
   };
   readonly mcp = CLAUDE_MCP_SUPPORT;
   readonly capabilities: AgentCapabilities = {
@@ -1236,6 +1329,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     resume: true,
     modelSwitching: true,
     thinking: true,
+    thinkingSummaries: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1377,7 +1471,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         authenticated: envMethod !== null,
         ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
-        installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
+        installInstructions: 'Install Claude Code: https://code.claude.com/docs/en/setup',
       };
     }
 
@@ -1456,22 +1550,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       // Settings rules are written in neutral terms (shell(...), edit(...),
       // read(...), ...) or with Claude's tool names; both match here.
+      // Chained shell commands are split first, so an allow rule has to
+      // match every command in the chain (see checkToolRules). shell(...)
+      // covers PowerShell too, split by PowerShell's own syntax.
       const category = categorizeToolName(toolName);
       const specifier = toolCallSpecifier(toolName, input, category);
-      const toolCall = specifier ? `${toolName}(${specifier})` : toolName;
-
-      // Deny rules
-      for (const rule of config.toolDenyRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
-          return { behavior: 'deny' as const, message: `Denied by settings rule: ${rule.pattern}` };
-        }
+      const shellSyntax = toolName === 'PowerShell' ? 'powershell' : 'bash';
+      const ruleVerdict = checkToolRules(
+        config.toolAllowRules, config.toolDenyRules, toolName, specifier, category, shellSyntax,
+      );
+      if (ruleVerdict?.behavior === 'deny') {
+        return { behavior: 'deny' as const, message: `Denied by settings rule: ${ruleVerdict.pattern}` };
       }
-
-      // Allow rules
-      for (const rule of config.toolAllowRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
-          return { behavior: 'allow' as const, updatedInput: input };
-        }
+      if (ruleVerdict?.behavior === 'allow') {
+        return { behavior: 'allow' as const, updatedInput: input };
       }
 
       // Sandbox auto-approve Bash — only when the sandbox config opts in,
@@ -1531,7 +1623,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
     const learned = this.learnedFor(config.model);
-    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned);
+    const thinkingDisplay = thinkingDisplayFor(config.thinkingSummaries);
+    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned, thinkingDisplay);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
 
     const q: Query = queryFn({
@@ -1597,7 +1690,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     // Create the async event generator
-    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+    async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       for await (const message of q) {
         if (abortController.signal.aborted) break;
 
@@ -1698,7 +1791,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             // The runtime token control can't express 'adaptive'; null clears
             // the limit so the provider default (adaptive on capable models)
             // applies until the next query start passes the full config.
-            await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null);
+            // A session that started with thinking off has no display set,
+            // so turning it on must send it again.
+            await q.setMaxThinkingTokens(
+              THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null,
+              value === 'off' ? undefined : thinkingDisplay,
+            );
             return;
           case CONTROL_IDS.effort:
             // Session-scoped; 'max' is accepted here though never persisted
@@ -1819,7 +1917,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       throw new Error(`${name} can't be removed from Grove Bench (${managedBy.label}). ${managedBy.hint}`);
     }
     validateMcpName(name);
-    const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
+    const args = ['mcp', 'remove', ...(scope ? ['-s', validateConfigScope(scope)] : []), quoteArg(name)];
     await execFileAsync('claude', args, {
       shell: true,
       ...(cwd ? { cwd } : {}),
@@ -1839,19 +1937,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'install', pluginId, '--scope', scope], { shell: true });
+    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true });
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'uninstall', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true });
   }
 
   async enablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'enable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true });
   }
 
   async disablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'disable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true });
   }
 
   // ─── Text generation (for memory extraction) ───

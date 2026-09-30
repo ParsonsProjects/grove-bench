@@ -34,10 +34,15 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Type check
-        run: npx tsc --noEmit
+        # tsc for .ts files, then svelte-check for the TypeScript in .svelte
+        # components, which tsc skips.
+        run: npm run typecheck
 
       - name: Run tests
-        run: npm test
+        # In a random order, so a test that only passes after (or without)
+        # another one fails here. The log prints the seed; reproduce with
+        # npx vitest run --sequence.shuffle --sequence.seed=<seed>
+        run: npm test -- --sequence.shuffle
 
       - name: Build
         run: npm run build

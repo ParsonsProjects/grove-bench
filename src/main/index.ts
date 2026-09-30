@@ -1,9 +1,9 @@
-import { app, BrowserWindow, powerMonitor } from 'electron';
+import { app, BrowserWindow, powerMonitor, screen } from 'electron';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
-import { loadWindowState, trackWindowState } from './window-state.js';
+import { keepOnScreen, loadWindowState, trackWindowState } from './window-state.js';
 import { flushPendingSaves } from './app-state.js';
 import * as settings from './settings.js';
 import { logger } from './logger.js';
@@ -14,6 +14,9 @@ import { initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
 import { installSpellcheckMenu } from './spellcheck.js';
+import { lockToAppPage } from './window-guard.js';
+import { runQuitCleanup } from './quit-cleanup.js';
+import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolders } from './attachments.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -29,6 +32,9 @@ app.setAppUserModelId('com.parsonsprojects.grove-bench');
 // Register built-in agent adapters before anything else uses them
 initAdapters();
 
+// Custom schemes can only be registered before the app is ready.
+registerAttachmentScheme();
+
 registerHandlers();
 
 let mainWindow: BrowserWindow | null = null;
@@ -39,7 +45,7 @@ let isQuitting = false;
 installProcessErrorHandlers({ getWindow: () => mainWindow });
 
 function createWindow() {
-  const state = loadWindowState();
+  const state = keepOnScreen(loadWindowState(), screen.getAllDisplays().map((d) => d.workArea));
 
   mainWindow = new BrowserWindow({
     x: state.x,
@@ -79,6 +85,7 @@ function createWindow() {
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);
+  lockToAppPage(mainWindow.webContents);
 
   if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -99,7 +106,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    // Claude's Preview pages are hidden windows; close them so the app quits.
+    // The agent's Preview pages are hidden windows; close them so the app quits.
     previewManager.setWindow(null);
     previewManager.closeAll();
   });
@@ -108,6 +115,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  handleAttachmentProtocol();
+  void removeDeletedFolders();
   createWindow();
 
   // Background worktree sweep. The first run waits until the renderer has
@@ -151,45 +160,26 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// Graceful shutdown: destroy all sessions and clean up worktrees
+// Graceful shutdown: stop every agent and shell. Worktrees, branches and
+// checkpoints are left alone; conversations reopen on the next launch.
 app.on('before-quit', (event) => {
   if (isQuitting) return;
-
-  if (sessionManager.count > 0) {
-    event.preventDefault();
-    isQuitting = true;
-
-    // Notify renderer
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.APP_CLOSING);
-    }
-
-    (async () => {
-      try {
-        logger.info(`Cleaning up ${sessionManager.count} sessions...`);
-        await terminalManager.killAll();
-        await sessionManager.destroyAll();
-        await new Promise((r) => setTimeout(r, 500));
-        await worktreeManager.cleanupAll();
-        logger.info('Cleanup complete');
-      } catch (e) {
-        logger.error('Cleanup error during quit:', e);
-      } finally {
-        logger.close();
-        app.quit();
-      }
-    })();
-  } else if (sessionManager.closingCount > 0 || terminalManager.count > 0) {
-    // No live sessions, but a conversation closed just before quitting or a
-    // terminal is still open: finish killing the processes they started so
-    // none outlive the app.
-    event.preventDefault();
-    isQuitting = true;
-    Promise.all([terminalManager.killAll(), sessionManager.waitForCloses()]).finally(() => {
-      logger.close();
-      app.quit();
-    });
-  } else {
+  // Nothing running: no live conversation, none still closing (one closed
+  // just before quitting), no terminal.
+  if (sessionManager.count === 0 && sessionManager.closingCount === 0 && terminalManager.count === 0) {
     logger.close();
+    return;
   }
+
+  event.preventDefault();
+  isQuitting = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.APP_CLOSING);
+  }
+  logger.info(`Closing ${sessionManager.count} sessions...`);
+  // closeAll() also waits for conversations already closing.
+  runQuitCleanup(() => Promise.all([terminalManager.killAll(), sessionManager.closeAll()])).finally(() => {
+    logger.close();
+    app.quit();
+  });
 });

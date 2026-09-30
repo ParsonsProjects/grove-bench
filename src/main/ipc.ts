@@ -5,17 +5,19 @@ import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, OpenPrSum
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
-import { editorLaunchCommand } from './editor-launch.js';
+import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts } from './git.js';
-import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE } from './gh.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { inspectProjectFolder, projectKind } from './project-path.js';
+import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { removeImages } from './attachments.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
@@ -30,14 +32,14 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
+import { installDependencies } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
 /** App-level lifecycle signals from the renderer (e.g. 'restore-complete'). */
@@ -130,7 +132,8 @@ async function attachNumstat(cwd: string, entries: GitStatusEntry[], base: strin
       paths.add(e.filePath);
       if (e.origPath) paths.add(e.origPath);
     }
-    const numstatArgs = ['diff', base, '--numstat'];
+    // Unquoted paths, so non-ASCII names match the -z status entries.
+    const numstatArgs = ['-c', 'core.quotePath=false', 'diff', base, '--numstat'];
     if (paths.size <= 200) numstatArgs.push('--', ...paths);
     const numstatRaw = await git(numstatArgs, cwd);
     const stats = new Map(parseNumstat(numstatRaw).map(s => [s.path, s]));
@@ -167,26 +170,45 @@ export function registerHandlers() {
 
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
-      title: 'Select a project folder (git repository)',
+      title: 'Select a project folder',
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
-    const repoPath = result.filePaths[0];
+    // A folder outside any repository comes back as 'folder' and is added
+    // as a plain folder.
+    const picked = await inspectProjectFolder(result.filePaths[0]);
+    // Remembered from the start, so it survives a restart before it has
+    // any conversations.
+    rememberProject(picked.path);
 
-    const valid = await worktreeManager.validateRepo(repoPath);
-    if (!valid) return null;
-
-    // Clean up any orphan worktrees from previous crashes
-    const orphans = await worktreeManager.cleanupOrphans(repoPath);
-    if (orphans > 0) {
-      logger.info(`Cleaned up ${orphans} orphan worktree(s) in ${repoPath}`);
+    if (picked.kind === 'git') {
+      // Clean up any orphan worktrees from previous crashes
+      const orphans = await worktreeManager.cleanupOrphans(picked.path);
+      if (orphans > 0) {
+        logger.info(`Cleaned up ${orphans} orphan worktree(s) in ${picked.path}`);
+      }
     }
 
-    return repoPath;
+    return picked;
   });
 
   ipcMain.handle(IPC.REPO_VALIDATE, async (_event, repoPath: string) => {
     return worktreeManager.validateRepo(repoPath);
+  });
+
+  ipcMain.handle(IPC.REPO_REMEMBER, async (_event, repoPath: string) => {
+    if (typeof repoPath !== 'string' || !path.isAbsolute(repoPath)) return;
+    rememberProject(repoPath);
+  });
+
+  ipcMain.handle(IPC.REPO_KIND, async (_event, repoPath: string) => {
+    if (typeof repoPath !== 'string' || !repoPath) return 'missing';
+    return projectKind(repoPath);
+  });
+
+  ipcMain.handle(IPC.GIT_HAS_IDENTITY, async (_event, dir: string) => {
+    if (typeof dir !== 'string' || !dir) return false;
+    return !!(await getGitIdentity(dir));
   });
 
   ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
@@ -195,10 +217,14 @@ export function registerHandlers() {
       throw new Error('Cannot remove a project while it has active conversations');
     }
 
-    const orphans = await worktreeManager.cleanupOrphans(repoPath);
-    if (orphans > 0) {
-      logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
+    if (await projectKind(repoPath) === 'git') {
+      const orphans = await worktreeManager.cleanupOrphans(repoPath);
+      if (orphans > 0) {
+        logger.info(`Cleaned up ${orphans} orphan worktree(s) on repo remove for ${repoPath}`);
+      }
     }
+    // Last, so a failed cleanup leaves the project both shown and remembered.
+    forgetProject(repoPath);
   });
 
   // ─── Sessions ───
@@ -210,38 +236,41 @@ export function registerHandlers() {
     const model = typeof opts.model === 'string' && opts.model ? opts.model : undefined;
     const controls = sanitizeControls(opts.controls);
 
-    if (opts.direct || opts.attachToSessionId) {
-      // Direct mode — run in-place on an existing checkout, no worktree created.
-      // When attachToSessionId is set, the new session shares that session's
-      // worktree + branch; otherwise it runs on the repo's current checkout.
-      let branch: string;
-      let checkoutPath = opts.repoPath;
-      if (opts.attachToSessionId) {
-        const src = await worktreeManager.getWorktreeOrManifest(opts.attachToSessionId);
-        if (!src) throw new Error(`Conversation ${opts.attachToSessionId} not found`);
-        branch = src.branch;
-        checkoutPath = src.path;
-      } else {
-        branch = opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
-      }
-      logger.info(`Creating direct session: branch=${branch}, cwd=${checkoutPath}, repo=${opts.repoPath}`);
+    // A folder project (not a repository, or git isn't installed) can only
+    // run in the folder.
+    const kind = await projectKind(opts.repoPath);
+    if (kind === 'missing') throw new Error(`The project folder ${opts.repoPath} wasn't found.`);
+    const noGit = kind === 'folder';
+    if (noGit && !opts.direct) {
+      throw new Error((await gitVersion())
+        ? 'This project isn\'t a git repository, so a conversation can only work in the project folder itself.'
+        : 'Git isn\'t installed, so a conversation can only work in the project folder itself.');
+    }
 
-      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, checkoutPath);
+    if (opts.direct) {
+      // Direct mode: run in-place on the repo's current checkout, no worktree created.
+      const branch = noGit
+        ? ''
+        : opts.branchName || (await git(['rev-parse', '--abbrev-ref', 'HEAD'], opts.repoPath)).trim();
+      logger.info(`Creating direct session: branch=${branch || '(no git)'}, repo=${opts.repoPath}`);
+
+      const entry = await worktreeManager.registerDirect(opts.repoPath, branch, { noGit });
 
       const session = await sessionManager.createSession({
         id: entry.id,
         branch: entry.branch,
-        cwd: checkoutPath,
+        cwd: opts.repoPath,
         repoPath: opts.repoPath,
         window: win,
         adapterType: opts.adapterType,
         permissionMode,
         model,
         controls,
+        noGit,
       });
 
       logger.info(`Direct session created: id=${session.id}`);
-      return { id: session.id, branch: session.branch, agentType: session.agentType };
+      return { id: session.id, branch: session.branch, agentType: session.agentType, ...(noGit ? { noGit: true } : {}) };
     }
 
     // Generate a stable ID up front so the renderer can open a tab immediately.
@@ -283,7 +312,10 @@ export function registerHandlers() {
     };
 
     // Return fast — the dialog can close and a tab can open
-    // Run the heavy work (worktree, npm install, agent start) in the background
+    // Run the heavy work (worktree, npm install, agent start) in the background.
+    // Deleting the conversation meanwhile aborts it (see destroySession).
+    const setupAbort = new AbortController();
+    const { signal } = setupAbort;
     const setupPromise = (async () => {
       try {
         emitPrelaunch({ type: 'status', message: 'Creating worktree…' });
@@ -296,6 +328,7 @@ export function registerHandlers() {
           id,
           adapterType: opts.adapterType,
         });
+        signal.throwIfAborted();
 
         // Auto-copy untracked files (.env, etc.)
         try {
@@ -320,9 +353,10 @@ export function registerHandlers() {
             const npmCache = await worktreeManager.getNpmCachePath(opts.repoPath);
             emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
             logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
-            await execa('npm', ['install', '--prefer-offline', '--cache', npmCache], { cwd: worktree.path });
+            await installDependencies(worktree.path, npmCache, signal);
             logger.info(`npm install completed for worktree ${worktree.id}`);
           } catch (e) {
+            if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
               const stderr = (e as any).stderr || (e as any).message || String(e);
               logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
@@ -332,6 +366,7 @@ export function registerHandlers() {
         }
 
         // Start agent in the worktree
+        signal.throwIfAborted();
         emitPrelaunch({ type: 'status', message: 'Starting agent…' });
         await sessionManager.createSession({
           id: worktree.id,
@@ -347,6 +382,10 @@ export function registerHandlers() {
 
         logger.info(`Session created: id=${worktree.id}`);
       } catch (err: any) {
+        if (signal.aborted) {
+          logger.info(`Session setup stopped for ${id}: the conversation was deleted`);
+          return;
+        }
         const msg = err.message || String(err);
         logger.error(`Session setup failed for ${id}:`, msg);
         emitPrelaunch({ type: 'error', message: msg });
@@ -363,7 +402,7 @@ export function registerHandlers() {
     // Don't await — let it run in the background
     setupPromise.catch(() => {}); // prevent unhandled rejection
     // Prompts sent to the new tab while setup runs wait for it to finish.
-    sessionManager.trackPendingSetup(id, setupPromise);
+    sessionManager.trackPendingSetup(id, setupPromise, setupAbort);
 
     return { id, branch };
   });
@@ -372,12 +411,18 @@ export function registerHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
-    // If already running, just reattach the window so events flow to new webContents
-    if (sessionManager.getSession(id)) {
-      const s = sessionManager.getSession(id)!;
+    // Its agent is up (or asleep, or starting): just reattach the window so
+    // events flow to the new webContents.
+    const existing = sessionManager.getSession(id);
+    if (existing && existing.status !== 'stopped' && existing.status !== 'error') {
       sessionManager.reattachWindow(id, win);
-      return { id: s.id, branch: s.branch };
+      return { id: existing.id, branch: existing.branch };
     }
+    // Its agent ended (exited or crashed, died in system sleep, or failed to
+    // start) but the session is still held: reattaching would leave the tab
+    // looking live with nothing behind it. Close it and resume below, as
+    // after an app restart.
+    if (existing) await sessionManager.closeSession(id);
 
     // The renderer already shows the tab and its input while this runs, so
     // register the resume as a pending setup: prompts sent meanwhile are held
@@ -405,6 +450,7 @@ export function registerHandlers() {
         resumeSessionId: providerSessionId,
         model: savedModel,
         adapterType,
+        noGit: !!worktree.noGit,
       });
 
       logger.info(`Session resumed: id=${session.id}`);
@@ -430,11 +476,16 @@ export function registerHandlers() {
     logger.info(`Session closed: id=${id}`);
   });
 
-  // Idle sleep: only the agent process goes. The terminal and anything
-  // running in it are left alone, so a dev server there keeps serving.
+  // Idle sleep: the agent process goes, and so does the agent's Preview page,
+  // which nothing drives while it sleeps. The terminal and anything running
+  // in it are left alone, so a dev server there keeps serving, and so is
+  // your own Preview page.
   ipcMain.handle(IPC.SESSION_SLEEP, async (_event, id: string) => {
     const slept = await sessionManager.sleepSession(id);
-    if (slept) logger.info(`Session asleep: id=${id}`);
+    if (slept) {
+      previewManager.closeAgentPage(id);
+      logger.info(`Session asleep: id=${id}`);
+    }
     return slept;
   });
 
@@ -450,11 +501,16 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch = false) => {
     logger.info(`Destroying session: id=${id}, deleteBranch=${deleteBranch}`);
+    // Refuse before stopping anything if other conversations share its worktree.
+    await worktreeManager.assertRemovable(id);
     previewManager.close(id);
     await terminalManager.killAllForSession(id);
     await sessionManager.destroySession(id); // includes 500ms Windows handle-release delay
     await worktreeManager.remove(id, deleteBranch);
-    bookmarks.removeBookmarksForSession(id); // cascade: no orphan bookmarks
+    // Cascade: no orphan bookmarks. The conversation is already gone, so a
+    // bookmarks file that can't be read right now doesn't fail the delete.
+    try { bookmarks.removeBookmarksForSession(id); } catch (err) { logger.warn(`Could not remove bookmarks for ${id}:`, err); }
+    void removeImages(id); // images shown in its Activity thread
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -573,6 +629,10 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.CHECKOUT_SHARERS, async (_event, sessionId: string): Promise<string[]> => {
+    return worktreeManager.checkoutSharers(sessionId);
+  });
+
   ipcMain.handle(IPC.BRANCH_SWITCH, async (
     _event, sessionId: string, branch: string, opts?: { create?: boolean; busySessionIds?: string[] },
   ): Promise<BranchSwitchResult> => {
@@ -609,7 +669,7 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.WORKTREE_LIST_REPOS, async () => {
-    return worktreeManager.listRepos();
+    return listProjects(await worktreeManager.listRepos());
   });
 
   // ─── Prerequisites ───
@@ -677,20 +737,24 @@ export function registerHandlers() {
   // ─── Agent I/O ───
 
   ipcMain.on(IPC.AGENT_SEND, (event, sessionId: string, content: string, images?: import('../shared/types.js').ImageAttachment[]) => {
-    sessionManager.sendMessage(sessionId, content, images).then((ok) => {
-      if (!ok) {
-        // Session is dead or never connected — tell the user the prompt was
-        // not delivered, then unlock the renderer so it doesn't stay stuck in
-        // "Writing message".
-        const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
-        if (event.sender.isDestroyed()) return;
-        event.sender.send(channel, {
-          type: 'error',
-          message: 'Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.',
-        } as import('../shared/types.js').AgentEvent);
-        event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
-      }
-    });
+    // Tell the user the prompt was not delivered, then unlock the renderer
+    // so it doesn't stay stuck in "Writing message".
+    const notDelivered = (message: string) => {
+      const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
+      if (event.sender.isDestroyed()) return;
+      event.sender.send(channel, { type: 'error', message } as import('../shared/types.js').AgentEvent);
+      event.sender.send(channel, { type: 'process_exit' } as import('../shared/types.js').AgentEvent);
+    };
+    sessionManager.sendMessage(sessionId, content, images).then(
+      (ok) => {
+        // Session is dead or never connected
+        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.');
+      },
+      (err) => {
+        logger.warn(`[AGENT_SEND] session=${sessionId} failed:`, err);
+        notDelivered('Message not delivered: sending it failed. See the log for details, then send it again.');
+      },
+    );
   });
 
   ipcMain.handle(IPC.AGENT_SET_MODE, (_event, sessionId: string, mode: string) => {
@@ -787,25 +851,14 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_HISTORY_PAGE, (_event, sessionId: string, limit: number, beforeIndex?: number) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
-    const page = sessionManager.getEventHistoryPage(sessionId, limit, beforeIndex);
-    // If this is the first page (includes the start of history) and there are
-    // prelaunch events, prepend them so the renderer sees worktree/install status.
-    if (page.startIndex === 0 && prelaunch.length > 0) {
-      return {
-        events: [...prelaunch, ...page.events],
-        totalCount: page.totalCount + prelaunch.length,
-        startIndex: 0,
-      };
-    }
-    // Adjust indices to account for prelaunch events
-    if (prelaunch.length > 0) {
-      return {
-        events: page.events,
-        totalCount: page.totalCount + prelaunch.length,
-        startIndex: page.startIndex + prelaunch.length,
-      };
-    }
-    return page;
+    if (prelaunch.length === 0) return sessionManager.getEventHistoryPage(sessionId, limit, beforeIndex);
+    // Page over the prelaunch-prefixed index space the renderer, search and
+    // bookmarks use, beforeIndex included. Prelaunch events (worktree/install
+    // status) only exist while setup runs, when the history is short.
+    const all = prelaunchPrefixedEvents(sessionId);
+    const end = beforeIndex !== undefined ? Math.min(beforeIndex, all.length) : all.length;
+    const start = Math.max(0, end - limit);
+    return { events: all.slice(start, end), totalCount: all.length, startIndex: start };
   });
 
   ipcMain.handle(IPC.AGENT_HISTORY_COUNT, (_event, sessionId: string) => {
@@ -853,13 +906,21 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.SESSION_PREVIEWS, (_event, sessionIds: string[]) => {
+  ipcMain.handle(IPC.SESSION_PREVIEWS, async (_event, sessionIds: string[]) => {
     const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
+    // A stopped conversation's preview parses its whole event log, and the
+    // sidebar asks for all of them at startup. Yield now and then, as the
+    // cross-conversation search does, so terminals and agent output keep flowing.
+    let sliceStart = performance.now();
     for (const id of sessionIds ?? []) {
       try {
         previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
       } catch (e) {
         logger.warn(`[session-previews] preview failed for ${id}:`, e);
+      }
+      if (performance.now() - sliceStart > 16) {
+        await new Promise((resolve) => setImmediate(resolve));
+        sliceStart = performance.now();
       }
     }
     return previews;
@@ -881,8 +942,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const output = await git(['ls-files'], worktree.path);
-    const files = output.split('\n').map(l => l.trim()).filter(Boolean);
+    const files = await listProjectFiles(worktree.path);
 
     // Extract unique directories from file paths
     const dirs = new Set<string>();
@@ -908,28 +968,15 @@ export function registerHandlers() {
       throw new Error('Path traversal not allowed');
     }
 
-    // Try VS Code, then Cursor (editorLaunchCommand handles Windows .cmd shims),
+    // Try VS Code, then Cursor (launchEditor handles Windows .cmd shims),
     // then fall back to the OS default opener.
-    const tryEditor = (editor: string): Promise<boolean> =>
-      new Promise((resolve) => {
-        const { cmd, args } = editorLaunchCommand(editor, resolved, line);
-        execFile(cmd, args, (err) => resolve(!err));
-      });
+    if (await launchEditor('code', resolved, line)) return;
+    if (await launchEditor('cursor', resolved, line)) return;
 
-    if (await tryEditor('code')) return;
-    if (await tryEditor('cursor')) return;
-
-    // Final fallback: system default opener.
-    await new Promise<void>((resolve, reject) => {
-      const onDone = (err: unknown) =>
-        err ? reject(new Error('Could not open file. Install the VS Code or Cursor CLI.')) : resolve();
-      if (process.platform === 'win32') {
-        execFile('cmd', ['/c', 'start', '""', resolved], onDone);
-      } else {
-        const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-        execFile(opener, [resolved], onDone);
-      }
-    });
+    // Final fallback: system default opener. shell.openPath goes straight to
+    // the OS (ShellExecute on Windows), with no cmd.exe parsing of the path.
+    const openError = await shell.openPath(resolved);
+    if (openError) throw new Error('Could not open file. Install the VS Code or Cursor CLI.');
   });
 
   // ─── External links & process cleanup ───
@@ -992,20 +1039,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
-    // Check if the file is untracked (git checkout won't work for untracked files)
-    const statusRaw = await git(['status', '--porcelain', '--', relPath], worktree.path);
-    const isUntracked = statusRaw.trimStart().startsWith('??');
-
-    if (isUntracked) {
-      // Delete untracked file
-      await fs.rm(resolved, { force: true, recursive: true });
-    } else if (staged) {
-      // Reset both index and working tree for staged files
-      await git(['checkout', 'HEAD', '--', relPath], worktree.path);
-    } else {
-      await git(['checkout', '--', relPath], worktree.path);
-    }
+    const { relPath } = sanitizeWorktreeRelPath(worktree.path, filePath);
+    await revertFile(worktree.path, relPath, staged === true);
   });
 
   ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }): Promise<FileDiffResult> => {
@@ -1061,8 +1096,9 @@ export function registerHandlers() {
       if (staged) {
         content = await indexFileContent(worktree.path, relPath);
       } else {
+        if ((await fs.stat(resolved)).size > 4 * 1024 * 1024) return null;
         const buf = await fs.readFile(resolved);
-        if (buf.length > 4 * 1024 * 1024 || looksBinary(buf)) return null;
+        if (looksBinary(buf)) return null;
         content = buf.toString('utf-8');
       }
       const lines = content.split('\n');
@@ -1132,7 +1168,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.GIT_SYNC_STATUS, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return { upstream: null, ahead: 0, behind: 0 };
+    if (!worktree || worktree.noGit) return { upstream: null, ahead: 0, behind: 0 };
     try {
       return await syncStatus(worktree.path);
     } catch (e) {
@@ -1240,7 +1276,7 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.GIT_STATUS, async (_event, sessionId: string, opts?: GitStatusOptions): Promise<GitStatusResult> => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return { entries: [] };
+    if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
 
     try {
@@ -1268,7 +1304,7 @@ export function registerHandlers() {
       return result;
     } catch (e) {
       logger.warn(`git status failed for session ${sessionId}:`, e);
-      return { entries: [] };
+      return { entries: [], error: e instanceof Error ? e.message : String(e) };
     }
   });
 
@@ -1292,25 +1328,29 @@ export function registerHandlers() {
     return [...new Set(ordered)].slice(0, MAX_SESSION_PR_BRANCHES);
   }
 
-  /** An unreachable GitHub is routine (laptop offline, VPN, GitHub down) and
-   *  the renderer already keeps its last snapshot and marks it stale, so it
-   *  does not deserve a stack trace per session per sweep. Record it once per
-   *  cooldown and rethrow a one-line error; the rejection is what tells the
-   *  renderer the data is stale, so it cannot be swallowed. */
+  /** An unreachable or rate-limiting GitHub is routine (laptop offline, VPN,
+   *  GitHub down, many open conversations) and the renderer already keeps its
+   *  last snapshot and marks it stale, so it does not deserve a stack trace
+   *  per session per sweep. Record it once per cooldown and rethrow a one-line
+   *  error; the rejection is what tells the renderer the data is stale, so it
+   *  cannot be swallowed. */
   let lastOfflineLog = 0;
   function rethrowGhFailure(e: unknown): never {
-    if (!isNetworkError(e)) throw e;
+    const rateLimited = isRateLimitError(e);
+    if (!rateLimited && !isNetworkError(e)) throw e;
     const now = Date.now();
     if (now - lastOfflineLog >= GH_OFFLINE_COOLDOWN_MS) {
       lastOfflineLog = now;
-      logger.warn('GitHub is unreachable; PR status stays stale until it responds again');
+      logger.warn(rateLimited
+        ? 'GitHub rate limit reached; PR status polling backs off and stays stale until it lifts'
+        : 'GitHub is unreachable; PR status stays stale until it responds again');
     }
-    throw new Error(GH_OFFLINE_MESSAGE);
+    throw new Error(rateLimited ? GH_RATE_LIMITED_MESSAGE : GH_OFFLINE_MESSAGE);
   }
 
   ipcMain.handle(IPC.PR_LIST, async (_event, sessionId: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) return [];
+    if (!worktree || worktree.noGit) return [];
     // Own comments are excluded from the feedback signature so the agent
     // replying on the PR doesn't trigger (and then auto-answer) a "new
     // comments" event about itself.
@@ -1385,8 +1425,8 @@ export function registerHandlers() {
   ipcMain.handle(IPC.MCP_CONFIG_APPROVE, async (_event, name: string, repoPath: string, adapterType?: string) => {
     const adapter = resolveAdapter(adapterType);
     if (!adapter.approveProjectMcpServer) throw new Error(`Adapter "${adapter.id}" does not support MCP server approval`);
-    if (!(await worktreeManager.validateRepo(repoPath))) {
-      throw new Error(`${repoPath} is not a git repository`);
+    if (typeof repoPath !== 'string' || (await projectKind(repoPath)) === 'missing') {
+      throw new Error(`The project folder ${repoPath} wasn't found.`);
     }
     const worktrees = await worktreeManager.list(repoPath);
     await adapter.approveProjectMcpServer(name, [repoPath, ...worktrees.map((w) => w.path)]);
@@ -1580,22 +1620,6 @@ export function registerHandlers() {
     bookmarks.updateBookmark(id, patch);
   });
 
-  // ─── Shell / Terminal ───
-
-  ipcMain.handle(IPC.SHELL_RUN, (event, sessionId: string, command: string) => {
-    const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
-    return terminalManager.spawnCommand(sessionId, command, worktree.path, event.sender);
-  });
-
-  ipcMain.handle(IPC.SHELL_KILL, (_event, execId: string) => {
-    terminalManager.killExecution(execId);
-  });
-
-  ipcMain.on(IPC.SHELL_INPUT, (_event, execId: string, data: string) => {
-    terminalManager.sendInput(execId, data);
-  });
-
   // ─── Settings ───
 
   ipcMain.handle(IPC.SETTINGS_GET, () => {
@@ -1648,6 +1672,15 @@ export function registerHandlers() {
     if (typeof width === 'number' && Number.isFinite(width)) {
       saveSidebarWidth(Math.round(width));
     }
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_PANELS, () => {
+    flushPendingSaves();
+    return loadAppState().collapsedPanels ?? {};
+  });
+
+  ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
+    saveCollapsedPanels(panels);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {
@@ -1733,20 +1766,23 @@ export function registerHandlers() {
     }
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {
-      // Return a listing of tracked files under this directory
-      const output = await git(['ls-files'], worktree.path);
+      // Return a listing of the files under this directory
       const prefix = path.relative(worktree.path, resolved).replace(/\\/g, '/');
-      const entries = output.split('\n').map(l => l.trim()).filter(Boolean)
+      const entries = (await listProjectFiles(worktree.path))
         .filter(f => f.startsWith(prefix ? prefix + '/' : ''));
       return entries.join('\n');
     }
-    const buf = await fs.readFile(resolved);
-    // Cap at 100KB
+    // Cap at 100KB, reading no more than that.
     const maxBytes = 100 * 1024;
-    if (buf.length > maxBytes) {
-      return buf.subarray(0, maxBytes).toString('utf-8') + '\n... (truncated at 100KB)';
+    const handle = await fs.open(resolved, 'r');
+    try {
+      const buf = Buffer.alloc(Math.min(stat.size, maxBytes));
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+      const text = buf.subarray(0, bytesRead).toString('utf-8');
+      return stat.size > maxBytes ? text + '\n... (truncated at 100KB)' : text;
+    } finally {
+      await handle.close();
     }
-    return buf.toString('utf-8');
   });
 
   // ─── Auto-updater ───

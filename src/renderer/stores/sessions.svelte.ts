@@ -10,6 +10,9 @@ interface SessionEntry {
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Runs in a folder that isn't a git repository: no Changes, checkpoints
+   *  or branches. */
+  noGit?: boolean;
   /** Adapter id the session runs on (e.g. 'claude-code'). */
   agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
@@ -26,6 +29,8 @@ interface SessionEntry {
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>([]);
+  /** Projects that are plain folders, not git repositories. */
+  folderRepos = $state<string[]>([]);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
@@ -138,6 +143,9 @@ class SessionStore {
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
             this.repos = [...this.repos, r];
+            // Main keeps the list now; without this a project with no
+            // conversations would be gone at the next launch.
+            await window.groveBench.rememberRepo(r).catch(() => {});
           }
         }
         localStorage.removeItem('grove-bench:repos');
@@ -145,18 +153,28 @@ class SessionStore {
     } catch { /* ignore */ }
   }
 
-  addRepo(path: string) {
+  /** Add a project. `folder` says whether it's a plain folder (no git);
+   *  left out, an existing project keeps what it was. */
+  addRepo(path: string, opts: { folder?: boolean } = {}) {
     if (!this.repos.includes(path)) {
       this.repos = [...this.repos, path];
     }
+    if (opts.folder !== undefined) this.setFolderProject(path, opts.folder);
   }
 
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
+    this.setFolderProject(path, false);
   }
 
-  canRemoveRepo(path: string): boolean {
-    return this.sessionsForRepo(path).length === 0;
+  isFolderProject(path: string): boolean {
+    return this.folderRepos.includes(path);
+  }
+
+  setFolderProject(path: string, folder: boolean) {
+    const has = this.folderRepos.includes(path);
+    if (folder && !has) this.folderRepos = [...this.folderRepos, path];
+    if (!folder && has) this.folderRepos = this.folderRepos.filter((r) => r !== path);
   }
 
   sessionsForRepo(path: string): SessionEntry[] {
@@ -183,27 +201,9 @@ class SessionStore {
     this.addRepo(entry.repoPath);
   }
 
-  /** Quick-create a new session (no dialog) that lands on `sourceSessionId`'s
-   *  branch, sharing its checkout. The main process resolves the branch + path
-   *  from the source session, so a new session forked off a worktree session
-   *  stays on that branch instead of the repo's default branch. Runs in-place
-   *  (direct), so it never creates or removes a worktree. It runs the same
-   *  agent as the source session. */
-  async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
-    try {
-      const adapterType = this.sessions.find((s) => s.id === sourceSessionId)?.agentType;
-      const result = await window.groveBench.createSession({
-        repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId,
-        ...(adapterType ? { adapterType } : {}),
-      });
-      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now() });
-    } catch (e: any) {
-      this.setError(e?.message || String(e));
-    }
-  }
-
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
+    this.removeFromRecentlyClosed(id);
     this.clearNeedsAttention(id);
     this.clearDeferredResume(id);
     // Back to the landing screen rather than jumping into another conversation.

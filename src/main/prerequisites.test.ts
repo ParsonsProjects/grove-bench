@@ -235,6 +235,18 @@ describe('API key state', () => {
     const result = await checkCorePrerequisites();
     expect(result.agents['claude-code'].apiKey?.canStore).toBe(false);
   });
+
+  it('passes on how a key is billed and how to sign in with the CLI instead', async () => {
+    const cliSignIn = { accountLabel: 'Claude plan', cliName: 'Claude Code', command: 'claude', setupUrl: 'https://example.com/setup' };
+    mockAdapters = [makeAdapter({
+      apiKey: { envVar: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', helpUrl: 'https://example.com/keys', billingNote: 'Billed separately.' },
+      cliSignIn,
+    })];
+
+    const result = await checkCorePrerequisites();
+    expect(result.agents['claude-code'].apiKey?.billingNote).toBe('Billed separately.');
+    expect(result.agents['claude-code'].cliSignIn).toEqual(cliSignIn);
+  });
 });
 
 describe('gitReady()', () => {

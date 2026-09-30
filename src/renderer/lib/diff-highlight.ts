@@ -36,25 +36,53 @@ function escapeHtml(s: string): string {
  */
 export function highlightLine(text: string, lang: string | null): string {
   if (!lang) return escapeHtml(text);
-  const key = `${lang}\n${text}`;
-  const cached = highlightCache.get(key);
-  if (cached !== undefined) return cached;
-  let html: string;
-  try {
-    html = DOMPurify.sanitize(hljs.highlight(text, { language: lang }).value);
-  } catch {
-    html = escapeHtml(text);
+  return highlightCache.get(`${lang}\n${text}`, () => {
+    try {
+      return DOMPurify.sanitize(hljs.highlight(text, { language: lang }).value);
+    } catch {
+      return escapeHtml(text);
+    }
+  });
+}
+
+/**
+ * A Map that keeps the `max` most recently used entries. When full it drops
+ * the least recently used tenth, rather than everything: clearing it all
+ * meant a diff longer than the cache was worked out in full on every render.
+ */
+export class RecentCache<V> {
+  private map = new Map<string, V>();
+  constructor(private readonly max: number) {}
+
+  get(key: string, make: () => V): V {
+    const hit = this.map.get(key);
+    if (hit !== undefined) {
+      // Most recent last (a Map keeps insertion order).
+      this.map.delete(key);
+      this.map.set(key, hit);
+      return hit;
+    }
+    const value = make();
+    if (this.map.size >= this.max) {
+      let drop = Math.max(1, Math.floor(this.max / 10));
+      for (const k of this.map.keys()) {
+        this.map.delete(k);
+        if (--drop === 0) break;
+      }
+    }
+    this.map.set(key, value);
+    return value;
   }
-  if (highlightCache.size >= HIGHLIGHT_CACHE_MAX) highlightCache.clear();
-  highlightCache.set(key, html);
-  return html;
+
+  get size(): number { return this.map.size; }
 }
 
 /** DiffView calls highlightLine for every line on every re-render of the
  *  diff, and each call builds a DOMPurify document. Lines are unchanged
  *  across re-renders (and repeat across files), so memoize by (lang, text). */
-const HIGHLIGHT_CACHE_MAX = 5000;
-const highlightCache = new Map<string, string>();
+const highlightCache = new RecentCache<string>(20_000);
+/** Word-level marks go through a DOM template per line; same idea. */
+const markCache = new RecentCache<string>(5_000);
 
 export interface WordSegment { text: string; changed: boolean; }
 
@@ -129,6 +157,10 @@ export function intralineRanges(oldText: string, newText: string): { del: [numbe
  */
 export function markRanges(html: string, ranges: [number, number][], className = 'diff-mark'): string {
   if (ranges.length === 0) return html;
+  return markCache.get(`${className}\n${ranges.join(';')}\n${html}`, () => markRangesUncached(html, ranges, className));
+}
+
+function markRangesUncached(html: string, ranges: [number, number][], className: string): string {
   const tpl = document.createElement('template');
   tpl.innerHTML = html;
   const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);

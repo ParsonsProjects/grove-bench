@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { pluginStore } from '../stores/plugins.svelte.js';
   import { mcpConfigStore } from '../stores/mcpConfig.svelte.js';
@@ -62,11 +63,15 @@
   }
 
   $effect(() => {
-    if (open) {
+    if (!open) return;
+    // Untracked: the loads read store state (agentsStore.loaded), and a
+    // change there, such as an agent reporting new models, would re-run
+    // this and replace unsaved edits with the saved settings.
+    untrack(() => {
       settingsStore.load();
       pluginStore.refresh();
       agentsStore.load();
-    }
+    });
   });
 
   // ─── MCP servers tab ───
@@ -74,7 +79,9 @@
   // Listing health-checks every server (slow, e.g. `claude mcp list`), so load lazily on
   // first visit to the MCP tab rather than on every settings open.
   $effect(() => {
-    if (open && tab === 'mcp' && !mcpConfigStore.loaded && !mcpConfigStore.loading) {
+    // Keyed on `attempted`, not `loaded`: a listing that fails (no CLI on
+    // PATH, a deleted project) would otherwise start another straight away.
+    if (open && tab === 'mcp' && !mcpConfigStore.attempted && !mcpConfigStore.loading) {
       // Start with the open conversation's agent (if it can edit MCP config)
       // and project: project and local servers only list for one project.
       const active = store.activeSession;
@@ -109,6 +116,13 @@
    *  (undefined in the store: the default agent). */
   let mcpAgents = $derived(agentsStore.supporting('mcpConfig'));
   let mcpAgent = $derived(agentsStore.get(mcpConfigStore.adapterType ?? agentsStore.defaultId));
+  /** Scopes for an agent that doesn't describe its own. */
+  const DEFAULT_MCP_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [
+    { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
+    { value: 'project', label: 'Project', description: 'Shared with the team in the project repository' },
+    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
+  ];
+
   /** The agent's own scopes, wording and name rule for configured servers. */
   let mcpRules = $derived(mcpAgent?.mcp?.config);
   let mcpScopes = $derived(mcpRules?.scopes ?? DEFAULT_MCP_SCOPES);
@@ -134,13 +148,6 @@
     { value: 'stdio', label: 'stdio (local command)' },
     { value: 'http', label: 'HTTP' },
     { value: 'sse', label: 'SSE' },
-  ];
-
-  /** Scopes for an agent that doesn't describe its own. */
-  const DEFAULT_MCP_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [
-    { value: 'user', label: 'User', description: 'Available in all projects on this machine' },
-    { value: 'project', label: 'Project', description: 'Shared with the team in the project repository' },
-    { value: 'local', label: 'Local', description: 'Only this machine, only the chosen project' },
   ];
 
   const mcpCanAdd = $derived(
@@ -294,6 +301,8 @@
     controls: ControlDescriptor[];
     /** The adapter's own model for background tasks, if it declares one. */
     backgroundModel?: string;
+    /** Offers the Show thinking summaries setting. */
+    thinkingSummaries: boolean;
   }
   let agentGroups = $state<AgentGroup[]>([]);
   let agentGroupsLoading = $state(false);
@@ -315,6 +324,7 @@
           models,
           controls,
           backgroundModel: a.backgroundModel,
+          thinkingSummaries: !!a.capabilities.thinkingSummaries,
         };
       }));
       if (request === agentGroupsRequest) agentGroups = groups;
@@ -335,7 +345,9 @@
   $effect(() => {
     const defaults = settingsStore.draft.defaultModels ?? {};
     void modelsVersion;
-    if (open && tab === 'agent') loadAgentGroups(defaults);
+    // Untracked: the load reads agentsStore.loaded, which a models-changed
+    // refresh flips twice, and each re-run would fetch every agent's models.
+    if (open && tab === 'agent') untrack(() => loadAgentGroups(defaults));
   });
 
   function controlValue(adapterId: string, control: ControlDescriptor): string {
@@ -594,6 +606,16 @@
                 {/each}
                 <p class="text-xs text-muted-foreground">Options depend on the default model above. Applied to new conversations only.</p>
               {/if}
+
+              {#if agent.thinkingSummaries}
+                <div>
+                  <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                    <Checkbox bind:checked={settingsStore.draft.showThinkingSummaries} aria-label={`${agent.displayName} show thinking summaries`} />
+                    Show thinking summaries
+                  </label>
+                  <p class="text-xs text-muted-foreground mt-1 ml-6">Asks for a short summary of the model's thinking to show in the conversation. Off asks for none. Doesn't change how much the model thinks or what it costs. Applies to agents started after the change. On by default.</p>
+                </div>
+              {/if}
             </div>
             <Separator />
           {/each}
@@ -720,7 +742,7 @@
               <Checkbox bind:checked={settingsStore.draft.groveCharacters} />
               Show grove characters
             </label>
-            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, when no conversation is open, and walking through the grove while a conversation starts up again.</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Small pixel agents show each conversation's status by pose as well as colour: in the sidebar in place of the dot, in permission and question prompts, when no conversation is open, on empty Changes, Checkpoints and Preview tabs, and walking through the grove while a conversation starts up again.</p>
           </div>
 
           <Separator />
@@ -812,9 +834,9 @@
 
           <Separator />
 
-          <!-- Default Activity View -->
+          <!-- Default Thread View -->
           <div>
-            <Label class="mb-1 block">Default Activity View</Label>
+            <Label class="mb-1 block">Default Thread View</Label>
             <Select.Root type="single" value={settingsStore.draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
               <Select.Trigger class="w-48">
                 {VIEW_MODE_LABELS[settingsStore.draft.defaultActivityView] ?? 'Summary'}

@@ -5,6 +5,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import SettingsPanel from './SettingsPanel.svelte';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
+import { mcpConfigStore } from '../stores/mcpConfig.svelte.js';
 import type { AgentSummary, ControlDescriptor, GroveBenchSettings } from '../../shared/types.js';
 
 const claude: AgentSummary = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true };
@@ -14,7 +15,7 @@ const MODE: ControlDescriptor = {
   label: 'Mode',
   default: 'default',
   options: [
-    { value: 'default', label: 'Code', description: 'Ask before edits and non-trivial commands' },
+    { value: 'default', label: 'Ask', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
     { value: 'plan', label: 'Plan' },
     { value: 'acceptEdits', label: 'Edit', description: 'Auto-accept file edits inside the worktree' },
     { value: 'auto', label: 'Auto' },
@@ -25,7 +26,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false,
-    defaultModels: {}, adapterDefaults, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '',
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '',
     memoryAutoSave: true, memoryAutoCompact: false, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -41,7 +42,7 @@ async function openModeSelect() {
   const trigger = await screen.findByRole('button', { name: 'Claude Agent default mode' });
   trigger.focus();
   await fireEvent.keyDown(trigger, { key: 'Enter' });
-  await screen.findByRole('option', { name: 'Code' });
+  await screen.findByRole('option', { name: 'Ask' });
   return trigger;
 }
 
@@ -93,7 +94,7 @@ describe('SettingsPanel default permission mode', () => {
     await openAgentTab();
     await openModeSelect();
 
-    for (const name of ['Code', 'Plan', 'Edit', 'Auto', 'Read-safe']) {
+    for (const name of ['Ask', 'Plan', 'Edit', 'Auto', 'Read-safe']) {
       expect(screen.getByRole('option', { name })).toBeInTheDocument();
     }
     expect(screen.getByText('Grove Bench')).toBeInTheDocument();
@@ -110,9 +111,9 @@ describe('SettingsPanel default permission mode', () => {
 
     trigger.focus();
     await fireEvent.keyDown(trigger, { key: 'Enter' });
-    await screen.findByRole('option', { name: 'Code' });
-    await pick('Code');
-    await waitFor(() => expect(trigger).toHaveTextContent('Code'));
+    await screen.findByRole('option', { name: 'Ask' });
+    await pick('Ask');
+    await waitFor(() => expect(trigger).toHaveTextContent('Ask'));
     expect(settingsStore.draft.adapterDefaults).toEqual({});
   });
 
@@ -121,5 +122,70 @@ describe('SettingsPanel default permission mode', () => {
     await openAgentTab();
 
     expect(await screen.findByRole('button', { name: 'Claude Agent default mode' })).toHaveTextContent('Read-safe');
+  });
+});
+
+describe('SettingsPanel loading', () => {
+  it('keeps unsaved edits when an agent reports new models', async () => {
+    render(SettingsPanel, { open: true, onclose: vi.fn() });
+    await waitFor(() => expect(settingsStore.loading).toBe(false));
+    settingsStore.draft.theme = 'dark';
+
+    // What the models-changed listener does.
+    await agentsStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockGroveBench.getSettings).toHaveBeenCalledTimes(1);
+    expect(settingsStore.draft.theme).toBe('dark');
+  });
+
+  it('fetches the Agent tab\'s models once per models-changed event', async () => {
+    let fire!: () => void;
+    mockGroveBench.onModelsChanged.mockImplementation(((cb: () => void) => { fire = cb; return () => {}; }) as never);
+    mockGroveBench.listAdapters.mockResolvedValue([claude]);
+    await openAgentTab();
+    await waitFor(() => expect(mockGroveBench.getModels).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    mockGroveBench.getModels.mockClear();
+
+    fire();
+    await waitFor(() => expect(mockGroveBench.getModels).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockGroveBench.getModels).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a failed MCP listing in a loop', async () => {
+    agentsStore.list = [{ ...claude, capabilities: { mcpConfig: true } }];
+    mcpConfigStore.loaded = false;
+    mcpConfigStore.attempted = false;
+    mockGroveBench.mcpConfigList.mockRejectedValue(new Error('claude: command not found'));
+    render(SettingsPanel, { open: true, onclose: vi.fn() });
+    await waitFor(() => expect(settingsStore.loading).toBe(false));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'MCP' }));
+    await waitFor(() => expect(mcpConfigStore.error).toMatch(/command not found/));
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockGroveBench.mcpConfigList).toHaveBeenCalledTimes(1);
+    mockGroveBench.mcpConfigList.mockResolvedValue([]);
+  });
+});
+
+describe('SettingsPanel thinking summaries', () => {
+  it('is offered only for agents that can show thinking summaries', async () => {
+    await openAgentTab();
+    await screen.findByRole('button', { name: 'Claude Agent default mode' });
+    expect(screen.queryByText('Show thinking summaries')).not.toBeInTheDocument();
+  });
+
+  it('is on by default and turns off from the checkbox', async () => {
+    agentsStore.list = [{ ...claude, capabilities: { thinkingSummaries: true } }];
+    await openAgentTab();
+
+    const box = await screen.findByRole('checkbox', { name: 'Claude Agent show thinking summaries' });
+    expect(box).toBeChecked();
+    await fireEvent.click(box);
+    expect(settingsStore.draft.showThinkingSummaries).toBe(false);
   });
 });

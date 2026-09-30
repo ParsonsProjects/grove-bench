@@ -4,11 +4,17 @@ import { render, cleanup, screen, act } from '@testing-library/svelte';
 
 import GroveWalk from './GroveWalk.svelte';
 import { agentLook, AGENT_SPRITES } from '../lib/agent-sprite.js';
-import { WAKE_AWAKE_AT_MS, WAKE_WALK_AT_MS } from '../lib/grove-walk.js';
+import { WAKE_AWAKE_AT_MS, WAKE_WALK_AT_MS, ARRIVE_SIT_AT_MS, ARRIVE_TYPE_AT_MS } from '../lib/grove-walk.js';
+import { createRawSnippet } from 'svelte';
+
+function reducedMotion(on: boolean) {
+  window.matchMedia = vi.fn(() => ({ matches: on }) as MediaQueryList);
+}
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  reducedMotion(false);
 });
 
 describe('GroveWalk', () => {
@@ -84,6 +90,67 @@ describe('GroveWalk', () => {
       expect(screen.queryByText('Click or press any key to skip')).toBeNull();
       const path = container.querySelectorAll('g.layer')[1] as SVGGElement;
       expect(path.style.animationDelay).toBe('0s');
+    });
+  });
+
+  describe('arriving', () => {
+    const path = (container: HTMLElement) => container.querySelectorAll('g.layer')[1] as SVGGElement;
+
+    it('walks up the path to the bench, which then stays put', async () => {
+      vi.useFakeTimers();
+      const { container } = render(GroveWalk, { seed: 's1', spriteState: 'starting', arrival: Date.now() });
+      expect(container.querySelector('svg.seated')).toBeNull();
+      expect(container.querySelector('.strip')).not.toBeNull();
+      expect(path(container)).toHaveClass('arriving');
+      expect(container.querySelector('svg.walk')).not.toHaveClass('still');
+
+      await act(() => vi.advanceTimersByTime(ARRIVE_SIT_AT_MS));
+      expect(path(container)).not.toHaveClass('arriving');
+      expect(path(container)).toHaveClass('parked');
+      expect(container.querySelector('svg.walk')).toHaveClass('still');
+    });
+
+    it('sits down with its laptop, then types once its agent is working', async () => {
+      vi.useFakeTimers();
+      const arrival = Date.now();
+      const { container, rerender } = render(GroveWalk, { seed: 's1', spriteState: 'starting', arrival });
+      await act(() => vi.advanceTimersByTime(ARRIVE_SIT_AT_MS));
+      const seated = () => container.querySelector('svg.seated')!;
+      // Sat down: laptop open, not typing yet, in the sidebar's colour.
+      expect(seated()).toHaveClass(AGENT_SPRITES.starting.colorClass);
+      expect(seated().querySelector('.strip')).toBeNull();
+
+      // Its agent is working, but it takes a moment to settle first.
+      await rerender({ seed: 's1', spriteState: 'working', arrival });
+      expect(seated().querySelector('.strip')).toBeNull();
+
+      await act(() => vi.advanceTimersByTime(ARRIVE_TYPE_AT_MS - ARRIVE_SIT_AT_MS));
+      expect(seated()).toHaveClass(AGENT_SPRITES.working.colorClass);
+      expect(seated().querySelector('.strip')).not.toBeNull();
+    });
+
+    it('carries on from where it was when shown again part way through', () => {
+      // A frozen clock: under load, rendering can take long enough to move
+      // a real one past the expected delay.
+      vi.useFakeTimers();
+      const { container } = render(GroveWalk, { seed: 's1', arrival: Date.now() - ARRIVE_SIT_AT_MS / 2 });
+      expect(path(container)).toHaveClass('arriving');
+      expect(path(container).style.animationDelay).toBe('-1.5s');
+    });
+
+    it('is already on the bench with reduced motion', () => {
+      reducedMotion(true);
+      const { container } = render(GroveWalk, { seed: 's1', spriteState: 'working', arrival: Date.now() });
+      expect(path(container)).toHaveClass('parked');
+      expect(container.querySelector('svg.seated')).toHaveClass(AGENT_SPRITES.working.colorClass);
+    });
+
+    it('shows the caption it is given', () => {
+      const caption = createRawSnippet(() => ({ render: () => '<p>Thinking...</p>' }));
+      render(GroveWalk, { seed: 's1', arrival: Date.now(), caption });
+      expect(screen.getByText('Thinking...')).toBeInTheDocument();
+      expect(screen.queryByText('Starting agent...')).toBeNull();
+      expect(screen.queryByText('Click or press any key to skip')).toBeNull();
     });
   });
 });

@@ -1,12 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { triageState, matchesTriageFilter, triageCounts, TRIAGE_FILTERS } from './session-triage.js';
+import { triageForSprite, matchesTriageFilter, triageCounts, TRIAGE_FILTERS } from './session-triage.js';
+import { agentSpriteState } from './agent-sprite.js';
 
-describe('triageState', () => {
-  it('prioritises needs-you over working over unread', () => {
-    expect(triageState({ needsInput: true, running: true, unread: true })).toBe('needs-you');
-    expect(triageState({ needsInput: false, running: true, unread: true })).toBe('working');
-    expect(triageState({ needsInput: false, running: false, unread: true })).toBe('unread');
-    expect(triageState({ needsInput: false, running: false, unread: false })).toBe('idle');
+describe('triageForSprite', () => {
+  const triage = (s: Partial<Parameters<typeof agentSpriteState>[0]>) =>
+    triageForSprite(agentSpriteState({ destroying: false, status: 'running', hasPending: false, isRunning: false, needsAttention: false, ...s }));
+
+  it('prioritises needs-you over working over unread, as the status colour does', () => {
+    expect(triage({ hasPending: true, isRunning: true, needsAttention: true })).toBe('needs-you');
+    expect(triage({ isRunning: true, needsAttention: true })).toBe('working');
+    expect(triage({ needsAttention: true })).toBe('unread');
+    expect(triage({})).toBe('idle');
+  });
+
+  it('counts starting up as working', () => {
+    expect(triage({ status: 'starting' })).toBe('working');
+    expect(triage({ status: 'installing' })).toBe('working');
+  });
+
+  it('puts an errored conversation under no chip, even when it is also unread', () => {
+    expect(triage({ status: 'error', needsAttention: true })).toBe('idle');
+  });
+
+  it('puts quiet states under no chip', () => {
+    for (const status of ['stopped', 'sleeping']) expect(triage({ status })).toBe('idle');
+    expect(triage({ destroying: true, needsAttention: true })).toBe('idle');
   });
 });
 

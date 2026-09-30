@@ -7,7 +7,21 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
-import type { CrossSessionSearchHit } from '../../shared/types.js';
+import { AGENT_SPRITES } from '../lib/agent-sprite.js';
+import type { AgentEvent, CrossSessionSearchHit } from '../../shared/types.js';
+
+// Counts search index builds; otherwise the real Fuse.
+const fuseBuilds = vi.hoisted(() => ({ count: 0 }));
+vi.mock('fuse.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fuse.js')>();
+  class CountingFuse<T> extends actual.default<T> {
+    constructor(...args: ConstructorParameters<typeof actual.default<T>>) {
+      super(...args);
+      fuseBuilds.count++;
+    }
+  }
+  return { ...actual, default: CountingFuse };
+});
 
 const HITS: CrossSessionSearchHit[] = [
   { sessionId: 's2', eventIndex: 12, kind: 'assistant', snippet: 'fixed the parser edge case' },
@@ -50,6 +64,44 @@ function snippetMark(text: string): HTMLElement {
   return mark;
 }
 
+describe('SessionFinder: search index', () => {
+  afterEach(() => {
+    messageStore.messagesBySession = {};
+    messageStore.isRunning = {};
+  });
+
+  it('is not rebuilt when a conversation gets a message or starts running, only when its text changes', async () => {
+    messageStore.messagesBySession = { s1: [{ kind: 'user', id: 'u1', text: 'revamp the sidebar' }] } as any;
+    render(SessionFinder, { onclose: vi.fn() });
+    await screen.findByText('fix the parser bug');
+    // The index is only used (and built) while there is a query.
+    await typeQuery('parser');
+    const builds = fuseBuilds.count;
+
+    messageStore.ingestEvent('s1', { type: 'assistant_text', text: 'working on it', uuid: 'a1' } as AgentEvent);
+    messageStore.setIsRunning('s2', true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fuseBuilds.count).toBe(builds);
+
+    store.updateDisplayName('s2', 'Parser fix');
+    await typeQuery('Parser fix');
+    expect(fuseBuilds.count).toBe(builds + 1);
+    expect(screen.getByText('Parser fix', { exact: false })).toBeInTheDocument();
+  });
+
+  it('shows a conversation as running as soon as it starts', async () => {
+    render(SessionFinder, { onclose: vi.fn() });
+    const row = (await screen.findByText('fix-parser')).closest('button')!;
+    const dot = () => row.querySelector('[role="img"]')!.getAttribute('aria-label');
+    expect(dot()).not.toBe(AGENT_SPRITES.working.label);
+
+    messageStore.setIsRunning('s2', true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(dot()).toBe(AGENT_SPRITES.working.label);
+  });
+});
+
 describe('SessionFinder', () => {
   it('lists sessions with display names and preview prompts', async () => {
     render(SessionFinder, { onclose: vi.fn() });
@@ -58,6 +110,26 @@ describe('SessionFinder', () => {
     expect(screen.getByText('fix-parser')).toBeInTheDocument();
     // Preview-derived first prompt for the stopped session (no loaded messages)
     expect(await screen.findByText('fix the parser bug')).toBeInTheDocument();
+  });
+
+  it('shows the same status dot as the sidebar', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'starting', displayName: 'Booting' },
+      { id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'running', displayName: 'Idle one' },
+    ] as any;
+    render(SessionFinder, { onclose: vi.fn() });
+    expect(screen.getByRole('img', { name: 'Starting' })).toHaveClass(AGENT_SPRITES.starting.colorClass);
+    expect(screen.getByRole('img', { name: 'Ready' })).toHaveClass(AGENT_SPRITES.ready.colorClass);
+  });
+
+  it('shows a loaded first prompt as plain text, like the preview of an unloaded one', async () => {
+    messageStore.messagesBySession = { s1: [{ kind: 'user', id: 'u1', text: '## Plan\n- fix **the** parser' }] } as any;
+    try {
+      render(SessionFinder, { onclose: vi.fn() });
+      expect(screen.getByText('Plan fix the parser')).toBeInTheDocument();
+    } finally {
+      messageStore.messagesBySession = {};
+    }
   });
 
   it('searches conversations across sessions and shows snippets', async () => {
@@ -124,5 +196,42 @@ describe('SessionFinder', () => {
     render(SessionFinder, { onclose: vi.fn() });
     await typeQuery('p');
     expect(mockGroveBench.searchAllEventHistory).not.toHaveBeenCalled();
+  });
+
+  it('drops message hits for a query that was cleared while they loaded', async () => {
+    messageStore.clearJump('s2'); // left by an earlier test
+    let finish!: (hits: CrossSessionSearchHit[]) => void;
+    mockGroveBench.searchAllEventHistory.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    render(SessionFinder, { onclose: vi.fn() });
+    await typeQuery('parser');
+    await typeQuery('');
+
+    finish(HITS);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // With the stale hit counted, the arrow keys could reach it though it
+    // isn't shown, and Enter would jump into that conversation's messages.
+    const input = screen.getByPlaceholderText('Search conversations and messages...');
+    for (let i = 0; i < 3; i++) await fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(messageStore.pendingJumpBySession['s2']).toBeUndefined();
+    messageStore.clearJump('s2');
+  });
+
+  it('does not select past an empty list, so Enter after late hits opens the first one', async () => {
+    let finish!: (hits: CrossSessionSearchHit[]) => void;
+    mockGroveBench.searchAllEventHistory.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    const onclose = vi.fn();
+    cleanup();
+    render(SessionFinder, { onclose });
+    const input = screen.getByPlaceholderText('Search conversations and messages...');
+    await fireEvent.input(input, { target: { value: 'zzqq edge' } }); // no conversation matches
+    await fireEvent.keyDown(input, { key: 'ArrowDown' });
+    await new Promise((r) => setTimeout(r, 200));
+    finish(HITS);
+    await new Promise((r) => setTimeout(r, 0));
+
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onclose).toHaveBeenCalledWith('s2');
   });
 });
