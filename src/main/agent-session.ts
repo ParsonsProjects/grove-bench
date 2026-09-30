@@ -2095,6 +2095,10 @@ class AgentSessionManager {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Conversation ${id} not found`);
 
+    // A running turn would keep editing files while, and after, they are
+    // restored. Stop it first; the query itself is restarted at the end.
+    if (this.isMidTurn(id)) await this.interruptQuery(id);
+
     // A checkpoint whose message is no longer in the conversation (rewound
     // away earlier, or from before a /clear) can only have its files restored.
     // Without this guard the fork point below would come back null and the

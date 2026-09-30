@@ -2061,6 +2061,39 @@ describe('AgentSessionManager.listSessions()', () => {
 });
 
 describe('AgentSessionManager.rewindFiles()', () => {
+  it('stops a running turn before restoring files', async () => {
+    await sessionManager.createSession({
+      id: 'test-rewind-midturn', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rewind-midturn')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-rewind-midturn')!;
+    await sessionManager.sendMessage('test-rewind-midturn', 'Refactor everything');
+    const uuid = (session.eventHistory.find((e) => e.type === 'user_message') as { uuid: string }).uuid;
+    const handle = session.queryHandle!;
+    expect(sessionManager.isMidTurn('test-rewind-midturn')).toBe(true);
+
+    await sessionManager.rewindFiles('test-rewind-midturn', uuid, { filesOnly: true });
+
+    expect(handle.interrupt).toHaveBeenCalled();
+    expect(vi.mocked(handle.interrupt!).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(session.checkpoints.restore).mock.invocationCallOrder[0]);
+    await sessionManager.destroySession('test-rewind-midturn');
+  });
+
+  it('leaves an idle agent alone when restoring files only', async () => {
+    await sessionManager.createSession({
+      id: 'test-rewind-idle', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rewind-idle')?.queryHandle).toBeTruthy());
+    const session = sessionManager.getSession('test-rewind-idle')!;
+
+    await sessionManager.rewindFiles('test-rewind-idle', 'gone-uuid', { filesOnly: true });
+
+    expect(session.queryHandle!.interrupt).not.toHaveBeenCalled();
+    expect(session.checkpoints.restore).toHaveBeenCalled();
+    await sessionManager.destroySession('test-rewind-idle');
+  });
+
   it('clears providerSessionId so the next query starts fresh', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -2231,6 +2264,8 @@ describe('AgentSessionManager.rewindFiles()', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     await sessionManager.sendMessage('test-rewind-files-only', 'Hello');
+    // The turn has finished: nothing to interrupt before the restore.
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
     await new Promise((r) => setTimeout(r, 50));
 
     const session = sessionManager.getSession('test-rewind-files-only')!;
