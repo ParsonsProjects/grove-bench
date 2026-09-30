@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -452,6 +452,33 @@ describe('buildMcpAddArgs()', () => {
   it('rejects unsafe server names and env keys', () => {
     expect(() => buildMcpAddArgs({ name: 'bad name', transport: 'http', commandOrUrl: 'https://x', scope: 'user' })).toThrow();
     expect(() => buildMcpAddArgs({ name: 'ok', transport: 'stdio', commandOrUrl: 'npx', env: { 'BAD KEY': 'v' }, scope: 'user' })).toThrow();
+  });
+});
+
+describe('plugin and scope arguments for the claude CLI', () => {
+  it('accepts plugin ids as the CLI lists them', () => {
+    expect(validatePluginId('code-review@claude-plugins-official')).toBe('code-review@claude-plugins-official');
+    expect(validatePluginId('figma')).toBe('figma');
+  });
+
+  it('refuses plugin ids with shell characters, spaces or a leading dash', () => {
+    for (const id of ['a&b', 'a|b', 'a b', 'a"b', '%x%', '-rf', '', 42]) {
+      expect(() => validatePluginId(id), String(id)).toThrow('Invalid plugin id');
+    }
+  });
+
+  it('refuses unknown scopes and transports', () => {
+    expect(validateConfigScope('project')).toBe('project');
+    expect(() => validateConfigScope('user & x')).toThrow('Invalid scope');
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'http', commandOrUrl: 'https://x', scope: 'global' as never })).toThrow('Invalid scope');
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'ws' as never, commandOrUrl: 'https://x', scope: 'user' })).toThrow('Invalid transport');
+  });
+
+  it('refuses a bad plugin id before running the CLI', async () => {
+    const adapter = new ClaudeCodeAdapter();
+    await expect(adapter.installPlugin('x & y')).rejects.toThrow('Invalid plugin id');
+    await expect(adapter.installPlugin('ok', 'all')).rejects.toThrow('Invalid scope');
+    await expect(adapter.disablePlugin('x|y')).rejects.toThrow('Invalid plugin id');
   });
 });
 

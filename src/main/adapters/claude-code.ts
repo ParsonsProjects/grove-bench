@@ -1097,6 +1097,27 @@ export function validateMcpName(name: string): void {
   }
 }
 
+/** Plugin ids as the CLI lists them (`name@marketplace`). The claude CLI runs
+ *  through the shell (a .cmd shim on Windows), and ids reach it from the
+ *  renderer and, before that, from marketplace listings that may be
+ *  third-party, so only shell-inert characters are accepted, and no leading
+ *  dash (it would read as a CLI option). */
+export function validatePluginId(id: unknown): string {
+  if (typeof id !== 'string' || id.startsWith('-') || !/^[A-Za-z0-9._\/:@+-]+$/.test(id)) {
+    throw new Error(`Invalid plugin id: ${String(id).slice(0, 80)}`);
+  }
+  return id;
+}
+
+const CONFIG_SCOPES: ReadonlySet<string> = new Set<McpConfigScope>(['local', 'user', 'project']);
+const MCP_TRANSPORTS: ReadonlySet<string> = new Set(['stdio', 'http', 'sse']);
+
+/** A settings scope for the claude CLI's -s/--scope; anything else throws. */
+export function validateConfigScope(scope: unknown): McpConfigScope {
+  if (typeof scope !== 'string' || !CONFIG_SCOPES.has(scope)) throw new Error(`Invalid scope: ${String(scope).slice(0, 40)}`);
+  return scope as McpConfigScope;
+}
+
 /**
  * Quote a single argument for execFile with `shell: true` (cmd.exe on
  * Windows joins args with spaces and does NOT quote them). Values that could
@@ -1167,7 +1188,8 @@ interface McpAuthenticateResponse {
 /** Build the `claude mcp add ...` argument list for the given options. */
 export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   validateMcpName(opts.name);
-  const args = ['mcp', 'add', '-s', opts.scope, '-t', opts.transport];
+  if (!MCP_TRANSPORTS.has(opts.transport)) throw new Error(`Invalid transport: ${String(opts.transport).slice(0, 40)}`);
+  const args = ['mcp', 'add', '-s', validateConfigScope(opts.scope), '-t', opts.transport];
   for (const [key, value] of Object.entries(opts.env ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       throw new Error(`Invalid environment variable name: ${key}`);
@@ -1818,7 +1840,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       throw new Error(`${name} can't be removed from Grove Bench (${managedBy.label}). ${managedBy.hint}`);
     }
     validateMcpName(name);
-    const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
+    const args = ['mcp', 'remove', ...(scope ? ['-s', validateConfigScope(scope)] : []), quoteArg(name)];
     await execFileAsync('claude', args, {
       shell: true,
       ...(cwd ? { cwd } : {}),
@@ -1838,19 +1860,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'install', pluginId, '--scope', scope], { shell: true });
+    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true });
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'uninstall', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true });
   }
 
   async enablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'enable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true });
   }
 
   async disablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'disable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true });
   }
 
   // ─── Text generation (for memory extraction) ───
