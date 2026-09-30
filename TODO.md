@@ -120,11 +120,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Maintenance & Hygiene
 - [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
-- [x] Tests for the IPC layer — `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
+- [x] Tests for the IPC layer: `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
 - [ ] Component tests (5 of 42 Svelte components covered) and E2E tests (Playwright)
 - [ ] In-app log viewer or "open logs folder" action; configurable log level
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
-- [ ] Measure live conversation memory — a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
+- [ ] Measure live conversation memory: a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
 - [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)
