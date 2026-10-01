@@ -41,7 +41,7 @@ const m = vi.hoisted(() => {
       'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
     prerequisites: fns('apiKeyState', 'checkCorePrerequisites', 'checkGh'),
-    credentials: fns('clearApiKey', 'saveApiKey'),
+    credentials: fns('canStoreApiKey', 'clearApiKey', 'parseApiKey', 'saveApiKey'),
     bookmarks: fns('getBookmarks', 'addBookmark', 'removeBookmark', 'updateBookmark', 'removeBookmarksForSession'),
     memoryCompact: fns('compactMemory', 'cancelCompaction', 'onCompactionEvent', 'listBackups', 'restoreBackup', 'getCompactionInfo', 'previewBackup', 'readBackupFile'),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -798,6 +798,22 @@ describe('history', () => {
     expect(texts({ events: invoke(IPC.AGENT_HISTORY, id) })).toEqual(['h0', 'h1', 'h2']);
   });
 
+  it('hands the setup status to the new conversation, which keeps it in its history', async () => {
+    let adopted: AgentEvent[] = [];
+    let countDuringAdoption = -1;
+    m.sessionManager.getEventHistoryCount.mockReturnValue(0);
+    m.sessionManager.createSession.mockImplementation(async (opts: { id: string; adoptSetupEvents?: () => AgentEvent[] }) => {
+      adopted = opts.adoptSetupEvents?.() ?? [];
+      // Taken in the same tick: the prefixed index space no longer counts them.
+      countDuringAdoption = invoke(IPC.AGENT_HISTORY_COUNT, opts.id);
+    });
+    await invoke(IPC.SESSION_CREATE, { repoPath: '/repo', branchName: '' });
+    await lastSetup().promise;
+
+    expect(adopted.map((e) => (e as { message: string }).message)).toEqual(['Creating worktree…', 'Starting agent…']);
+    expect(countDuringAdoption).toBe(0);
+  });
+
   it('cross-conversation search gives up once a newer search starts', async () => {
     // Each search takes longer than one 16ms slice, so the handler yields.
     m.sessionManager.searchEventHistory.mockImplementation(() => {
@@ -1052,6 +1068,11 @@ describe('pull requests', () => {
 describe('prerequisites and API keys', () => {
   const claude = { id: 'claude', displayName: 'Claude Code', apiKey: { envVar: 'ANTHROPIC_API_KEY' } };
 
+  beforeEach(() => {
+    m.credentials.parseApiKey.mockImplementation((k: unknown) => String(k).trim());
+    m.credentials.canStoreApiKey.mockReturnValue(true);
+  });
+
   it('saving a key patches the last check instead of re-running every probe', async () => {
     m.adapterRegistry.get.mockReturnValue(claude);
     m.appState.loadPrerequisiteCache.mockReturnValue({
@@ -1061,10 +1082,47 @@ describe('prerequisites and API keys', () => {
 
     const status = await invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'sk-test');
 
-    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test');
+    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test', { unverified: false });
     expect(status.agents.claude).toEqual({ installed: true, apiKey: 'set' });
     expect(m.prerequisites.checkCorePrerequisites).not.toHaveBeenCalled();
     expect(m.appState.savePrerequisiteCache).toHaveBeenCalledWith(status);
+  });
+
+  it('checks the key with the provider before saving it', async () => {
+    const verifyApiKey = vi.fn().mockResolvedValue(true);
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey });
+    m.appState.loadPrerequisiteCache.mockReturnValue({ status: { git: {}, agents: { claude: {} } } });
+
+    await invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', '  sk-test  ');
+
+    expect(verifyApiKey).toHaveBeenCalledWith('sk-test');
+    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test', { unverified: false });
+  });
+
+  it('turns away a key the provider refuses, without saving it', async () => {
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey: vi.fn().mockResolvedValue(false) });
+
+    await expect(invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'typo')).rejects.toThrow('That key was refused');
+    expect(m.credentials.saveApiKey).not.toHaveBeenCalled();
+  });
+
+  it('saves a key it could not check, marked unchecked', async () => {
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey: vi.fn().mockResolvedValue(null) });
+    m.appState.loadPrerequisiteCache.mockReturnValue({ status: { git: {}, agents: { claude: {} } } });
+
+    await invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'sk-test');
+
+    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test', { unverified: true });
+  });
+
+  it('says there is no secure storage before sending the key anywhere', async () => {
+    const verifyApiKey = vi.fn();
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey });
+    m.credentials.canStoreApiKey.mockReturnValue(false);
+
+    await expect(invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'sk-test')).rejects.toThrow('no secure storage');
+    expect(verifyApiKey).not.toHaveBeenCalled();
+    expect(m.credentials.saveApiKey).not.toHaveBeenCalled();
   });
 
   it('refuses an unknown agent or one that takes no key', async () => {

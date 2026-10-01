@@ -143,3 +143,40 @@ describe('WorkspacePane tabs', () => {
     expect(await screen.findByText('Working tree clean')).toBeInTheDocument();
   });
 });
+
+describe('WorkspacePane loading a new conversation', () => {
+  it("shows the first message once when it arrives live while the history loads (it's in the page too)", async () => {
+    store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'running' }] as never;
+    store.activeSessionId = SID;
+    gitStatusStore.statusBySession = { [SID]: { entries: [] } };
+    let live: ((event: unknown) => void) | undefined;
+    mockGroveBench.onAgentEvent.mockImplementation(((_id: string, cb: (event: unknown) => void) => {
+      live = cb;
+      return vi.fn();
+    }) as never);
+    const first = [
+      { type: 'status', message: 'Creating worktree…' },
+      { type: 'status', message: 'Starting agent…' },
+      { type: 'status', message: 'Connecting to Claude Agent' },
+      { type: 'user_message', text: 'Add a hello world test', uuid: 'u1' },
+    ];
+    const later = { type: 'status', message: 'Connected to claude-opus' };
+    type Page = { events: unknown[]; totalCount: number; startIndex: number };
+    let answerPage: (page: Page) => void = () => {};
+    mockGroveBench.getEventHistoryPage.mockImplementationOnce((() => new Promise<Page>((r) => { answerPage = r; })) as never);
+
+    render(WorkspacePane, { sessionId: SID });
+    await waitFor(() => expect(live).toBeDefined());
+    // While the page is on its way: the last three steps arrive live...
+    for (const event of first.slice(1)) live!(event);
+    // ...and the page, read after main logged them, has all four.
+    answerPage({ events: first, totalCount: first.length, startIndex: 0 });
+    await waitFor(() => expect(messageStore.isHistoryLoaded(SID)).toBe(true));
+    live!(later);
+
+    const texts = messageStore.getMessages(SID).map((m) => ('text' in m ? m.text : m.kind));
+    expect(texts).toEqual([
+      'Creating worktree…', 'Starting agent…', 'Connecting to Claude Agent', 'Add a hello world test', 'Connected to claude-opus',
+    ]);
+  });
+});

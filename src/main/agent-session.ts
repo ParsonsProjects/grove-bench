@@ -14,6 +14,7 @@ import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/typ
 import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
+import { markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
@@ -43,6 +44,14 @@ export type { SessionCompletionResult } from './session-types.js';
 // limit of 10 and trigger a MaxListenersExceededWarning.  Raise the cap so the
 // warning doesn't fire under normal multi-session use.
 process.setMaxListeners(50);
+
+/** The error event for an agent that failed to run: the adapter's sign-in
+ *  help when the failure reads as a sign-in problem, else the error itself. */
+function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
+  return isAuthFailure(detail)
+    ? { type: 'error', message: adapter.authErrorMessage, auth: true }
+    : { type: 'error', message: detail };
+}
 
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
@@ -82,6 +91,11 @@ class AgentSessionManager {
   private createEmitter(session: ManagedSession): Emit {
     const id = session.id;
     const emit = (event: AgentEvent) => {
+      // The provider refused the credentials. A saved key is used instead of
+      // any other sign-in, so when one is saved it is the bad one: flag it so
+      // new conversations ask for another.
+      if (event.type === 'error' && event.keyRejected) markApiKeyRejected(session.adapter.id);
+
       // Streaming deltas and activity ticks are only useful live: the renderer
       // drops them on replay, search ignores them, and memory extraction never
       // reads them. Keeping them would grow eventHistory and the JSONL log by
@@ -131,6 +145,11 @@ class AgentSessionManager {
     /** Runs in a folder without git (the worktree entry's `noGit`): no
      *  checkpoints and no commit identity. */
     noGit?: boolean;
+    /** Hands over events already shown while the conversation was being set
+     *  up ("Creating worktree…"), to start its history with. Called once, in
+     *  the same tick the session becomes visible, so the caller can drop its
+     *  own copy then and a history read never sees them twice. */
+    adoptSetupEvents?: () => AgentEvent[];
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -227,6 +246,10 @@ class AgentSessionManager {
 
     this.events.ensureDir();
 
+    // Keep the setup steps in the history: they were only held until now,
+    // and a pane that loads the history later would otherwise miss them.
+    for (const event of opts.adoptSetupEvents?.() ?? []) this.events.append(session, event);
+
     const emit = this.createEmitter(session);
 
     // Tell the renderer which mode the conversation starts in. It shows
@@ -244,11 +267,7 @@ class AgentSessionManager {
 
     this.runQuery(session, emit).catch((err) => {
         console.error(`[runQuery] session=${id} FAILED:`, err);
-        const errMsg = String(err.message || err);
-        const isAuthError = isAuthFailure(errMsg);
-        emit({ type: 'error', message: isAuthError
-          ? adapter.authErrorMessage
-          : errMsg });
+        emit(failureEvent(adapter, String(err.message || err)));
         session.status = 'error';
         const w = session.window;
         if (!w.isDestroyed()) {
@@ -286,9 +305,7 @@ class AgentSessionManager {
     const emit = session.emit ?? this.createEmitter(session);
     this.runQuery(session, emit, resend).catch((err) => {
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
-      const errMsg = String(err?.message || err);
-      const isAuthError = isAuthFailure(errMsg);
-      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
       if (!session.window.isDestroyed()) {
         session.window.webContents.send(IPC.SESSION_STATUS, session.id, 'error');
@@ -645,7 +662,7 @@ class AgentSessionManager {
 
         const isAuthError = isAuthFailure(detail);
         if (isAuthError) {
-          emit({ type: 'error', message: session.adapter.authErrorMessage });
+          emit(failureEvent(session.adapter, detail));
         } else {
           emit({ type: 'error', message: detail.slice(0, 500) });
         }
@@ -1287,11 +1304,7 @@ class AgentSessionManager {
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED after stop:`, err);
-      const errMsg = String(err.message || err);
-      const isAuthError = isAuthFailure(errMsg);
-      emit({ type: 'error', message: isAuthError
-        ? session.adapter.authErrorMessage
-        : errMsg });
+      emit(failureEvent(session.adapter, String(err.message || err)));
     });
   }
 
@@ -1366,9 +1379,7 @@ class AgentSessionManager {
       await this.runQuery(session, emit);
     })().catch((err) => {
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
-      const errMsg = String(err?.message || err);
-      const isAuthError = isAuthFailure(errMsg);
-      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
       if (!session.window.isDestroyed()) {
         session.window.webContents.send(IPC.SESSION_STATUS, id, 'error');

@@ -344,6 +344,11 @@ export interface AgentAdapter {
   /** Set when the provider accepts an API key entered in the app. */
   readonly apiKey?: ApiKeyDescriptor;
 
+  /** Ask the provider whether `key` works, before it is saved: true when it
+   *  is accepted, false when it is refused, null when that couldn't be told
+   *  (offline, a custom endpoint). Omit to save keys unchecked. */
+  verifyApiKey?(key: string): Promise<boolean | null>;
+
   /** Set when the user can sign in with the provider's CLI instead. */
   readonly cliSignIn?: CliSignInDescriptor;
 

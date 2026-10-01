@@ -154,7 +154,9 @@
     {#if status?.apiKey}
       <div data-setting="credentials" class="flex flex-col gap-2">
         <p class="text-xs text-muted-foreground">
-          {#if status.apiKey.saved}
+          {#if status.apiKey.saved && status.apiKey.rejected}
+            The saved API key was refused.
+          {:else if status.apiKey.saved}
             Using the saved API key.
           {:else if status.authenticated}
             Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.

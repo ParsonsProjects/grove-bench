@@ -15,6 +15,8 @@
 
   let value = $state('');
   let busy = $state(false);
+  /** Saving, which first asks the provider whether it takes the key. */
+  let checking = $state(false);
   let error = $state('');
   let inputEl = $state<HTMLInputElement | null>(null);
 
@@ -29,6 +31,7 @@
   async function save() {
     if (!value.trim() || busy) return;
     busy = true;
+    checking = true;
     error = '';
     try {
       await prerequisitesStore.saveApiKey(adapterId, value);
@@ -37,6 +40,7 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
+      checking = false;
     }
   }
 
@@ -80,9 +84,18 @@
           onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') save(); }}
         />
         <Button onclick={save} disabled={!value.trim() || busy}>
-          Save key
+          {checking ? 'Checking…' : 'Save key'}
         </Button>
       </div>
+      {#if apiKey.saved && apiKey.rejected}
+        <p class="text-xs text-destructive" role="alert">
+          The saved key was refused when a conversation used it. Paste a new key, or remove it to use your CLI sign-in instead.
+        </p>
+      {:else if apiKey.saved && apiKey.unverified}
+        <p class="text-xs text-muted-foreground" role="status">
+          Saved, but it couldn't be checked: Grove Bench couldn't reach the provider. Your first conversation will show if it works.
+        </p>
+      {/if}
       <p class="text-xs text-muted-foreground">
         {#if apiKey.billingNote}{apiKey.billingNote}{' '}{/if}Stored encrypted on this computer. While saved, it is used instead of a CLI sign-in.
       </p>

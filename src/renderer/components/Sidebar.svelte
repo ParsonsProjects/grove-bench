@@ -1004,7 +1004,9 @@
 
   <div class="flex-1 overflow-auto px-3 py-3 {collapsed ? 'hidden' : ''}">
     <!-- Triage filter: what needs me, what is working, what finished while I was away.
-         Click a chip to show only those; click it again to show all. -->
+         Click a chip to show only those; click it again to show all. Hidden,
+         with the sort, until there is a conversation to filter. -->
+    {#if store.sessions.length > 0}
     <div class="flex items-center gap-1 mb-2 px-1" role="group" aria-label="Filter conversations">
       {#each CHIP_FILTERS as f (f)}
         {@const n = counts[f]}
@@ -1026,15 +1028,18 @@
         </button>
       {/each}
     </div>
+    {/if}
 
     <!-- CONVERSATIONS: the live working set, always visible at the top. The sort
          applies to the Projects tree too. -->
     <div class="flex items-center justify-between mb-1 px-1">
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Conversations</span>
-      <div class="flex items-center" role="group" aria-label="Sort conversations">
-        {@render sortButton('name', 'Name')}
-        {@render sortButton('age', 'Age')}
-      </div>
+      {#if store.sessions.length > 0}
+        <div class="flex items-center" role="group" aria-label="Sort conversations">
+          {@render sortButton('name', 'Name')}
+          {@render sortButton('age', 'Age')}
+        </div>
+      {/if}
     </div>
 
     {#if draftStore.draft}

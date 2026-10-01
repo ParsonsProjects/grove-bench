@@ -9,7 +9,7 @@ import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from
 import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
-import { clearApiKey, saveApiKey } from './credentials.js';
+import { canStoreApiKey, clearApiKey, parseApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
@@ -416,6 +416,11 @@ export function registerHandlers() {
           permissionMode,
           model,
           controls,
+          adoptSetupEvents: () => {
+            const events = prelaunchEvents.get(id) ?? [];
+            prelaunchEvents.delete(id);
+            return events;
+          },
         });
 
         logger.info(`Session created: id=${worktree.id}`);
@@ -809,9 +814,20 @@ export function registerHandlers() {
     return adapter;
   }
 
-  ipcMain.handle(IPC.CREDENTIALS_SET_API_KEY, async (_event, adapterId: unknown, key: unknown): Promise<PrerequisiteStatus> => {
+  // A key the provider refuses is turned away here, so a typo shows up next
+  // to the field rather than after a conversation has been created. When the
+  // provider can't be reached the key is saved anyway and marked unchecked.
+  ipcMain.handle(IPC.CREDENTIALS_SET_API_KEY, async (_event, adapterId: unknown, rawKey: unknown): Promise<PrerequisiteStatus> => {
     const adapter = adapterForKey(adapterId);
-    saveApiKey(adapter.id, key);
+    const key = parseApiKey(rawKey);
+    if (!canStoreApiKey()) {
+      throw new Error('This computer has no secure storage, so the API key cannot be saved.');
+    }
+    const accepted = adapter.verifyApiKey ? await adapter.verifyApiKey(key) : true;
+    if (accepted === false) {
+      throw new Error('That key was refused. Check you copied all of it, or create a new one.');
+    }
+    saveApiKey(adapter.id, key, { unverified: accepted === null });
     return withFreshApiKeyState(adapter);
   });
 

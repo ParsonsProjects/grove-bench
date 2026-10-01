@@ -1,4 +1,5 @@
 import type { GroveBenchSettings, ToolRule } from '../../shared/types.js';
+import type { SettingsSectionId } from '../lib/settings-search.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolAllowRules: [],
@@ -62,6 +63,14 @@ class SettingsStore {
   error = $state<string | null>(null);
   /** Whether the Settings panel is open (gear button or Ctrl+,). */
   panelOpen = $state(false);
+  /** The section Settings should show when it next opens (see openAt). */
+  requestedSection = $state<SettingsSectionId | null>(null);
+
+  /** Open Settings at one section, for links such as "fix your sign-in". */
+  openAt(section: SettingsSectionId) {
+    this.requestedSection = section;
+    this.panelOpen = true;
+  }
 
   get dirty(): boolean {
     return JSON.stringify(this.current) !== JSON.stringify(this.draft);

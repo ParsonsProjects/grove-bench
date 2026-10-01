@@ -17,6 +17,7 @@ import type {
   ToolImageData,
   UserMessage,
 } from './types.js';
+import { net } from 'electron';
 import { ResumeNotFoundError } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
@@ -31,6 +32,10 @@ import { promisify } from 'node:util';
 import * as path from 'node:path';
 
 const execFileAsync = promisify(execFile);
+
+/** Shown when Claude can't sign in: a bad or revoked API key, or an expired
+ *  Claude Code sign-in. */
+export const CLAUDE_AUTH_ERROR_MESSAGE = 'Claude couldn\'t sign in. Check or replace your Anthropic API key in Settings → Agents (Grovekeepers), or run "claude" in a terminal and sign in, then try again.';
 
 // ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
 
@@ -396,6 +401,13 @@ export function transformMessage(
     }
 
     case 'assistant': {
+      // The API refused the credentials. The message's text is the CLI's own
+      // ("Invalid API key · Fix external API key"), which names nothing in
+      // Grove, so say where to fix it instead.
+      if ((message as { error?: string }).error === 'authentication_failed') {
+        events.push({ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true });
+        break;
+      }
       // A subagent's messages carry the id of the Agent call that started it.
       // Tagged with it, they go to that subagent's own thread instead of
       // reading as the main agent's reply.
@@ -1320,6 +1332,38 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
   return null;
 }
 
+/** Lists one model: it needs only the key and runs no model, so it shows
+ *  whether Anthropic accepts a key (https://platform.claude.com/docs/en/api/models/list). */
+const API_KEY_CHECK_URL = 'https://api.anthropic.com/v1/models?limit=1';
+const API_KEY_CHECK_TIMEOUT_MS = 10_000;
+
+type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
+
+/** Whether Anthropic accepts `key`: true when it does, false when it answers
+ *  401, null when that couldn't be told (offline, a proxy in the way, an
+ *  outage). With ANTHROPIC_BASE_URL set, conversations go to that endpoint
+ *  instead, which may take other keys, so nothing is checked. Uses Electron's
+ *  network stack, which follows the system's proxy settings. */
+export async function verifyAnthropicKey(
+  key: string,
+  { env = process.env, fetchFn = (url, init) => net.fetch(url, init) }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
+): Promise<boolean | null> {
+  if (env.ANTHROPIC_BASE_URL?.trim()) return null;
+  try {
+    const res = await fetchFn(API_KEY_CHECK_URL, {
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      signal: AbortSignal.timeout(API_KEY_CHECK_TIMEOUT_MS),
+    });
+    if (res.ok) return true;
+    if (res.status === 401) return false;
+    logger.debug(`[ClaudeCodeAdapter] API key check answered ${res.status}`);
+    return null;
+  } catch (err) {
+    logger.debug('[ClaudeCodeAdapter] API key check failed:', err);
+    return null;
+  }
+}
+
 /**
  * Query options that keep generateText to a single reply. The model gets no
  * tools: a tool call would use up the one turn and fail the query with
@@ -1345,7 +1389,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Grovekeepers (Agents), or run "claude" in a terminal and sign in, then try again.';
+  readonly authErrorMessage = CLAUDE_AUTH_ERROR_MESSAGE;
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
@@ -1381,6 +1425,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   };
 
   constructor(private readonly modelStore: ModelCatalogStore = appStateModelStore) {}
+
+  verifyApiKey(key: string): Promise<boolean | null> {
+    return verifyAnthropicKey(key);
+  }
 
   // ─── Models ───
   // The list comes from the SDK (`Query.supportedModels()`), read when a
