@@ -7,6 +7,7 @@
   import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
   import PluginCard from './PluginCard.svelte';
   import ApiKeyField from './ApiKeyField.svelte';
+  import UpdateSettings from './UpdateSettings.svelte';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -958,6 +959,10 @@
             Send crash reports
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">When something goes wrong, send the error message and stack trace along with the usage data. Requires usage data to be on. Never includes prompts, code, or project paths.</p>
+
+          <Separator />
+
+          <UpdateSettings />
         </div>
 
       {:else if tab === 'mcp'}
