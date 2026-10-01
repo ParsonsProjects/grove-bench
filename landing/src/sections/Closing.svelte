@@ -1,10 +1,11 @@
 <script>
+  import { trackLandingEvent } from '../lib/analytics.js';
   import Tree from '../shared/Tree.svelte';
   import BenchSeat from '../shared/BenchSeat.svelte';
   import Pixels from '../shared/Pixels.svelte';
   import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
   import { MOON, MOON_COLORS } from './sky.js';
-  import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
+  import { DownloadIcon, GithubIcon } from '../lib/icons.js';
   import Branch from './Branch.svelte';
   import { arrive } from './scroll.svelte.js';
   import { links } from './content.js';
@@ -39,11 +40,11 @@
     </div>
     <div class="btns rise" use:arrive>
       <div>
-        <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
+        <a class="d-btn" href={links.releases} target="_blank" rel="noopener" onclick={() => trackLandingEvent('download_click', { location: 'trail-cta' })}>{@html DownloadIcon} Download for Windows</a>
         <p class="btn-note">free · Windows 10 or later</p>
       </div>
       <div>
-        <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener">{@html GithubIcon} View source</a>
+        <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener" onclick={() => trackLandingEvent('github_click', { location: 'trail-cta' })}>{@html GithubIcon} View source</a>
         <p class="btn-note">source-available, FSL-1.1-MIT</p>
       </div>
     </div>

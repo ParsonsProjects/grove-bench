@@ -1,5 +1,6 @@
 <script>
-  import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
+  import { trackLandingEvent } from '../lib/analytics.js';
+  import { DownloadIcon, GithubIcon } from '../lib/icons.js';
   import Branch from './Branch.svelte';
   import { arrive } from './scroll.svelte.js';
   import { INCLUDED, DOCS, links } from './content.js';
@@ -23,7 +24,7 @@
         </p>
         <p class="lede">You bring the AI: a Claude plan (Pro, Max, Team or Enterprise) with Claude Code, or an Anthropic API key.</p>
         <div class="btn">
-          <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
+          <a class="d-btn" href={links.releases} target="_blank" rel="noopener" onclick={() => trackLandingEvent('download_click', { location: 'trail-free' })}>{@html DownloadIcon} Download for Windows</a>
           <p class="btn-note">Windows 10 or later</p>
         </div>
       </div>
@@ -44,8 +45,8 @@
         <p>Read the source, or the same help pages the app ships with.</p>
       </div>
       <div class="btns">
-        <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener">{@html GithubIcon} View source</a>
-        <a class="d-btn ghost" href={DOCS} target="_blank" rel="noopener">Read the help ↗</a>
+        <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener" onclick={() => trackLandingEvent('github_click', { location: 'trail-free' })}>{@html GithubIcon} View source</a>
+        <a class="d-btn ghost" href={DOCS} target="_blank" rel="noopener" onclick={() => trackLandingEvent('docs_click', { location: 'trail-free' })}>Read the help ↗</a>
       </div>
     </div>
   </div>

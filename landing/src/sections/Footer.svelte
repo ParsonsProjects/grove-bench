@@ -1,6 +1,7 @@
 <script>
-  import { treeGreens } from '../../src/lib/brand.js';
-  import { DownloadIcon } from '../../src/lib/icons.js';
+  import { trackLandingEvent } from '../lib/analytics.js';
+  import { treeGreens } from '../lib/brand.js';
+  import { DownloadIcon } from '../lib/icons.js';
   import { FOOTER, links } from './content.js';
 </script>
 
@@ -14,16 +15,15 @@
       <p>run AI agents side by side, each on its own branch.</p>
       <ul class="links">
         {#each FOOTER as l}
-          <li><a href={l.href} target="_blank" rel="noopener">{l.label}</a></li>
+          <li><a href={l.href} target="_blank" rel="noopener" onclick={() => trackLandingEvent('footer_click', { location: 'trail-footer', link: l.label })}>{l.label}</a></li>
         {/each}
       </ul>
     </div>
     <div class="right">
-      <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download</a>
+      <a class="d-btn" href={links.releases} target="_blank" rel="noopener" onclick={() => trackLandingEvent('download_click', { location: 'trail-footer' })}>{@html DownloadIcon} Download</a>
       <p>Source-available under <span class="nowrap">FSL-1.1-MIT</span></p>
     </div>
   </div>
-  <p class="inner proto">Prototype. The conversations shown are samples; the characters are the app’s own sprites.</p>
 </footer>
 
 <style>
@@ -32,7 +32,7 @@
     flex-wrap: wrap;
     justify-content: space-between;
     gap: 24px;
-    padding-block: 40px 20px;
+    padding-block: 40px 56px;
   }
   .logo {
     display: inline-flex;
@@ -83,10 +83,5 @@
     .right {
       align-items: flex-start;
     }
-  }
-  .proto {
-    padding-bottom: 30px;
-    font-size: 11.5px;
-    color: var(--faint);
   }
 </style>

@@ -7,9 +7,10 @@
   import Sprite from '../shared/Sprite.svelte';
   import { WAKE_SCENE_MS } from '../shared/app-art.js';
   import '../shared/app/app.css';
-  import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
+  import { DownloadIcon, GithubIcon } from '../lib/icons.js';
   import { heroWorld } from './heroWorld.js';
   import { links } from './content.js';
+  import { trackLandingEvent } from '../lib/analytics.js';
 
   /**
    * Headline, buttons, and the app itself. The window can be clicked: switch
@@ -51,6 +52,7 @@
     onselect(id) {
       world.selected = id;
       const c = sel();
+      trackLandingEvent('trail_conversation_open', { state: c.state });
       if (c.state === 'unread') c.state = 'ready';
       // Opening a sleeping conversation wakes its agent, as in the app.
       if (c.state === 'sleeping') {
@@ -116,11 +118,11 @@
     <p class="lede">{lede}</p>
     <div class="ctas">
       <div>
-        <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
+        <a class="d-btn" href={links.releases} target="_blank" rel="noopener" onclick={() => trackLandingEvent('download_click', { location: 'trail-hero' })}>{@html DownloadIcon} Download for Windows</a>
         <p class="btn-note">free · Windows 10 or later</p>
       </div>
       <div>
-        <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener">{@html GithubIcon} View source</a>
+        <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener" onclick={() => trackLandingEvent('github_click', { location: 'trail-hero' })}>{@html GithubIcon} View source</a>
         <p class="btn-note">source-available, FSL-1.1-MIT</p>
       </div>
     </div>

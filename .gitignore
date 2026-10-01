@@ -5,4 +5,3 @@ dist/
 .grove-wt/
 *.log
 coverage/
-dist-prototypes/

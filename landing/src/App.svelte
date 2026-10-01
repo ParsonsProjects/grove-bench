@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { initLandingAnalytics } from './lib/analytics.js';
   import ConsentBanner from './ConsentBanner.svelte';
-  import Canopy from './canopy/Canopy.svelte';
+  import Trail from './trail/Trail.svelte';
 
   let showConsentBanner = $state(false);
 
@@ -14,6 +14,6 @@
   });
 </script>
 
-<Canopy />
+<Trail />
 
 <ConsentBanner visible={showConsentBanner} ondismiss={() => showConsentBanner = false} />

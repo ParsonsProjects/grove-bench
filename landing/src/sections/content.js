@@ -1,7 +1,6 @@
-// Copy for the day-into-night pages. Facts follow README.md, docs/help and the
-// app source; anything that isn't settled is marked as a draft.
+// The page's copy. Facts follow README.md, docs/help and the app source.
 
-import { links } from '../../src/lib/brand.js';
+import { links } from '../lib/brand.js';
 
 export const DOCS = 'https://github.com/ParsonsProjects/grove-bench/tree/main/docs/help';
 export const README = 'https://github.com/ParsonsProjects/grove-bench#readme';
@@ -12,7 +11,6 @@ export const FOUNDER = {
   // Shown as a commit: the title is its subject line, so no full stop.
   title: 'For the developer with more ideas than hands',
   commit: '7f3a9c2e41b8d05a6c19f3e2b7d4a8c0e5f1b923',
-  draft: true,
   paragraphs: [
     'I wanted to hand out more than one task at a time. Running AI agents one after another meant a lot of waiting. Running them side by side in the same folder meant they edited the same files and broke each other’s tests.',
     'Git already had the fix: worktrees. A separate copy of the project for each task, on its own branch. Grove Bench gives every conversation one, with its own terminal, so you can start three tasks, step away, and review each one on its own.',
@@ -95,7 +93,7 @@ export const FAQ = [
   },
   {
     q: 'Which agents does it work with?',
-    a: 'Claude Code for now. The app talks to agents through adapters, so more can be added, and that’s the plan.',
+    a: 'Claude Code for now. The app is built so more agents can be added.',
   },
   { q: 'Does it run on Mac or Linux?', a: 'No. Grove Bench is a Windows app.' },
   {

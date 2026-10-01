@@ -1,8 +1,9 @@
 <script>
-  import { treeGreens } from '../../src/lib/brand.js';
-  import { DownloadIcon } from '../../src/lib/icons.js';
+  import { trackLandingEvent } from '../lib/analytics.js';
+  import { treeGreens } from '../lib/brand.js';
+  import { DownloadIcon } from '../lib/icons.js';
   import { onMount } from 'svelte';
-  import { mix, hexToRgb, rgbToOklab } from '../../src/pixel/palette.js';
+  import { mix, hexToRgb, rgbToOklab } from '../pixel/palette.js';
   import { BANDS } from './sky.js';
   import { scroll, clockText, isEvening } from './scroll.svelte.js';
   import { links } from './content.js';
@@ -64,7 +65,7 @@
       </svg>
       {clockText(scroll.progress)}
     </span>
-    <a class="d-btn get" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} <span>download</span></a>
+    <a class="d-btn get" href={links.releases} target="_blank" rel="noopener" onclick={() => trackLandingEvent('download_click', { location: 'trail-nav' })}>{@html DownloadIcon} <span>download</span></a>
   </div>
 </header>
 

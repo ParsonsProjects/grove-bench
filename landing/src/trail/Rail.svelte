@@ -5,7 +5,7 @@
   import BenchSeat from '../shared/BenchSeat.svelte';
   import Pixels from '../shared/Pixels.svelte';
   import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
-  import { scroll } from '../day/scroll.svelte.js';
+  import { scroll } from '../sections/scroll.svelte.js';
 
   /**
    * A path down the left of the page. One agent walks down it as you scroll

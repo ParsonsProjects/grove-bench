@@ -1,4 +1,5 @@
 <script>
+  import { trackLandingEvent } from '../lib/analytics.js';
   import { arrive } from './scroll.svelte.js';
   import { FOUNDER, README, links } from './content.js';
   import '../shared/app/app.css';
@@ -13,7 +14,6 @@
 
 <section class="band b-founder" id="why" aria-labelledby="founder-h">
   <div class="inner">
-    {#if FOUNDER.draft}<p class="draft">Draft: rewrite in your own words</p>{/if}
     <div class="gb term rise" use:arrive>
       <div class="tabs" aria-hidden="true"><span class="on">Terminal <i class="t-faint">Alt+4</i></span></div>
       <div class="screen">
@@ -28,7 +28,7 @@
     </div>
     <p class="links">
       <a href={README} target="_blank" rel="noopener">read the readme ↗</a>
-      <a href={links.github} target="_blank" rel="noopener">see the source ↗</a>
+      <a href={links.github} target="_blank" rel="noopener" onclick={() => trackLandingEvent('github_click', { location: 'trail-founder' })}>see the source ↗</a>
     </p>
   </div>
 </section>
@@ -36,15 +36,6 @@
 <style>
   .inner {
     padding-block: 96px;
-  }
-  .draft {
-    display: inline-block;
-    margin-bottom: 12px;
-    padding: 2px 8px;
-    font-size: 12px;
-    font-weight: 700;
-    color: #6b4a00;
-    background: #fdecc8;
   }
   .term {
     max-width: 780px;

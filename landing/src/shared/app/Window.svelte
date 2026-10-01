@@ -7,7 +7,7 @@
   import Panes from './Panes.svelte';
   import GroveScene from '../GroveScene.svelte';
   import GroveWalk from '../GroveWalk.svelte';
-  import { treeGreens } from '../../../src/lib/brand.js';
+  import { treeGreens } from '../../lib/brand.js';
 
   /**
    * A copy of the Grove Bench window, drawn from a `world` object: the

@@ -1,7 +1,8 @@
-// The grove art the app itself draws, straight from src/renderer/lib (see the
-// `@app-art` alias in vite.prototypes.config.js). Characters, scenery, the
-// logo tree, the grove walk and the context grove all come from here, so the
-// prototypes never drift from the app.
+// The grove art the app itself draws, straight from src/renderer/lib.
+// Characters, scenery, the logo tree, the grove walk and the context grove all
+// come from here, so the page never drifts from the app. Plain relative
+// imports rather than an alias: the app's dev server scans every HTML file in
+// the repo, and an alias it doesn't know reads as a missing package there.
 
 export {
   AGENT_SPRITES,

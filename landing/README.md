@@ -1,33 +1,44 @@
-# Landing page prototype: Trail
+# Landing page
 
-A lighter, product-style landing page in Grove Bench's world. The page turns
-from morning to night as you scroll, and a path runs down its left edge: one
+The Grove Bench site, published to GitHub Pages by `deploy-landing.yml` on
+pushes to main. A light, product-style page in Grove Bench's world: it turns
+from morning to night as you scroll, and a path runs down its left edge. One
 agent walks down it, trees sprout as it nears them, and at each section it
-sits on a bench in that section's pose. Canopy (`landing/src/canopy`) stays
-the live page until this replaces it.
+sits on a bench in that section's pose.
 
 ```bash
 cd landing
-npm run dev:prototypes     # serves prototypes/ at /
-npm run build:prototypes   # builds into landing/dist-prototypes/ (git-ignored)
+npm run dev       # dev server
+npm run build     # builds into landing/dist
 ```
-
-`npm run build` and the Pages deploy don't include it.
 
 ## How the page is put together
 
-- `index.html` and `trail/`: the page, and the path (`Rail.svelte`).
-- `day/`: the sections and their copy (`content.js`), the day-to-night
-  palette and type (`day.css`, with the same colours in `sky.js`), and scroll
-  tracking with the "arrive" reveal (`scroll.svelte.js`).
-- `shared/app/`: a copy of the app window's look, checked against the app in
-  its demo mode (`demo.html`). The hero uses it with sample conversations;
-  visitors can click conversations, tabs and the permission prompt. On phones
-  the hero shows the sidebar and the open prompt instead, at full size.
-- `shared/app-art.js`: the app's own sprite code from `src/renderer/lib`, so
-  every pose, colour, look and scene is what the app draws. Plain relative
-  imports: the app's dev server scans every HTML file in the repo and reports
-  an unknown alias as missing packages.
+- `index.html`: meta tags, structured data and the `<noscript>` fallback for
+  crawlers. Keep the fallback's copy in step with `src/sections/content.js`.
+- `src/App.svelte`: the page plus the analytics consent banner
+  (`ConsentBanner.svelte`, `lib/analytics.js`; nothing is sent before
+  consent).
+- `src/trail/`: the page layout (`Trail.svelte`) and the path (`Rail.svelte`).
+- `src/sections/`: the sections and their copy (`content.js`), the
+  day-to-night palette and type (`day.css`, with the same colours in
+  `sky.js`), and scroll tracking with the "arrive" reveal
+  (`scroll.svelte.js`).
+- `src/shared/app/`: a copy of the app window's look, checked against the
+  app in its demo mode (`demo.html`). The hero uses it with sample
+  conversations; visitors can click conversations, tabs and the permission
+  prompt. On phones the hero shows the sidebar and the open prompt instead,
+  at full size.
+- `src/shared/app-art.js`: the app's own sprite code from `src/renderer/lib`,
+  so every pose, colour, look and scene is what the app draws. The deploy
+  workflow also runs when those files change.
+
+## Analytics events
+
+Only after consent: `download_click`, `github_click` and `docs_click` (with a
+`location` such as `trail-hero`), `footer_click` (with the link), and
+`trail_conversation_open` when a visitor opens a sample conversation in the
+hero.
 
 ### The look
 
@@ -76,20 +87,10 @@ Facts follow `README.md`, `docs/help` and the source (requirements, modes,
 the FAQ's SmartScreen and privacy answers). Git is recommended, not
 required (`src/main/prerequisites.ts`), and Claude Code is optional with an
 API key, so the page never lists either as a must. The founder note is
-signed Parsons Projects; its text is still a draft, marked as one on the
-page.
+signed Parsons Projects.
 
 The app window is dark because the app is dark-only; it sits on the light
 page as a product shot.
-
-## Before it replaces Canopy
-
-- Analytics and the consent banner (`landing/src/lib/analytics.js`,
-  `ConsentBanner.svelte`) aren't wired in.
-- The `<noscript>` fallback, structured data and social image from
-  `landing/index.html` need carrying over.
-- If it imports from `src/renderer/lib`, `deploy-landing.yml` should also
-  rebuild on changes there (it only watches `landing/**`).
 
 ## Checked
 

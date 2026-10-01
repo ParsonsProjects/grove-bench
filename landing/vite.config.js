@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [svelte()],
   base: '/grove-bench/',
+  server: {
+    // The characters come from the app's own sprite code in src/renderer/lib
+    // (see src/shared/app-art.js), outside this folder.
+    fs: { allow: ['..'] },
+  },
 });

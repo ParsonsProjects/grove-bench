@@ -1,18 +1,18 @@
 <script>
   import { onMount } from 'svelte';
-  import '../day/day.css';
-  import Nav from '../day/Nav.svelte';
-  import Hero from '../day/Hero.svelte';
-  import Founder from '../day/Founder.svelte';
-  import Features from '../day/Features.svelte';
-  import Steps from '../day/Steps.svelte';
-  import Free from '../day/Free.svelte';
-  import Sunset from '../day/Sunset.svelte';
-  import Faq from '../day/Faq.svelte';
-  import Closing from '../day/Closing.svelte';
-  import Footer from '../day/Footer.svelte';
+  import '../sections/day.css';
+  import Nav from '../sections/Nav.svelte';
+  import Hero from '../sections/Hero.svelte';
+  import Founder from '../sections/Founder.svelte';
+  import Features from '../sections/Features.svelte';
+  import Steps from '../sections/Steps.svelte';
+  import Free from '../sections/Free.svelte';
+  import Sunset from '../sections/Sunset.svelte';
+  import Faq from '../sections/Faq.svelte';
+  import Closing from '../sections/Closing.svelte';
+  import Footer from '../sections/Footer.svelte';
   import Rail from './Rail.svelte';
-  import { trackScroll } from '../day/scroll.svelte.js';
+  import { trackScroll } from '../sections/scroll.svelte.js';
 
   let page = $state();
   let k = $state(3);
