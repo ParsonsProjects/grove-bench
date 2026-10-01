@@ -64,7 +64,9 @@
 </script>
 
 {#if draft}
-<div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+<!-- A container like the conversation bar, so the shared Agent settings
+     button widens its model name the same way when there is room. -->
+<div class="@container flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <DraftAgentControl />
 
   <span class="w-px self-stretch bg-border"></span>

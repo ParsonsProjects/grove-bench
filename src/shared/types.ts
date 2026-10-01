@@ -760,7 +760,7 @@ export interface McpSupport {
   };
   /** Tooltip for Disconnect: how long it lasts and what it affects. */
   disconnectHint: string;
-  /** Editing configured servers (Settings > MCP). Absent: not supported. */
+  /** Editing configured servers (Settings > MCP servers). Absent: not supported. */
   config?: {
     /** Scopes a server can be added to. */
     scopes: { value: McpConfigScope; label: string; description: string }[];
@@ -1257,9 +1257,14 @@ export interface GroveBenchAPI {
   getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string; contextWindow?: number }>>;
 
   // Auto-update
-  checkForUpdate(): Promise<void>;
+  getUpdateState(): Promise<UpdateState>;
+  /** Check now, on the user's behalf. Resolves to the status once the check
+   *  is done (null in dev builds). */
+  checkForUpdate(): Promise<UpdateStatus | null>;
   downloadUpdate(): Promise<void>;
-  installUpdate(): void;
+  /** Stop every agent and shell the way quitting does, then install the
+   *  downloaded update and reopen the app. */
+  restartToUpdate(): Promise<void>;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
@@ -1350,8 +1355,8 @@ export interface GroveBenchSettings {
    *  session-note pruning) when memory grows past its budget. Default false —
    *  it costs an LLM call; the panel's manual Compact button always works. */
   memoryAutoCompact: boolean;
-  /** Abort a memory compaction pass after this many seconds. Clamped to a
-   *  30-second minimum. Default 300 (5 minutes). */
+  /** Abort a memory compaction pass after this many seconds. 30 to 3600,
+   *  default 300 (5 minutes); see shared/compact-timeout.ts. */
   memoryCompactTimeoutSeconds: number;
   /** Model for background tasks (memory notes and compaction, commit
    *  messages, skill suggestions), keyed by adapter id. Missing or empty
@@ -1385,6 +1390,12 @@ export interface GroveBenchSettings {
   branchNamingRule: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+
+  // Updates
+  /** Download new versions in the background as soon as they're found; they
+   *  install on the next quit, or sooner from the title bar. Off = show the
+   *  update and wait for a click to download. Default true. */
+  autoDownloadUpdates: boolean;
 
   // Appearance
   /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */
@@ -1535,13 +1546,27 @@ export interface UpdateInfo {
   releaseDate?: string;
 }
 
+/** Where the updater is. `manual` marks what the user asked for (Check for
+ *  updates, or a click to download) as opposed to the background schedule,
+ *  so the UI can stay quiet about background work. */
 export type UpdateStatus =
-  | { state: 'checking' }
+  | { state: 'checking'; manual: boolean }
+  /** Found, waiting for the user to download it (automatic download off). */
   | { state: 'available'; info: UpdateInfo }
-  | { state: 'not-available' }
-  | { state: 'downloading'; percent: number }
+  | { state: 'not-available'; manual: boolean }
+  | { state: 'downloading'; info: UpdateInfo; percent: number; manual: boolean }
+  /** Ready: installs on the next quit, or now via restartToUpdate(). */
   | { state: 'downloaded'; info: UpdateInfo }
-  | { state: 'error'; message: string };
+  | { state: 'error'; message: string; during: 'check' | 'download'; manual: boolean };
+
+export interface UpdateState {
+  /** The running app's version. */
+  currentVersion: string;
+  /** False in dev builds: updates are only checked in the installed app. */
+  enabled: boolean;
+  /** The latest status, or null before the first check. */
+  status: UpdateStatus | null;
+}
 
 // ─── IPC Channel Names ───
 
@@ -1727,9 +1752,10 @@ export const IPC = {
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater
+  UPDATE_GET_STATE: 'update:get-state',
   UPDATE_CHECK: 'update:check',
   UPDATE_DOWNLOAD: 'update:download',
-  UPDATE_INSTALL: 'update:install',
+  UPDATE_RESTART: 'update:restart',
   UPDATE_STATUS: 'update:status',
   // Preview tab
   PREVIEW_NAVIGATE: 'preview:navigate',

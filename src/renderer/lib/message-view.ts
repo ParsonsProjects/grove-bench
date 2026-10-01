@@ -19,19 +19,6 @@ export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking)',
 };
 
-/** Cycle order for the status-bar toggle: Summary → Focus → Detailed → Summary. */
-export const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
-  summary: 'focus',
-  focus: 'detailed',
-  detailed: 'summary',
-};
-
-export const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
-  detailed: 'Showing everything — click for Summary',
-  summary: 'Hiding thinking & most tool calls — click for Focus (responses & questions only)',
-  focus: 'Showing agent responses, questions & your answers only — click for Detailed',
-};
-
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
  *  too frequent for Summary. */
 const GROVE_MCP_SERVERS = new Set(['grove-preview', 'grove-memory']);

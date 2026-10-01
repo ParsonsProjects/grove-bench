@@ -442,9 +442,10 @@ const api: GroveBenchAPI = {
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
 
   // Auto-update
+  getUpdateState: () => ipcRenderer.invoke(IPC.UPDATE_GET_STATE),
   checkForUpdate: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   downloadUpdate: () => ipcRenderer.invoke(IPC.UPDATE_DOWNLOAD),
-  installUpdate: () => ipcRenderer.send(IPC.UPDATE_INSTALL),
+  restartToUpdate: () => ipcRenderer.invoke(IPC.UPDATE_RESTART),
   onUpdateStatus: (callback: (status: import('../shared/types.js').UpdateStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: import('../shared/types.js').UpdateStatus) =>
       callback(status);

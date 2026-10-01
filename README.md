@@ -31,6 +31,8 @@ The in-app help (the **?** in the title bar) covers each step in detail.
 
 ## Building from Source
 
+Needs npm 11.10.0 or later (`npm install -g npm@11`). The repo's `.npmrc` only installs package versions that have been public for at least 7 days, and older npm would skip that check, so it refuses to install instead.
+
 ```bash
 # Install dependencies
 npm install

@@ -26,7 +26,7 @@ import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObject
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
-import { checkForUpdate, downloadUpdate, installUpdate } from './auto-updater.js';
+import { applyUpdateSettings, checkForUpdate, downloadUpdate, getUpdateState, restartToUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
 import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
@@ -1631,6 +1631,7 @@ export function registerHandlers() {
     settings.saveSettings(data);
     const win = BrowserWindow.fromWebContents(event.sender);
     settings.applyImmediateEffects(win, data);
+    applyUpdateSettings(settings.getSettings());
   });
 
   // ─── App State ───
@@ -1788,7 +1789,8 @@ export function registerHandlers() {
 
   // ─── Auto-updater ───
 
+  ipcMain.handle(IPC.UPDATE_GET_STATE, () => getUpdateState());
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdate());
   ipcMain.handle(IPC.UPDATE_DOWNLOAD, () => downloadUpdate());
-  ipcMain.on(IPC.UPDATE_INSTALL, () => installUpdate());
+  ipcMain.handle(IPC.UPDATE_RESTART, () => restartToUpdate());
 }

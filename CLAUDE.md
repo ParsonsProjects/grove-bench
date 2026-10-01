@@ -50,6 +50,7 @@ src/
     App.svelte         # Root component
     main.ts            # Renderer entry
     components/        # Svelte components (~34 files)
+      settings/        # Settings panel sections and shared setting rows
     lib/               # Utilities
     stores/            # Svelte stores (sessions, messages, settings, etc.)
     styles/            # CSS
@@ -68,6 +69,7 @@ TODO.md                # Gap analysis vs competitors
 - `vite.preload.config.mjs` — Vite config for preload script
 - `vitest.config.mts` — Test config (projects: main, renderer)
 - `svelte.config.mjs` — Svelte compiler config
+- `.npmrc`: npm settings. `min-release-age=7` only installs versions published 7+ days ago; `engine-strict` makes the `engines.npm` range (>=11.10.0, the first npm with that setting) a hard error. `landing/.npmrc` repeats them. `scripts/check-release-age.mjs` checks lockfile changes in the Dependency age workflow
 
 ## Commands
 
@@ -90,7 +92,6 @@ User-facing names and internal names differ on purpose:
 - **Conversation** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`).
 - **Thread tab** (UI, help, docs) = the `'activity'` workspace tab in code (`WorkspaceTab`, `setActiveTab`), and its view modes are `ActivityViewMode` / `defaultActivityView`. It was called Activity before; the code names stay so saved settings keep working.
 - **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
-- **Trail** (UI, help, docs) = an MCP server (`mcp*` in code, the `'mcp'` Settings tab). **Field guide** = a skill (`SkillInfo`, `skills.ts`). **Sapling** = a plugin, and **Nursery** = what the agent's plugin marketplaces offer (the `'discover'` plugin list). MCP and skills are standards across agents, and people meet the standard words in CLI errors and server READMEs, so headings, badges' tooltips and help pages show the standard term beside Grove's: "Trails · MCP servers", "Add a field guide (skill)".
 
 Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.
 

@@ -94,7 +94,7 @@
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Add a field guide (skill)</Dialog.Title>
+      <Dialog.Title>Add Skill</Dialog.Title>
       <Dialog.Description>
         Package instructions the agent can invoke by name. Loaded when a conversation's agent (re)starts.
       </Dialog.Description>
@@ -192,7 +192,7 @@
               Creating…
             </span>
           {:else}
-            Create field guide
+            Create Skill
           {/if}
         </Button>
       </Dialog.Footer>

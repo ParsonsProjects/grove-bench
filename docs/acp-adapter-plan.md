@@ -85,14 +85,10 @@ Code: `src/main/adapters/acp/`.
 
 ## Names
 
-UI and help use Grove's names with the standard term beside them, since MCP
-and skills are standards people meet in CLI errors and server READMEs. Code
-keeps the standard names. See `CLAUDE.md`, Terminology.
-
-| Standard term | Grove name | Where it shows |
-|---|---|---|
-| MCP server | Trail | Status bar badge, Settings tab "Trails (MCP)", popover "Trails · MCP servers" |
-| Skill | Field guide | Status bar badge, popover "Field guides · Skills", "Add a field guide (skill)" |
-| Plugin | Sapling | Settings tab "Saplings (Plugins)" |
-| Plugin marketplace | Nursery | The plugin list tab that was "Discover" |
-| Agent | Agent | Unchanged |
+This branch first named single items in the UI (Trails for MCP servers,
+Field guides for skills, Saplings for plugins, Nursery for the plugin
+marketplace). Main's Settings redesign names Settings sections instead,
+each with its plain name under it ("Tool shed" for MCP servers, "Seed
+packets" for plugins; see `src/renderer/lib/settings-search.ts`), and keeps
+the plain words everywhere else. The merge follows main, so the per-item
+names are gone.

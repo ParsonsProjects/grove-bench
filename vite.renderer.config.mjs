@@ -62,8 +62,9 @@ export default defineConfig({
     emptyOutDir: true,
     // Panels and tabs that open on demand load on first use (lazyComponent),
     // so the main chunk is the code that draws the first screen. It sits near
-    // 660 kB; splitting it further only moves that code between files, which
-    // an app loading from disk gains nothing from. Warn if it grows past this.
+    // 685 kB (V8 parses it in about 20 ms); splitting it further only moves
+    // that code between files, which an app loading from disk gains little
+    // from. Warn if it grows past this.
     chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {

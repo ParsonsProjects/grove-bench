@@ -72,13 +72,23 @@ describe('SessionControlsPopover', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('shows a control on the trigger once it leaves its default', async () => {
+  it('leads with the model and mode, and shows a control once it leaves its default', async () => {
     messageStore.controlsBySession[SID].values = { thinking: 'low', speed: 'fast' };
     messageStore.modeBySession[SID] = 'plan';
     render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: MODELS } });
+    await new Promise((r) => setTimeout(r, 0)); // listAdapters resolves
 
-    const trigger = screen.getByTitle(/Agent settings/);
-    expect(trigger).toHaveTextContent('Opus 5 · Plan · Low · Fast');
+    expect(screen.getByTestId('agent-settings-headline')).toHaveTextContent(/^Opus 5 · Plan$/);
+    expect(screen.getByTestId('agent-settings-detail')).toHaveTextContent(/^Claude Agent · Low · Fast$/);
+  });
+
+  it('cuts a long model name short on the button but names it in full in the tooltip', async () => {
+    const long = 'Sonnet 4.6 with the one million token context window';
+    render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: [{ value: 'claude-opus-5', label: long }] } });
+
+    const name = within(screen.getByTestId('agent-settings-headline')).getByText(long);
+    expect(name.className).toContain('truncate');
+    expect(screen.getByTitle(/Agent settings/).getAttribute('title')).toContain(long);
   });
 
   it('opens a column per setting: agent, model, and each declared control', async () => {

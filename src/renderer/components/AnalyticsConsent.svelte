@@ -27,7 +27,7 @@
     <div class="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
       <p class="text-xs text-muted-foreground">
         Help improve Grove Bench by sending anonymous usage data. No personal information or code content is collected.
-        You can change this anytime in Settings.
+        You can change this anytime in Settings → Hedges (Privacy).
       </p>
       <div class="flex items-center gap-2 shrink-0">
         <Button variant="ghost" size="sm" onclick={handleDecline}>Decline</Button>

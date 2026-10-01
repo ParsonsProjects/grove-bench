@@ -339,7 +339,7 @@ export interface AgentAdapter {
 
   /** Cheap model for background tasks run on this agent: memory notes and
    *  compaction, commit messages, skill suggestions. Used unless the user
-   *  picks another in Settings > Agent. Omit to use the agent's own default. */
+   *  picks another in Settings > Agents. Omit to use the agent's own default. */
   readonly backgroundModel?: string;
 
   /** Release any adapter-level resources (open connections, child processes).
@@ -348,7 +348,7 @@ export interface AgentAdapter {
 
   // ─── Optional MCP server configuration (CLI config, not per-session) ───
 
-  /** List MCP servers from the provider's configuration (Settings > MCP;
+  /** List MCP servers from the provider's configuration (Settings > MCP servers;
    *  describe it in mcp.config). `cwd` scopes local/project servers. */
   listConfiguredMcpServers?(cwd?: string): Promise<McpConfiguredServer[]>;
   /** Register a new MCP server in the provider's configuration. */

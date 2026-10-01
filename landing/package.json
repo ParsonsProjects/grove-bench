@@ -2,6 +2,9 @@
   "name": "grove-bench-landing",
   "private": true,
   "version": "0.0.1",
+  "engines": {
+    "npm": ">=11.10.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

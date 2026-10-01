@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import '@testing-library/jest-dom/vitest';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 
 import StatusBar from './StatusBar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -8,7 +9,9 @@ import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
+import { usageStore } from '../stores/usage.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
+import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
@@ -59,6 +62,53 @@ describe('StatusBar keyboard shortcuts', () => {
   });
 });
 
+describe('StatusBar Keys popover', () => {
+  it('lists each tab under the key that switches to it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+
+    const popover = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    for (const [key, tab] of Object.entries(TAB_BY_KEY)) {
+      const row = within(popover).getByText(`${TAB_LABELS[tab]} tab`).closest('div')!;
+      expect(row).toHaveTextContent(`Alt+${key}`);
+    }
+    expect(within(popover).getByText('Settings').closest('div')).toHaveTextContent('Ctrl+,');
+  });
+
+  it('closes on Escape, with focus back on its button', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    const button = screen.getByRole('button', { name: 'Keys' });
+    // A real click focuses the button; jsdom's doesn't.
+    button.focus();
+    await fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('lets Escape through when focus is elsewhere, such as a dialog opened over it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+    const elsewhere = document.createElement('input');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    const reached = vi.fn();
+    document.addEventListener('keydown', reached);
+
+    await fireEvent.keyDown(elsewhere, { key: 'Escape' });
+
+    expect(reached).toHaveBeenCalled();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    document.removeEventListener('keydown', reached);
+    elsewhere.remove();
+  });
+});
+
 describe('StatusBar MCP controls follow the agent', () => {
   const ID = 's-mcp';
   const NONE = { list: false, reconnect: false, toggle: false, signIn: false, contextCost: false };
@@ -81,7 +131,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /Trails 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
 
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
@@ -93,7 +143,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /Trails 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
 
     expect(screen.getByRole('button', { name: 'Disconnect' }).getAttribute('title')).toBe('Off until this conversation restarts');
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
@@ -104,19 +154,34 @@ describe('StatusBar MCP controls follow the agent', () => {
     vi.mocked(window.groveBench.listMcpServers).mockResolvedValueOnce([{ name: 'docs', status: 'connected' }]);
     render(StatusBar, { props: { sessionId: ID } });
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /Trails 1/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
+  });
+
+  // A narrow bar drops MCP and Skills to keep the branch in view, but not
+  // while a server is down: that is worth the room.
+  it.each([
+    ['connected', true],
+    ['failed', false],
+  ] as const)('drops out of a narrow bar when %s: %s', (status, dropsOut) => {
+    useAgent();
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status }] };
+    render(StatusBar, { props: { sessionId: ID } });
+
+    const stack = screen.getByRole('button', { name: /MCP 1/ }).closest('.flex-col')!;
+    expect(stack.classList.contains('hidden')).toBe(dropsOut);
   });
 });
 
 describe('StatusBar rate limit', () => {
   afterEach(() => rateLimitStore.destroy(ACTIVE));
 
-  it('shows the warning under the activity view toggle', () => {
+  it('shows the warning under the activity line', () => {
     rateLimitStore.set(ACTIVE, { status: 'allowed_warning', utilization: 0.85 });
-    const { getByTestId, getByRole } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
     const warning = getByTestId('rate-limit');
     expect(warning.textContent).toMatch(/rate warning\s+\(85%\)/);
-    expect(getByRole('button', { name: /^Thread view:/ }).nextElementSibling).toBe(warning);
+    // In the same stack as "idle", since it explains why the agent waits.
+    expect(warning.closest('.flex-col')?.textContent).toContain('idle');
   });
 
   it('shows nothing while requests are allowed', () => {
@@ -210,6 +275,20 @@ describe('StatusBar context actions', () => {
     await openContext();
     await fireEvent.click(screen.getByRole('button', { name: 'Summarise to free space' }));
     expect(send).toHaveBeenCalledWith(ACTIVE, '/compact');
+  });
+
+  it('colours the whole used length, cached tokens included', () => {
+    // Nearly all of it cached, as it is with prompt caching: the bar still
+    // reads as 90% full, in the full colour.
+    messageStore.contextWindowBySession[ACTIVE] = 200_000;
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, outputTokens: 0, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+
+    const fill = getByTestId('context-bar').children;
+    expect(fill).toHaveLength(1);
+    expect(fill[0].className).toContain('bg-red-400');
+    expect((fill[0] as HTMLElement).style.width).toBe('90%');
+    expect(screen.getByText('Context 90%').className).toContain('text-red-400');
   });
 });
 
@@ -372,16 +451,164 @@ describe('StatusBar PR', () => {
     await waitFor(() => expect(screen.queryByText('push failed')).toBeNull());
   });
 
-  it('shows a push that failed in the Changes tab, and dismisses it on click', async () => {
+  it('shows a push that failed in the Changes tab, with the error a click away', async () => {
     vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
     render(StatusBar, { props: { sessionId: ACTIVE } });
     // The Changes tab's "& Push" goes through the same store call.
     await prStore.push(ACTIVE).catch(() => {});
 
-    const note = await screen.findByRole('button', { name: 'push failed' });
-    expect(note.getAttribute('title')).toContain('rejected: non-fast-forward');
-    await fireEvent.click(note);
+    // Clicking it shows why: it used to dismiss the error unread.
+    await fireEvent.click(await screen.findByRole('button', { name: 'push failed' }));
+    expect(screen.getByTestId('push-error').textContent).toContain('rejected: non-fast-forward');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
 
     expect(screen.queryByText('push failed')).toBeNull();
+    expect(screen.queryByTestId('push-error')).toBeNull();
+  });
+
+  it('retries a failed push from its popover: the new error on failure, closed on success', async () => {
+    vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('rejected: non-fast-forward'));
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await prStore.push(ACTIVE).catch(() => {});
+    await fireEvent.click(await screen.findByRole('button', { name: 'push failed' }));
+
+    vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('could not read Username'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByTestId('push-error').textContent).toContain('could not read Username'));
+
+    vi.mocked(window.groveBench.push).mockResolvedValueOnce(undefined as never);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByTestId('push-error')).toBeNull());
+    expect(screen.queryByText('push failed')).toBeNull();
+    expect(window.groveBench.push).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('StatusBar activity', () => {
+  afterEach(() => {
+    delete messageStore.messagesBySession[ACTIVE];
+    messageStore.isRunning = {};
+  });
+
+  it('says it is waiting for you while a permission prompt is open, even mid-turn', () => {
+    messageStore.setIsRunning(ACTIVE, true);
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: false } as any];
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('activity').textContent?.trim()).toBe('waiting for you');
+  });
+
+  it('does not reopen the pending tools popover when the next tool comes along', async () => {
+    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
+    messageStore.messagesBySession[ACTIVE] = [tool];
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: /^1 tool/ }));
+    expect(screen.queryByText('Pending Tools')).not.toBeNull();
+
+    // The tool finishes with the popover still open, then the next one starts.
+    messageStore.messagesBySession[ACTIVE] = [];
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).toBeNull());
+    messageStore.messagesBySession[ACTIVE] = [{ ...tool, toolUseId: 'tu2' }];
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).not.toBeNull());
+    expect(screen.queryByText('Pending Tools')).toBeNull();
+  });
+
+  it('goes back to the agent\'s state once answered', () => {
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: true } as any];
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('activity').textContent?.trim()).toBe('idle');
+  });
+});
+
+describe('StatusBar context popover closes on Escape', () => {
+  afterEach(() => {
+    delete messageStore.usageBySession[ACTIVE];
+    delete messageStore.contextWindowBySession[ACTIVE];
+  });
+
+  it('closes the context popover without stopping anything else', async () => {
+    messageStore.contextWindowBySession[ACTIVE] = 200_000;
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 50_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Context 25% used/ }));
+    expect(screen.queryByText('Summarise to free space')).not.toBeNull();
+
+    const later = vi.fn();
+    window.addEventListener('keydown', later);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    window.removeEventListener('keydown', later);
+
+    expect(screen.queryByText('Summarise to free space')).toBeNull();
+    expect(later).not.toHaveBeenCalled();
+  });
+});
+
+describe('StatusBar last turn', () => {
+  afterEach(() => {
+    delete messageStore.messagesBySession[ACTIVE];
+    usageStore.byProvider = {};
+  });
+
+  function finishTurn(totalCostUsd: number) {
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r1', totalCostUsd, durationMs: 4200 } as any];
+  }
+
+  it('shows the cost for an API key sign-in, rounded to cents', () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.0423);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('$0.04 last turn 4.2s');
+    expect(getByTestId('last-turn').title).toContain('$0.0423 at list price');
+  });
+
+  it('leaves the cost out on a plan, which it is not billed against', () => {
+    usageStore.byProvider = { 'claude-code': { available: true, plan: 'max', windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.0423);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('last turn 4.2s');
+  });
+
+  it('waits to show a cost until it knows the sign-in, and asks', () => {
+    // Claude reports plan usage; nothing has fetched it yet.
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { usage: true }, isDefault: true }];
+    agentsStore.loaded = true;
+    const refresh = vi.spyOn(usageStore, 'refresh').mockResolvedValue();
+    try {
+      finishTurn(0.0423);
+      const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(getByTestId('last-turn').textContent).not.toContain('$');
+      expect(refresh).toHaveBeenCalledWith(ACTIVE);
+    } finally {
+      agentsStore.list = [];
+      agentsStore.loaded = false;
+    }
+  });
+
+  it('shows the cost for an agent that cannot report plan usage', () => {
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true }];
+    agentsStore.loaded = true;
+    try {
+      finishTurn(0.0423);
+      const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(getByTestId('last-turn').textContent).toContain('$0.04');
+    } finally {
+      agentsStore.list = [];
+      agentsStore.loaded = false;
+    }
+  });
+
+  it('shows a free turn as $0.00, not under a cent', () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent).toContain('$0.00');
+  });
+
+  it('says when a turn cost under a cent', () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.003);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent).toContain('<$0.01');
   });
 });

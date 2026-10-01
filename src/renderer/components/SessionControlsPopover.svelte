@@ -13,8 +13,11 @@
   import { usageStore } from '../stores/usage.svelte.js';
   import { formatResetTime } from '../lib/reset-time.js';
   import { toneClass } from '../lib/control-tones.js';
-  import { CONTROL_IDS, CONTROL_SHORTCUTS, type ControlOption } from '../../shared/types.js';
-  import { controlHint } from '../lib/control-hint.js';
+  // The same scale as the context meter, so the two read alike.
+  import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
+  import { CONTROL_SHORTCUTS, type ControlOption } from '../../shared/types.js';
+  import { controlHint, controlSummary } from '../lib/control-hint.js';
+  import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
 
@@ -38,16 +41,8 @@
   let controls = $derived(messageStore.getControlDescriptors(sessionId));
   let hint = $derived(controlHint(controls, (id) => messageStore.getControlValue(sessionId, id), hovered));
 
-  /** What the subtitle shows besides the model: the mode always (tinted, since
-   *  it governs what the agent may do), every other control only when it is
-   *  off its default. The popover is where the full set lives. */
-  let subtitleItems = $derived(controls.flatMap((ctl) => {
-    const value = messageStore.getControlValue(sessionId, ctl.id);
-    const isMode = ctl.id === CONTROL_IDS.permissionMode;
-    if (!isMode && value === ctl.default) return [];
-    const option = ctl.options.find((o) => o.value === value);
-    return [{ id: ctl.id, label: option?.label ?? value, tone: isMode ? option?.tone : undefined }];
-  }));
+  /** The mode, and any other control off its default, for the button. */
+  let summary = $derived(controlSummary(controls, (id) => messageStore.getControlValue(sessionId, id)));
 
   $effect(() => { messageStore.loadControls(sessionId); });
 
@@ -60,15 +55,6 @@
     if (open) usageStore.refresh(sessionId, { providerId: agentType, minAgeMs: 15_000 }).catch(() => {});
   });
 
-  /** Same thresholds as the context-window meter so the two read alike. */
-  function usageTextClass(fraction: number): string {
-    const pct = fraction * 100;
-    return pct > 85 ? 'text-red-400' : pct > 70 ? 'text-orange-400' : pct > 40 ? 'text-yellow-400' : 'text-green-400';
-  }
-  function usageBarClass(fraction: number): string {
-    const pct = fraction * 100;
-    return pct > 85 ? 'bg-red-400' : pct > 70 ? 'bg-orange-400' : pct > 40 ? 'bg-yellow-400' : 'bg-green-500';
-  }
 
   async function switchModel(modelId: string) {
     if (modelId === model) return;
@@ -127,34 +113,14 @@
 </script>
 
 <div class="relative" bind:this={rootRef}>
-  <!-- Two-line trigger: agent on top; model, mode, and any non-default
-       control values underneath. -->
-
-  <button
+  <AgentSettingsTrigger
+    {agentName}
+    {modelLabel}
+    mode={summary.mode}
+    details={summary.details}
+    {open}
     onclick={() => open = !open}
-    class="flex items-center gap-2 pl-1.5 pr-1 py-0.5 border border-border whitespace-nowrap text-left transition-colors hover:bg-accent {open ? 'bg-accent' : ''}"
-    title="Agent settings — agent, model, and conversation controls"
-    aria-haspopup="dialog"
-    aria-expanded={open}
-  >
-    <span class="w-1.5 h-1.5 shrink-0 bg-primary" aria-hidden="true"></span>
-    <span class="flex flex-col gap-px leading-snug">
-      <span class="text-foreground font-medium">{agentName}</span>
-      <span class="text-muted-foreground/80 text-[11px]">
-        {modelLabel || 'Provider default'}
-        {#each subtitleItems as item (item.id)}
-          <span class="text-muted-foreground/40">{' · '}</span><span class={item.tone ? toneClass(item.tone).split(' ')[0] : ''}>{item.label}</span>
-        {/each}
-      </span>
-    </span>
-    <svg
-      class="w-3 h-3 shrink-0 text-muted-foreground/60 transition-transform {open ? 'rotate-180' : ''}"
-      viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 6l4 4 4-4" />
-    </svg>
-  </button>
+  />
 
   {#if open}
     <div
@@ -204,10 +170,10 @@
                 >
                   <div class="flex items-baseline justify-between gap-2">
                     <span class="text-muted-foreground">{w.label}</span>
-                    <span class="font-medium {usageTextClass(w.utilization)}">{Math.round(w.utilization * 100)}%</span>
+                    <span class="font-medium {usageTextClass(w.utilization * 100)}">{Math.round(w.utilization * 100)}%</span>
                   </div>
                   <div class="h-1 mt-1 bg-muted-foreground/20">
-                    <div class="h-full transition-all {usageBarClass(w.utilization)}" style:width="{Math.min(100, w.utilization * 100)}%"></div>
+                    <div class="h-full transition-all {usageBarClass(w.utilization * 100)}" style:width="{Math.min(100, w.utilization * 100)}%"></div>
                   </div>
                   {#if w.resetsAt}
                     <div class="text-[10px] text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
