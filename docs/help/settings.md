@@ -56,7 +56,7 @@ Grove Bench can run any agent that speaks the [Agent Client Protocol](https://ag
 
 With ACP agents:
 
-- Grove Bench's memory and Preview browser tools are offered to agents that can connect to MCP servers over HTTP. They are served on this computer only, with a key for each conversation
+- Grove Bench's memory and Preview browser tools are offered to every ACP agent. They are served on this computer only, with a key for each conversation. Agents that can't connect to a server by address start a small bridge program that comes with Grove Bench
 - Rewinding a conversation starts the agent on a new conversation from that point, since ACP agents can't forget part of one
 - Field guides (skills), saplings (plugins) and plan usage are not managed for them
 

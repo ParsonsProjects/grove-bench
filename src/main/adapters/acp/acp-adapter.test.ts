@@ -190,14 +190,27 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
-  it('offers no Grove tools to an agent without HTTP MCP', async () => {
+  it('starts Grove\'s stdio bridge for an agent without HTTP MCP, and its tools work', async () => {
     const adapter = new AcpAdapter(def('nohttp'));
-    const memoryOperations = { list: () => [], read: () => null, write: () => {}, delete: () => false };
+    const memoryOperations = {
+      list: () => [],
+      read: (p: string) => (p === 'repo/overview.md' ? '# Overview' : null),
+      write: () => {},
+      delete: () => false,
+    };
     const handle = await adapter.start(config({ memoryOperations }));
     await until(handle, 'system_init');
+
     handle.sendMessage({ text: 'mcp' });
-    const turn = await until(handle, 'result');
-    expect((turn.find((e) => e.type === 'assistant_text') as { text: string }).text).toBe('[]');
+    const told = await until(handle, 'result');
+    expect(JSON.parse((told.find((e) => e.type === 'assistant_text') as { text: string }).text)).toEqual([
+      { type: 'stdio', name: 'grove-memory', env: ['ELECTRON_RUN_AS_NODE', 'GROVE_MCP_URL', 'GROVE_MCP_AUTHORIZATION'] },
+    ]);
+
+    // The fake agent starts the bridge as a real process and calls memory_read.
+    handle.sendMessage({ text: 'mcp-call' });
+    const called = await until(handle, 'result');
+    expect((called.find((e) => e.type === 'assistant_text') as { text: string }).text).toBe('# Overview');
     handle.close();
   });
 

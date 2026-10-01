@@ -18,9 +18,15 @@ export default defineConfig({
   build: {
     outDir: 'dist/main',
     lib: {
-      entry: path.resolve('src/main/index.ts'),
+      entry: {
+        index: path.resolve('src/main/index.ts'),
+        // The MCP stdio bridge that agents start as their own process (see
+        // src/main/adapters/mcp-bridge). electron-builder unpacks it from
+        // app.asar so it can run outside the app.
+        'mcp-stdio-bridge': path.resolve('src/main/adapters/mcp-bridge/main.mjs'),
+      },
       formats: ['cjs'],
-      fileName: () => 'index.js',
+      fileName: (_format, entryName) => `${entryName}.js`,
     },
     rollupOptions: {
       external: (id) => {

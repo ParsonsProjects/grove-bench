@@ -20,7 +20,7 @@ import type {
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
-import { cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -66,12 +66,6 @@ export function capToolResult(content: string): string {
   const tailChars = MAX_TOOL_RESULT_CHARS - TOOL_RESULT_HEAD_CHARS;
   const omitted = content.length - TOOL_RESULT_HEAD_CHARS - tailChars;
   return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
-}
-
-/** `p` with an `app.asar` directory swapped for `app.asar.unpacked`, where
- *  electron-builder puts files that must exist on disk. Unchanged otherwise. */
-export function asarUnpackedPath(p: string): string {
-  return p.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
 }
 
 export function spawnClaudeCodeProcess(
@@ -152,6 +146,8 @@ const WRITE_TOOL_PATH_FIELD: Record<string, string> = {
 // Re-exported so existing importers (tests) keep working after the move to
 // agent-utils, where non-adapter modules can share it.
 export { isPathInside };
+// Moved to agent-utils (the MCP bridge launcher uses it too); importers keep working.
+export { asarUnpackedPath };
 
 // ─── SDKMessage → AgentEvent transform ───
 

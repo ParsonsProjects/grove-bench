@@ -4,6 +4,7 @@
 //   auth     - session/new answers auth_required
 //   nohttp   - no HTTP MCP support
 import { createInterface } from 'node:readline';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 const scenario = process.env.FAKE_ACP_SCENARIO || 'default';
@@ -34,6 +35,28 @@ function configOptions() {
 }
 const modes = { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] };
 
+/** Start a stdio MCP server the client gave us, as an agent would, and
+ *  call one tool through it. Resolves with the tool's first text. */
+function callStdioTool(server, name, args) {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env, ...Object.fromEntries((server.env ?? []).map((e) => [e.name, e.value])) };
+    const child = spawn(server.command, server.args ?? [], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+    const send = (m) => child.stdin.write(JSON.stringify(m) + '\n');
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const msg = JSON.parse(line);
+      if (msg.id === 1) {
+        send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+        send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } });
+      } else if (msg.id === 2) {
+        child.stdin.end();
+        resolve(msg.error ? `error: ${msg.error.message}` : msg.result.content[0].text);
+      }
+    });
+    child.on('error', reject);
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake', version: '1' } } });
+  });
+}
+
 async function prompt(params) {
   const sid = params.sessionId;
   const text = params.prompt.find((b) => b.type === 'text')?.text ?? '';
@@ -49,8 +72,17 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: texts } });
     return { stopReason: 'end_turn' };
   }
+  if (text === 'mcp-call') {
+    const server = lastMcpServers.find((s) => s.name === 'grove-memory');
+    const result = server ? await callStdioTool(server, 'memory_read', { path: 'repo/overview.md' }) : 'no server';
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: result } });
+    return { stopReason: 'end_turn' };
+  }
   if (text === 'mcp') {
-    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(lastMcpServers.map((s) => ({ type: s.type, name: s.name, auth: !!s.headers?.length }))) } });
+    const summary = lastMcpServers.map((s) => s.command
+      ? { type: 'stdio', name: s.name, env: (s.env ?? []).map((e) => e.name) }
+      : { type: s.type, name: s.name, auth: !!s.headers?.length });
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(summary) } });
     return { stopReason: 'end_turn' };
   }
   if (text.startsWith('You write commit messages')) {

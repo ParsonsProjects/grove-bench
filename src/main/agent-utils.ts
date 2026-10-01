@@ -24,6 +24,12 @@ export function isPathInside(parent: string, child: string): boolean {
  */
 export const ENV_NOISE_PREFIXES = ['npm_', 'NVM_', 'FNM_', 'VSCODE_', 'ELECTRON_'];
 
+/** `p` with an `app.asar` directory swapped for `app.asar.unpacked`, where
+ *  electron-builder puts files that must exist on disk. Unchanged otherwise. */
+export function asarUnpackedPath(p: string): string {
+  return p.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+}
+
 /**
  * Strip noisy env vars that leak absolute paths into the LLM context,
  * causing the model to use full paths for simple CLI commands.

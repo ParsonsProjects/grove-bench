@@ -29,7 +29,7 @@ protocol is still in `TODO.md`.
 |---|---|---|
 | 1 | The UI, Read-safe mode and parts of main read Claude Code's tool names and input fields (`Edit`, `file_path`, `old_string`) | `src/shared/tool-view.ts`: a neutral `ToolView` (kind, path, edits or whole-file write, command, pattern, URL). Adapters attach it; events without one are read as Claude Code tools, so saved history keeps working. New `tool_update` event for calls an agent fills in later |
 | 2 | 8 of 12 capability flags were never read | The session manager passes a sandbox, output format, resume id and images only to agents that declare them. New `rewind` flag: rewinding on an agent without it starts a new conversation and says so. The composer skips images an agent can't take |
-| 3 | Grove's memory and Preview tools were in-process Claude SDK servers | `grove-tools.ts` defines them once; `grove-mcp-http.ts` serves them over MCP Streamable HTTP on 127.0.0.1 with a per-query bearer token and a loopback Host check |
+| 3 | Grove's memory and Preview tools were in-process Claude SDK servers | `grove-tools.ts` defines them once; `grove-mcp-http.ts` serves them over MCP Streamable HTTP on 127.0.0.1 with a per-query bearer token and a loopback Host check. Agents that can't connect over HTTP start Grove's stdio bridge instead (below) |
 | 4 | Permissions relied on a per-call callback | ACP has one: `session/request_permission`. The ACP adapter answers from deny/allow rules, always-allow, the conversation's mode, then the user |
 | 5 | Smaller Claude paths | Skill folders are named by the adapter (`SkillDirs`); adapters declare the files Grove writes into worktrees (`generatedFiles`) |
 
@@ -55,6 +55,15 @@ Code: `src/main/adapters/acp/`.
 - **Models**: from a config option in the `model` category, or Gemini's older
   `models` field with `session/set_model` (removed from the protocol, still
   used by Gemini CLI).
+- **Grove's tools**: agents that declare `mcpCapabilities.http` get the
+  address. Every other agent gets a stdio server to start, since stdio is
+  the transport every ACP agent must support
+  ([session setup](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/docs/protocol/v1/session-setup.mdx)).
+  That server is Grove's own executable in Electron's Node mode
+  (`ELECTRON_RUN_AS_NODE=1`) running `mcp-stdio-bridge.js`, which forwards
+  each message to the HTTP server with the conversation's token
+  (`adapters/mcp-bridge/`). electron-builder unpacks the script from
+  app.asar, and `scripts/smoke-deps.mjs` checks the packaged app runs it.
 - **Sign-in**: done in the agent's own CLI. An `auth_required` error says
   which command to run.
 - **Background tasks** (commit messages, branch names, memory notes) run as
@@ -68,8 +77,6 @@ Code: `src/main/adapters/acp/`.
   values, so a badge can lag until the next start.
 - Replying to a denied permission with a message: ACP's reject options carry
   no text, so the reply doesn't reach the agent.
-- Agents without HTTP MCP support get no Grove tools. A stdio bridge would
-  cover them.
 - File system and terminal client capabilities (letting the agent read
   through Grove, or run commands in Grove's terminal).
 - `session/close` and `session/list` (titles across restarts).

@@ -32,6 +32,7 @@ import { logger } from '../../logger.js';
 import { loadModelCatalog, saveModelCatalog } from '../../app-state.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
+import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
 import { JsonRpcConnection, JsonRpcError, RPC_ERRORS } from './rpc.js';
 import {
   ACP_PROTOCOL_VERSION,
@@ -331,6 +332,8 @@ class AcpQuery {
   private proc: ResultPromise | null = null;
   private rpc: JsonRpcConnection | null = null;
   private mcp: GroveMcpHttp | null = null;
+  /** Grove's tool servers as the agent is told about them (also for /clear). */
+  private mcpServers: AcpMcpServer[] = [];
   private init: AcpInitializeResponse | null = null;
   private sessionId: string | null = null;
   private configOptions: AcpConfigOption[] = [];
@@ -462,19 +465,28 @@ class AcpQuery {
     });
   }
 
-  /** Grove's memory and Preview tools, served for agents that connect to MCP
-   *  servers over HTTP (an ACP option every agent must declare). */
+  /** Grove's memory and Preview tools. They are served over HTTP on this
+   *  computer; an agent that can connect by address (the optional
+   *  mcpCapabilities.http) gets the address, and any other starts Grove's
+   *  stdio bridge to it (stdio is the one transport every agent supports). */
   private async groveMcpServers(): Promise<AcpMcpServer[]> {
     const servers: GroveServer[] = [];
     if (this.config.memoryOperations) servers.push(memoryServer(this.config.memoryOperations));
     if (this.config.previewOperations) servers.push(previewServer(this.config.previewOperations));
     if (servers.length === 0) return [];
-    if (!this.init?.agentCapabilities?.mcpCapabilities?.http) {
-      logger.info(`[${this.def.id}] agent can't connect to MCP servers over HTTP; Grove's memory and Preview tools are not offered`);
-      return [];
-    }
     this.mcp = await startGroveMcpHttp(servers);
-    return this.mcp.endpoints.map((e) => ({ type: 'http', name: e.name, url: e.url, headers: e.headers }));
+    const http = this.init?.agentCapabilities?.mcpCapabilities?.http === true;
+    this.mcpServers = this.mcp.endpoints.map((e): AcpMcpServer => {
+      if (http) return { type: 'http', name: e.name, url: e.url, headers: e.headers };
+      const launch = stdioBridgeLaunch(e);
+      return {
+        name: launch.name,
+        command: launch.command,
+        args: launch.args,
+        env: Object.entries(launch.env).map(([name, value]) => ({ name, value })),
+      };
+    });
+    return this.mcpServers;
   }
 
   private async openSession(mcpServers: AcpMcpServer[]): Promise<void> {
@@ -647,7 +659,7 @@ class AcpQuery {
     try {
       const setup = await this.rpc!.request<AcpSessionSetup>('session/new', {
         cwd: this.config.cwd,
-        mcpServers: this.mcp ? this.mcp.endpoints.map((e) => ({ type: 'http', name: e.name, url: e.url, headers: e.headers })) : [],
+        mcpServers: this.mcpServers,
       });
       if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
       this.sessionId = setup.sessionId;

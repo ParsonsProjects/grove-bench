@@ -44,6 +44,7 @@ src/
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, custom agents)
       grove-tools.ts   # Grove's memory and Preview tools, defined once
       grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
+      mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)
       preview-mcp-server.ts # Agent browser tools (grove-preview)
   renderer/            # Electron renderer (Svelte UI)
     App.svelte         # Root component
