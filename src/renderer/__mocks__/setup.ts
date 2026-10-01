@@ -1,5 +1,11 @@
-import { vi } from 'vitest';
+import { afterAll, vi } from 'vitest';
 import type { GroveBenchAPI } from '../../shared/types.js';
+
+// A closed bits-ui dialog resets the page body's style on a timer (24ms by
+// default, see bits-ui's body-scroll-lock). One left over from a file's last
+// test can fire after jsdom is torn down and throw "document is not defined",
+// which fails the run. Let it fire while the page still exists.
+afterAll(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
 
 // ─── localStorage mock ───
 const localStorageMock = (() => {
@@ -115,6 +121,8 @@ const mockGroveBench = {
   setSidebarWidth: vi.fn(),
   getCollapsedPanels: vi.fn(() => Promise.resolve({} as import('../../shared/types.js').CollapsedPanels)),
   setCollapsedPanels: vi.fn(),
+  getConversationGroups: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').ConversationGroup[] | null)),
+  setConversationGroups: vi.fn(),
   getUnreadSessions: vi.fn(() => Promise.resolve([] as string[])),
   setUnreadSessions: vi.fn(),
   onAppError: vi.fn(() => () => {}),

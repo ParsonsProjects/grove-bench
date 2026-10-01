@@ -12,7 +12,7 @@ import { clearApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, resolveMergeBase, indexFileContent, hashWorkingFiles, listProjectFiles, revertFile, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -32,7 +32,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { perfSteps, logWindowTiming } from './perf-steps.js';
@@ -285,13 +285,30 @@ export function registerHandlers() {
     // Generate a stable ID up front so the renderer can open a tab immediately.
     // It also names the placeholder branch when no name was given.
     const id = crypto.randomUUID().slice(0, 8);
+
+    // A conversation joining a group on the group's branch continues that
+    // branch where the project has it already. Git allows a branch in one
+    // checkout at a time, so one held by another (a conversation, or the
+    // project folder itself) is refused here rather than failing later.
+    let useExisting = !!opts.useExisting;
+    if (!useExisting && opts.continueBranch && opts.branchName.trim()) {
+      const name = opts.branchName.trim();
+      if (await branchExistsAnywhere(opts.repoPath, name)) {
+        const holder = (await worktreeBranches(opts.repoPath).catch(() => null))?.get(name);
+        if (holder) {
+          throw new Error(`Branch "${name}" is already checked out at ${holder}. Pick another branch name for this conversation.`);
+        }
+        useExisting = true;
+      }
+    }
+
     // No name for a new branch: start on a placeholder that is renamed from
     // the task after the first turn (BRANCH_AUTO_NAME).
-    const branch = opts.useExisting ? opts.branchName : (opts.branchName.trim() || tempBranchName(id));
+    const branch = useExisting ? opts.branchName.trim() : (opts.branchName.trim() || tempBranchName(id));
 
     // ── Validation (synchronous — errors shown in dialog) ──
 
-    if (opts.useExisting) {
+    if (useExisting) {
       const exists = await branchExistsAnywhere(opts.repoPath, branch);
       if (!exists) {
         throw new Error(`Branch "${branch}" does not exist`);
@@ -307,7 +324,7 @@ export function registerHandlers() {
       }
     }
 
-    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
+    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${useExisting}`);
     perfSteps.begin(id, 'new conversation', startedAt);
     perfSteps.step(id, 'checks');
 
@@ -335,7 +352,7 @@ export function registerHandlers() {
           repoPath: opts.repoPath,
           branchName: branch,
           baseBranch: opts.baseBranch,
-          useExisting: opts.useExisting,
+          useExisting,
           id,
           adapterType: opts.adapterType,
         });
@@ -1701,6 +1718,12 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
     saveCollapsedPanels(panels);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_GROUPS, () => loadConversationGroups());
+
+  ipcMain.on(IPC.APP_STATE_SET_GROUPS, (_event, groups: unknown) => {
+    saveConversationGroups(groups);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {

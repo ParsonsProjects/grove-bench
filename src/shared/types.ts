@@ -53,6 +53,10 @@ export interface CreateSessionOpts {
   branchName: string;
   baseBranch?: string;
   useExisting?: boolean;
+  /** A new branch named after the group the conversation joins: when the
+   *  project has that branch already, continue on it instead of refusing the
+   *  name. Refused when another checkout has it. */
+  continueBranch?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
   /** Which adapter to use for this session (defaults to registry default). */
@@ -866,6 +870,19 @@ export interface SessionSortState {
   dir: 'asc' | 'desc';
 }
 
+/** Conversations that belong to one piece of work, usually in different
+ *  projects (an API change and the web change that uses it). Short-lived:
+ *  the group goes when its last conversation leaves it. Each conversation
+ *  still runs in its own project; the group only lists them together.
+ *  Persisted via app-state. */
+export interface ConversationGroup {
+  id: string;
+  name: string;
+  /** Conversation ids, in the order they joined. Never empty, and a
+   *  conversation is in at most one group. */
+  sessionIds: string[];
+}
+
 /** Sidebars that fold down to a thin rail. The Changes and Checkpoints file
  *  lists are separate so each tab keeps its own. */
 export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles'] as const;
@@ -1198,6 +1215,10 @@ export interface GroveBenchAPI {
   setSidebarWidth(width: number): void;
   getCollapsedPanels(): Promise<CollapsedPanels>;
   setCollapsedPanels(panels: CollapsedPanels): void;
+  /** The saved groups, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getConversationGroups(): Promise<ConversationGroup[] | null>;
+  setConversationGroups(groups: ConversationGroup[]): void;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
@@ -1733,6 +1754,8 @@ export const IPC = {
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
   APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
   APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
+  APP_STATE_GET_GROUPS: 'appState:getConversationGroups',
+  APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   /** Main → renderer: an uncaught main-process error. */

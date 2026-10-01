@@ -1,115 +1,35 @@
-@import "tailwindcss";
-
-@theme inline {
-  --spacing: 0.25rem;
-
-  --font-sans: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
-
-  --color-background: oklch(0.208 0 0);
-  --color-foreground: oklch(0.835 0 0);
-
-  --color-card: oklch(0.233 0 0);
-  --color-card-foreground: oklch(0.835 0 0);
-
-  --color-primary: oklch(0.541 0.181 254.624);
-  --color-primary-foreground: oklch(1 0 0);
-
-  --color-secondary: oklch(0.279 0 0);
-  --color-secondary-foreground: oklch(0.835 0 0);
-
-  --color-muted: oklch(0.279 0 0);
-  --color-muted-foreground: oklch(0.576 0 0);
-
-  --color-accent: oklch(0.310 0.065 245);
-  --color-accent-foreground: oklch(0.835 0 0);
-
-  --color-border: oklch(0.260 0 0);
-
-  --color-sidebar: oklch(0.176 0 0);
+/* Page base: reset, and the morning sky behind everything. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
-
-/* Runtime CSS vars for SVG fills and base styles */
-:root {
-  --spacing: 0.25rem;
-  --color-primary: oklch(0.541 0.181 254.624);
-  --color-background: oklch(0.208 0 0);
-  --color-foreground: oklch(0.835 0 0);
-  --color-card: oklch(0.233 0 0);
-  --color-border: oklch(0.260 0 0);
-  --color-sidebar: oklch(0.176 0 0);
-  --color-muted: oklch(0.279 0 0);
-  --color-muted-foreground: oklch(0.576 0 0);
-  --color-secondary: oklch(0.279 0 0);
-  --color-secondary-foreground: oklch(0.835 0 0);
-  --color-accent: oklch(0.310 0.065 245);
-  --color-primary-foreground: oklch(1 0 0);
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-}
-
-@layer base {
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-    border-color: oklch(0.260 0 0);
-    border-radius: 0 !important;
-    scrollbar-width: thin;
-    scrollbar-color: oklch(0.320 0 0) transparent;
-  }
-  body {
-    background-color: oklch(0.208 0 0);
-    color: oklch(0.835 0 0);
-  }
-}
-
-/* Button styles */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1.75rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  background-color: var(--color-primary);
-  color: var(--color-primary-foreground);
-  transition: all 0.15s ease;
-}
-.btn-primary:hover {
-  filter: brightness(1.15);
-  transform: translateY(-1px);
-}
-
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1.75rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  background-color: var(--color-secondary);
-  color: var(--color-secondary-foreground);
-  border: 1px solid var(--color-border);
-  transition: all 0.15s ease;
-}
-.btn-secondary:hover {
-  filter: brightness(1.15);
-  transform: translateY(-1px);
-}
-
-/* Smooth scroll */
 html {
-  scroll-behavior: smooth;
+  background: #fffdf7;
+  scroll-behavior: auto;
+  color-scheme: light;
 }
-
-/* Backdrop blur support for nav */
-@supports (backdrop-filter: blur(12px)) {
-  nav {
-    backdrop-filter: blur(12px);
+body {
+  min-height: 100vh;
+  background: #fffdf7;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+a {
+  color: inherit;
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+img,
+svg {
+  max-width: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }

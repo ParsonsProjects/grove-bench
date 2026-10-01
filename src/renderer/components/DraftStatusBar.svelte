@@ -18,6 +18,9 @@
 
   const draft = $derived(draftStore.draft);
   const start = $derived(draft?.start);
+  /** The group the conversation joins, or starts, when it starts. */
+  const groupName = $derived(draftStore.groupName);
+  const newGroup = $derived(!!draft?.newGroupName);
 
   const whereLabel = $derived.by(() => {
     if (!start) return '';
@@ -33,6 +36,7 @@
     }
     if (start.kind === 'existing') return start.pr ? start.pr.title : 'existing branch · separate copy';
     const from = start.baseBranch.trim() ? `from ${start.baseBranch.trim()}` : 'from the default branch';
+    if (draftStore.onGroupBranch) return `the group's branch · ${from}, or continued if the project has it`;
     return start.branchName.trim() ? from : `${from} · named after the first reply`;
   });
 
@@ -123,6 +127,23 @@
       </div>
     {/if}
   </div>
+
+  {#if groupName}
+    <span class="w-px self-stretch bg-border"></span>
+    <span class="flex items-center gap-1 min-w-0 text-[11px]" title={newGroup ? `Starts the group ${groupName}` : `Joins the group ${groupName} when it starts`}>
+      <span class="text-muted-foreground/60 shrink-0">{newGroup ? 'New group' : 'Group'}</span>
+      <span class="text-foreground/80 truncate max-w-32">{groupName}</span>
+      <button
+        type="button"
+        onclick={() => draftStore.leaveGroup()}
+        class="w-4 h-4 flex items-center justify-center shrink-0 text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors"
+        title="Start it outside the group"
+        aria-label="Don't add to {groupName}"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </span>
+  {/if}
 
   <span class="ml-auto text-[11px] text-muted-foreground/50 text-right">Nothing is created until you send</span>
 </div>

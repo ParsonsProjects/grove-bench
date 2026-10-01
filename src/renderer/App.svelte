@@ -32,6 +32,7 @@
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import { groupStore } from './stores/groups.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
@@ -356,6 +357,7 @@
     prerequisitesStore.init();
     settingsStore.load();
     bookmarkStore.load();
+    groupStore.load();
     panelStore.load();
     memoryStore.init();
     previewStore.init();

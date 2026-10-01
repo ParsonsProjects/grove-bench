@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
-import { COLLAPSIBLE_PANELS, type CollapsedPanels, type PrerequisiteStatus, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
+import { COLLAPSIBLE_PANELS, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 
@@ -52,6 +52,8 @@ export interface AppState {
    *  only knows projects that have conversations, so without this a project
    *  with none was forgotten at restart. Absent until first listed. */
   projects?: string[];
+  /** Conversation groups from the sidebar. Absent until the first one. */
+  groups?: ConversationGroup[];
 }
 
 const DEFAULT_STATE: AppState = {
@@ -88,6 +90,25 @@ const collapsedPanelsSchema = z.record(z.string(), z.unknown()).transform((raw):
   return panels;
 });
 
+const groupSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  sessionIds: z.array(z.string()),
+});
+
+/** Keeps the well-formed groups and drops the rest, so one bad entry doesn't
+ *  lose every group. A conversation listed twice keeps its first place only
+ *  (the sidebar keys rows by conversation), and a group left with none goes. */
+const groupsSchema = z.array(z.unknown()).transform((raw): ConversationGroup[] => {
+  const seen = new Set<string>();
+  return raw.flatMap((g) => {
+    const parsed = groupSchema.safeParse(g);
+    if (!parsed.success) return [];
+    const sessionIds = parsed.data.sessionIds.filter((id) => !seen.has(id) && !!seen.add(id));
+    return sessionIds.length > 0 ? [{ ...parsed.data, sessionIds }] : [];
+  });
+});
+
 /** Per-field fallback: a corrupt value resets that field only. */
 const appStateSchema = z.object({
   openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
@@ -111,6 +132,7 @@ const appStateSchema = z.object({
     fetchedAt: z.number(),
   })).optional().catch(undefined),
   projects: z.array(z.string()).optional().catch(undefined),
+  groups: groupsSchema.optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -213,6 +235,7 @@ const sessionSortWriter = debouncedWriter<SessionSortState>((s, v) => { s.sessio
 const sidebarWidthWriter = debouncedWriter<number>((s, v) => { s.sidebarWidth = v; });
 const collapsedPanelsWriter = debouncedWriter<CollapsedPanels>((s, v) => { s.collapsedPanels = v; });
 const unreadWriter = debouncedWriter<string[]>((s, v) => { s.unreadSessionIds = v; });
+const groupsWriter = debouncedWriter<ConversationGroup[]>((s, v) => { s.groups = v; });
 
 export function saveOpenTabs(ids: string[]): void {
   openTabsWriter.save(ids);
@@ -291,6 +314,22 @@ export function saveModelCatalog(adapterId: string, models: unknown[]): void {
   updateAppState((state) => {
     state.modelCatalogs = { ...(state.modelCatalogs ?? {}), [adapterId]: { models, fetchedAt: Date.now() } };
   });
+}
+
+/** The saved groups, or null when the file exists but can't be read right
+ *  now. The renderer saves its whole list back, so reading a passing lock as
+ *  "no groups" would let its next save wipe them. */
+export function loadConversationGroups(): ConversationGroup[] | null {
+  flushPendingSaves();
+  const state = readAppState();
+  return state ? state.groups ?? [] : null;
+}
+
+/** Debounced: deleting several grouped conversations (removing a project,
+ *  clean-up) sends one save each. Junk from the renderer is ignored. */
+export function saveConversationGroups(groups: unknown): void {
+  const parsed = groupsSchema.safeParse(groups);
+  if (parsed.success) groupsWriter.save(parsed.data);
 }
 
 /** Flush any pending debounced saves immediately (e.g. before system suspend). */
