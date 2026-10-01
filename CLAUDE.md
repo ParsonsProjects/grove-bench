@@ -46,6 +46,7 @@ src/
     App.svelte         # Root component
     main.ts            # Renderer entry
     components/        # Svelte components (~34 files)
+      settings/        # Settings panel sections and shared setting rows
     lib/               # Utilities
     stores/            # Svelte stores (sessions, messages, settings, etc.)
     styles/            # CSS

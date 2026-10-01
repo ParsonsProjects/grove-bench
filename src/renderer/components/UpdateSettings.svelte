@@ -3,8 +3,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { releaseNotesUrl } from '../lib/release-notes.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { Label } from '$lib/components/ui/label/index.js';
-  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import CheckboxSetting from './settings/CheckboxSetting.svelte';
 
   let updateState = $state<UpdateState | null>(null);
   let checking = $state(false);
@@ -46,13 +45,14 @@
   }
 </script>
 
-<div>
-  <Label class="mb-1 block">Updates</Label>
+<!-- Shown under an "Updates" heading in Settings → The grove (General). -->
+<div data-setting="updates" class="flex flex-col gap-2">
   {#if updateState}
-    <p class="text-xs text-muted-foreground mb-2">
+    <p class="text-xs text-muted-foreground leading-relaxed">
       Version {updateState.currentVersion}.
       <button
-        class="underline hover:text-foreground"
+        type="button"
+        class="text-primary hover:underline"
         onclick={() => window.groveBench.openExternal(releaseNotesUrl())}
       >All releases</button>
     </p>
@@ -67,9 +67,10 @@
       <p class="text-xs text-muted-foreground">Updates are only checked in the installed app.</p>
     {/if}
   {/if}
-  <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer mt-3">
-    <Checkbox bind:checked={settingsStore.draft.autoDownloadUpdates} />
-    Download updates automatically
-  </label>
-  <p class="text-xs text-muted-foreground mt-1 ml-6">New versions download in the background and install the next time you quit, or sooner with Restart to update in the title bar. When off, the title bar shows the new version and waits for you to download it. On by default.</p>
 </div>
+<CheckboxSetting
+  setting="auto-download-updates"
+  label="Download updates automatically"
+  description="New versions download in the background and install the next time you quit, or sooner with Restart to update in the title bar. When off, the title bar shows the new version and waits for you to download it."
+  bind:checked={settingsStore.draft.autoDownloadUpdates}
+/>

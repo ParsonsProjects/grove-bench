@@ -12,7 +12,7 @@ import { worktreeManager } from './worktree-manager.js';
  * model rather than its conversation model.
  */
 
-/** The user's pick in Settings > Agent, else the adapter's own cheap default,
+/** The user's pick in Settings > Agents, else the adapter's own cheap default,
  *  else undefined (the agent's default model). */
 export function backgroundModelFor(adapter: AgentAdapter): string | undefined {
   return getSettings().backgroundModels?.[adapter.id] || adapter.backgroundModel || undefined;

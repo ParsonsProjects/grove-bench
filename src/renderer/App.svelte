@@ -255,6 +255,10 @@
       e.preventDefault();
       bookmarkStore.toggleDrawer();
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+      e.preventDefault();
+      settingsStore.panelOpen = !settingsStore.panelOpen;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
       // A draft in the project of the conversation being looked at.

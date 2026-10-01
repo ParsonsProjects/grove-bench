@@ -6,7 +6,7 @@
   import { Label } from '$lib/components/ui/label/index.js';
 
   /** API key entry for one agent. Used by the New Conversation dialog and
-   *  Settings > Agent. The saved key never comes back to the renderer; only
+   *  Settings > Agents. The saved key never comes back to the renderer; only
    *  whether one is saved. */
   let { adapterId, autofocus = false }: { adapterId: string; autofocus?: boolean } = $props();
 

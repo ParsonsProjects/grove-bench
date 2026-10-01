@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import '@testing-library/jest-dom/vitest';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 
 import StatusBar from './StatusBar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -9,6 +10,7 @@ import { settingsStore } from '../stores/settings.svelte.js';
 import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
+import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
@@ -56,6 +58,53 @@ describe('StatusBar keyboard shortcuts', () => {
     await fireEvent.keyDown(window, { key: 'm', altKey: true });
 
     expect(cycle).not.toHaveBeenCalled();
+  });
+});
+
+describe('StatusBar Keys popover', () => {
+  it('lists each tab under the key that switches to it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+
+    const popover = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    for (const [key, tab] of Object.entries(TAB_BY_KEY)) {
+      const row = within(popover).getByText(`${TAB_LABELS[tab]} tab`).closest('div')!;
+      expect(row).toHaveTextContent(`Alt+${key}`);
+    }
+    expect(within(popover).getByText('Settings').closest('div')).toHaveTextContent('Ctrl+,');
+  });
+
+  it('closes on Escape, with focus back on its button', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    const button = screen.getByRole('button', { name: 'Keys' });
+    // A real click focuses the button; jsdom's doesn't.
+    button.focus();
+    await fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('lets Escape through when focus is elsewhere, such as a dialog opened over it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+    const elsewhere = document.createElement('input');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    const reached = vi.fn();
+    document.addEventListener('keydown', reached);
+
+    await fireEvent.keyDown(elsewhere, { key: 'Escape' });
+
+    expect(reached).toHaveBeenCalled();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    document.removeEventListener('keydown', reached);
+    elsewhere.remove();
   });
 });
 

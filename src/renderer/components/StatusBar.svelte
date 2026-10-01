@@ -15,6 +15,8 @@
   import { keepInViewport } from '../lib/keep-in-viewport.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { memoryStore } from '../stores/memory.svelte.js';
+  import { helpStore } from '../stores/help.svelte.js';
+  import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
   import { mergeSkills } from '../lib/skills-merge.js';
   import { buildCreateSkillPrompt } from '../lib/skill-prompt.js';
   import { formatMcpActionError, mcpNeedsAuthHint } from '../lib/mcp-errors.js';
@@ -355,6 +357,43 @@
     prPopoverOpen = false;
     createPrMenuOpen = false;
     if (focusWasInStack) trigger?.focus();
+  }
+
+  // ─── Keys popover ───
+
+  let shortcutsButtonRef = $state<HTMLButtonElement | null>(null);
+
+  /** Shortcuts the popover lists. The tab ones come from the map the
+   *  shortcut handler uses, so the list can't drift from what works. */
+  const SHORTCUT_GROUPS: { title: string; keys: [string, string][] }[] = [
+    { title: 'General', keys: [
+      ['Conversation finder', 'Ctrl+R'],
+      ['New conversation', 'Ctrl+N'],
+      ['Reopen closed tab', 'Ctrl+Shift+T'],
+      ['Bookmarks', 'Ctrl+B'],
+      ['Search messages', 'Ctrl+F'],
+      ['Settings', 'Ctrl+,'],
+      ['Help', 'F1'],
+    ] },
+    { title: 'Agent', keys: [
+      ['Cycle mode', 'Alt+M'],
+      ['Toggle thinking', 'Alt+T'],
+      ['Cycle effort level', 'Alt+E'],
+    ] },
+    { title: 'Tabs', keys: Object.entries(TAB_BY_KEY).map(([key, tab]) => [`${TAB_LABELS[tab]} tab`, `Alt+${key}`]) },
+  ];
+
+  /** Escape closes the Keys popover. Capture phase, and only while this bar
+   *  shows (see handlePrEscape). The key is kept, and focus goes back to the
+   *  Keys button, only when focus was in the popover: Escape pressed in a
+   *  dialog opened over it (Ctrl+,) or in the prompt must still reach them. */
+  function handleShortcutsEscape(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !shortcutsOpen) return;
+    if (!(shortcutsRef?.checkVisibility?.() ?? true)) return;
+    shortcutsOpen = false;
+    if (!shortcutsRef?.contains(document.activeElement)) return;
+    e.stopPropagation();
+    shortcutsButtonRef?.focus();
   }
 
   // ─── MCP server control ───
@@ -700,6 +739,7 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('keydown', handlePrEscape, true);
+    window.addEventListener('keydown', handleShortcutsEscape, true);
     window.addEventListener('click', handleClickOutside);
     // The MCP controls depend on what the agent supports (loaded once).
     agentsStore.load();
@@ -712,6 +752,7 @@
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('keydown', handlePrEscape, true);
+    window.removeEventListener('keydown', handleShortcutsEscape, true);
     window.removeEventListener('click', handleClickOutside);
     stopSignInPoll();
   });
@@ -728,7 +769,7 @@
   <span class="w-px self-stretch bg-border"></span>
 
   <!-- Activity view toggle (cycles Summary → Focus → Detailed). Per session;
-       the default for new sessions is set in Settings → Default Thread View.
+       the default for new sessions is set in Settings → General → Default thread view.
        The rate-limit warning sits underneath. -->
   <div class="flex flex-col gap-px leading-snug">
   <button
@@ -1860,26 +1901,39 @@
 
   <div class="relative" bind:this={shortcutsRef}>
     <button
+      bind:this={shortcutsButtonRef}
       onclick={() => shortcutsOpen = !shortcutsOpen}
-      class="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+      class="text-muted-foreground hover:text-foreground transition-colors"
       title="Keyboard shortcuts"
+      aria-expanded={shortcutsOpen}
+      aria-controls="status-bar-shortcuts"
     >
       Keys
     </button>
 
     {#if shortcutsOpen}
-      <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-56 z-50">
-        <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
-        <div class="space-y-1.5 text-muted-foreground">
-          <div class="flex justify-between"><span>Conversation finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
-          <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
-          <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
-          <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
-          <div class="flex justify-between"><span>Cycle effort level</span><kbd class="text-foreground">Alt+E</kbd></div>
-          <div class="flex justify-between"><span>Thread tab</span><kbd class="text-foreground">Alt+1</kbd></div>
-          <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
-          <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>
-        </div>
+      <div
+        id="status-bar-shortcuts"
+        role="dialog"
+        aria-label="Keyboard shortcuts"
+        class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-64 max-h-[70vh] overflow-y-auto z-50"
+      >
+        <div class="font-medium text-foreground mb-2">Keyboard shortcuts</div>
+        {#each SHORTCUT_GROUPS as group, i (group.title)}
+          <div class="text-muted-foreground font-medium mb-1 {i > 0 ? 'mt-3' : ''}">{group.title}</div>
+          <dl class="space-y-1.5 text-muted-foreground">
+            {#each group.keys as [action, keys] (keys)}
+              <div class="flex justify-between gap-3"><dt>{action}</dt><dd><kbd class="text-foreground">{keys}</kbd></dd></div>
+            {/each}
+          </dl>
+        {/each}
+        <button
+          type="button"
+          class="mt-3 text-primary hover:underline"
+          onclick={() => { shortcutsOpen = false; helpStore.show('keyboard-shortcuts'); }}
+        >
+          All shortcuts
+        </button>
       </div>
     {/if}
   </div>

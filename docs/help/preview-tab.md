@@ -30,7 +30,7 @@ When a page can't load, the tab says why. For example, a refused connection usua
 | `F12` or `Ctrl+Shift+I` | Developer tools |
 | `Alt+Left` / `Alt+Right` | Back / forward |
 | `Ctrl+L` or `Alt+D` | Go to the address bar |
-| `Alt+1` to `Alt+5`, `Alt+M`, `Alt+T`, `Alt+E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T` | Grove Bench shortcuts, as usual |
+| `Alt+1` to `Alt+5`, `Alt+M`, `Alt+T`, `Alt+E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T`, `Ctrl+,` | Grove Bench shortcuts, as usual |
 
 `Ctrl+R` reloads the page while the page has focus. Elsewhere in Grove Bench it still opens the conversation finder.
 
@@ -46,6 +46,6 @@ The agent can open a local page, take a screenshot, read the page's text, click,
 - The page is 1280×800 unless the agent picks another size, for example a phone size
 - The agent's page closes when the conversation goes to sleep, so it isn't left running. The agent opens it again next time it uses the browser. Your page and the shared sign-ins stay
 
-Turn the agent's browser off under **Settings > General > Let the agent use the Preview browser**. The change applies to agents started after it.
+Turn the agent's browser off under **Settings → Grovekeepers (Agents) → Let the agent use the Preview browser**. The change applies to agents started after it.
 
 Pages show on screen only while the Preview tab is open. When a Grove Bench menu or dialog opens over your page, a still picture of the page stands in until it closes.

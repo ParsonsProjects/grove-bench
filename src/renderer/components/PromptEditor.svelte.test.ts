@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import PromptEditor from './PromptEditor.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'prompt-session';
@@ -149,5 +150,51 @@ describe('PromptEditor: attachments', () => {
     const again = render(PromptEditor, { sessionId: SID });
 
     expect(again.getByText('notes.txt')).toBeInTheDocument();
+  });
+});
+
+describe('PromptEditor: @ file picker', () => {
+  it('does not send on Enter while the picker is still loading', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage');
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const textarea = container.querySelector('textarea')!;
+    textarea.value = 'look at @app';
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    await fireEvent.input(textarea);
+
+    // Straight away, before the picker's code has loaded.
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+    textarea.dispatchEvent(enter);
+    await tick();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(textarea.value).toBe('look at @app');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(submit).not.toHaveBeenCalled();
+    submit.mockRestore();
+  });
+
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+    Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+    mockGroveBench.listFiles.mockResolvedValue(['src/app.ts', 'README.md']);
+  });
+  afterEach(() => cleanup());
+
+  it('loads the picker the first time @ is typed, and inserts the picked file', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const textarea = container.querySelector('textarea')!;
+
+    textarea.value = 'look at @app';
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    await fireEvent.input(textarea);
+
+    // Its code loads on first use, which can be slow under test.
+    const option = await screen.findByTitle('src/app.ts', {}, { timeout: 4000 });
+    await fireEvent.mouseDown(option);
+
+    expect(textarea.value).toContain('@src/app.ts');
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });
 });
