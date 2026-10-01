@@ -5,6 +5,7 @@ import { store } from './sessions.svelte.js';
 import { agentsStore } from './agents.svelte.js';
 import { messageStore } from './messages.svelte.js';
 import { arrivalScene } from './arrivalScene.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
@@ -51,6 +52,7 @@ afterEach(() => {
   store.activeSessionId = null;
   agentsStore.list = [];
   agentsStore.loaded = false;
+  settingsStore.current = { ...settingsStore.current, adapterDefaults: {} };
 });
 
 describe('draftStore.open', () => {
@@ -107,14 +109,13 @@ describe('draftStore choices', () => {
     expect(draftStore.controlValue('effort')).toBe('high');
   });
 
-  it('starts a PR in Plan mode unless a mode was picked', () => {
+  it('leaves the mode alone when a PR or branch is picked', () => {
     draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
-    expect(draftStore.controlValue('permissionMode')).toBe('plan');
-    // Back to a plain branch: back to the default.
-    draftStore.setStart({ kind: 'existing', branch: 'fix/b' });
     expect(draftStore.controlValue('permissionMode')).toBe('default');
 
     draftStore.setControl('permissionMode', 'acceptEdits');
+    draftStore.setStart({ kind: 'existing', branch: 'fix/b' });
+    expect(draftStore.controlValue('permissionMode')).toBe('acceptEdits');
     draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
     expect(draftStore.controlValue('permissionMode')).toBe('acceptEdits');
   });
@@ -221,25 +222,13 @@ describe('draftStore.start', () => {
 });
 
 describe('draftStore review fixes', () => {
-  it('applies Plan for a PR picked before the agent\'s modes have loaded', async () => {
-    let release: (v: ControlDescriptor[]) => void = () => {};
-    mockGroveBench.getAdapterControls.mockReturnValue(new Promise((r) => { release = r; }));
-    draftStore.open('/repo/one');
-    draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
-    expect(draftStore.draft?.controls.permissionMode).toBeUndefined();
-
-    release([modeControl, effortControl]);
-    await settle();
-    expect(draftStore.controlValue('permissionMode')).toBe('plan');
-  });
-
-  it('keeps a PR draft in Plan after the agent changes', async () => {
+  it('starts a PR on the saved default mode, not Plan', async () => {
+    settingsStore.current = { ...settingsStore.current, adapterDefaults: { 'claude-code': { permissionMode: 'acceptEdits' } } };
     draftStore.open('/repo/one');
     await settle();
     draftStore.setStart({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
-    draftStore.setAgent('codex');
-    await settle();
-    expect(draftStore.draft?.controls.permissionMode).toBe('plan');
+    expect(draftStore.controlValue('permissionMode')).toBe('acceptEdits');
+    expect(draftStore.buildOpts(draftStore.draft!, '').permissionMode).toBeUndefined();
   });
 
   it('refuses to start in a project that was removed', async () => {

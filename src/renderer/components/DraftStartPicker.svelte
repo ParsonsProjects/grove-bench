@@ -218,7 +218,6 @@
           {forkPrCount === 1 ? '1 pull request from a fork is' : `${forkPrCount} pull requests from forks are`} not listed yet.
         </p>
       {/if}
-      <p class="text-muted-foreground/70 mt-2">Picking a pull request starts in Plan mode, so a review doesn't edit the branch.</p>
     {:else if folderProject}
       <p class="text-muted-foreground">
         This project is used without git, so conversations run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
