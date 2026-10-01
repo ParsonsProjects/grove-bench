@@ -14,7 +14,7 @@ import { previewStore } from './preview.svelte.js';
 import type { AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
-import { subagentOf } from '../lib/message-view.js';
+import { agentCallInput, isAgentCall, subagentOf } from '../lib/message-view.js';
 
 // ─── Chat message types ───
 
@@ -48,6 +48,19 @@ export interface ChatToolCallMessage {
   images?: StoredImage[];
   /** See ChatTextMessage.parentToolUseId. */
   parentToolUseId?: string;
+}
+
+/** A tool call still running, as the status bar lists it. */
+export interface PendingTool {
+  toolName: string;
+  toolUseId: string;
+  summary: string;
+  elapsedSeconds?: number;
+  /** The Agent call whose subagent's thread shows this call: the subagent it
+   *  runs in, or the one it starts. */
+  subagentCall?: string;
+  /** The kind of subagent it runs in (Explore, ...), for a subagent's own call. */
+  inSubagent?: string;
 }
 
 /** An image shown in the thread: inline while the app still has its data
@@ -921,10 +934,10 @@ class MessageStore {
   }
 
   /** Get all currently pending tool calls with their progress info. */
-  getPendingTools(sessionId: string): { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] {
+  getPendingTools(sessionId: string): PendingTool[] {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const progress = this.toolProgressBySession[sessionId] ?? {};
-    const pending: { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] = [];
+    const pending: PendingTool[] = [];
     for (const m of msgs) {
       if (m.kind === 'tool_call' && m.pending) {
         const p = progress[m.toolUseId];
@@ -933,10 +946,22 @@ class MessageStore {
           toolUseId: m.toolUseId,
           summary: this.summarizeToolInput(m),
           elapsedSeconds: p?.elapsedSeconds,
+          ...this.subagentOfPendingTool(msgs, m),
         });
       }
     }
     return pending;
+  }
+
+  /** The subagent a pending call opens: the one it runs in, or the one it
+   *  starts (an Agent call). */
+  private subagentOfPendingTool(msgs: ChatMessage[], call: ChatToolCallMessage): Pick<PendingTool, 'subagentCall' | 'inSubagent'> {
+    const parent = call.parentToolUseId;
+    if (parent) {
+      const agentCall = msgs.find((m) => m.kind === 'tool_call' && m.toolUseId === parent) as ChatToolCallMessage | undefined;
+      return { subagentCall: parent, inSubagent: agentCallInput(agentCall?.toolInput).agentType ?? 'subagent' };
+    }
+    return isAgentCall(call) ? { subagentCall: call.toolUseId } : {};
   }
 
   private summarizeToolInput(call: { toolName: string; toolInput: unknown; toolView?: ToolView }): string {

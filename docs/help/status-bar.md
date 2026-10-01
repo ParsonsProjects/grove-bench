@@ -32,7 +32,7 @@ The Mode, Effort, Thinking and Speed columns are declared by the agent provider 
 
 ## Activity
 
-Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details.
+Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
 
 ## Last turn
 
@@ -139,4 +139,6 @@ When the agent runs background tasks (subagents), their status is shown:
 | Blue pulsing | Task running |
 | Green | Task completed |
 | Red | Task failed |
+
+Click a subagent's name in the list to open its thread, the same panel its line in the Thread tab opens. In the pending tools list, a subagent's tools show which subagent they run in (**in Explore**), and clicking one, or a running **Agent** call, opens that subagent's thread too.
 

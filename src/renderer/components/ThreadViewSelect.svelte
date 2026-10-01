@@ -43,7 +43,10 @@
     aria-label="{what}: {label}{hiddenText ? `, ${hiddenText}` : ''}"
     title="{what}: {VIEW_MODE_DESCRIPTIONS[viewMode]}{hiddenText ? ` (${hiddenText})` : ''}"
   >
-    <span class="text-muted-foreground/40" aria-hidden="true">·</span>
+    <!-- Sets it apart from the tab's name; the subagent panel has none. -->
+    {#if !subagentOf}
+      <span class="text-muted-foreground/40" aria-hidden="true">·</span>
+    {/if}
     {label}
     {#if hiddenText}
       <!-- Dropped first when the tab strip is narrow; the tooltip keeps it. -->

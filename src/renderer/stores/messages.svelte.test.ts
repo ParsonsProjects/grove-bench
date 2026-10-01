@@ -464,6 +464,18 @@ describe('ingestEvent — subagent events', () => {
     expect(messageStore.getMessages(SID)[0]).toMatchObject({ kind: 'tool_call', pending: false, result: 'serverless.ts:12', parentToolUseId: 'tu-agent' });
   });
 
+  it('names the subagent each pending call runs in or starts, for the status bar', () => {
+    messageStore.ingestEvent(SID, { ...agentCall, toolInput: { description: 'Find the burst', subagent_type: 'Explore' } } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId: 'tu-bash', uuid: 's1' }));
+    messageStore.ingestEvent(SID, { type: 'assistant_tool_use', toolName: 'Read', toolInput: {}, toolUseId: 'tu-read', uuid: 'u2' } as AgentEvent);
+
+    expect(messageStore.getPendingTools(SID).map(({ toolUseId, subagentCall, inSubagent }) => ({ toolUseId, subagentCall, inSubagent }))).toEqual([
+      { toolUseId: 'tu-agent', subagentCall: 'tu-agent', inSubagent: undefined },
+      { toolUseId: 'tu-bash', subagentCall: 'tu-agent', inSubagent: 'Explore' },
+      { toolUseId: 'tu-read', subagentCall: undefined, inSubagent: undefined },
+    ]);
+  });
+
   it('reports a background subagent as running after its Agent call returned', () => {
     messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-agent', description: 'Find the burst' } as AgentEvent);
     expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(true);

@@ -88,7 +88,7 @@ describe('SubagentPanel', () => {
   it('shows the subagent\'s prompt, tool calls and report in its own view', async () => {
     subagentPanelStore.setViewMode('detailed');
     subagentPanelStore.show(SID, 'tu-agent');
-    const { getByRole, getByText } = render(SubagentPanel);
+    const { getByRole, getByText, getByLabelText } = render(SubagentPanel);
     await tick();
 
     const panel = getByRole('complementary', { name: 'Subagent thread' });
@@ -99,6 +99,8 @@ describe('SubagentPanel', () => {
     expect(panel).toHaveTextContent('Grep');
     // Not the conversation's own messages.
     expect(panel).not.toHaveTextContent('The cause is the cron job.');
+    // Its view picker, without the dot that sets it apart from the Thread tab's name.
+    expect(getByLabelText(/Subagent view: Detailed/).textContent?.trim()).toBe('Detailed');
   });
 
   const pressEsc = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
@@ -140,6 +142,20 @@ describe('SubagentPanel', () => {
     store.activeSessionId = 'another';
     await tick();
     expect(subagentPanelStore.open).toBe(false);
+  });
+
+  it('says what a running subagent is doing when the view hides its calls', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [
+        { ...agentCall, pending: true, result: undefined } as ChatMessage,
+        { kind: 'tool_call', id: 's1', toolName: 'Bash', toolInput: { command: 'node runs.mjs' }, toolUseId: 'tu-bash', uuid: 'b1', pending: true, parentToolUseId: 'tu-agent' },
+      ],
+    };
+    subagentPanelStore.setViewMode('focus');
+    subagentPanelStore.show(SID, 'tu-agent');
+    const { getByText } = render(SubagentPanel);
+    await tick();
+    expect(getByText('Working...').parentElement).toHaveTextContent('Working... Bash node runs.mjs');
   });
 
   it('falls back to the result for a subagent recorded without its thread', async () => {

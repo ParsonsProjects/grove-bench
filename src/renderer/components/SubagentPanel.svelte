@@ -11,7 +11,7 @@
   import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { agentCallInput, filterVisibleMessages, threadMessages } from '../lib/message-view.js';
-  import { toolViewOf } from '../../shared/tool-view.js';
+  import { toolViewOf, toolViewSummary } from '../../shared/tool-view.js';
   import ThreadMessage from './ThreadMessage.svelte';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
@@ -29,6 +29,12 @@
   let callCount = $derived(thread.reduce((n, m) => n + (m.kind === 'tool_call' ? 1 : 0), 0));
   let running = $derived(!!call?.pending || backgroundTaskStore.isRunningFor(sessionId, toolUseId));
   let status = $derived(running ? 'running' : call?.isError ? 'error' : 'done');
+  // The call it is running, named on the working line when the view hides
+  // it (Focus, Summary): opened while it works, the panel says what on.
+  let hiddenRunningCall = $derived.by(() => {
+    const latest = thread.findLast((m): m is ChatToolCallMessage => m.kind === 'tool_call' && m.pending);
+    return latest && !visible.includes(latest) ? latest : undefined;
+  });
 
   // Nothing to show once its call is gone (rewound away, cleared) or another
   // conversation is open.
@@ -153,8 +159,12 @@
 
       {#if running}
         <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget"></span>
-          <span>Working...</span>
+          <span class="inline-block w-2.5 h-2.5 bg-primary animate-fidget shrink-0"></span>
+          <span class="shrink-0">Working...</span>
+          {#if hiddenRunningCall}
+            <span class="text-yellow-400 shrink-0">{hiddenRunningCall.toolName}</span>
+            <span class="truncate">{toolViewSummary(toolViewOf(hiddenRunningCall))}</span>
+          {/if}
         </div>
       {:else if thread.length === 0}
         <!-- Recorded before Grove kept subagents' threads, or it said nothing. -->
