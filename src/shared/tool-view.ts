@@ -164,8 +164,9 @@ export function changesFiles(view: ToolView): boolean {
   return view.kind === 'edit' || view.kind === 'shell';
 }
 
-/** One line saying what a call works on: the command, file, pattern, URL or
- *  summary. Empty when the view has none. */
+/** One line saying what a call works on: the command, file, pattern (before
+ *  the folder, for a search), URL or summary. Empty when the view has none. */
 export function toolViewSummary(view: ToolView): string {
-  return view.command ?? view.path ?? view.pattern ?? view.url ?? view.query ?? view.summary ?? '';
+  const target = view.kind === 'search' ? view.pattern ?? view.path : view.path ?? view.pattern;
+  return view.command ?? target ?? view.url ?? view.query ?? view.summary ?? '';
 }

@@ -81,6 +81,7 @@ describe('view helpers', () => {
   it('summarises a view by its most telling field', () => {
     expect(toolViewSummary({ kind: 'shell', command: 'ls' })).toBe('ls');
     expect(toolViewSummary({ kind: 'read', path: 'a.ts' })).toBe('a.ts');
+    expect(toolViewSummary({ kind: 'search', pattern: 'TODO', path: 'src' })).toBe('TODO');
     expect(toolViewSummary({ kind: 'other', summary: 'Doing a thing' })).toBe('Doing a thing');
     expect(toolViewSummary({ kind: 'other' })).toBe('');
   });
