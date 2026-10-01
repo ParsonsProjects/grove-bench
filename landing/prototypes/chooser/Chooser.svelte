@@ -9,17 +9,17 @@
 
   // Hovering a card makes its agent wave, the app's "finished a turn" pose.
   let hovered = $state(null);
-  const seeds = ['c4a1f9e2', '0b7d3e51', '9e2f64ac'];
+  const seeds = ['c4a1f9e2', '0b7d3e51'];
 </script>
 
 <Shell current="">
   <section class="wrap hero">
     <div class="copy">
       <p class="eyebrow">Landing page prototypes</p>
-      <h1>Three ways to show the app</h1>
+      <h1>Day into night</h1>
       <p class="lede">
-        Canopy shows what Grove Bench is. These show how it works, with the little agents doing what they do in the app.
-        You watch, scroll, pause and click around.
+        Two takes on a lighter, product-style page. Both turn from morning to night as you scroll, with the grove and its
+        agents growing down the page. They share every section; only the grove differs.
       </p>
     </div>
     <div class="scene" aria-hidden="true">
@@ -131,7 +131,7 @@
   }
   @media (min-width: 720px) {
     .grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
   .card {

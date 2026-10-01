@@ -30,9 +30,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: here('./prototypes/index.html'),
-        live: here('./prototypes/live.html'),
-        story: here('./prototypes/story.html'),
-        loops: here('./prototypes/loops.html'),
+        meadow: here('./prototypes/meadow.html'),
+        trail: here('./prototypes/trail.html'),
       },
     },
   },

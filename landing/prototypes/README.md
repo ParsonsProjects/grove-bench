@@ -1,9 +1,10 @@
 # Landing page prototypes
 
-Three ideas for showing how Grove Bench works, with the grove characters in
-the places they actually appear in the app. Canopy (`landing/src/canopy`)
-stays the live page; these are for trying out, and for borrowing pieces
-from. None of them is a game: visitors watch, scroll, pause and click around.
+Two takes on a lighter, product-style landing page, in the spirit of a clean
+SaaS page (big two-tone headline, the real app as the hero, a founder note,
+feature cards, an FAQ and a bold closing banner) but in Grove Bench's own
+world. Both turn from morning to night as you scroll, and the grove and its
+agents grow down the page. Canopy (`landing/src/canopy`) stays the live page.
 
 ```bash
 cd landing
@@ -13,72 +14,67 @@ npm run build:prototypes   # builds into landing/dist-prototypes/ (git-ignored)
 
 `npm run build` and the Pages deploy don't include them.
 
-## The art and the layout are the app's own
+## The two variants
 
-- `shared/app-art.js` imports the sprite code from `src/renderer/lib`
-  (`agent-sprite.ts`, `pixel-tree.ts`, `grove-walk.ts`, `context-grove.ts`),
-  so every pose, colour, look, scene and timing is what the app draws. The
-  imports are plain relative paths: the app's own dev server scans every HTML
-  file in the repo, and an alias it doesn't know would read as a missing
-  package there.
-- `shared/app/` is a copy of the app window's look (colours from
-  `src/renderer/styles/globals.css`), checked against the app running in its
-  demo mode (`demo.html`): sidebar rows, filter chips, thread blocks,
-  permission prompts, the Changes and Checkpoints tabs, the status bar with
-  its context grove, and the draft pane. Labels and wording come from the
-  source (for example `session-subtitle.ts`, `always-allow.ts`,
-  `DraftPane.svelte`, `PermissionBlock.svelte`) and `docs/help`.
+Both use the same sections, from `day/`: nav (its clock runs from 08:00 to
+22:00 as you scroll), hero with the app window and numbered notes, founder
+note, six feature cards, three steps, "free", FAQ and a night closing banner.
+Only the grove differs.
 
-If any of this moves into the live page, the deploy workflow
-(`deploy-landing.yml`) would need to rebuild on changes to those app files
-too, since it only watches `landing/**`.
+### Meadow (`meadow.html`)
 
-## The three directions
+A strip of grove sits between each pair of sections, and each one is fuller
+than the last: one tree on main in the morning, then three conversations with
+their own trees and branch tags, then one that needs you, then ones that have
+finished, then dusk, when idle agents nap and the lamps come on. New trees
+grow and new agents walk in to their benches as each strip arrives. The
+undergrowth along each strip is the app's context grove code, filling a bit
+more each time.
 
-### Live app (`live.html`)
+- Strength: the grove reads as "more conversations through the day", and
+  each strip says what's happening in one line.
+- Trade-off: the strips add height; five may be one or two too many.
 
-The Grove Bench window, playing a 50-second session on one project: a
-conversation finishing in Auto mode, one waiting for permission in Ask mode,
-one asleep, and a new one started from a draft (its agent walks in, and the
-`grove/<id>` branch is renamed after the first reply). A pointer does the
-clicking; captions say what's happening; chapter buttons jump to a moment.
-Clicking anything in the window pauses the tour and does what the app would,
-and Resume tour picks it up again.
+### Trail (`trail.html`)
 
-- Strength: the most honest picture of the product, and the characters are
-  shown exactly where they live.
-- Trade-off: a desktop window shrunk onto a phone is hard to read. A phone
-  version would need its own layout (for example one pane at a time).
+A path runs down the left edge. One agent walks down it as you scroll (it only
+steps while the page moves), trees sprout as it nears them, and at each
+section it sits on a bench in that section's pose: ready, working, waiting
+for you, finished, asking, asleep. Lamps along the last stretch light up at
+night.
 
-### One conversation (`story.html`)
+- Strength: one character, one day: the page itself becomes the story.
+- Trade-off: on phones the path takes 56 px of width, and the content gets
+  narrower.
 
-An editorial page that follows one conversation through a day, from the
-first message to a pull request, as you scroll: the draft, the worktree, the
-walk-in, the thread, the rename, permissions, the wave and notification, the
-diff, checkpoints, the others in the sidebar, sleep and wake, the context
-grove, and the PR. A sticky stage shows the matching piece of the app.
-Two chapters have toggles: pick a mode to see what happens to `npm test`, and
-pick Rewind all or Conv. only to see what comes back.
+## Shared parts
 
-- Strength: explains the most, in order, at the reader's pace.
-- Trade-off: long. A shorter cut (5 or 6 chapters) might suit the live page.
+- `day/`: copy (`content.js`), the day-to-night palette and type
+  (`day.css`), scroll tracking and the "arrive" reveal (`scroll.svelte.js`),
+  and the sections.
+- `shared/app/`: a copy of the app window's look, checked against the app in
+  its demo mode (`demo.html`). The hero uses it with sample conversations;
+  you can click conversations, tabs and the permission prompt.
+- `shared/app-art.js`: the app's own sprite code from `src/renderer/lib`, so
+  every pose, colour, look and scene is what the app draws. Plain relative
+  imports: the app's dev server scans every HTML file in the repo and reports
+  an unknown alias as missing packages. If any of this moves into the live
+  page, `deploy-landing.yml` would need to rebuild on changes to those app
+  files too.
 
-### Short loops (`loops.html`)
+## Copy
 
-Nine features, each a short paragraph next to a looping scene: worktrees,
-status at a glance, permissions, checkpoints, terminals, sleep and wake, the
-context grove, project memory, and review and ship. Hover to pause; the
-buttons pause and step through, with a caption per step. Loops only run
-while on screen.
+Facts follow `README.md`, `docs/help` and the source (for example the FAQ's
+SmartScreen answer, requirements, privacy and modes). The founder note is a
+draft in Alan's voice and is marked as one on the page; it needs rewriting.
 
-- Strength: quick to scan, and each card works on its own, so any of them
-  could drop into Canopy.
-- Trade-off: the least sense of the whole workflow.
+The app window is dark because the app is dark-only; it sits on the light page
+as a product shot.
 
 ## Not checked yet
 
 - Real devices and browsers beyond Chromium. Screens checked at 1440 and 390
   px wide.
-- Screen readers. Controls are buttons with labels and captions are live
-  regions, but nobody has used them with one.
+- Screen readers. Decorative scenes are hidden from them; the FAQ uses native
+  `<details>`.
 - Copy accuracy was checked against `docs/help` and the source on 2026-10-01.

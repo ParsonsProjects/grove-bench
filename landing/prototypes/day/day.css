@@ -1,0 +1,259 @@
+/* Day into night: a light, open page that turns to dusk and night as you
+   scroll down. Each band's colours run into the next, so the page reads as
+   one sky. Layout concept: wide margins, two-tone lowercase headlines,
+   pastel cards, the grove as the illustration. */
+
+.day {
+  /* The sky, top to bottom. */
+  --c0: #fffdf7;
+  --c1: #fdf7ea;
+  --c2: #faefd9;
+  --c3: #f7e3c4;
+  --c4: #f3cda5;
+  --c5: #eaa682;
+  --c6: #4b3f78;
+  --c7: #232750;
+  --c8: #0c1224;
+  --c9: #090e1c;
+
+  /* Day text. */
+  --ink: #1b140d;
+  --soft: #5b4a39;
+  --faint: #8a7660;
+  --line: rgb(58 42 28 / 0.12);
+
+  /* Accents, from the logo and the app. */
+  --blue: oklch(0.541 0.181 254.624);
+  --blue-ink: oklch(0.47 0.18 254.624);
+  --green: #3a9a48;
+  --green-ink: #2a7a36;
+  --gold: #f2b84b;
+  --amber: oklch(0.769 0.188 70.08);
+
+  /* Pastel card grounds. */
+  --p-green: #e3f3e2;
+  --p-amber: #fdecc8;
+  --p-blue: #e3ecfb;
+  --p-pink: #fbe3ea;
+  --p-lilac: #ece6fb;
+  --p-mint: #dff4ee;
+
+  --head: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+  --pixel: 'Pixelify Sans', 'JetBrains Mono', monospace;
+
+  color: var(--ink);
+  background: var(--c0);
+  font-family: var(--head);
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+.day ::selection {
+  background: #ffe7a8;
+}
+.day :focus-visible {
+  outline: 2px dashed var(--blue);
+  outline-offset: 3px;
+}
+
+/* Bands. Light ones keep dark text; dusk and night switch it. */
+.band {
+  position: relative;
+}
+.b-hero {
+  background: linear-gradient(var(--c0), var(--c1));
+}
+.b-founder {
+  background: linear-gradient(var(--c1), var(--c2));
+}
+.b-features {
+  background: linear-gradient(var(--c2), var(--c3));
+}
+.b-steps {
+  background: linear-gradient(var(--c3), var(--c4));
+}
+.b-free {
+  background: linear-gradient(var(--c4), var(--c5));
+}
+.b-dusk {
+  background: linear-gradient(var(--c6), var(--c7));
+}
+.b-night {
+  background: linear-gradient(var(--c7), var(--c8));
+}
+.b-foot {
+  background: var(--c9);
+}
+.b-dusk,
+.b-night,
+.b-foot {
+  --ink: #f4f1ff;
+  --soft: #c9c3e6;
+  --faint: #8f89b3;
+  --line: rgb(201 195 230 / 0.16);
+  color: var(--ink);
+}
+
+.inner {
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-inline: 20px;
+}
+@media (min-width: 768px) {
+  .inner {
+    padding-inline: 40px;
+  }
+}
+
+/* Two-tone lowercase headlines. */
+.h1,
+.h2 {
+  font-family: var(--head);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1.02;
+  text-transform: lowercase;
+  text-wrap: balance;
+}
+.h1 {
+  font-size: clamp(38px, 4.4vw + 14px, 72px);
+}
+.h2 {
+  font-size: clamp(30px, 2.6vw + 14px, 50px);
+}
+.tone-2 {
+  color: var(--blue);
+}
+.tone-g {
+  color: var(--green);
+}
+.tone-gold {
+  color: var(--gold);
+}
+.b-dusk .tone-2,
+.b-night .tone-2 {
+  color: #8db4ff;
+}
+
+.lede {
+  color: var(--soft);
+  font-size: 15px;
+}
+.small {
+  font-size: 12.5px;
+  color: var(--faint);
+}
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--green-ink);
+}
+
+/* Buttons: soft and square, like the reference, with a pixel underside. */
+.d-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 20px;
+  font-family: var(--head);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  color: #fff;
+  background: var(--blue);
+  border: 0;
+  cursor: pointer;
+  box-shadow:
+    inset 0 -3px 0 rgb(0 0 0 / 0.22),
+    0 6px 16px -6px oklch(0.541 0.181 254.624 / 0.6);
+  transition:
+    transform 0.08s steps(2),
+    filter 0.15s;
+}
+.d-btn:hover {
+  filter: brightness(1.08);
+}
+.d-btn:active {
+  transform: translateY(2px);
+}
+.d-btn.ghost {
+  color: var(--ink);
+  background: #fff;
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 0 -3px 0 rgb(0 0 0 / 0.06),
+    0 6px 16px -10px rgb(58 42 28 / 0.4);
+}
+.b-dusk .d-btn.ghost,
+.b-night .d-btn.ghost,
+.b-foot .d-btn.ghost {
+  color: var(--ink);
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.d-btn.gold {
+  color: #2a1a00;
+  background: var(--gold);
+  box-shadow:
+    inset 0 -3px 0 rgb(0 0 0 / 0.18),
+    0 6px 18px -6px rgb(242 184 75 / 0.5);
+}
+.btn-note {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--faint);
+  text-align: center;
+}
+
+/* Pastel chips. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--chip, var(--p-amber));
+}
+.chip.green {
+  --chip: var(--p-green);
+}
+.chip.amber {
+  --chip: var(--p-amber);
+}
+.chip.blue {
+  --chip: var(--p-blue);
+}
+.chip.pink {
+  --chip: var(--p-pink);
+}
+.chip.lilac {
+  --chip: var(--p-lilac);
+}
+.chip.mint {
+  --chip: var(--p-mint);
+}
+.chip.dark {
+  color: #fff;
+  background: var(--ink);
+}
+
+/* Things that rise into place when their section arrives. Visible at rest:
+   only pages with JavaScript and motion hide them first. */
+.rise {
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.js-motion .rise:not(.in) {
+  opacity: 0;
+  transform: translateY(18px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise {
+    transition: none;
+  }
+}

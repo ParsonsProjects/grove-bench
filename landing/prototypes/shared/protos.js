@@ -2,24 +2,17 @@
 
 export const PROTOTYPES = [
   {
-    slug: 'live',
-    name: 'Live app',
-    pitch: 'Grove Bench’s own window, playing a short session: several agents at once, a permission prompt, a review, a new conversation. Click in to look around.',
-    shows: 'The real layout, with the characters where they actually live',
+    slug: 'meadow',
+    name: 'Meadow',
+    pitch: 'A light product page that turns from morning to night as you scroll. Between sections, a strip of grove fills in: more trees, more agents, lamps at dusk.',
+    shows: 'Day into night, with the grove growing between sections',
     state: 'working',
   },
   {
-    slug: 'story',
-    name: 'One conversation',
-    pitch: 'An editorial page that follows one conversation from the first message to a pull request, as you scroll. Pieces of the app appear as the story needs them.',
-    shows: 'The life of a conversation, start to finish',
+    slug: 'trail',
+    name: 'Trail',
+    pitch: 'The same page with a path down the left edge. One agent walks down it as you scroll, trees sprout as it passes, and it sits on a bench at each section.',
+    shows: 'Day into night, with one agent walking through the page',
     state: 'unread',
-  },
-  {
-    slug: 'loops',
-    name: 'Short loops',
-    pitch: 'Plain feature copy, each next to a short looping scene of the characters doing that thing. Pause or step through any of them.',
-    shows: 'Each feature in a few seconds, easy to scan',
-    state: 'ready',
   },
 ];
