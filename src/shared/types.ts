@@ -89,6 +89,24 @@ export interface SessionInfo {
   displayName?: string | null;
 }
 
+/** Who wrote a conversation's goal: generated ('auto') or typed ('user').
+ *  A goal is only generated once; Refresh makes a new one on request. */
+export type ConversationGoalSource = 'auto' | 'user';
+
+/** Longest goal the user can type. */
+export const MAX_USER_GOAL_LENGTH = 500;
+
+/** The one-line goal pinned at the top of a conversation's Thread tab. */
+export interface ConversationGoal {
+  /** What the conversation is trying to get done, or null when there is
+   *  none yet (or the user cleared it). */
+  text: string | null;
+  /** Null until a goal has been generated or typed. */
+  source: ConversationGoalSource | null;
+  /** The bar was closed for this conversation. */
+  hidden: boolean;
+}
+
 // ─── Prerequisites ───
 
 /** A registered agent as the renderer sees it. */
@@ -177,16 +195,18 @@ export const PERMISSION_TIMEOUT_MINUTES = 30;
  */
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
-  | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView }
+  // parentToolUseId: set when a subagent produced the event, to the id of the
+  // Agent call that started it. See subagentParent().
+  | { type: 'assistant_text'; text: string; uuid: string; parentToolUseId?: string }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView; parentToolUseId?: string }
   /** More about a tool call the agent already reported: a title, its input
    *  or its edits once known (ACP agents fill a call in as it runs). Only
    *  the fields present change. */
   | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[] }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
-  | { type: 'thinking'; thinking: string; uuid: string }
+  | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
@@ -249,6 +269,13 @@ export type AgentEvent =
   // Git has no user.name/user.email for this conversation's checkout, so the
   // agent's commits will likely fail. Emitted at most once per conversation.
   | { type: 'git_identity_missing' };
+
+/** The Agent call whose subagent produced this event, or undefined for the
+ *  conversation's own events. A subagent's work belongs to its own thread,
+ *  not the conversation's turn: it can carry on after the turn ends. */
+export function subagentParent(event: AgentEvent): string | undefined {
+  return 'parentToolUseId' in event ? event.parentToolUseId : undefined;
+}
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
@@ -974,6 +1001,20 @@ export interface GroveBenchAPI {
    *  generated from its task. Returns the new name, or null when nothing
    *  changed (already named, pushed, no prompt yet, or generation failed). */
   autoNameBranch(sessionId: string): Promise<string | null>;
+  /** A conversation's goal, or null for an unknown conversation. */
+  getConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Save a goal the user typed. Empty text clears it; either way it is
+   *  never replaced automatically. */
+  setConversationGoal(sessionId: string, text: string): Promise<ConversationGoal | null>;
+  /** Generate a goal for a conversation that has never had one, after a
+   *  turn ends. Resolves to the new goal, or null when nothing changed (goals
+   *  turned off, one exists already, no reply yet, or generation failed). */
+  autoConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Generate a new goal now, replacing the current one, typed or not.
+   *  Rejects when generation fails. */
+  refreshConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Close (or reopen) the goal bar for one conversation. */
+  setConversationGoalHidden(sessionId: string, hidden: boolean): Promise<ConversationGoal | null>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -1346,6 +1387,11 @@ export interface GroveBenchSettings {
    *  suggestions in the status bar. Off by default — each analysis is a model
    *  call, so the status bar's manual "Suggest" button is the main route. */
   autoSkillSuggestions: boolean;
+  /** Pin a one-line goal at the top of each conversation's Thread tab,
+   *  generated after its first reply (one background model call per
+   *  conversation, plus one per Refresh). Off by default, as each goal is a
+   *  model call the user didn't ask for. */
+  showConversationGoal: boolean;
 
   // Agent Defaults
   /** Model new conversations start on, keyed by adapter id. Missing or empty
@@ -1464,8 +1510,8 @@ export interface GroveBenchSettings {
  * - 'detailed': everything (tool calls, thinking, system, ...)
  * - 'summary':  hides thinking and non-essential tool calls
  * - 'focus':    only user prompts, assistant text, question blocks (with
- *               the answer given), unanswered permission blocks, errors
- *               and turn results
+ *               the answer given), unanswered permission blocks, errors,
+ *               turn results and the calls that start subagents
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];
@@ -1632,6 +1678,11 @@ export const IPC = {
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
   SESSION_AUTO_NAME: 'session:autoName',
+  SESSION_GOAL_GET: 'session:getGoal',
+  SESSION_GOAL_SET: 'session:setGoal',
+  SESSION_GOAL_AUTO: 'session:autoGoal',
+  SESSION_GOAL_REFRESH: 'session:refreshGoal',
+  SESSION_GOAL_HIDE: 'session:setGoalHidden',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',

@@ -3,35 +3,50 @@
    * The Thread tab's view picker (Detailed / Summary / Focus). It sits on the
    * tab itself while Thread is the open tab, next to what it changes. Per
    * conversation; new ones start in Settings > General > Default thread view.
+   * Given `subagentOf`, it picks the view of that subagent's panel instead.
    */
   import { Select as SelectPrimitive } from 'bits-ui';
   import * as Select from '$lib/components/ui/select/index.js';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
-  import { filterVisibleMessages, VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '../lib/message-view.js';
+  import { filterVisibleMessages, threadMessages, VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '../lib/message-view.js';
 
-  let { sessionId }: { sessionId: string } = $props();
+  let { sessionId, subagentOf }: {
+    sessionId: string;
+    /** The Agent call whose subagent's thread this picks the view of. */
+    subagentOf?: string;
+  } = $props();
 
-  let viewMode = $derived(messageStore.getViewMode(sessionId));
-  let allMessages = $derived(messageStore.getMessages(sessionId));
-  let hiddenCount = $derived(allMessages.length - filterVisibleMessages(allMessages, viewMode).length);
+  let viewMode = $derived(subagentOf ? subagentPanelStore.viewMode(sessionId) : messageStore.getViewMode(sessionId));
+  let thread = $derived(threadMessages(messageStore.getMessages(sessionId), subagentOf));
+  let hiddenCount = $derived(thread.length - filterVisibleMessages(thread, viewMode).length);
   let label = $derived(VIEW_MODE_LABELS[viewMode]);
   let hiddenText = $derived(hiddenCount > 0 ? `${hiddenCount} hidden` : '');
+  let what = $derived(subagentOf ? 'Subagent view' : 'Thread view');
+
+  function pick(mode: ActivityViewMode) {
+    if (subagentOf) subagentPanelStore.setViewMode(mode);
+    else messageStore.setViewMode(sessionId, mode);
+  }
 </script>
 
 <Select.Root
   type="single"
   value={viewMode}
-  onValueChange={(v) => { if (v) messageStore.setViewMode(sessionId, v as ActivityViewMode); }}
+  onValueChange={(v) => { if (v) pick(v as ActivityViewMode); }}
 >
   <!-- A filtering view is tinted, so it's clear some messages are hidden. -->
   <SelectPrimitive.Trigger
     class="flex items-center gap-1.5 pl-1 pr-3 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring
       {viewMode === 'detailed' ? 'text-muted-foreground hover:text-foreground' : 'text-primary hover:text-primary/80'}"
-    aria-label="Thread view: {label}{hiddenText ? `, ${hiddenText}` : ''}"
-    title="Thread view: {VIEW_MODE_DESCRIPTIONS[viewMode]}{hiddenText ? ` (${hiddenText})` : ''}"
+    aria-label="{what}: {label}{hiddenText ? `, ${hiddenText}` : ''}"
+    title="{what}: {VIEW_MODE_DESCRIPTIONS[viewMode]}{hiddenText ? ` (${hiddenText})` : ''}"
   >
-    <span class="text-muted-foreground/40" aria-hidden="true">·</span>
+    <!-- Sets it apart from the tab's name; the subagent panel has none. -->
+    {#if !subagentOf}
+      <span class="text-muted-foreground/40" aria-hidden="true">·</span>
+    {/if}
     {label}
     {#if hiddenText}
       <!-- Dropped first when the tab strip is narrow; the tooltip keeps it. -->

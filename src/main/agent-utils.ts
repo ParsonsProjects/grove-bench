@@ -3,7 +3,7 @@
  */
 
 import path from 'node:path';
-import { TOOL_RULE_KEYWORDS } from '../shared/types.js';
+import { TOOL_RULE_KEYWORDS, subagentParent } from '../shared/types.js';
 import type { ToolCategory, ToolRule } from '../shared/types.js';
 import { POWERSHELL_ALIASES } from './powershell-aliases.js';
 
@@ -527,7 +527,9 @@ export function lastTurnUuid(
     const e = events[i];
     if (
       (e.type === 'assistant_text' || e.type === 'assistant_tool_use' || e.type === 'thinking') &&
-      e.uuid
+      e.uuid &&
+      // A subagent's uuids are from its own transcript, not one to resume at.
+      !subagentParent(e)
     ) {
       return e.uuid;
     }

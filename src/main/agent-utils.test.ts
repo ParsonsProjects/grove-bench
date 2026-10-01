@@ -557,6 +557,16 @@ describe('findRewindForkPoint()', () => {
     expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-1');
   });
 
+  it('skips a subagent\'s events, whose uuids are not in the main transcript', () => {
+    const events: AgentEvent[] = [
+      user('grove-1'), toolUse('sdk-1'),
+      { type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-sub', uuid: 'sub-1', parentToolUseId: 'tu1' },
+      { type: 'assistant_text', text: 'found it', uuid: 'sub-2', parentToolUseId: 'tu1' },
+      user('grove-2'),
+    ];
+    expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-1');
+  });
+
   it('never uses another user message uuid as a fork point', () => {
     // user_message uuids are Grove-generated, not provider chain uuids
     const events = [user('grove-1'), user('grove-2')];

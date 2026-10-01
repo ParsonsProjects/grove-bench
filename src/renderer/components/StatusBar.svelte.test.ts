@@ -10,6 +10,8 @@ import { settingsStore } from '../stores/settings.svelte.js';
 import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo } from '../../shared/types.js';
@@ -512,6 +514,49 @@ describe('StatusBar activity', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).not.toBeNull());
     expect(screen.queryByText('Pending Tools')).toBeNull();
+  });
+
+  describe('subagents', () => {
+    const agentCall = {
+      kind: 'tool_call', id: 'a', toolName: 'Agent', toolUseId: 'tu-agent', pending: false,
+      toolInput: { description: 'Count failed runs', subagent_type: 'Explore' }, result: 'Async agent launched',
+    } as any;
+    const subagentBash = {
+      kind: 'tool_call', id: 'b', toolName: 'Bash', toolUseId: 'tu-bash', toolInput: { command: 'node runs.mjs' }, pending: true, parentToolUseId: 'tu-agent',
+    } as any;
+    afterEach(() => {
+      backgroundTaskStore.tasksBySession = {};
+      subagentPanelStore.close();
+    });
+
+    it('says a subagent\'s tool is one, and opens its thread from the list', async () => {
+      messageStore.messagesBySession[ACTIVE] = [agentCall, subagentBash];
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByRole('button', { name: /^1 subagent tool/ }));
+
+      const row = screen.getByRole('button', { name: /node runs\.mjs/ });
+      expect(row).toHaveTextContent('in Explore');
+      await fireEvent.click(row);
+      expect(subagentPanelStore.isShowing(ACTIVE, 'tu-agent')).toBe(true);
+      expect(screen.queryByText('Pending Tools')).toBeNull();
+    });
+
+    it('opens a background subagent\'s thread from its task, and leaves other tasks alone', async () => {
+      messageStore.messagesBySession[ACTIVE] = [agentCall];
+      const task = { description: '', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 } as const;
+      backgroundTaskStore.tasksBySession = {
+        [ACTIVE]: {
+          bg1: { ...task, taskId: 'bg1', toolUseId: 'tu-agent', description: 'Count failed runs' },
+          bg2: { ...task, taskId: 'bg2', toolUseId: 'tu-shell', description: 'npm run dev' },
+        },
+      };
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByRole('button', { name: /^2 bg tasks/ }));
+
+      expect(screen.queryByRole('button', { name: /npm run dev/ })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: /Count failed runs/ }));
+      expect(subagentPanelStore.isShowing(ACTIVE, 'tu-agent')).toBe(true);
+    });
   });
 
   it('goes back to the agent\'s state once answered', () => {

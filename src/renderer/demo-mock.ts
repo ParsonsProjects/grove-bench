@@ -36,6 +36,8 @@ const SETTINGS = {
   toolDenyRules: [],
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
+  // On here (off by default) so the demo shows the goal bar.
+  showConversationGoal: true,
   defaultModels: {},
   adapterDefaults: {},
   showThinkingSummaries: true,
@@ -67,6 +69,11 @@ const SETTINGS = {
   analyticsEnabled: false,
   analyticsPrompted: true,
   crashReportsEnabled: false,
+};
+
+const GOALS: Record<string, string> = {
+  's-sidebar': 'Redesign the sidebar so conversations group by project and show their status at a glance',
+  's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
 };
 
 const PREVIEWS: Record<string, { firstPrompt: string; lastText: string }> = {
@@ -350,6 +357,11 @@ const api: Record<string, unknown> = {
     q.toLowerCase().includes('oauth') ? CONTENT_HITS : [],
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
+  // The goal pinned at the top of the Thread tab.
+  getConversationGoal: async (id: string) => {
+    const text = GOALS[id] ?? null;
+    return { text, source: text ? 'auto' : null, hidden: false };
+  },
   getDefaultBranch: async () => 'main',
   // Branch picker: `main` is checked out in the project folder, so picking it
   // from a worktree conversation shows the refusal.

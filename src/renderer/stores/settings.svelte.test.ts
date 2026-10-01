@@ -9,6 +9,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disabledSkills: [],
   autoSkillSuggestions: false,
+  showConversationGoal: true,
   defaultModels: {},
   adapterDefaults: {},
   showThinkingSummaries: true,

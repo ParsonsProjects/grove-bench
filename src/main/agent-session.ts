@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS, PERMISSION_MODES } from '../shared/types.js';
+import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
@@ -516,9 +516,10 @@ class AgentSessionManager {
         if (event.type === 'user_message') continue;
 
         // A reply means a turn is running, including ones the agent starts
-        // itself (e.g. when a background task finishes).
-        if (event.type === 'assistant_text' || event.type === 'assistant_tool_use'
-          || event.type === 'thinking' || event.type === 'partial_text') {
+        // itself (e.g. when a background task finishes). A subagent's work
+        // doesn't: a background one carries on after the turn ends.
+        if ((event.type === 'assistant_text' || event.type === 'assistant_tool_use'
+          || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
           session.turnHandle = handle;
         }
 

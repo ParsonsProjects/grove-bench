@@ -1855,6 +1855,25 @@ describe('AgentSessionManager sleep and wake', () => {
     await sessionManager.destroySession('test-sleep-own-turn');
   });
 
+  it('a background subagent working after the turn ends does not start one', async () => {
+    const { win } = await startSession('test-sleep-subagent');
+
+    mockAdapter.control!.emitEvent({
+      type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-sub', uuid: 'sub-1', parentToolUseId: 'tu-agent',
+    });
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Report', uuid: 'sub-2', parentToolUseId: 'tu-agent' });
+    // Drained in order: once this marker shows, the subagent's events were handled.
+    mockAdapter.control!.emitEvent({ type: 'status', message: 'marker' });
+    await vi.waitFor(() => expect(win._send.mock.calls.some(
+      ([, event]: [string, AgentEvent | undefined]) => event?.type === 'status' && event.message === 'marker',
+    )).toBe(true));
+
+    expect(sessionManager.getSession('test-sleep-subagent')!.turnHandle).toBeNull();
+    expect(await sessionManager.sleepSession('test-sleep-subagent')).toBe(true);
+
+    await sessionManager.destroySession('test-sleep-subagent');
+  });
+
   it('a stop while waking waits for the old agent and leaves one agent running', async () => {
     mockAdapter.pid = 7100;
     const { session } = await startSession('test-wake-stop');

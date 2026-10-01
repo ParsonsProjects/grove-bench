@@ -2,7 +2,7 @@ import { logger } from './logger.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as settings from './settings.js';
-import type { AgentEvent } from '../shared/types.js';
+import { subagentParent, type AgentEvent } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import { backgroundModelFor } from './background-tasks.js';
 
@@ -113,9 +113,10 @@ export function readAllMemoryContents(repoPath: string): Record<string, string> 
 /**
  * Condense the event history into a text summary suitable for the extraction prompt.
  * Only includes user messages, assistant text, tool calls/results, and errors.
+ * Subagents' work is left out: the main agent reports what they found.
  */
 function summarizeEvents(events: AgentEvent[], maxEvents: number): string {
-  const relevant = events.slice(-maxEvents);
+  const relevant = events.filter((e) => !subagentParent(e)).slice(-maxEvents);
   const lines: string[] = [];
 
   for (const ev of relevant) {
