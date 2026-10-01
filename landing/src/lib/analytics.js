@@ -12,8 +12,8 @@ const CONFIG = {
 };
 
 /**
- * posthog-js, set up, or null if it failed to load. Stays unset until the
- * visitor accepts, so nobody downloads it before then.
+ * Resolves to the initialized posthog-js client, or null if it failed to
+ * load. Unset until the visitor accepts, so nobody downloads it before then.
  * @type {Promise<import('posthog-js').PostHog | null> | undefined}
  */
 let loading;

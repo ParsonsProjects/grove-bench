@@ -18,7 +18,7 @@ npm run build     # builds into landing/dist
   crawlers. Keep the fallback's copy in step with `src/sections/content.js`.
 - `src/App.svelte`: the page plus the analytics consent banner
   (`ConsentBanner.svelte`, `lib/analytics.js`; nothing is sent before
-  consent).
+  consent, and posthog-js only downloads after it).
 - `src/trail/`: the page layout (`Trail.svelte`) and the path (`Rail.svelte`).
 - `src/sections/`: the sections and their copy (`content.js`), the
   day-to-night palette and type (`day.css`, with the same colours in
