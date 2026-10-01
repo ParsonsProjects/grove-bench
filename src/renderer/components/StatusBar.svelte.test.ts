@@ -106,6 +106,20 @@ describe('StatusBar MCP controls follow the agent', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
   });
+
+  // A narrow bar drops MCP and Skills to keep the branch in view, but not
+  // while a server is down: that is worth the room.
+  it.each([
+    ['connected', true],
+    ['failed', false],
+  ] as const)('drops out of a narrow bar when %s: %s', (status, dropsOut) => {
+    useAgent();
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status }] };
+    render(StatusBar, { props: { sessionId: ID } });
+
+    const stack = screen.getByRole('button', { name: /MCP 1/ }).closest('.flex-col')!;
+    expect(stack.classList.contains('hidden')).toBe(dropsOut);
+  });
 });
 
 describe('StatusBar rate limit', () => {

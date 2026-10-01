@@ -2,6 +2,8 @@
 
 The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open conversation.
 
+In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost, the project name (the branch's tooltip still names it), then **Keys** (`F1` opens the same list) and the **MCP** and **Skills** badges. The MCP badge stays while a server is down.
+
 ## Agent Settings
 
 The left side is a single **Agent settings** control: the agent on the first line, and on the second the model, the mode, and any control that is off its default (for example `Opus 5.5 · Ask` normally, or `Opus 5.5 · Plan · Low · Fast` after changes). Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. **Done**, `Esc`, or clicking outside closes the popup. A conversation keeps the agent it started with, because its history is stored by that agent and only that agent can pick it up again. Picking another agent starts a new conversation with it in the same project, as a draft, and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.

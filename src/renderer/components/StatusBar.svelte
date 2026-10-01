@@ -682,7 +682,12 @@
        Only the open conversation's grove plays out its growth. -->
   <ContextGrove seed={sessionId} percent={usedPercent} animate={store.activeSessionId === sessionId} />
 {/if}
-<div class="flex items-center gap-4 px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+<!-- The window can be 800px wide with the sidebar open, which leaves this
+     bar about 480px. Narrow, the extras drop out so the agent, activity,
+     branch and context keep their room: Keys (F1 has the list) and MCP /
+     Skills below 672px (MCP stays while a server is down), the project name
+     below 768px, and the last turn's cost below 1024px. -->
+<div class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
 
   <span class="w-px self-stretch bg-border"></span>
@@ -728,7 +733,7 @@
     <div class="relative" bind:this={tasksRef}>
       <button
         onclick={() => tasksExpanded = !tasksExpanded}
-        class="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 transition-colors"
+        class="flex items-center gap-1 whitespace-nowrap text-yellow-400 hover:text-yellow-300 transition-colors"
         title="Pending tools — click for details"
       >
         <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse"></span>
@@ -759,7 +764,7 @@
     <div class="relative" bind:this={bgTasksRef}>
       <button
         onclick={() => bgTasksExpanded = !bgTasksExpanded}
-        class="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+        class="flex items-center gap-1 whitespace-nowrap text-blue-400 hover:text-blue-300 transition-colors"
         title="Background tasks — click for details"
       >
         {#if runningBgTasks.length > 0}
@@ -839,7 +844,7 @@
   {#if memoryCompacting}
     <button
       onclick={() => memoryStore.panelOpen = true}
-      class="flex items-center gap-1 text-teal-400 hover:text-teal-300 transition-colors"
+      class="flex items-center gap-1 whitespace-nowrap text-teal-400 hover:text-teal-300 transition-colors"
       title="Project memory is being compacted — click to open the memory panel"
     >
       <span class="w-1.5 h-1.5 bg-teal-400 animate-pulse"></span>
@@ -854,7 +859,7 @@
 
   <!-- Last turn: cost over duration -->
   {#if lastResult?.totalCostUsd !== undefined || lastResult?.durationMs !== undefined}
-    <div class="flex flex-col gap-px leading-snug" title="Last turn — cost and duration">
+    <div class="hidden @5xl:flex flex-col gap-px leading-snug whitespace-nowrap" title="Last turn — cost and duration">
       {#if lastResult?.totalCostUsd !== undefined}
         <span>${lastResult.totalCostUsd.toFixed(4)}</span>
       {/if}
@@ -863,18 +868,18 @@
       {/if}
     </div>
 
-    <span class="w-px self-stretch bg-border"></span>
+    <span class="hidden @5xl:block w-px self-stretch bg-border"></span>
   {/if}
 
   <!-- Capabilities stack: MCP servers over skills. Both popovers anchor to the
        stack so they open above the pair rather than over each other. -->
   {#if mcpRows.length > 0 || allSkills.length > 0}
-  <div class="relative flex flex-col gap-px leading-snug">
+  <div class="relative {mcpHealth === 'ok' ? 'hidden @2xl:flex' : 'flex'} flex-col gap-px leading-snug">
   {#if mcpRows.length > 0}
     <div bind:this={mcpRef}>
       <button
         onclick={toggleMcpPopover}
-        class="flex items-center gap-1 transition-colors
+        class="flex items-center gap-1 whitespace-nowrap transition-colors
           {mcpHealth === 'down' ? 'text-red-400 hover:text-red-300'
             : mcpHealth === 'partial' ? 'text-orange-400 hover:text-orange-300'
             : 'text-muted-foreground hover:text-foreground'}"
@@ -1036,7 +1041,7 @@
     <div bind:this={skillsRef}>
       <button
         onclick={toggleSkillsPopover}
-        class="flex items-center gap-1 transition-colors
+        class="flex items-center gap-1 whitespace-nowrap transition-colors
           {enabledSkillCount === 0 ? 'text-red-400 hover:text-red-300'
             : disabledSkillCount > 0 ? 'text-orange-400 hover:text-orange-300'
             : 'text-muted-foreground hover:text-foreground'}"
@@ -1199,18 +1204,18 @@
     {#if sessionBranch}
       <span class="flex items-center gap-1 min-w-0">
         {#if sessionRepoPath}
-          <span class="text-muted-foreground/50 truncate max-w-28" title={sessionRepoPath}>
+          <span class="hidden @3xl:inline text-muted-foreground/50 truncate max-w-28" title={sessionRepoPath}>
             {store.repoDisplayName(sessionRepoPath)}
           </span>
-          <span class="text-muted-foreground/30 shrink-0">/</span>
+          <span class="hidden @3xl:inline text-muted-foreground/30 shrink-0">/</span>
         {/if}
         <button
           onclick={toggleBranchPicker}
           disabled={isRunning}
           class="text-muted-foreground/70 hover:text-foreground truncate max-w-40 transition-colors disabled:hover:text-muted-foreground/70"
-          title={isRunning
-            ? `${sessionBranch} (switch branches once the agent finishes its turn)`
-            : `${sessionBranch}: click to switch branch`}
+          title={`${sessionRepoPath ? `${store.repoDisplayName(sessionRepoPath)} / ` : ''}${sessionBranch}${isRunning
+            ? ' (switch branches once the agent finishes its turn)'
+            : ': click to switch branch'}`}
         >
           {sessionBranch}
         </button>
@@ -1230,7 +1235,7 @@
     {/if}
 
     {#if gitSync.ahead > 0 || gitSync.behind > 0 || pushError || prInfo || showCreatePr}
-      <span class="flex items-center gap-2 text-[11px]">
+      <span class="flex items-center gap-2 text-[11px] whitespace-nowrap">
         {#if gitSync.ahead > 0}
           <button
             onclick={doPush}
@@ -1575,10 +1580,10 @@
   {/if}
 
   {#if showContext}
-    <div class="relative ml-auto" bind:this={contextRef}>
+    <div class="relative ml-auto shrink-0" bind:this={contextRef}>
       <button
         onclick={() => contextExpanded = !contextExpanded}
-        class="flex flex-col items-end gap-1 leading-snug hover:text-foreground transition-colors"
+        class="flex flex-col items-end gap-1 leading-snug whitespace-nowrap hover:text-foreground transition-colors"
         title="Context: {formatTokens(usedTokens)} of {formatTokens(contextWindow)} tokens used. Click for details."
         aria-label="Context {usedPercent.toFixed(0)}% used. Click for details."
       >
@@ -1586,7 +1591,7 @@
           Context {usedPercent.toFixed(0)}%
         </span>
         <!-- Mini bar, coloured by how full it is -->
-        <div class="w-24 h-1.5 bg-muted overflow-hidden" data-testid="context-bar">
+        <div class="w-16 @3xl:w-24 h-1.5 bg-muted overflow-hidden" data-testid="context-bar">
           <div class="h-full transition-all {usedBarClass}" style:width="{usedPercent}%"></div>
         </div>
       </button>
@@ -1778,7 +1783,7 @@
     <span class="ml-auto"></span>
   {/if}
 
-  <div class="relative" bind:this={shortcutsRef}>
+  <div class="relative hidden @2xl:block" bind:this={shortcutsRef}>
     <button
       onclick={() => shortcutsOpen = !shortcutsOpen}
       class="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
