@@ -48,6 +48,11 @@ Only after consent: `download_click`, `github_click` and `docs_click` (with a
 `trail_conversation_open` when a visitor opens a sample conversation in the
 hero.
 
+The deploy reads the PostHog project key from the `POSTHOG_API_KEY`
+repository variable (Settings, Secrets and variables, Actions, Variables).
+Without it the build leaves posthog-js out and sends nothing. For a local
+build, set `VITE_POSTHOG_API_KEY` (and optionally `VITE_POSTHOG_HOST`).
+
 ### The look
 
 Type, buttons and labels come from the app, not from a generic product page:
