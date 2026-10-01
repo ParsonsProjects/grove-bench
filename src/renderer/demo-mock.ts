@@ -53,6 +53,7 @@ const SETTINGS = {
   branchNamingRule: '',
   theme: 'dark',
   alwaysOnTop: false,
+  autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
   diffViewMode: 'unified',
@@ -179,6 +180,24 @@ const memoryBackups = [
 
 const compactListeners = new Set<(e: unknown) => void>();
 let compactCancelled = false;
+
+// Update pill and Settings > Updates: start in a state with
+// ?update=available|downloading|downloaded|error|up-to-date, or send more
+// from the console with __demoUpdate({ state: ... }).
+const DEMO_UPDATE_INFO = { version: '0.0.0-alpha.3' };
+const DEMO_UPDATES: Record<string, unknown> = {
+  available: { state: 'available', info: DEMO_UPDATE_INFO },
+  downloading: { state: 'downloading', info: DEMO_UPDATE_INFO, percent: 42, manual: true },
+  downloaded: { state: 'downloaded', info: DEMO_UPDATE_INFO },
+  error: { state: 'error', message: 'net::ERR_INTERNET_DISCONNECTED', during: 'download', manual: false },
+  'up-to-date': { state: 'not-available', manual: true },
+};
+let demoUpdateStatus: unknown = DEMO_UPDATES[new URLSearchParams(location.search).get('update') ?? ''] ?? null;
+const updateListeners = new Set<(status: unknown) => void>();
+(window as never as Record<string, unknown>).__demoUpdate = (status: unknown) => {
+  demoUpdateStatus = status;
+  updateListeners.forEach((l) => l(status));
+};
 
 const api: Record<string, unknown> = {
   memoryList: async () => memoryFiles.map(({ content: _c, ...entry }) => entry),
@@ -446,8 +465,12 @@ const api: Record<string, unknown> = {
   }),
   setControl: async () => {},
   pluginList: async () => ({ installed: [], available: [] }),
-  checkForUpdate: async () => null,
-  getUpdateState: async () => ({ currentVersion: '0.0.0-demo', enabled: false, status: null }),
+  checkForUpdate: async () => demoUpdateStatus,
+  getUpdateState: async () => ({ currentVersion: '0.0.0-alpha.2', enabled: true, status: demoUpdateStatus }),
+  onUpdateStatus: (cb: (status: unknown) => void) => {
+    updateListeners.add(cb);
+    return () => updateListeners.delete(cb);
+  },
   ptyIsAlive: async () => false,
   winIsMaximized: async () => false,
   // The MCP settings tab reads `.length` of this list.

@@ -37,45 +37,47 @@
   }
 </script>
 
-{#if status?.state === 'available'}
-  <button
-    class="update-pill bg-primary/15 text-primary hover:bg-primary/25"
-    onclick={() => window.groveBench.downloadUpdate()}
-    title="Download version {status.info.version}"
-  >
-    Update v{status.info.version} available
-  </button>
-{:else if status?.state === 'downloading' && status.manual}
-  <span class="update-pill bg-primary/10 text-primary cursor-default">
-    Downloading v{status.info.version} {Math.round(status.percent)}%
-  </span>
-{:else if status?.state === 'downloaded'}
-  {@const version = status.info.version}
-  <button
-    class="update-pill bg-primary/20 text-primary hover:bg-primary/30 font-medium"
-    onclick={restart}
-    disabled={restarting}
-    title="Version {version} is ready. Restart now to install it, or it installs when you next quit."
-  >
-    {restarting ? 'Restarting...' : 'Restart to update'}
-  </button>
-  <button
-    class="update-link text-muted-foreground hover:text-foreground"
-    onclick={() => window.groveBench.openExternal(releaseNotesUrl(version))}
-  >
-    What's new
-  </button>
-{:else if status?.state === 'error' && (status.manual || status.during === 'download')}
-  <!-- Background checks stay out of the title bar, but a failed download
-       shows: an update exists and isn't arriving. -->
-  <button
-    class="update-pill bg-destructive/15 text-destructive hover:bg-destructive/25"
-    onclick={() => window.groveBench.checkForUpdate()}
-    title={status.message}
-  >
-    Update failed, retry
-  </button>
-{/if}
+<div class="ml-2 flex items-center gap-1.5">
+  {#if status?.state === 'available'}
+    <button
+      class="update-pill bg-primary/15 text-primary hover:bg-primary/25"
+      onclick={() => window.groveBench.downloadUpdate()}
+      title="Download version {status.info.version}"
+    >
+      Update v{status.info.version} available
+    </button>
+  {:else if status?.state === 'downloading' && status.manual}
+    <span class="update-pill bg-primary/10 text-primary cursor-default">
+      Downloading v{status.info.version} {Math.round(status.percent)}%
+    </span>
+  {:else if status?.state === 'downloaded'}
+    {@const version = status.info.version}
+    <button
+      class="update-pill bg-primary/20 text-primary hover:bg-primary/30 font-medium"
+      onclick={restart}
+      disabled={restarting}
+      title="Version {version} is ready. Restart now to install it, or it installs when you next quit."
+    >
+      {restarting ? 'Restarting...' : 'Restart to update'}
+    </button>
+    <button
+      class="update-link text-muted-foreground hover:text-foreground"
+      onclick={() => window.groveBench.openExternal(releaseNotesUrl(version))}
+    >
+      What's new
+    </button>
+  {:else if status?.state === 'error' && (status.manual || status.during === 'download')}
+    <!-- Background checks stay out of the title bar, but a failed download
+         shows: an update exists and isn't arriving. -->
+    <button
+      class="update-pill bg-destructive/15 text-destructive hover:bg-destructive/25"
+      onclick={() => window.groveBench.checkForUpdate()}
+      title={status.message}
+    >
+      Update failed, retry
+    </button>
+  {/if}
+</div>
 
 <style>
   .update-pill,
