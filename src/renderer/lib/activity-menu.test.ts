@@ -30,9 +30,12 @@ describe('activityMenuEntries', () => {
     expect(entries[5].action).toEqual({ kind: 'rewind', uuid: 'uuid-1' });
   });
 
-  it('copies a table as Markdown plus HTML', () => {
-    const [entry] = activityMenuEntries({ table: { markdown: '| a |', html: '<table></table>' } });
-    expect(entry).toEqual({ label: 'Copy table', action: { kind: 'copy-rich', text: '| a |', html: '<table></table>' } });
+  it('copies a table as tab-separated text plus HTML, or as Markdown', () => {
+    const entries = activityMenuEntries({ table: { markdown: '| a | b |', tsv: 'a\tb', html: '<table></table>' } });
+    expect(entries).toEqual([
+      { label: 'Copy table', action: { kind: 'copy-rich', text: 'a\tb', html: '<table></table>' } },
+      { label: 'Copy table as Markdown', action: { kind: 'copy', text: '| a | b |' } },
+    ]);
   });
 
   it('copies a link under the pointer', () => {

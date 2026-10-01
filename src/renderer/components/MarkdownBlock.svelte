@@ -31,11 +31,12 @@
   }
 
   /** Table renderer: marked's default table plus a copy button that holds the
-   *  Markdown source. The click handler adds the rendered table as HTML. */
+   *  Markdown source. A click copies the rendered table as HTML and
+   *  tab-separated text; Shift+click copies the Markdown. */
   const tableRenderer = {
     table(this: Renderer, token: Tokens.Table) {
       const encoded = encodeCopyText(token.raw.trim());
-      const copyBtn = `<button class="table-copy-btn" data-copy="${COPY_MARK}" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
+      const copyBtn = `<button class="table-copy-btn" data-copy="${COPY_MARK}" data-code="${encoded}" aria-label="Copy table" title="Copy table (Shift+click for Markdown)">${COPY_SVG}</button>`;
       return `<div class="table-wrapper">${Renderer.prototype.table.call(this, token)}${copyBtn}</div>`;
     },
   };
@@ -73,12 +74,14 @@
   const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
   const copySvg = COPY_SVG;
 
-  async function copy(btn: HTMLElement) {
+  /** `markdown`: a table copies its Markdown source instead (Shift+click). */
+  async function copy(btn: HTMLElement, markdown: boolean) {
     try {
       if (btn.classList.contains('table-copy-btn')) {
         const table = renderedTable(btn);
         if (!table) return;
-        await writeRichText(table.markdown, table.html);
+        if (markdown) await navigator.clipboard.writeText(table.markdown);
+        else await writeRichText(table.tsv, table.html);
       } else {
         const code = renderedCode(btn);
         if (code === null) return;
@@ -102,7 +105,7 @@
       // Only buttons this renderer made: chat content can hold its own.
       const btn = target.closest('button.code-copy-btn, button.table-copy-btn');
       if (isRenderedCopyButton(btn)) {
-        void copy(btn);
+        void copy(btn, e.shiftKey);
         return;
       }
       // Links: localhost opens in the Preview tab, the rest in the system
