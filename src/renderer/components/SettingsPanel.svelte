@@ -849,7 +849,7 @@
             </Select.Root>
             <p class="text-xs text-muted-foreground mt-1">
               {VIEW_MODE_DESCRIPTIONS[settingsStore.draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}.
-              New conversations start in this view. Each conversation can still switch from the toggle in its status bar.
+              New conversations start in this view. Each conversation can still switch from its Thread tab.
             </p>
           </div>
 

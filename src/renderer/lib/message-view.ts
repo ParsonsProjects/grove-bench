@@ -18,19 +18,6 @@ export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking)',
 };
 
-/** Cycle order for the status-bar toggle: Summary → Focus → Detailed → Summary. */
-export const NEXT_VIEW_MODE: Record<MessageViewMode, MessageViewMode> = {
-  summary: 'focus',
-  focus: 'detailed',
-  detailed: 'summary',
-};
-
-export const VIEW_MODE_HINTS: Record<MessageViewMode, string> = {
-  detailed: 'Showing everything — click for Summary',
-  summary: 'Hiding thinking & most tool calls — click for Focus (responses & questions only)',
-  focus: 'Showing agent responses, questions & your answers only — click for Detailed',
-};
-
 /** Built-in tools shown in summary mode: the ones that change files or run commands. */
 const SUMMARY_VISIBLE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash']);
 /** Grove's own MCP servers (the Preview browser, project memory): local, and

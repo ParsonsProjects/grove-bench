@@ -29,7 +29,6 @@
   import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
   import { SHORTCUT_GROUPS, formatShortcut } from '../lib/shortcut-list.js';
   import { helpStore } from '../stores/help.svelte.js';
-  import { filterVisibleMessages, NEXT_VIEW_MODE, VIEW_MODE_HINTS, VIEW_MODE_LABELS } from '../lib/message-view.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -190,11 +189,6 @@
   let activity = $derived(messageStore.getActivity(sessionId));
   let usage = $derived(messageStore.getUsage(sessionId));
 
-  // Activity view mode (Summary / Focus / Detailed). Per session; the starting
-  // value is the global default from Settings.
-  let viewMode = $derived(messageStore.getViewMode(sessionId));
-  let allMessages = $derived(messageStore.getMessages(sessionId));
-  let hiddenCount = $derived(allMessages.length - filterVisibleMessages(allMessages, viewMode).length);
   let systemInfo = $derived(messageStore.getSystemInfo(sessionId));
   // SDK-reported window wins; before the first result, fall back to the
   // selected model's known window (e.g. 1M for Opus), then 200k.
@@ -249,6 +243,7 @@
 
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
+  let showRateLimit = $derived(!!rateLimit && rateLimit.status !== 'allowed');
   /** Memory compaction (manual or automatic) running for this session's repo. */
   let memoryCompacting = $derived.by(() => {
     const repo = store.sessions.find((s) => s.id === sessionId)?.repoPath;
@@ -692,47 +687,8 @@
 
   <span class="w-px self-stretch bg-border"></span>
 
-  <!-- Activity view toggle (cycles Summary → Focus → Detailed). Per session;
-       the default for new sessions is set in Settings → Default Thread View.
-       The rate-limit warning sits underneath. -->
-  <div class="flex flex-col gap-px leading-snug">
-  <button
-    onclick={() => messageStore.setViewMode(sessionId, NEXT_VIEW_MODE[viewMode])}
-    class="flex items-center gap-1 transition-colors
-      {viewMode === 'detailed' ? 'text-muted-foreground hover:text-foreground' : 'text-primary hover:text-primary/80'}"
-    title="Thread view: {VIEW_MODE_LABELS[viewMode]}. {VIEW_MODE_HINTS[viewMode]}"
-    aria-label="Thread view: {VIEW_MODE_LABELS[viewMode]}"
-  >
-    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-      {#if viewMode === 'detailed'}
-        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
-      {:else if viewMode === 'summary'}
-        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
-      {:else}
-        <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
-      {/if}
-    </svg>
-    {VIEW_MODE_LABELS[viewMode]}{#if hiddenCount > 0}<span class="text-muted-foreground/70">&nbsp;({hiddenCount} hidden)</span>{/if}
-  </button>
-
-  {#if rateLimit && rateLimit.status !== 'allowed'}
-    <span class="flex items-center gap-1 text-[11px] whitespace-nowrap {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}" data-testid="rate-limit">
-      <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
-      {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
-      {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
-      {#if rateLimit.resetsAt}
-        <span class="text-muted-foreground" title={new Date(rateLimit.resetsAt * 1000).toLocaleString()}>
-          resets {formatResetTime(rateLimit.resetsAt)}
-        </span>
-      {/if}
-    </span>
-  {/if}
-  </div>
-
-  <span class="w-px self-stretch bg-border"></span>
-
-  <!-- Activity stack: session state on top; transient chips (pending tools,
-       background tasks, memory compaction) underneath. -->
+  <!-- Activity stack: session state on top; transient chips (rate limit,
+       pending tools, background tasks, memory compaction) underneath. -->
   <div class="flex flex-col gap-px leading-snug">
   <span class="flex items-center gap-1.5">
     {#if isRunning}
@@ -754,8 +710,20 @@
     {/if}
   </span>
 
-  {#if pendingTools.length > 0 || backgroundTasks.length > 0 || memoryCompacting}
+  {#if showRateLimit || pendingTools.length > 0 || backgroundTasks.length > 0 || memoryCompacting}
   <div class="flex items-center gap-3 text-[11px]">
+  {#if rateLimit && showRateLimit}
+    <span class="flex items-center gap-1 text-[11px] whitespace-nowrap {rateLimit.status === 'rejected' ? 'text-red-400' : 'text-yellow-400'}" data-testid="rate-limit">
+      <span class="w-1.5 h-1.5 {rateLimit.status === 'rejected' ? 'bg-red-400' : 'bg-yellow-400'} animate-pulse"></span>
+      {rateLimit.status === 'rejected' ? 'rate limited' : 'rate warning'}
+      {#if rateLimit.utilization}({Math.round(rateLimit.utilization * 100)}%){/if}
+      {#if rateLimit.resetsAt}
+        <span class="text-muted-foreground" title={new Date(rateLimit.resetsAt * 1000).toLocaleString()}>
+          resets {formatResetTime(rateLimit.resetsAt)}
+        </span>
+      {/if}
+    </span>
+  {/if}
   {#if pendingTools.length > 0}
     <div class="relative" bind:this={tasksRef}>
       <button

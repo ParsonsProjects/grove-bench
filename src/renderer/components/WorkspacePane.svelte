@@ -7,6 +7,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import OutputPanel from './OutputPanel.svelte';
   import StatusBar from './StatusBar.svelte';
+  import ThreadViewSelect from './ThreadViewSelect.svelte';
   import PromptEditor from './PromptEditor.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import GitNotice from './GitNotice.svelte';
@@ -19,6 +20,17 @@
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
 
   let { sessionId }: { sessionId: string } = $props();
+
+  // What the tab strip shows as it widens (measured in the demo, with
+  // badges on every tab): every label from 672px (about 650px needed), wider
+  // padding and the Thread view's hidden count from 768px, and the Alt+N
+  // hints from 1024px.
+  /** Inactive tabs show only their icon when the strip is narrow. sr-only,
+   *  not hidden, so screen readers still hear the tab's name. */
+  function tabLabelClass(tab: WorkspaceTab): string {
+    return activeTab === tab ? '' : 'sr-only @2xl:not-sr-only';
+  }
+  const TAB_HINT_CLASS = 'hidden @5xl:inline text-muted-foreground/60';
 
   let activeTab = $derived(messageStore.getActiveTab(sessionId));
 
@@ -219,82 +231,95 @@
 {/snippet}
 
 <div class="flex flex-col h-full bg-background">
-  <!-- Tab bar -->
-  <div class="flex items-center border-b border-border bg-card/50 shrink-0">
-    <button
-      onclick={() => switchTab('activity')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'activity'
-        ? 'border-primary text-foreground'
-        : 'border-transparent text-muted-foreground hover:text-foreground'}"
-    >
-      <!-- A pixel chat bubble: two lines of text, tail at the bottom left. -->
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
-      Thread
-      {#if hasPendingPermission}
-        <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
-      {:else if isRunning}
-        <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+  <!-- Tab bar. The window can be 800px wide with the sidebar open, which
+       leaves about 480px here: narrow, only the open tab keeps its label
+       (the rest are icons, named for screen readers and in the tooltip),
+       and the Alt+N hints show only when everything fits. -->
+  <div class="@container flex items-center border-b border-border bg-card/50 shrink-0">
+    <!-- The Thread tab carries its view picker while it is the open tab. -->
+    <div class="flex items-stretch border-b-2 {activeTab === 'activity' ? 'border-primary' : 'border-transparent'}">
+      <button
+        onclick={() => switchTab('activity')}
+        class="{activeTab === 'activity' ? 'pl-3 @3xl:pl-4 pr-1' : 'px-3 @3xl:px-4'} py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 {activeTab === 'activity'
+          ? 'text-foreground'
+          : 'text-muted-foreground hover:text-foreground'}"
+        title="Thread (Alt+1)"
+      >
+        <!-- A pixel chat bubble: two lines of text, tail at the bottom left. -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
+        <span class={tabLabelClass('activity')}>Thread</span>
+        {#if hasPendingPermission}
+          <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
+        {:else if isRunning}
+          <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+        {/if}
+        <span class="{TAB_HINT_CLASS} ml-1">Alt+1</span>
+      </button>
+      {#if activeTab === 'activity'}
+        <ThreadViewSelect {sessionId} />
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+1</span>
-    </button>
+    </div>
     <button
       onclick={() => switchTab('changes')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'changes'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'changes'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Changes (Alt+2)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
-      Changes
+      <span class={tabLabelClass('changes')}>Changes</span>
       {#if hasChanges}
         <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
           {gitStatus.entries.length}
         </span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+2</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+2</span>
     </button>
     <button
       onclick={() => switchTab('checkpoints')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'checkpoints'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'checkpoints'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Checkpoints (Alt+3)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
-      Checkpoints
+      <span class={tabLabelClass('checkpoints')}>Checkpoints</span>
       {#if checkpointCount > 0}
         <span class="bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
           {checkpointCount}
         </span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+3</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+3</span>
     </button>
     <button
       onclick={() => switchTab('terminal')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'terminal'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'terminal'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Terminal (Alt+4)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><polyline points="4,6 10,12 4,18"/><line x1="12" y1="18" x2="20" y2="18"/></svg>
-      Terminal
+      <span class={tabLabelClass('terminal')}>Terminal</span>
       {#if terminalRunning}
         <span class="inline-block w-2 h-2 bg-green-500 animate-pulse"></span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+4</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+4</span>
     </button>
     <button
       onclick={() => switchTab('preview')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
-      title="Browse your app, and watch the agent's page when it checks its work"
+      title="Preview (Alt+5): browse your app, and watch the agent's page when it checks its work"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><rect x="3" y="4" width="18" height="16"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="6" y1="6.5" x2="7" y2="6.5"/></svg>
-      Preview
+      <span class={tabLabelClass('preview')}>Preview</span>
       {#if previewUnseen}
         <span class="inline-block w-2 h-2 bg-primary" title="The agent used the browser"></span>
       {:else if previewLoading}
         <span class="inline-block w-2 h-2 bg-primary/60 animate-pulse"></span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+5</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+5</span>
     </button>
   </div>
 

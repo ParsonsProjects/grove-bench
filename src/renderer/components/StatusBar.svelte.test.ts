@@ -111,12 +111,13 @@ describe('StatusBar MCP controls follow the agent', () => {
 describe('StatusBar rate limit', () => {
   afterEach(() => rateLimitStore.destroy(ACTIVE));
 
-  it('shows the warning under the activity view toggle', () => {
+  it('shows the warning under the activity line', () => {
     rateLimitStore.set(ACTIVE, { status: 'allowed_warning', utilization: 0.85 });
-    const { getByTestId, getByRole } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
     const warning = getByTestId('rate-limit');
     expect(warning.textContent).toMatch(/rate warning\s+\(85%\)/);
-    expect(getByRole('button', { name: /^Thread view:/ }).nextElementSibling).toBe(warning);
+    // In the same stack as "idle", since it explains why the agent waits.
+    expect(warning.closest('.flex-col')?.textContent).toContain('idle');
   });
 
   it('shows nothing while requests are allowed', () => {
