@@ -35,7 +35,7 @@ const m = vi.hoisted(() => {
     adapterRegistry: fns('get', 'getDefault', 'list'),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
-      'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels',
+      'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
       'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
       'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
@@ -81,7 +81,7 @@ vi.mock('./git.js', async (importOriginal) => {
     'git', 'validateBranchName', 'branchExists', 'branchExistsAnywhere', 'listBranches', 'getDefaultBranch', 'fileDiff',
     'fileDiffAgainst', 'resolveMergeBase', 'indexFileContent', 'hashWorkingFiles', 'listProjectFiles', 'revertFile',
     'stageFile', 'unstageFile', 'commit', 'push', 'syncStatus', 'branchCommits', 'logCommits', 'rebaseOnto', 'cherryPick',
-    'squashSince', 'currentBranch', 'recentCheckouts',
+    'squashSince', 'currentBranch', 'recentCheckouts', 'worktreeBranches',
   ];
   return { ...actual, ...Object.fromEntries(runsGit.map((n) => [n, vi.fn()])) };
 });
@@ -235,6 +235,39 @@ describe('SESSION_CREATE', () => {
 
     expect(m.worktreeManager.create).not.toHaveBeenCalled();
     expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+  });
+
+  describe('joining a group on its branch (continueBranch)', () => {
+    it('continues the branch when the project has it and nothing has it checked out', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);
+      vi.mocked(git.worktreeBranches).mockResolvedValueOnce(new Map([['main', '/repo']]));
+      const result = await create({ branchName: 'feat/billing', continueBranch: true });
+      await lastSetup().promise;
+
+      expect(result.branch).toBe('feat/billing');
+      expect(git.branchExists).not.toHaveBeenCalled();
+      expect(m.worktreeManager.create).toHaveBeenCalledWith(expect.objectContaining({ branchName: 'feat/billing', useExisting: true }));
+    });
+
+    it('refuses a branch another checkout has, before any setup starts', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);
+      vi.mocked(git.worktreeBranches).mockResolvedValueOnce(new Map([['feat/billing', '/repo']]));
+      await expect(create({ branchName: 'feat/billing', continueBranch: true }))
+        .rejects.toThrow('Branch "feat/billing" is already checked out at /repo');
+      expect(m.worktreeManager.create).not.toHaveBeenCalled();
+    });
+
+    it('creates the branch when the project doesn\'t have it', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValueOnce(false);
+      await create({ branchName: 'feat/billing', continueBranch: true });
+      await lastSetup().promise;
+      expect(m.worktreeManager.create).toHaveBeenCalledWith(expect.objectContaining({ branchName: 'feat/billing', useExisting: false }));
+    });
+
+    it('still refuses an existing name without it', async () => {
+      vi.mocked(git.branchExists).mockResolvedValueOnce(true);
+      await expect(create({ branchName: 'feat/billing' })).rejects.toThrow('already exists');
+    });
   });
 
   it('returns at once and sets up in the background: worktree, copied files, agent', async () => {

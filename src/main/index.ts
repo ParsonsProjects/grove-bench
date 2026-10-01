@@ -192,6 +192,8 @@ function shutdown(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
+  // Debounced app-state saves (open tabs, groups, …) still waiting to be written.
+  flushPendingSaves();
   if (isQuitting) return;
   if (!shutdownDone && nothingRunning()) {
     logger.close();

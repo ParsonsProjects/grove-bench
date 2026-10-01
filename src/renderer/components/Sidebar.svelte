@@ -10,6 +10,9 @@
   import AddRepoButton from './AddRepoButton.svelte';
   import MessageSquarePlusIcon from '@lucide/svelte/icons/message-square-plus';
   import { draftStore } from '../stores/draft.svelte.js';
+  import { groupStore } from '../stores/groups.svelte.js';
+  import SidebarGroups from './SidebarGroups.svelte';
+  import AttentionCounts from './AttentionCounts.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
@@ -149,7 +152,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'destroy' | 'check';
+    icon: 'rename' | 'folder' | 'destroy' | 'check' | 'add' | 'close';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -168,7 +171,27 @@
     if (store.isOpenTab(session)) {
       items.push({ label: 'Mark Completed', icon: 'check', action: () => stopSession(sessionId) });
     }
+    items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
+    return items;
+  }
+
+  /** Group actions for a conversation: leave its group, join another, or
+   *  start a new one with it. */
+  function groupMenuItems(sessionId: string): MenuItem[] {
+    // Until the saved groups are read, changing them could write over them.
+    if (!groupStore.ready) return [];
+    const current = groupStore.groupOf(sessionId);
+    const items: MenuItem[] = [];
+    if (current) {
+      items.push({ label: `Remove from ${current.name}`, icon: 'close', action: () => groupStore.remove(sessionId) });
+    }
+    for (const g of groupStore.groups) {
+      if (g.id === current?.id) continue;
+      items.push({ label: `${current ? 'Move' : 'Add'} to ${g.name}`, icon: 'add', action: () => groupStore.add(g.id, sessionId) });
+    }
+    items.push({ label: 'New Group…', icon: 'add', action: () => { groupStore.nameRequest = { kind: 'new', sessionId }; } });
+    items[0].separator = true;
     return items;
   }
 
@@ -681,9 +704,14 @@
   /** Conversations marked completed: stopped and not an open tab. */
   let completedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
 
-  /** Attention counts for one repo's header (all of its sessions, any status). */
+  /** Attention counts for a header (a project's or a group's conversations,
+   *  any status). */
+  function headerCounts(sessions: typeof store.sessions) {
+    return triageCounts(sessions.map(triageOf));
+  }
+
   function repoCounts(repo: string) {
-    return triageCounts(store.sessionsForRepo(repo).map(triageOf));
+    return headerCounts(store.sessionsForRepo(repo));
   }
 
   /** All sessions for a repo that pass the filter, grouped by branch (for the
@@ -756,8 +784,8 @@
     {/if}
   {/snippet}
 
-  <!-- Reusable session row, shared by the Conversations list and the Projects tree -->
-  {#snippet sessionRow(session: (typeof store.sessions)[number], showProject: boolean, labelOverride: string | null)}
+  <!-- Reusable session row, shared by the Conversations list, the Groups section and the Projects tree -->
+  {#snippet sessionRow(session: (typeof store.sessions)[number], showProject: boolean, labelOverride: string | null, showGroup: boolean)}
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
@@ -765,6 +793,7 @@
     {@const subtitle = rowSubtitle(session)}
     {@const changedCount = isStopped ? 0 : gitStatusStore.getStatus(session.id).entries.length}
     {@const label = labelOverride ?? sessionRowLabel(session)}
+    {@const group = showGroup ? groupStore.groupOf(session.id) : null}
     <!-- PR data is only polled for open tabs; anything else would be stale, so it stays neutral. -->
     {@const pr = store.isOpenTab(session) ? prStore.getPr(session.id) : null}
     {@const health = prHealth(pr)}
@@ -799,9 +828,10 @@
             >{formatAge(ts)}</span>
           {/if}
         </div>
-        {#if showProject || subtitle || changedCount > 0}
+        {#if group || showProject || subtitle || changedCount > 0}
           <div class="w-full flex items-center gap-1.5 pl-4 pr-1 mt-0.5 min-w-0">
             <span class="text-[11px] truncate min-w-0">
+              {#if group}<span class="text-foreground/60" title="Group: {group.name}" data-row-group>{group.name}</span>{#if showProject || subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}
               {#if showProject}
                 <!-- A grove character carries the project colour on its laptop, so the square is only needed with the plain dot. -->
                 {#if repoColor && !settingsStore.current.groveCharacters}<span class="inline-block w-1.5 h-1.5 align-middle mr-1" style="background-color: {repoColor}"></span>{/if}<span class="text-muted-foreground/70">{store.repoDisplayName(session.repoPath)}</span>{#if subtitle}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if subtitle}<span class={SUBTITLE_TONE_CLASS[subtitle.tone]}>{subtitle.text}</span>{/if}
@@ -976,6 +1006,7 @@
 
     {#if draftStore.draft}
       {@const draft = draftStore.draft}
+      {@const draftGroup = draftStore.groupName}
       <!-- The draft conversation: not started, so nothing exists yet. -->
       <button
         type="button"
@@ -988,18 +1019,27 @@
           <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">{draft.text.trim() ? draft.text.trim().split('\n')[0] : 'New conversation'}</span>
           <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
         </span>
-        {#if store.repos.length > 1}
-          <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{store.repoDisplayName(draft.repoPath)}</span>
+        {#if store.repos.length > 1 || draftGroup}
+          <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
         {/if}
       </button>
     {/if}
     {#each activeSessions as session (session.id)}
       <!-- The project name only helps when there is more than one. -->
-      {@render sessionRow(session, store.repos.length > 1, null)}
+      {@render sessionRow(session, store.repos.length > 1, null, true)}
     {/each}
     {#if activeSessions.length === 0 && !draftStore.draft}
       <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
     {/if}
+
+    <!-- GROUPS: conversations across projects that belong to one piece of work -->
+    <SidebarGroups
+      row={sessionRow}
+      {rowVisible}
+      countsFor={headerCounts}
+      markCompleted={(id) => void stopSession(id)}
+      filterLabel={triageFilter === 'all' ? null : TRIAGE_FILTER_LABELS[triageFilter]}
+    />
 
     <!-- PROJECTS: every repo with its sessions (stopped ones actionable); hosts repo management -->
     <div class="flex items-center justify-between mt-5 mb-2 px-1">
@@ -1015,7 +1055,6 @@
       {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
       {@const branchGroups = getBranchGroups(repo)}
       {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
-      {@const rc = repoCounts(repo)}
       {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
       <div class="mb-3">
         <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
@@ -1038,15 +1077,7 @@
               <span class="text-xs text-muted-foreground/40 shrink-0">{rowCount}</span>
             {/if}
             <!-- Per-repo attention counts, same dots as the filter chips -->
-            {#if rc['needs-you']}
-              <span class="flex items-center gap-0.5 text-[10px] text-amber-500 shrink-0" title="{rc['needs-you']} need{rc['needs-you'] === 1 ? 's' : ''} you"><span class="w-1.5 h-1.5 bg-amber-500"></span>{rc['needs-you']}</span>
-            {/if}
-            {#if rc.working}
-              <span class="flex items-center gap-0.5 text-[10px] text-primary shrink-0" title="{rc.working} working"><span class="w-1.5 h-1.5 bg-primary"></span>{rc.working}</span>
-            {/if}
-            {#if rc.unread}
-              <span class="flex items-center gap-0.5 text-[10px] text-green-400 shrink-0" title="{rc.unread} unread"><span class="w-1.5 h-1.5 bg-green-400"></span>{rc.unread}</span>
-            {/if}
+            <AttentionCounts counts={repoCounts(repo)} />
           </button>
           <div class="flex items-center gap-0.5">
             <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first).
@@ -1075,7 +1106,7 @@
         {#if !repoCollapsed}
           {#each branchGroups as [branch, sessions] (branch)}
             {#if sessions.length === 1}
-              {@render sessionRow(sessions[0], false, null)}
+              {@render sessionRow(sessions[0], false, null, true)}
             {:else}
               {@const branchCollapsed = !!collapsedBranches[branchKey(repo, branch)]}
               <div class="pl-3 mt-0.5">
@@ -1091,7 +1122,7 @@
                 </button>
                 {#if !branchCollapsed}
                   {#each sessions as session, i (session.id)}
-                    {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`)}
+                    {@render sessionRow(session, false, session.displayName || `conversation ${i + 1}`, true)}
                   {/each}
                 {/if}
               </div>

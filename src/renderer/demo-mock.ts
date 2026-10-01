@@ -333,6 +333,10 @@ const api: Record<string, unknown> = {
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
   getSidebarWidth: async () => 320,
   getCollapsedPanels: async () => ({}),
+  // One piece of work across both projects: the API fix and the sign-in UI that uses it.
+  getConversationGroups: async () => [
+    { id: 'g-oauth', name: 'OAuth refresh', sessionIds: ['s-oauth', 's-oauth-ui'] },
+  ],
   getUnreadSessions: async () => [],
   setUnreadSessions: () => {},
   onAppError: () => () => {},
@@ -494,6 +498,7 @@ async function seedSessions() {
 
   store.addSession({ id: 's-sidebar', branch: 'claude/sidebar-revamp', repoPath: REPO_A, status: 'running', displayName: 'Sidebar revamp', createdAt: now - 52 * min, lastActiveAt: now - 1 * min }, false);
   store.addSession({ id: 's-oauth', branch: 'claude/fix-oauth-refresh', repoPath: REPO_B, status: 'running', createdAt: now - 3 * 60 * min, lastActiveAt: now - 4 * min }, false);
+  store.addSession({ id: 's-oauth-ui', branch: 'claude/fix-oauth-refresh', repoPath: REPO_A, status: 'running', displayName: 'Sign-in retry banner', createdAt: now - 2 * 60 * min, lastActiveAt: now - 9 * min }, false);
   store.addSession({ id: 's-e2e', branch: 'claude/flaky-e2e-retries', repoPath: REPO_B, status: 'running', displayName: 'Flaky e2e retries', createdAt: now - 26 * 60 * min, lastActiveAt: now - 38 * min }, false);
   store.addSession({ id: 's-readme', branch: 'claude/update-readme', repoPath: REPO_A, status: 'stopped', createdAt: now - 2 * 24 * 60 * min, lastActiveAt: now - 26 * 60 * min }, false);
   store.addSession({ id: 's-perf', branch: 'claude/perf-audit', repoPath: REPO_B, status: 'stopped', createdAt: now - 5 * 24 * 60 * min, lastActiveAt: now - 3 * 24 * 60 * min }, false);
