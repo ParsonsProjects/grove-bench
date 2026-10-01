@@ -3,6 +3,8 @@ import {
   isMessageVisible,
   filterVisibleMessages,
   hasAgentReply,
+  threadMessages,
+  agentCallInput,
   VIEW_MODE_LABELS,
   VIEW_MODE_DESCRIPTIONS,
 } from './message-view.js';
@@ -94,7 +96,13 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible({ kind: 'system', id: '3', text: 'hi' }, 'summary')).toBe(true);
   });
 
-  it('in focus mode hides all tool calls and system messages', () => {
+  it('keeps the call that started a subagent in every view, as its way in', () => {
+    for (const mode of ACTIVITY_VIEW_MODES) {
+      expect(isMessageVisible(tool({ id: '1', toolName: 'Agent', toolInput: { description: 'Find it' } }), mode)).toBe(true);
+    }
+  });
+
+  it('in focus mode hides all other tool calls and system messages', () => {
     expect(isMessageVisible(tool({ id: '1', toolName: 'Edit' }), 'focus')).toBe(false);
     expect(isMessageVisible(tool({ id: '2', toolName: 'Bash' }), 'focus')).toBe(false);
     expect(isMessageVisible({ kind: 'system', id: '3', text: 'hi' }, 'focus')).toBe(false);
@@ -200,5 +208,33 @@ describe('hasAgentReply', () => {
     ]) {
       expect(hasAgentReply([user, reply as ChatMessage]), reply.kind).toBe(true);
     }
+  });
+});
+
+describe('threadMessages', () => {
+  const sub = (id: string, parent: string): ChatMessage => ({ kind: 'text', id, text: id, uuid: '', parentToolUseId: parent });
+
+  it('splits the conversation\'s own messages from each subagent\'s', () => {
+    const list = [text('1'), tool({ id: '2', toolName: 'Agent', toolUseId: 'a1' }), sub('3', 'a1'), sub('4', 'a2'), text('5')];
+    expect(threadMessages(list).map((m) => m.id)).toEqual(['1', '2', '5']);
+    expect(threadMessages(list, 'a1').map((m) => m.id)).toEqual(['3']);
+    expect(threadMessages(list, 'a2').map((m) => m.id)).toEqual(['4']);
+    expect(threadMessages(list, 'none')).toEqual([]);
+  });
+
+  it('returns the list itself when there are no subagents, and the same thread on every ask', () => {
+    const plain = [text('1'), text('2')];
+    expect(threadMessages(plain)).toBe(plain);
+    const mixed = [text('1'), sub('2', 'a1')];
+    expect(threadMessages(mixed, 'a1')).toBe(threadMessages(mixed, 'a1'));
+  });
+});
+
+describe('agentCallInput', () => {
+  it('reads the subagent type and prompt, ignoring anything else', () => {
+    expect(agentCallInput({ subagent_type: 'Explore', prompt: 'Find the cron job', description: 'x' }))
+      .toEqual({ agentType: 'Explore', prompt: 'Find the cron job' });
+    expect(agentCallInput({ subagent_type: 3, prompt: '' })).toEqual({});
+    expect(agentCallInput(null)).toEqual({});
   });
 });

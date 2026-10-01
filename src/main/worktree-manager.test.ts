@@ -273,6 +273,61 @@ describe('saveAutoDisplayName', () => {
   });
 });
 
+describe('conversation goal', () => {
+  it('reads an empty goal for entries without one, and undefined for unknown ids', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-set': { repoPath: '/repo', branch: 'a', createdAt: 1000, goal: 'Fix sort', goalSource: 'auto', goalHidden: true },
+      'wt-none': { repoPath: '/repo', branch: 'b', createdAt: 1000 },
+    }));
+
+    expect(await manager.getGoal('wt-set')).toEqual({ text: 'Fix sort', source: 'auto', hidden: true });
+    expect(await manager.getGoal('wt-none')).toEqual({ text: null, source: null, hidden: false });
+    expect(await manager.getGoal('wt-unknown')).toBeUndefined();
+  });
+
+  it('saves a typed goal, and an empty one clears the text but keeps the source', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Old', goalSource: 'auto' },
+    }));
+
+    expect(await manager.saveGoal('wt-123', 'Mine', 'user')).toEqual({ text: 'Mine', source: 'user', hidden: false });
+    expect((savedManifest as any)['wt-123'].goal).toBe('Mine');
+
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    expect(await manager.saveGoal('wt-123', '', 'user')).toEqual({ text: null, source: 'user', hidden: false });
+    expect((savedManifest as any)['wt-123'].goal).toBeUndefined();
+    expect((savedManifest as any)['wt-123'].goalSource).toBe('user');
+  });
+
+  it('does not overwrite an edit made while a goal was being generated', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Mine', goalSource: 'user' },
+    }));
+
+    const saved = await manager.saveGoal('wt-123', 'Generated', 'auto', { text: null, source: null, hidden: false });
+
+    expect(saved).toBeNull();
+    // Nothing changed, so the manifest isn't rewritten.
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('hides and shows the bar without touching the goal, and ignores unknown ids', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Fix sort', goalSource: 'auto' },
+    }));
+
+    expect(await manager.setGoalHidden('wt-123', true)).toEqual({ text: 'Fix sort', source: 'auto', hidden: true });
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    expect(await manager.setGoalHidden('wt-123', false)).toEqual({ text: 'Fix sort', source: 'auto', hidden: false });
+    expect((savedManifest as any)['wt-123'].goalHidden).toBeUndefined();
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    mockFs.writeFile.mockClear();
+    expect(await manager.setGoalHidden('wt-123', false)).toEqual({ text: 'Fix sort', source: 'auto', hidden: false });
+    expect(await manager.setGoalHidden('wt-unknown', true)).toBeNull();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+});
+
 describe('migration from claudeSessionId', () => {
   it('getProviderSessionId falls back to claudeSessionId for old manifests', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({

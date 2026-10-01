@@ -208,6 +208,12 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
   return images;
 }
 
+/** The parentToolUseId field for an event from an SDK message's
+ *  parent_tool_use_id, or nothing for the main agent's own messages. */
+function subagentTag(parentToolUseId: string | null | undefined): { parentToolUseId?: string } {
+  return parentToolUseId ? { parentToolUseId } : {};
+}
+
 /**
  * Transform a single SDKMessage into zero or more AgentEvents.
  * This is a pure function (given a context bag) extracted from the former
@@ -391,11 +397,15 @@ export function transformMessage(
         events.push({ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true });
         break;
       }
+      // A subagent's messages carry the id of the Agent call that started it.
+      // Tagged with it, they go to that subagent's own thread instead of
+      // reading as the main agent's reply.
+      const subagent = subagentTag(message.parent_tool_use_id);
       const content = message.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block.type === 'text') {
-            events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid });
+            events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid, ...subagent });
           } else if (block.type === 'tool_use') {
             ctx.toolUseMap.set(block.id, block.name);
             events.push({
@@ -405,12 +415,14 @@ export function transformMessage(
               toolUseId: block.id,
               uuid: message.uuid,
               toolCategory: categorizeToolName(block.name),
+              ...subagent,
             });
           } else if (block.type === 'thinking') {
             events.push({
               type: 'thinking',
               thinking: (block as any).thinking || '',
               uuid: message.uuid,
+              ...subagent,
             });
           }
         }
@@ -418,9 +430,8 @@ export function transformMessage(
       // Only track token usage from the main conversation — subagent messages
       // carry a parent_tool_use_id and would cause the status-bar values to
       // fluctuate wildly as their smaller contexts overwrite the main context size.
-      const isSubagent = !!(message as any).parent_tool_use_id;
       const usage = (message.message as any)?.usage;
-      if (usage && !isSubagent) {
+      if (usage && !subagent.parentToolUseId) {
         events.push({
           type: 'usage',
           inputTokens: usage.input_tokens ?? 0,
@@ -447,6 +458,7 @@ export function transformMessage(
               content: capToolResult(resultContent),
               isError: block.is_error,
               ...(imageData.length > 0 && { imageData }),
+              ...subagentTag(message.parent_tool_use_id),
             });
           }
         }
@@ -506,6 +518,10 @@ export function transformMessage(
     }
 
     case 'stream_event': {
+      // The live stream and activity are the main agent's. A subagent's text
+      // arrives whole as an assistant message; its deltas would run into the
+      // main agent's reply.
+      if (message.parent_tool_use_id) break;
       const event = message.event;
       if (event.type === 'content_block_delta') {
         const delta = (event as any).delta;
@@ -1696,6 +1712,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cwd: config.cwd,
         abortController,
         includePartialMessages: true,
+        // Subagents' text and thinking too, not only their tool calls: the
+        // thread shows each subagent's own thread in a panel. Without this
+        // the CLI sends them for background subagents only.
+        forwardSubagentText: true,
         // We render a per-task stop control (see stopTask below), so an
         // interrupt only aborts the current turn and leaves background
         // tasks running. Without this the CLI fails closed and kills them.

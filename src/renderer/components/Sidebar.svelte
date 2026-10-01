@@ -788,6 +788,10 @@
   {#snippet sessionRow(session: (typeof store.sessions)[number], showProject: boolean, labelOverride: string | null, showGroup: boolean)}
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
+    <!-- Faded a little while its agent is off, matching its character: asleep
+         (back when opened), and a step further once completed. -->
+    {@const spriteState = sessionSpriteState(session, isDestroying)}
+    {@const restFade = spriteState === 'stopped' ? 'opacity-60' : spriteState === 'sleeping' ? 'opacity-70' : ''}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
@@ -809,7 +813,8 @@
         disabled={isDestroying}
         title={subtitle ? `${label}\n${subtitle.text}` : label}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
-          {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
+          {restFade}"
       >
         <!-- Line 1 is the conversation's name, so it gets the width; the project goes on line 2. -->
         <div class="w-full flex items-center gap-2 min-w-0">
@@ -923,6 +928,7 @@
       <!-- Every open conversation: the triage filter isn't on the rail to explain a shorter list. -->
       {#each store.openConversations as session (session.id)}
         {@const isDestroying = destroying.has(session.id)}
+        {@const isSleeping = sessionSpriteState(session, isDestroying) === 'sleeping'}
         {@const subtitle = rowSubtitle(session)}
         {@const name = `${store.repoDisplayName(session.repoPath)} / ${sessionRowLabel(session)}`}
         <button
@@ -933,7 +939,8 @@
           aria-label={name}
           data-rail-session={session.id}
           class="w-full flex justify-center py-2 transition-colors
-            {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+            {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
+            {isSleeping ? 'opacity-70' : ''}"
         >
           {@render statusMark(session, isDestroying, getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors))}
         </button>

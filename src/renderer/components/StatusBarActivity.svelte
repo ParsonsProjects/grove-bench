@@ -4,8 +4,10 @@
    * it, the rate-limit warning and chips for pending tools, background tasks
    * and memory compaction.
    */
-  import { messageStore } from '../stores/messages.svelte.js';
+  import { messageStore, type ChatToolCallMessage, type PendingTool } from '../stores/messages.svelte.js';
   import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+  import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
+  import { isAgentCall } from '../lib/message-view.js';
   import { rateLimitStore } from '../stores/rateLimit.svelte.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
@@ -21,6 +23,8 @@
   let activity = $derived(messageStore.getActivity(sessionId));
 
   let pendingTools = $derived(messageStore.getPendingTools(sessionId));
+  /** All of them are subagents' calls: the conversation itself may be idle. */
+  let onlySubagentTools = $derived(pendingTools.length > 0 && pendingTools.every((t) => t.inSubagent));
   let rateLimit = $derived(rateLimitStore.get(sessionId));
   let showRateLimit = $derived(!!rateLimit && rateLimit.status !== 'allowed');
   /** Memory compaction (manual or automatic) running for this session's repo. */
@@ -31,6 +35,11 @@
       || memoryStore.autoCompactingRepo === repo;
   });
   let backgroundTasks = $derived(backgroundTaskStore.get(sessionId));
+  /** The Agent calls in the conversation, so a background subagent's task
+   *  can open its thread. */
+  let agentCalls = $derived(new Set(
+    messageStore.getMessages(sessionId).filter(isAgentCall).map((m) => (m as ChatToolCallMessage).toolUseId),
+  ));
   let runningBgTasks = $derived(backgroundTasks.filter((t) => t.status === 'running'));
   let bgTaskStopError = $state('');
 
@@ -45,7 +54,25 @@
 
   let tasksExpanded = $state(false);
   let bgTasksExpanded = $state(false);
+
+  function openSubagent(toolUseId: string) {
+    tasksExpanded = false;
+    bgTasksExpanded = false;
+    subagentPanelStore.show(sessionId, toolUseId);
+  }
 </script>
+
+{#snippet pendingTool(task: PendingTool)}
+  <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse shrink-0"></span>
+  <span class="text-yellow-400 font-medium shrink-0">{task.toolName}</span>
+  <span class="text-muted-foreground truncate flex-1">{task.summary}</span>
+  {#if task.inSubagent}
+    <span class="text-muted-foreground/60 shrink-0">in {task.inSubagent}</span>
+  {/if}
+  {#if task.elapsedSeconds && task.elapsedSeconds > 0}
+    <span class="text-muted-foreground/60 shrink-0">{Math.round(task.elapsedSeconds)}s</span>
+  {/if}
+{/snippet}
 
 <!-- Session state on top; transient chips (rate limit, pending tools,
      background tasks, memory compaction) underneath. -->
@@ -101,21 +128,28 @@
               aria-expanded={tasksExpanded}
             >
               <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse"></span>
-              {pendingTools.length} tool{pendingTools.length > 1 ? 's' : ''}
+              {pendingTools.length} {onlySubagentTools ? 'subagent ' : ''}tool{pendingTools.length > 1 ? 's' : ''}
             </button>
           {/snippet}
 
           <div class="font-medium text-foreground mb-2">Pending Tools</div>
           <div class="space-y-1.5 max-h-48 overflow-y-auto">
             {#each pendingTools as task}
-              <div class="flex items-center gap-2">
-                <span class="w-1.5 h-1.5 bg-yellow-400 animate-pulse shrink-0"></span>
-                <span class="text-yellow-400 font-medium shrink-0">{task.toolName}</span>
-                <span class="text-muted-foreground truncate flex-1">{task.summary}</span>
-                {#if task.elapsedSeconds && task.elapsedSeconds > 0}
-                  <span class="text-muted-foreground/60 shrink-0">{Math.round(task.elapsedSeconds)}s</span>
-                {/if}
-              </div>
+              {#if task.subagentCall}
+                {@const call = task.subagentCall}
+                <button
+                  onclick={() => openSubagent(call)}
+                  class="w-full flex items-center gap-2 text-left hover:bg-accent/30 -mx-1 px-1"
+                  title="Open this subagent's thread"
+                >
+                  {@render pendingTool(task)}
+                  <span class="text-muted-foreground/40 shrink-0">&rsaquo;</span>
+                </button>
+              {:else}
+                <div class="flex items-center gap-2">
+                  {@render pendingTool(task)}
+                </div>
+              {/if}
             {/each}
           </div>
         </StatusBarPopover>
@@ -156,7 +190,20 @@
                   {:else}
                     <span class="w-1.5 h-1.5 bg-red-500 shrink-0"></span>
                   {/if}
-                  <span class="text-foreground font-medium truncate flex-1">{task.description || task.taskId}</span>
+                  {#if task.toolUseId && agentCalls.has(task.toolUseId)}
+                    {@const call = task.toolUseId}
+                    <!-- The arrow stays in view however long the name. -->
+                    <button
+                      onclick={() => openSubagent(call)}
+                      class="group/open flex items-center gap-1 min-w-0 flex-1 text-left"
+                      title="Open this subagent's thread"
+                    >
+                      <span class="text-foreground font-medium truncate group-hover/open:underline">{task.description || task.taskId}</span>
+                      <span class="text-muted-foreground/40 shrink-0">&rsaquo;</span>
+                    </button>
+                  {:else}
+                    <span class="text-foreground font-medium truncate flex-1">{task.description || task.taskId}</span>
+                  {/if}
                   <span class="text-muted-foreground/60 shrink-0 capitalize">{task.status}</span>
                   {#if task.status === 'running'}
                     <button

@@ -900,8 +900,35 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events.find((e) => e.type === 'usage')).toBeUndefined();
-      // text should still come through
-      expect(events.find((e) => e.type === 'assistant_text')).toMatchObject({ text: 'subagent reply' });
+    });
+
+    it('tags a subagent\'s text, thinking and tool calls with its Agent call, in order', () => {
+      // Untagged, a subagent's report read as the main agent's reply.
+      const events = transformMessage(
+        {
+          type: 'assistant',
+          uuid: 'u6',
+          parent_tool_use_id: 'tu-agent-123',
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'Spot-checking...' },
+              { type: 'text', text: 'I\'ve sent the full report to your caller.' },
+              { type: 'tool_use', id: 'tu-sub-1', name: 'Grep', input: { pattern: 'cron' } },
+            ],
+          },
+        } as any,
+        makeCtx(),
+      );
+      expect(events.map((e) => e.type)).toEqual(['thinking', 'assistant_text', 'assistant_tool_use']);
+      for (const e of events) expect(e).toMatchObject({ parentToolUseId: 'tu-agent-123' });
+    });
+
+    it('leaves the main agent\'s events untagged', () => {
+      const events = transformMessage(
+        { type: 'assistant', uuid: 'u7', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'hi' }] } } as any,
+        makeCtx(),
+      );
+      expect(events[0]).not.toHaveProperty('parentToolUseId');
     });
   });
 
@@ -926,6 +953,18 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events[0]).toMatchObject({ content: 'part1part2' });
+    });
+
+    it('tags a subagent\'s tool results with its Agent call', () => {
+      const events = transformMessage(
+        {
+          type: 'user',
+          parent_tool_use_id: 'tu-agent-123',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'tu-sub-1', content: 'match', is_error: false }] },
+        } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'tool_result', toolUseId: 'tu-sub-1', content: 'match', isError: false, parentToolUseId: 'tu-agent-123' }]);
     });
   });
 
@@ -1002,6 +1041,16 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events).toEqual([{ type: 'partial_thinking', text: 'hmm' }]);
+    });
+
+    it('drops a subagent\'s stream, which would run into the main agent\'s reply', () => {
+      for (const event of [
+        { type: 'message_start' },
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'sub' } },
+      ]) {
+        expect(transformMessage({ type: 'stream_event', parent_tool_use_id: 'tu-agent-123', event } as any, makeCtx())).toEqual([]);
+      }
     });
   });
 
