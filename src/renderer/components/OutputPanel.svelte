@@ -586,6 +586,15 @@
 
       {:else if msg.kind === 'error'}
         <SystemBlock text={msg.text} variant="error" />
+        {#if msg.auth}
+          <button
+            type="button"
+            class="ml-4 mt-1 text-xs text-primary hover:underline"
+            onclick={() => settingsStore.openAt('agents')}
+          >
+            Open Settings → Agents
+          </button>
+        {/if}
 
       {:else if msg.kind === 'git_identity_missing'}
         <GitIdentityNotice />

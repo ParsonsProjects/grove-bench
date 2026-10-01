@@ -127,6 +127,12 @@ export interface AgentPrerequisiteStatus {
     saved: boolean;
     /** The OS can encrypt a key. Without it no key can be saved. */
     canStore: boolean;
+    /** The provider refused the saved key the last time it was used. Cleared
+     *  when a key is saved or removed. */
+    rejected?: boolean;
+    /** The key was saved without being checked: the provider couldn't be
+     *  reached. It is checked for real by the first conversation. */
+    unverified?: boolean;
   };
   /** Present when the user can sign in with the provider's CLI instead of a
    *  key. `available` above says whether that CLI is installed. */
@@ -196,7 +202,9 @@ export type AgentEvent =
   | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox). */
   | { type: 'status'; message: string; level?: 'warning' }
-  | { type: 'error'; message: string }
+  /** `auth`: a sign-in failure, so the UI offers a way to fix it. `keyRejected`:
+   *  the provider refused the credentials outright (a bad or revoked key). */
+  | { type: 'error'; message: string; auth?: boolean; keyRejected?: boolean }
   | { type: 'process_exit'; exitCode?: number }
   // Rate limiting
   | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }

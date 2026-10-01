@@ -601,6 +601,8 @@ Conversations don't need the installed CLI: the Agent SDK runs its own bundled C
 
 If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
 
+A pasted key is checked before it is saved (`AgentAdapter.verifyApiKey`; for Claude, one `GET /v1/models` call, [List Models](https://platform.claude.com/docs/en/api/models/list)): a 401 turns it away next to the field, and when the provider can't be reached it is saved and marked unchecked. Skipped when `ANTHROPIC_BASE_URL` points conversations elsewhere. A key can still fail later (revoked, typo saved offline): the SDK flags the reply `authentication_failed`, the adapter turns it into an `error` event with `auth` and `keyRejected` set and its own sign-in help in place of the CLI's text, the thread links to Settings > Agents, and main marks the saved key refused (`markApiKeyRejected`). A refused key counts as no credentials (`agentReady`), so new conversations ask again until it is replaced or removed.
+
 **Several agents.** Every check above runs for each registered adapter, and `PrerequisiteStatus.agents` holds the result per adapter id. Saved keys, default models (`settings.defaultModels`) and the Settings > Agent groups are per adapter too. The New Conversation dialog shows an Agent picker when more than one adapter is registered and asks for the picked agent's credentials; the status bar lists the models of the conversation's own agent. The Settings MCP and Plugins tabs configure the default agent and are hidden when it doesn't support them.
 
 **Background tasks.** Memory notes, memory compaction, commit messages and skill suggestions call `adapter.generateText()` (`src/main/background-tasks.ts`). Each runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider chosen for it. The manifest records every conversation's agent (`adapterType`), which also lets a restart resume it on the same agent. Project-level tasks use the project's most recently used agent: manual compaction any agent, skill suggestions only an agent with skills, and suggestions only read that agent's conversations. The model is the user's pick in `settings.backgroundModels`, else the adapter's own `backgroundModel` (Claude: the SDK's current Haiku), else the agent's default.
@@ -717,7 +719,7 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 | Category | Example | How it surfaces |
 |----------|---------|-----------------|
-| Prerequisite failure | Git not found or too old, no agent credentials | Git: dismissible notice under the title bar. Credentials: API key step in the New Conversation dialog. Neither blocks the app. |
+| Prerequisite failure | Git not found or too old, no agent credentials | Git: a notice with Download Git and Re-check on the first screen, in a new conversation and at the top of the Changes tab. Credentials: API key step in the New Conversation dialog. Neither blocks the app. |
 | Worktree creation failure | Branch already exists, disk full, permission denied | Error toast + details. Session creation aborted, no terminal opens. |
 | PTY crash | Claude Code exits unexpectedly, shell crashes | Terminal shows exit message in red. Agent status changes to "stopped". User can destroy and recreate. |
 | Worktree cleanup failure | File locked by another process | Warning toast. Retry button. Flag for cleanup on next startup. |

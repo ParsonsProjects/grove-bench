@@ -120,6 +120,7 @@ const attachments = vi.hoisted(() => ({
   }),
 }));
 vi.mock('./attachments.js', () => attachments);
+vi.mock('./credentials.js', () => ({ markApiKeyRejected: vi.fn() }));
 
 // ─── Mock Adapter ───
 
@@ -283,6 +284,7 @@ const settingsMock = await import('./settings.js') as unknown as { getSettings: 
 const { getGitIdentity, isGitRepo } = await import('./git.js');
 const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
 const { logger } = await import('./logger.js');
+const { markApiKeyRejected } = await import('./credentials.js');
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -730,6 +732,42 @@ describe('AgentSessionManager event processing', () => {
     expect(textEvents).toHaveLength(2);
 
     await sessionManager.destroySession('test-history');
+  });
+
+  it('starts the history with the setup steps already shown, without sending them again', async () => {
+    const win = makeMockWindow();
+    const setup = [{ type: 'status' as const, message: 'Creating worktree…' }, { type: 'status' as const, message: 'Starting agent…' }];
+    const adoptSetupEvents = vi.fn(() => setup);
+    await sessionManager.createSession({
+      id: 'test-setup', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', adoptSetupEvents,
+    });
+
+    expect(adoptSetupEvents).toHaveBeenCalledTimes(1);
+    const history = sessionManager.getEventHistory('test-setup');
+    expect(history.slice(0, 2)).toEqual(setup);
+    const sent = win._send.mock.calls.filter((c: any[]) => c[0].includes('agent:event')).map((c: any[]) => c[1]);
+    expect(sent).not.toContainEqual(setup[0]);
+
+    await sessionManager.destroySession('test-setup');
+  });
+
+  it('flags a saved key the provider refused', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-refused', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'error', message: 'Sign in again', auth: true, keyRejected: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(markApiKeyRejected).toHaveBeenCalledWith('mock');
+
+    vi.mocked(markApiKeyRejected).mockClear();
+    mockAdapter.control!.emitEvent({ type: 'error', message: 'Something else' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(markApiKeyRejected).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-refused');
   });
 
   it('forwards transient streaming events to the renderer without buffering them', async () => {

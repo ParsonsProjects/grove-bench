@@ -15,6 +15,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { conversationAgent } from '$lib/session-sprite-state.js';
   import type { GroveTab } from '$lib/agent-sprite.js';
+  import type { AgentEvent } from '../../shared/types.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -130,6 +131,8 @@
     // Always replay history on mount — clear any stale state first to avoid
     // duplicates. This is critical after refresh/restart where prior state is
     // lost but isReady might have been set by a leaked event.
+    /** The page replayed, for sorting out live events held meanwhile. */
+    let replayedPage: AgentEvent[] | null = null;
     try {
       // Clear existing messages so replay starts fresh.
       // clearSession does NOT reset isReady — that's handled below based on
@@ -146,11 +149,12 @@
 
       // Subscribe to live events BEFORE replaying history so events for a
       // session still being set up (worktree creation, npm install) aren't
-      // missed; replay then fills in prior events. Caveat: a live event that
-      // arrives during the awaited history fetch below is appended ahead of the
-      // replayed history. In practice the window is tiny (system_init arrives
-      // after mount) and the worst case is a single duplicated status line.
+      // missed. Ones that arrive while the page loads are held, then shown
+      // after the replay unless the page already has them: a new
+      // conversation's first events land in that window, and were shown
+      // twice.
       messageStore.subscribe(sessionId);
+      messageStore.holdLiveEvents(sessionId);
 
       // Suppress this session's git refreshes during replay to avoid N IPC
       // calls (per-session so concurrent pane mounts don't clear each other's).
@@ -170,6 +174,7 @@
       // array and flushes to the reactive store in one assignment at the end,
       // avoiding O(n²) array copies and hundreds of intermediate re-renders.
       messageStore.replayEvents(sessionId, page.events, skipDuringReplay, page.startIndex);
+      replayedPage = page.events;
       if (page.events.length > 0) {
         const last = page.events[page.events.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {
@@ -197,6 +202,7 @@
         message: `Failed to load conversation history: ${e?.message || e}`,
       });
     } finally {
+      messageStore.releaseLiveEvents(sessionId, replayedPage);
       gitStatusStore.unsuppressRefresh(sessionId);
       messageStore.setHistoryLoaded(sessionId, true);
     }

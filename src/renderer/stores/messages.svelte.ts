@@ -11,9 +11,11 @@ import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
+import { prerequisitesStore } from './prerequisites.svelte.js';
 import type { AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
+import { liveEventsMissingFrom } from '../../shared/live-events.js';
 
 // ─── Chat message types ───
 
@@ -71,6 +73,8 @@ export interface ChatErrorMessage {
   kind: 'error';
   id: string;
   text: string;
+  /** A sign-in failure: the thread offers a way to fix the credentials. */
+  auth?: boolean;
 }
 
 /** Git has no name/email for this conversation's checkout. */
@@ -1408,7 +1412,12 @@ class MessageStore {
           kind: 'error',
           id: nextId(),
           text: event.message,
+          ...(event.auth ? { auth: true } : {}),
         });
+        // Main has flagged a refused key: re-check so a new conversation asks
+        // for credentials instead of failing the same way. Live only, not when
+        // an old failure is replayed.
+        if (event.keyRejected && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
         if (!this.getIsReady(sessionId)) {
@@ -2351,6 +2360,10 @@ class MessageStore {
     return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf];
   }
 
+  /** Live events that arrived while a pane was loading the history page,
+   *  by session (see holdLiveEvents). */
+  private heldLive = new Map<string, AgentEvent[]>();
+
   /** Subscribe to events from the main process for a session */
   subscribe(sessionId: string) {
     if (this.cleanups.has(sessionId)) {
@@ -2362,13 +2375,34 @@ class MessageStore {
       this.setIsReady(sessionId, false);
     }
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
-      this.ingestEvent(sessionId, event);
+      const held = this.heldLive.get(sessionId);
+      if (held) held.push(event);
+      else this.ingestEvent(sessionId, event);
     });
     this.cleanups.set(sessionId, cleanup);
   }
 
+  /** Hold this session's live events instead of showing them, while its
+   *  history page loads. Shown straight away they would come first, and then
+   *  again when the page (which has them too) is replayed. */
+  holdLiveEvents(sessionId: string) {
+    this.heldLive.set(sessionId, []);
+  }
+
+  /** Stop holding and show the held events the replayed page doesn't have.
+   *  Without a page (it failed to load), show them all. */
+  releaseLiveEvents(sessionId: string, page: readonly AgentEvent[] | null) {
+    const held = this.heldLive.get(sessionId);
+    this.heldLive.delete(sessionId);
+    if (!held?.length) return;
+    for (const event of page ? liveEventsMissingFrom(page, held) : held) {
+      this.ingestEvent(sessionId, event);
+    }
+  }
+
   /** Unsubscribe from session events */
   unsubscribe(sessionId: string) {
+    this.heldLive.delete(sessionId);
     const cleanup = this.cleanups.get(sessionId);
     if (cleanup) {
       cleanup();

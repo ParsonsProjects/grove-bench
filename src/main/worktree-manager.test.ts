@@ -22,6 +22,7 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('./git.js', () => ({
   FETCH_TIMEOUT_MS: 30_000,
   git: vi.fn(),
+  excludeFromGit: vi.fn(),
   isGitRepo: vi.fn().mockResolvedValue(true),
   renameBranch: vi.fn(),
   branchHasRemote: vi.fn(),
@@ -56,10 +57,11 @@ const mockFsUtils = vi.hoisted(() => ({
 vi.mock('./fs-utils.js', () => mockFsUtils);
 
 import {
-  git, branchExists, branchHasRemote, getGitIdentity, getDefaultBranch, validateBranchName, currentBranch,
+  git, excludeFromGit, branchExists, branchHasRemote, getGitIdentity, getDefaultBranch, validateBranchName, currentBranch,
   localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch,
 } from './git.js';
 import { WorktreeManager } from './worktree-manager.js';
+import { adapterRegistry } from './adapters/index.js';
 
 const mockGit = vi.mocked(git);
 
@@ -548,6 +550,33 @@ describe('registerDirect (direct sessions, and older attached ones)', () => {
     expect(info?.path).toBe(wtPath);
     expect(info?.branch).toBe('feature-x');
     expect(info?.direct).toBe(true);
+  });
+});
+
+describe("create: the agent's generated files", () => {
+  beforeEach(() => {
+    mockFsUtils.pathExists.mockResolvedValue(false);
+    vi.mocked(branchExists).mockResolvedValue(false);
+    vi.mocked(branchHasRemote).mockResolvedValue(false);
+    mockGit.mockResolvedValue('');
+  });
+
+  it("writes the agent's settings, then keeps them out of git", async () => {
+    const generateWorktreeSettings = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(adapterRegistry.getDefault).mockReturnValueOnce({
+      id: 'claude-code', generateWorktreeSettings, generatedFiles: ['.claude/settings.local.json'],
+    } as never);
+    const info = await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(generateWorktreeSettings).toHaveBeenCalledWith(info.path, '/repo');
+    expect(excludeFromGit).toHaveBeenCalledWith(info.path, ['.claude/settings.local.json']);
+  });
+
+  it('still creates the worktree when the exclude list cannot be written', async () => {
+    vi.mocked(adapterRegistry.getDefault).mockReturnValueOnce({
+      id: 'claude-code', generateWorktreeSettings: vi.fn(), generatedFiles: ['.claude/settings.local.json'],
+    } as never);
+    vi.mocked(excludeFromGit).mockRejectedValueOnce(new Error('read-only'));
+    await expect(manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' })).resolves.toMatchObject({ id: 'a1' });
   });
 });
 

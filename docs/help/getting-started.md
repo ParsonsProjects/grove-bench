@@ -2,6 +2,26 @@
 
 Grove Bench lets you run several AI coding conversations with Claude Code at the same time, each with its own terminal. In a git project, each conversation works in its own copy of the project (a git worktree), so their changes stay apart. A folder without git works too, but its conversations edit the folder directly.
 
+## Quick Start
+
+1. **Add a project**: click **Add a project** on the first screen (or **+ Project** at the bottom of the sidebar) and pick your project's folder.
+2. **Start a conversation**: click **Start a conversation**, or **+** next to the project in the sidebar.
+3. **Sign in, the first time only**: the new conversation asks for Claude credentials if it can't find any (see below).
+4. **Say what to work on** and press `Enter`.
+
+If [git](https://git-scm.com/downloads) isn't installed, the first screen and each new conversation say so. Conversations still run without it, but they edit your project folder in place.
+
+## Signing In
+
+The first time you start a conversation, it may ask for the agent's credentials. Claude Agent runs on Claude Code, so it signs in the same way. There are two ways in:
+
+- **Use your Claude plan** (Pro, Max, Team or Enterprise): install Claude Code (**How to install Claude Code** opens Anthropic's setup page), run `claude` in a terminal and sign in when it asks, then click **Re-check**. Grove Bench never sees your sign-in; the agent reads it itself.
+- **Or use an API key**: paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. Grove Bench checks the key with Anthropic before saving it, so a mistyped key is turned away there and then. If Anthropic can't be reached, the key is saved anyway and your first message shows whether it works. API usage is billed per use by Anthropic, separately from any Claude plan. The key is stored encrypted on this computer, and while saved it is used instead of a plan sign-in. You can change or remove it later in **Settings → Agents (Grovekeepers)**.
+
+If you already set `ANTHROPIC_API_KEY`, just click **Re-check**.
+
+If a conversation can't sign in later (a key was revoked, or the plan sign-in expired), its thread says so with a link to **Settings → Agents (Grovekeepers)**, and new conversations ask for credentials again until you replace or remove the key.
+
 ## Adding a Project
 
 Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to your project's folder and select it. The project will appear in the sidebar, ready for new conversations. Pick a folder inside a git repository and the repository's top-level folder is added.
@@ -18,16 +38,11 @@ Before you send, the draft's status bar lets you change the choices that are fix
 
 - **Agent settings** (left) — Pick the agent, the model, the mode and the other controls the agent offers. A new draft uses the agent and model of the conversation you had open, or your defaults. Once the conversation starts, the model and controls can still change but the agent can't.
 - **Project / branch** (next to it) — Click the project name to move the draft to another project. Click the branch to choose where the agent works:
-  - **New branch** (the default) — A separate copy of the project (a worktree) on a new branch, so the agent's changes stay away from your other work. You don't have to name the branch. It starts with a temporary name (`grove/` and a short id) and is renamed after the agent's first reply, from your message and the style of the project's recent branch names. Put a ticket ID in the message (e.g. `API-123`) to have it included. To describe the style in your own words, set **Branch naming rule** in **Settings → Branches & roots (Git & worktrees)**. A branch that has already been pushed keeps its name. **Base branch** is prefilled with **Default base branch** from **Settings → Branches & roots (Git & worktrees)**, or the project's default branch (e.g. `main`), and Grove Bench fetches its latest commits from `origin` first when it can.
+  - **New branch** (the default) — A separate copy of the project (a worktree) on a new branch, so the agent's changes stay away from your other work. You don't have to name the branch. It starts with a temporary name (`grove/` and a short id) and is renamed after the agent's first reply, from your message and the style of the project's recent branch names. Put a ticket ID in the message (e.g. `API-123`) to have it included. To describe the style in your own words, set **Branch naming rule** in **Settings → Git & worktrees (Branches & roots)**. A branch that has already been pushed keeps its name. **Base branch** is prefilled with **Default base branch** from **Settings → Git & worktrees (Branches & roots)**, or the project's default branch (e.g. `main`), and Grove Bench fetches its latest commits from `origin` first when it can.
   - **Branch or PR** — A separate copy of an open pull request or a branch that already exists, local or remote. Open pull requests are listed when the GitHub CLI (`gh`) is installed and signed in; ones from forks are not listed yet. The list leaves out branches that another conversation in this project is already using.
   - **Project folder** — The agent works in the project folder itself, on whatever branch is checked out there. No separate copy is made and changes land in place.
 
-The first time you use an agent, the draft may ask for its credentials. For Claude there are two ways in:
-
-- **Use your Claude plan** (Pro, Max, Team or Enterprise): install Claude Code (**How to install Claude Code** opens Anthropic's setup page), run `claude` in a terminal and sign in when it asks, then click **Re-check**. Grove Bench never sees your sign-in; the agent reads it itself.
-- **Or use an API key**: paste an Anthropic API key (**Get a key** opens the Claude Console) and click **Save key**. API usage is billed per use by Anthropic, separately from any Claude plan. The key is stored encrypted on this computer, and while saved it is used instead of a plan sign-in. You can change or remove it later in **Settings → Grovekeepers (Agents)**.
-
-If you already set `ANTHROPIC_API_KEY`, just click **Re-check**.
+The first time you use an agent, the draft may ask for its credentials first (see [Signing In](#signing-in)).
 
 ## Interacting with an Agent
 

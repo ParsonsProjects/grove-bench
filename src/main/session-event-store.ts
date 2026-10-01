@@ -11,10 +11,8 @@ import { logger } from './logger.js';
 import { SearchIndexCache, type EventSearchIndex, type EventSearchHit } from './event-search.js';
 import type { ManagedSession } from './session-types.js';
 
-/** Event types that are never persisted or replayed — live UI feedback only. */
-export const TRANSIENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set<AgentEvent['type']>([
-  'partial_text', 'partial_thinking', 'activity', 'tool_progress', 'usage',
-]);
+// Shared with the renderer, which reconciles live events with replayed ones.
+export { TRANSIENT_EVENT_TYPES } from '../shared/live-events.js';
 
 /** Event-log batching: flush after this delay or once this many bytes queue. */
 const EVENT_LOG_FLUSH_MS = 250;

@@ -380,6 +380,18 @@ describe('Sidebar attention triage', () => {
   });
 });
 
+describe('Sidebar for a new user', () => {
+  it('leaves out the filter chips, sort and Groups until there is a conversation', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [];
+    render(Sidebar);
+    expect(await screen.findByText('No conversations')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Filter conversations' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sort conversations' })).toBeNull();
+    expect(screen.queryByText('Right-click a conversation to start a group')).toBeNull();
+  });
+});
+
 describe('Sidebar bottom buttons', () => {
   afterEach(() => {
     mockGroveBench.getSidebarWidth.mockReset();

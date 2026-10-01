@@ -66,6 +66,12 @@ function writeCredentials(data: CredentialsFile): void {
  *  decrypt per launch. */
 const cache = new Map<string, string | null>();
 
+/** Saved keys the provider refused, and ones saved without a check, by
+ *  adapter id. Kept for this run only: after a restart the next conversation
+ *  finds a bad key again. */
+const rejected = new Set<string>();
+const unverified = new Set<string>();
+
 /** False when the OS offers no encryption, in which case nothing is saved. */
 export function canStoreApiKey(): boolean {
   try {
@@ -107,20 +113,31 @@ export function hasApiKey(adapterId: string): boolean {
   return getApiKey(adapterId) !== null;
 }
 
-/** Validates, encrypts and saves a key. Throws a user-facing message when the
- *  key is malformed or the OS can't encrypt it. */
-export function saveApiKey(adapterId: string, rawKey: unknown): void {
+/** Checks the shape of a pasted key and returns it trimmed. Throws a
+ *  user-facing message when it can't be a key. */
+export function parseApiKey(rawKey: unknown): string {
   const parsed = apiKeySchema.safeParse(rawKey);
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? 'That API key is not valid.');
   }
+  return parsed.data;
+}
+
+/** Validates, encrypts and saves a key. Throws a user-facing message when the
+ *  key is malformed or the OS can't encrypt it. `unverified`: the provider
+ *  couldn't be reached to check it. */
+export function saveApiKey(adapterId: string, rawKey: unknown, opts: { unverified?: boolean } = {}): void {
+  const key = parseApiKey(rawKey);
   if (!canStoreApiKey()) {
     throw new Error('This computer has no secure storage, so the API key cannot be saved.');
   }
   const data = readCredentialsForUpdate();
-  data.apiKeys[adapterId] = safeStorage.encryptString(parsed.data).toString('base64');
+  data.apiKeys[adapterId] = safeStorage.encryptString(key).toString('base64');
   writeCredentials(data);
-  cache.set(adapterId, parsed.data);
+  cache.set(adapterId, key);
+  rejected.delete(adapterId);
+  if (opts.unverified) unverified.add(adapterId);
+  else unverified.delete(adapterId);
 }
 
 export function clearApiKey(adapterId: string): void {
@@ -130,9 +147,30 @@ export function clearApiKey(adapterId: string): void {
     writeCredentials(data);
   }
   cache.set(adapterId, null);
+  rejected.delete(adapterId);
+  unverified.delete(adapterId);
+}
+
+/** The provider refused the saved key (a conversation failed to sign in with
+ *  it). Does nothing when no key is saved: the failure was about another
+ *  sign-in. */
+export function markApiKeyRejected(adapterId: string): void {
+  if (!hasApiKey(adapterId)) return;
+  rejected.add(adapterId);
+  unverified.delete(adapterId);
+}
+
+export function isApiKeyRejected(adapterId: string): boolean {
+  return rejected.has(adapterId);
+}
+
+export function isApiKeyUnverified(adapterId: string): boolean {
+  return unverified.has(adapterId);
 }
 
 /** Test hook: forget decrypted keys so the next read goes to disk. */
 export function resetCredentialsCache(): void {
   cache.clear();
+  rejected.clear();
+  unverified.clear();
 }

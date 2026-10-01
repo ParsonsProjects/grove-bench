@@ -40,7 +40,8 @@
 
   // Shown once there is a group, or once there are two projects to work
   // across, and never before the saved groups are read.
-  let visible = $derived(groupStore.ready && (groupStore.groups.length > 0 || store.repos.length > 1));
+  // Offered once there are conversations to group, across more than one project.
+  let visible = $derived(groupStore.ready && (groupStore.groups.length > 0 || (store.repos.length > 1 && store.sessions.length > 0)));
 
   /** Folded groups. Kept for this run only, like the Projects tree's branches. */
   let collapsed = $state<Record<string, boolean>>({});

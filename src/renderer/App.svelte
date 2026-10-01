@@ -567,6 +567,7 @@
     {/if}
   </main>
 </div>
+<AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
 
 {#if store.finderOpen}
@@ -580,7 +581,5 @@
 
 <BookmarksDrawer />
 <MarkdownPreviewPanel />
-
-<AnalyticsConsent visible={showAnalyticsConsent} />
 
 <SpellcheckMenu />

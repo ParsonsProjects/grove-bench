@@ -165,8 +165,11 @@ export function downloadUpdate(): Promise<void> {
 }
 
 /** Follow the "Download updates automatically" setting. Turning it on with
- *  an update already found starts that download. */
+ *  an update already found starts that download. Nothing in a dev build:
+ *  updates are off there, and reaching for the updater can throw (it refuses
+ *  an app version that isn't semver), which failed every settings save. */
 export function applyUpdateSettings(settings: Pick<GroveBenchSettings, 'autoDownloadUpdates'>) {
+  if (!app.isPackaged) return;
   autoUpdater.autoDownload = settings.autoDownloadUpdates;
   if (settings.autoDownloadUpdates && status?.state === 'available') void startDownload(false);
 }

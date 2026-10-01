@@ -104,6 +104,15 @@ afterEach(() => {
   agentsStore.loaded = false;
 });
 
+describe('SettingsPanel opened at a section', () => {
+  it('shows the section asked for, e.g. Agents from a sign-in error', async () => {
+    settingsStore.requestedSection = 'agents';
+    await renderPanel();
+    await waitFor(() => expect(sectionTab('Agents')).toHaveAttribute('aria-selected', 'true'));
+    expect(settingsStore.requestedSection).toBeNull();
+  });
+});
+
 describe('SettingsPanel default permission mode', () => {
   it('is not under Permissions, which points to Agents instead', async () => {
     await renderPanel();

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
-import { git, FETCH_TIMEOUT_MS, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
+import { git, excludeFromGit, FETCH_TIMEOUT_MS, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
 import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
 import type { BranchSwitchResult, BranchSyncResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
@@ -1272,6 +1272,14 @@ export class WorktreeManager {
       await adapter.generateWorktreeSettings(wtPath, repoPath);
     } else {
       logger.debug(`[WorktreeManager] Adapter "${adapter.id}" has no worktree settings to generate`);
+    }
+    // Grove's own files, not the user's: keep them out of Changes and commits.
+    if (adapter.generatedFiles?.length) {
+      try {
+        await excludeFromGit(wtPath, adapter.generatedFiles);
+      } catch (err) {
+        logger.warn(`[WorktreeManager] Could not add ${adapter.generatedFiles.join(', ')} to git's exclude list:`, err);
+      }
     }
   }
 }

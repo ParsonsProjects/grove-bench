@@ -1070,6 +1070,28 @@ describe('ingestEvent — error/process_exit unlocks input when never initialize
     expect(messageStore.getIsRunning(SID)).toBe(false);
   });
 
+  it('keeps a sign-in failure marked as one, and re-checks credentials when a key was refused', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Sign in again', auth: true, keyRejected: true });
+    const last = messageStore.getMessages(SID).at(-1);
+    expect(last).toMatchObject({ kind: 'error', text: 'Sign in again', auth: true });
+    expect(mockGroveBench.checkPrerequisites).toHaveBeenCalled();
+  });
+
+  it('does not re-check credentials when an old refusal is replayed', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.replayEvents(SID, [{ type: 'error', message: 'Sign in again', auth: true, keyRejected: true }]);
+    expect(messageStore.getMessages(SID).at(-1)).toMatchObject({ kind: 'error', auth: true });
+    expect(mockGroveBench.checkPrerequisites).not.toHaveBeenCalled();
+  });
+
+  it('does not re-check credentials for other errors', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.ingestEvent(SID, { type: 'error', message: 'boom' });
+    expect(messageStore.getMessages(SID).at(-1)).not.toHaveProperty('auth');
+    expect(mockGroveBench.checkPrerequisites).not.toHaveBeenCalled();
+  });
+
   it('process_exit unlocks input if session never had system_init', () => {
     expect(messageStore.getIsReady(SID)).toBe(false);
     messageStore.ingestEvent(SID, { type: 'process_exit' } as AgentEvent);

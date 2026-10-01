@@ -25,7 +25,7 @@ Groups are short-lived. A group goes away when its last conversation leaves it o
 
 Each conversation in the sidebar shows:
 
-- **Status dot** — A colored indicator showing the conversation's current state (see [Conversation States](session-states.md)). With **Show grove characters** on (Settings → The grove (General), on by default), a small pixel agent shows the state instead
+- **Status dot** — A colored indicator showing the conversation's current state (see [Conversation States](session-states.md)). With **Show grove characters** on (Settings → General (The grove), on by default), a small pixel agent shows the state instead
 - **Conversation name** — Either the branch name or a custom name you've assigned. It has the first line to itself
 - **Second line**: its group, if it is in one. Under **Conversations**, which project it belongs to (when you have more than one), then what the agent is doing or last said
 - **Active indicator** — The currently selected conversation is highlighted
