@@ -4,7 +4,7 @@
  */
 import type { BrowserWindow } from 'electron';
 import type { AgentEvent, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
-import type { AgentAdapter, AgentQueryHandle, PermissionResponse } from './adapters/types.js';
+import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
 
 export type Emit = (event: AgentEvent) => void;
@@ -137,6 +137,11 @@ export interface ManagedSession {
    *  replaced query never counts as mid-turn. Idle sleep refuses while set,
    *  rather than trusting the renderer's view alone. */
   turnHandle: AgentQueryHandle | null;
+  /** Prompts sent to a resumed query's `handle` before it reported
+   *  system_init. If the agent turns out not to have the conversation it
+   *  resumed, they went nowhere, and the new conversation started in its
+   *  place gets them. Null for a fresh query, or once the query reports in. */
+  promptsBeforeInit: { handle: AgentQueryHandle; prompts: UserMessage[] } | null;
 }
 
 export interface SessionCompletionResult {

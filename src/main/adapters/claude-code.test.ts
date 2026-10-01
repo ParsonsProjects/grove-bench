@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -569,6 +569,27 @@ describe('supportsLargeContext()', () => {
 function makeCtx() {
   return { toolUseMap: new Map<string, string>() };
 }
+
+describe('missingConversationError()', () => {
+  // What the CLI sends when asked to resume a conversation it no longer has.
+  const missing = {
+    type: 'result', subtype: 'error_during_execution', is_error: true, num_turns: 0,
+    errors: ['No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170'],
+  };
+
+  it('picks out the missing-conversation error result', () => {
+    expect(missingConversationError(missing as any)).toBe('No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170');
+    // Still recognised if a CLI version prefixes the text.
+    expect(missingConversationError({ ...missing, errors: ['Error: No conversation found with session ID: x'] } as any))
+      .toBe('Error: No conversation found with session ID: x');
+  });
+
+  it('ignores other results', () => {
+    expect(missingConversationError({ ...missing, errors: ['Request was aborted'] } as any)).toBeNull();
+    expect(missingConversationError({ type: 'result', subtype: 'success', is_error: false, result: 'No conversation found with session ID: x' } as any)).toBeNull();
+    expect(missingConversationError({ type: 'assistant', message: { content: [] } } as any)).toBeNull();
+  });
+});
 
 describe('capToolResult()', () => {
   it('returns short results unchanged', () => {
