@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - 'landing/**'
+      # The page draws its characters with the app's own sprite code.
+      - 'src/renderer/lib/agent-sprite.ts'
+      - 'src/renderer/lib/pixel-tree.ts'
+      - 'src/renderer/lib/grove-walk.ts'
+      - 'src/renderer/lib/context-grove.ts'
       - '.github/workflows/deploy-landing.yml'
   workflow_dispatch:
 
