@@ -177,16 +177,18 @@ export const PERMISSION_TIMEOUT_MINUTES = 30;
  */
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
-  | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView }
+  // parentToolUseId: set when a subagent produced the event, to the id of the
+  // Agent call that started it. See subagentParent().
+  | { type: 'assistant_text'; text: string; uuid: string; parentToolUseId?: string }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView; parentToolUseId?: string }
   /** More about a tool call the agent already reported: a title, its input
    *  or its edits once known (ACP agents fill a call in as it runs). Only
    *  the fields present change. */
   | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[] }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
-  | { type: 'thinking'; thinking: string; uuid: string }
+  | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
@@ -247,6 +249,13 @@ export type AgentEvent =
   // Git has no user.name/user.email for this conversation's checkout, so the
   // agent's commits will likely fail. Emitted at most once per conversation.
   | { type: 'git_identity_missing' };
+
+/** The Agent call whose subagent produced this event, or undefined for the
+ *  conversation's own events. A subagent's work belongs to its own thread,
+ *  not the conversation's turn: it can carry on after the turn ends. */
+export function subagentParent(event: AgentEvent): string | undefined {
+  return 'parentToolUseId' in event ? event.parentToolUseId : undefined;
+}
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
@@ -1462,8 +1471,8 @@ export interface GroveBenchSettings {
  * - 'detailed': everything (tool calls, thinking, system, ...)
  * - 'summary':  hides thinking and non-essential tool calls
  * - 'focus':    only user prompts, assistant text, question blocks (with
- *               the answer given), unanswered permission blocks, errors
- *               and turn results
+ *               the answer given), unanswered permission blocks, errors,
+ *               turn results and the calls that start subagents
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];

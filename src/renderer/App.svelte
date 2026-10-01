@@ -35,6 +35,7 @@
   import { groupStore } from './stores/groups.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
+  import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
@@ -43,6 +44,7 @@
   let showAnalyticsConsent = $state(false);
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
+  const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -579,6 +581,13 @@
 <MemoryToast />
 
 <BookmarksDrawer />
+<!-- Mounted from its first opening on, so closing plays its transition.
+     Before the Focus panel, which can open over it. -->
+{#if subagentPanelStore.opened}
+  {#await loadSubagentPanel() then SubagentPanel}
+    <SubagentPanel />
+  {/await}
+{/if}
 <MarkdownPreviewPanel />
 
 <AnalyticsConsent visible={showAnalyticsConsent} />

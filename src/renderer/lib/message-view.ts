@@ -15,13 +15,61 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 /** Short description of what each mode shows, for pickers and hints. */
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
-  summary: 'Hides thinking and most tool calls (edits, writes, shell commands and images stay)',
-  focus: 'Agent responses, questions and your answers only (no tool calls or thinking)',
+  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay)',
+  focus: 'Agent responses, questions and your answers only (no tool calls or thinking; subagents show as one line)',
 };
 
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
  *  too frequent for Summary. */
 const GROVE_MCP_SERVERS = new Set(['grove-preview', 'grove-memory']);
+
+/** A call that started a subagent. It stays in every view as one line that
+ *  opens the subagent's own thread, so its work is never out of reach. */
+export function isAgentCall(msg: ChatMessage): boolean {
+  return msg.kind === 'tool_call' && toolViewOf(msg).kind === 'agent';
+}
+
+/** What an Agent call asked for, as far as Claude Code's input says: the kind
+ *  of subagent (Explore, general-purpose, ...) and the prompt it was given. */
+export function agentCallInput(toolInput: unknown): { agentType?: string; prompt?: string } {
+  if (!toolInput || typeof toolInput !== 'object') return {};
+  const { subagent_type: agentType, prompt } = toolInput as Record<string, unknown>;
+  return {
+    ...(typeof agentType === 'string' && agentType ? { agentType } : {}),
+    ...(typeof prompt === 'string' && prompt ? { prompt } : {}),
+  };
+}
+
+/** The Agent call a subagent's message belongs under, or undefined for the
+ *  conversation's own messages. */
+export function subagentOf(msg: ChatMessage): string | undefined {
+  return 'parentToolUseId' in msg ? msg.parentToolUseId : undefined;
+}
+
+const NO_MESSAGES: ChatMessage[] = [];
+const threadsByList = new WeakMap<ChatMessage[], Map<string | undefined, ChatMessage[]>>();
+
+/**
+ * One thread's messages: the conversation's own (no parentToolUseId), or one
+ * subagent's (the id of the Agent call that started it). Grouped once per
+ * list: a list is replaced on every change, never edited in place.
+ */
+export function threadMessages(messages: ChatMessage[], parentToolUseId?: string): ChatMessage[] {
+  let threads = threadsByList.get(messages);
+  if (!threads) {
+    threads = new Map();
+    for (const m of messages) {
+      const key = subagentOf(m);
+      const thread = threads.get(key);
+      if (thread) thread.push(m);
+      else threads.set(key, [m]);
+    }
+    // Without subagents the conversation's thread is the list itself.
+    if (threads.size === 1 && threads.has(undefined)) threads.set(undefined, messages);
+    threadsByList.set(messages, threads);
+  }
+  return threads.get(parentToolUseId) ?? NO_MESSAGES;
+}
 
 /** Whether summary mode shows a tool call: the ones that change files or run
  *  commands, and MCP tools other than Grove's own, since they can act outside
@@ -33,9 +81,10 @@ function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): bool
 }
 
 /**
- * Whether a message is rendered in the Activity panel for the given view mode.
+ * Whether a message is rendered in its thread for the given view mode.
  * Single source of truth shared by the panel's filter and the search-scroll logic
- * so the two can never disagree about what's on screen.
+ * so the two can never disagree about what's on screen. Which thread a message
+ * is in is threadMessages()'s concern.
  */
 export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boolean {
   // Tool calls awaiting a permission decision are never rendered (the permission
@@ -50,13 +99,14 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
   if (mode === 'summary') {
     // A tool that returned images (a preview screenshot, an image file read)
     // stays in view so the images do.
-    if (msg.kind === 'tool_call') return shownInSummary(msg) || !!msg.images?.length;
+    if (msg.kind === 'tool_call') return shownInSummary(msg) || isAgentCall(msg) || !!msg.images?.length;
     return true;
   }
 
   // Focus mode: only what the user must read or act on.
   switch (msg.kind) {
     case 'tool_call':
+      return isAgentCall(msg);
     case 'system':
       return false;
     case 'permission':

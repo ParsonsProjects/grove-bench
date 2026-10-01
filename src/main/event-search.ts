@@ -1,4 +1,4 @@
-import type { AgentEvent, EventSearchHit, SessionPreview } from '../shared/types.js';
+import { subagentParent, type AgentEvent, type EventSearchHit, type SessionPreview } from '../shared/types.js';
 import { displayTextFromSent, stripFileContext } from '../shared/prompt-text.js';
 import { oneLine, plainSnippet } from '../shared/plain-text.js';
 
@@ -42,9 +42,11 @@ export function eventKind(event: AgentEvent): string {
 /**
  * Extract searchable text from a raw AgentEvent — the event-level analogue of the
  * renderer's message-level searchableText. Transient/noise events (streaming
- * deltas, activity, usage, progress, …) return '' so they're never matched.
+ * deltas, activity, usage, progress, …) return '' so they're never matched,
+ * and so do a subagent's, which the thread shows in its own panel.
  */
 export function searchableEventText(event: AgentEvent): string {
+  if (subagentParent(event)) return '';
   switch (event.type) {
     case 'user_message':
       // As the chat shows it, so a hit never lands in attached file content.
@@ -128,6 +130,7 @@ export function extractSessionPreview(events: AgentEvent[]): SessionPreview {
   let lastText = '';
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
+    if (subagentParent(e)) continue;
     if (e.type === 'assistant_text' || e.type === 'user_message') {
       const text = (e.type === 'user_message' ? displayTextFromSent(e.text, e.images) : e.text).trim();
       if (!text || (e.type === 'user_message' && text.startsWith('/'))) continue;

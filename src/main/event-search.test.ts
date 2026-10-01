@@ -20,6 +20,11 @@ describe('searchableEventText', () => {
     expect(text).toContain('/src/widget.ts');
   });
 
+  it('leaves out a subagent\'s events, which the thread shows in its own panel', () => {
+    expect(searchableEventText({ type: 'assistant_text', text: 'report', uuid: '', parentToolUseId: 'tu1' })).toBe('');
+    expect(searchableEventText({ type: 'tool_result', toolUseId: 't', content: 'match', parentToolUseId: 'tu1' })).toBe('');
+  });
+
   it('includes plan text for permission requests', () => {
     const text = searchableEventText({
       type: 'permission_request', toolName: 'Bash', toolUseId: 't', requestId: 'r',
@@ -265,6 +270,15 @@ describe('extractSessionPreview', () => {
     const preview = extractSessionPreview(events);
     expect(preview.firstPrompt).toBe('refactor the sidebar layout');
     expect(preview.lastText).toBe('Done — added tests for the sidebar');
+  });
+
+  it('previews the main agent\'s reply, not a subagent\'s', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'find the cause' },
+      { type: 'assistant_text', text: 'The cause is the cron job', uuid: '' },
+      { type: 'assistant_text', text: 'I sent the report to your caller', uuid: '', parentToolUseId: 'tu1' },
+    ];
+    expect(extractSessionPreview(events).lastText).toBe('The cause is the cron job');
   });
 
   it('falls back to the latest user message when the assistant has not replied', () => {
