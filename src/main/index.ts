@@ -1,4 +1,4 @@
-import { app, BrowserWindow, powerMonitor, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, powerMonitor, screen } from 'electron';
 import path from 'node:path';
 import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
@@ -17,6 +17,7 @@ import { installSpellcheckMenu } from './spellcheck.js';
 import { lockToAppPage } from './window-guard.js';
 import { runQuitCleanup } from './quit-cleanup.js';
 import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolders } from './attachments.js';
+import { freezeLog, startStallWatch } from './freeze-log.js';
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -36,6 +37,9 @@ initAdapters(settings.loadSettings().acpAgents);
 // Custom schemes can only be registered before the app is ready.
 registerAttachmentScheme();
 
+// Time IPC handlers before they are registered, so the freeze log can name
+// the calls that ran while the main process was blocked.
+freezeLog.timeIpcHandlers(ipcMain);
 registerHandlers();
 
 let mainWindow: BrowserWindow | null = null;
@@ -135,6 +139,9 @@ app.whenReady().then(() => {
   setTimeout(scheduleFirstSweep, 60_000);
   const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
+
+  // Note in the log whenever the main process stops responding.
+  startStallWatch(powerMonitor);
 
   // ─── Power monitor: flush state on suspend, health-check on resume ───
   powerMonitor.on('suspend', () => {

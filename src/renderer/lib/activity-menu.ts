@@ -33,8 +33,9 @@ export interface ActivityMenuTarget {
   selection?: { text: string; msgId: string | null };
   /** Source of the code block under the pointer. */
   code?: string;
-  /** Table under the pointer: its Markdown source and rendered HTML. */
-  table?: { markdown: string; html: string };
+  /** Table under the pointer: its Markdown source, tab-separated text and
+   *  rendered HTML. */
+  table?: { markdown: string; tsv: string; html: string };
   /** href of the link under the pointer. */
   link?: string;
   /** The Activity row under the pointer. */
@@ -150,8 +151,11 @@ export function activityMenuEntries(target: ActivityMenuTarget): ActivityMenuEnt
   const element: Entry[] = [];
   if (target.code !== undefined) element.push(copy('Copy code', target.code));
   if (target.table) {
-    const { markdown, html } = target.table;
-    element.push({ label: 'Copy table', action: { kind: 'copy-rich', text: markdown, html } });
+    const { markdown, tsv, html } = target.table;
+    element.push(
+      { label: 'Copy table', action: { kind: 'copy-rich', text: tsv, html } },
+      copy('Copy table as Markdown', markdown),
+    );
   }
   if (target.link) element.push(copy('Copy link', target.link));
   groups.push(element);

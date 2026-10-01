@@ -3,13 +3,11 @@
  *
  * "Needs attention" is the union of the triage states the user has to act
  * on — blocked on a permission/question ("needs you") or finished while
- * unfocused ("unread"). Completed sessions are excluded, matching the
- * sidebar's default view.
+ * unfocused ("unread").
  */
 
 export interface BadgeSession {
   id: string;
-  completedAt?: number | null;
 }
 
 export function attentionCount(
@@ -19,7 +17,6 @@ export function attentionCount(
 ): number {
   let n = 0;
   for (const s of sessions) {
-    if (s.completedAt) continue;
     if (needsInput(s.id) || unread(s.id)) n++;
   }
   return n;

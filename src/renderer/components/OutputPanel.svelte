@@ -52,9 +52,56 @@
   const PAGE_SIZE = 50;
   let visibleCount = $state(PAGE_SIZE);
   let hasOlderMessages = $derived(filteredMessages.length > visibleCount);
+
+  // ─── A loaded page draws newest first, a batch per frame ───
+  // History arrives in one go (a conversation waking, the app starting).
+  // Drawing a whole page of it at once (markdown, tool blocks, layout) kept
+  // the window from painting for a few hundred ms, so the newest batch draws
+  // first and older ones join above it a batch per frame. Anything the user
+  // asks for (older messages, a jump) still draws at once.
+  const RENDER_BATCH = 10;
+  let renderCap = $state(Infinity);
+  // Set when the thread is empty (or this pane just mounted), so the next
+  // load starts small. Not state: only this effect reads it.
+  let batchNextLoad = true;
+  $effect.pre(() => {
+    const len = filteredMessages.length;
+    if (len === 0) { batchNextLoad = true; return; }
+    if (!batchNextLoad) return;
+    batchNextLoad = false;
+    if (len > RENDER_BATCH) renderCap = RENDER_BATCH;
+  });
+  $effect(() => {
+    if (renderCap === Infinity) return;
+    if (renderCap >= Math.min(visibleCount, filteredMessages.length)) {
+      renderCap = Infinity;
+      return;
+    }
+    const frame = requestAnimationFrame(drawOlderBatch);
+    return () => cancelAnimationFrame(frame);
+  });
+
+  async function drawOlderBatch() {
+    const el = scrollContainer;
+    // Following the conversation, the scroll effect below keeps the bottom
+    // in view. Scrolled up, keep the reader's place as messages join above.
+    const keepPlace = !shouldAutoScroll && !!el && el.clientHeight > 0;
+    const prevScrollHeight = keepPlace ? el.scrollHeight : 0;
+    renderCap += RENDER_BATCH;
+    if (!keepPlace) return;
+    await tick();
+    el.scrollTop += el.scrollHeight - prevScrollHeight;
+  }
+
+  /** Draw everything in the window now (before a change the user asked for). */
+  function drawAll() {
+    renderCap = Infinity;
+  }
+
+  let renderedCount = $derived(Math.min(visibleCount, renderCap));
   let messages = $derived(
-    hasOlderMessages
-      ? filteredMessages.slice(filteredMessages.length - visibleCount)
+    filteredMessages.length > renderedCount
+      ? filteredMessages.slice(filteredMessages.length - renderedCount)
       : filteredMessages
   );
   let olderCount = $derived(
@@ -100,6 +147,7 @@
   });
 
   async function expandVisibleCount(newCount: number) {
+    drawAll();
     const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
     visibleCount = Math.min(newCount, filteredMessages.length);
     await tick();
@@ -117,6 +165,7 @@
   }
 
   async function loadOlderEvents() {
+    drawAll();
     const prevScrollHeight = scrollContainer?.scrollHeight ?? 0;
     await messageStore.loadOlderEvents(sessionId);
     // Show all messages after loading older events (they're already in the store)
@@ -144,6 +193,8 @@
     await messageStore.loadOlderUntil(sessionId, eventIndex);
     const id = await messageStore.findMessageForEvent(sessionId, eventIndex);
     if (!id) return false;
+    // The target must be drawn to scroll to it, even mid-way through a load.
+    drawAll();
 
     // The target may be hidden by the current view mode (thinking or a
     // filtered tool call). Reveal details so it can be scrolled to.
@@ -322,7 +373,9 @@
     const _stk = streamingThinking; // follow the live thinking line as it grows
     if (shouldAutoScroll && scrollContainer) {
       requestAnimationFrame(() => {
-        if (scrollContainer) {
+        // Not if the reader scrolled up since (a page drawing in batches
+        // asks for this on every batch).
+        if (shouldAutoScroll && scrollContainer) {
           scrollContainer.scrollTop = scrollContainer.scrollHeight;
         }
       });

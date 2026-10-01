@@ -38,10 +38,6 @@ export interface WorktreeInfo {
   noGit?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
-  /** Epoch ms when the user marked the session completed; null/absent when
-   *  it is still open. Completed sessions are hidden from the sidebar by
-   *  default and reopen on the next user message. */
-  completedAt?: number | null;
   /** Adapter id of the agent the session runs, from the manifest. */
   agentType?: string;
 }
@@ -976,8 +972,6 @@ export interface GroveBenchAPI {
    *  generated from its task. Returns the new name, or null when nothing
    *  changed (already named, pushed, no prompt yet, or generation failed). */
   autoNameBranch(sessionId: string): Promise<string | null>;
-  /** Persist the completed flag (see WorktreeInfo.completedAt). */
-  setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -1241,6 +1235,8 @@ export interface GroveBenchAPI {
   onAppError(callback: (report: AppErrorReport) => void): () => void;
   /** Send an uncaught renderer error to main for the file log. */
   reportError(report: AppErrorReport): void;
+  /** Send a frame the window took long over to main for the file log. */
+  reportFreeze(report: FreezeReport): void;
 
   // Taskbar attention badge
   /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
@@ -1489,6 +1485,17 @@ export interface AppErrorReport {
   timestamp: number;
 }
 
+/** A frame (or, where the browser can't time frames, a task) the window
+ *  took over 100 ms on, sent to main for the freeze log. */
+export interface FreezeReport {
+  kind: 'frame' | 'task';
+  durationMs: number;
+  /** Of that, style and layout, when the browser says. */
+  renderMs?: number;
+  /** The scripts that ran longest in it, longest first, as text. */
+  scripts?: string[];
+}
+
 // ─── Memory ───
 
 export interface MemoryEntry {
@@ -1623,7 +1630,6 @@ export const IPC = {
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
   SESSION_AUTO_NAME: 'session:autoName',
-  SESSION_SET_COMPLETED: 'session:setCompleted',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',
@@ -1728,6 +1734,8 @@ export const IPC = {
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */
   APP_REPORT_ERROR: 'app:reportError',
+  /** Renderer → main: a frame the window took long over, for the file log. */
+  APP_REPORT_FREEZE: 'app:reportFreeze',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
   /** Main → renderer: show the spell check menu for a misspelled word. */
   SPELLCHECK_MENU: 'spellcheck:menu',

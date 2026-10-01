@@ -341,6 +341,7 @@ const api: Record<string, unknown> = {
   setUnreadSessions: () => {},
   onAppError: () => () => {},
   reportError: () => {},
+  reportFreeze: () => {},
   setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
   getEventHistoryCount: async () => 0,
@@ -437,7 +438,6 @@ const api: Record<string, unknown> = {
   ],
   setModel: async () => {},
   setMode: async () => {},
-  setSessionCompleted: async () => {},
   getUsage: async () => ({
     available: true,
     plan: 'max',

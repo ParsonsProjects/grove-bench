@@ -34,6 +34,7 @@ import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
 import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
+import { freezeLog } from './freeze-log.js';
 import { installDependencies } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
@@ -568,10 +569,6 @@ export function registerHandlers() {
     if (next.source !== 'auto') return null;
     sessionManager.renameSession(sessionId, next.displayName);
     return next.displayName;
-  });
-
-  ipcMain.handle(IPC.SESSION_SET_COMPLETED, async (_event, sessionId: string, completed: boolean) => {
-    await worktreeManager.saveCompleted(sessionId, completed === true);
   });
 
   // ─── Branches ───
@@ -1731,6 +1728,10 @@ export function registerHandlers() {
       ...(typeof report.sessionId === 'string' ? { sessionId: report.sessionId } : {}),
       timestamp: typeof report.timestamp === 'number' ? report.timestamp : Date.now(),
     });
+  });
+
+  ipcMain.on(IPC.APP_REPORT_FREEZE, (_event, report: unknown) => {
+    freezeLog.logWindowFreeze(report);
   });
 
   // ─── OS notifications ───

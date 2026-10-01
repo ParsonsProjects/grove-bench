@@ -6,6 +6,7 @@
   import { splitStreamingMarkdown } from '$lib/markdown-stream.js';
   import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
   import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
+  import { HIGHLIGHT_MARK, highlightWhenVisible } from '$lib/code-highlight.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -13,8 +14,10 @@
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  /** Code renderer; `highlight` false skips highlight.js (used while streaming,
-   *  where the whole block is re-rendered on every flush). */
+  /** Code renderer. With `highlight`, a block in a language highlight.js
+   *  knows is marked to be coloured once it is on screen (lib/code-highlight);
+   *  without it (while streaming, where the whole block is re-rendered on
+   *  every flush) it stays plain. Either way it renders as escaped text. */
   function codeRenderer(highlight: boolean) {
     return {
       code({ text, lang }: { text: string; lang?: string }) {
@@ -22,8 +25,7 @@
         const copyBtn = `<button class="code-copy-btn" data-copy="${COPY_MARK}" title="Copy">${COPY_SVG}</button>`;
 
         if (highlight && lang && hljs.getLanguage(lang)) {
-          const highlighted = hljs.highlight(text, { language: lang }).value;
-          return `<div class="code-block-wrapper"><pre class="hljs"><code class="language-${lang}">${highlighted}</code></pre>${copyBtn}</div>`;
+          return `<div class="code-block-wrapper"><pre class="hljs"><code class="language-${lang}" data-hl="${HIGHLIGHT_MARK}">${escapeHtml(text)}</code></pre>${copyBtn}</div>`;
         }
         return `<div class="code-block-wrapper"><pre class="hljs"><code>${escapeHtml(text)}</code></pre>${copyBtn}</div>`;
       },
@@ -31,11 +33,12 @@
   }
 
   /** Table renderer: marked's default table plus a copy button that holds the
-   *  Markdown source. The click handler adds the rendered table as HTML. */
+   *  Markdown source. A click copies the rendered table as HTML and
+   *  tab-separated text; Shift+click copies the Markdown. */
   const tableRenderer = {
     table(this: Renderer, token: Tokens.Table) {
       const encoded = encodeCopyText(token.raw.trim());
-      const copyBtn = `<button class="table-copy-btn" data-copy="${COPY_MARK}" data-code="${encoded}" title="Copy table">${COPY_SVG}</button>`;
+      const copyBtn = `<button class="table-copy-btn" data-copy="${COPY_MARK}" data-code="${encoded}" aria-label="Copy table" title="Copy table (Shift+click for Markdown)">${COPY_SVG}</button>`;
       return `<div class="table-wrapper">${Renderer.prototype.table.call(this, token)}${copyBtn}</div>`;
     },
   };
@@ -73,12 +76,14 @@
   const checkSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
   const copySvg = COPY_SVG;
 
-  async function copy(btn: HTMLElement) {
+  /** `markdown`: a table copies its Markdown source instead (Shift+click). */
+  async function copy(btn: HTMLElement, markdown: boolean) {
     try {
       if (btn.classList.contains('table-copy-btn')) {
         const table = renderedTable(btn);
         if (!table) return;
-        await writeRichText(table.markdown, table.html);
+        if (markdown) await navigator.clipboard.writeText(table.markdown);
+        else await writeRichText(table.tsv, table.html);
       } else {
         const code = renderedCode(btn);
         if (code === null) return;
@@ -102,7 +107,7 @@
       // Only buttons this renderer made: chat content can hold its own.
       const btn = target.closest('button.code-copy-btn, button.table-copy-btn');
       if (isRenderedCopyButton(btn)) {
-        void copy(btn);
+        void copy(btn, e.shiftKey);
         return;
       }
       // Links: localhost opens in the Preview tab, the rest in the system
@@ -116,6 +121,15 @@
     };
     container.addEventListener('click', onClick);
     return () => container.removeEventListener('click', onClick);
+  });
+
+  // Colour the code blocks once they are on screen (lib/code-highlight), not
+  // while the reply renders. Runs again for each new render of a finished
+  // reply; a streaming one stays plain.
+  $effect(() => {
+    void html;
+    if (!container || streaming) return;
+    return highlightWhenVisible(container);
   });
 </script>
 

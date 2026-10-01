@@ -225,7 +225,7 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
     messageStore.setViewMode(SID, 'detailed');
     const { container, findByTitle } = render(OutputPanel, { sessionId: SID });
     const el = scroller(container);
-    expect(container.querySelector('[data-msg-id="m10"]')).not.toBeNull();
+    await vi.waitFor(() => expect(container.querySelector('[data-msg-id="m10"]')).not.toBeNull());
     measure(el, { scrollTop: 0, scrollHeight: 5000, clientHeight: 500 });
     el.dispatchEvent(new Event('scroll'));
     await findByTitle('Scroll to bottom');
@@ -320,6 +320,86 @@ describe('OutputPanel: follows the conversation after being hidden', () => {
     el.dispatchEvent(new Event('scroll'));
     await tick();
     expect(getByTitle('Scroll to bottom')).toBeInTheDocument();
+  });
+});
+
+describe('OutputPanel: drawing a loaded page', () => {
+  const replies = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: 'text', id: `m${i}`, text: `reply ${i}`, uuid: `a${i}` }));
+  const drawn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-msg-id]')].map((el) => el.dataset.msgId);
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'detailed');
+  });
+
+  it('draws history that loads into an empty thread newest first, then the rest a batch per frame', async () => {
+    const { container } = render(OutputPanel, { sessionId: SID });
+    // Count what each DOM update adds, to see the first one stays small.
+    const added: number[] = [];
+    new MutationObserver((records) => {
+      added.push(records.reduce((n, r) => n + [...r.addedNodes].filter((node) => node instanceof HTMLElement && node.dataset.msgId).length, 0));
+    }).observe(container, { childList: true, subtree: true });
+
+    messageStore.messagesBySession = { [SID]: replies(60) as never };
+    await tick();
+
+    expect(drawn(container)).toEqual(Array.from({ length: 10 }, (_, i) => `m${50 + i}`));
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(50));
+    expect(drawn(container)[0]).toBe('m10');
+    expect(Math.max(...added)).toBe(10);
+  });
+
+  it('draws a page already there when the pane mounts the same way', async () => {
+    messageStore.messagesBySession = { [SID]: replies(30) as never };
+    const { container } = render(OutputPanel, { sessionId: SID });
+
+    expect(drawn(container)).toHaveLength(10);
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(30));
+  });
+
+  it('keeps a reader who scrolled up in place as older batches join above', async () => {
+    messageStore.messagesBySession = { [SID]: replies(30) as never };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    const el = container.querySelector<HTMLElement>('.overflow-y-auto')!;
+    // jsdom has no layout: each drawn message stands 100px tall.
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => drawn(container).length * 100 });
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 500 });
+    el.scrollTop = 200;
+    el.dispatchEvent(new Event('scroll'));
+
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(30));
+    await tick();
+    // Two batches of ten joined above, 1000px each.
+    expect(el.scrollTop).toBe(2200);
+  });
+
+  it('draws a short thread at once', () => {
+    messageStore.messagesBySession = { [SID]: replies(8) as never };
+    const { container } = render(OutputPanel, { sessionId: SID });
+
+    expect(drawn(container)).toHaveLength(8);
+  });
+
+  it('draws older messages the user asks for at once', async () => {
+    messageStore.messagesBySession = { [SID]: replies(60) as never };
+    const { container, getByText } = render(OutputPanel, { sessionId: SID });
+    expect(drawn(container)).toHaveLength(10);
+
+    await fireEvent.click(getByText(/older messages/));
+    await tick();
+
+    expect(drawn(container)).toHaveLength(60);
+  });
+
+  it('adds new messages to a thread that has loaded without batching them', async () => {
+    messageStore.messagesBySession = { [SID]: replies(12) as never };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await vi.waitFor(() => expect(drawn(container)).toHaveLength(12));
+
+    messageStore.ingestEvent(SID, { type: 'assistant_text', text: 'reply 12', uuid: 'a12' } as never);
+    await tick();
+
+    expect(drawn(container)).toHaveLength(13);
   });
 });
 
@@ -466,8 +546,12 @@ describe('OutputPanel: right-click menu', () => {
 
     await fireEvent.contextMenu(screen.getByText('2'));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy table' }));
-    // No ClipboardItem in jsdom, so rich copy falls back to the Markdown.
-    expect(writeText).toHaveBeenCalledWith(table);
+    // No ClipboardItem in jsdom, so rich copy falls back to the plain text.
+    expect(writeText).toHaveBeenCalledWith('a\tb\n1\t2');
+
+    await fireEvent.contextMenu(screen.getByText('2'));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy table as Markdown' }));
+    expect(writeText).toHaveBeenLastCalledWith(table);
   });
 
   it('acts on selected text', async () => {

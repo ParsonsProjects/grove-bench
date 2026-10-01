@@ -1,9 +1,6 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
 import { sortSessions, DEFAULT_SORT, type SessionSortState } from '../lib/session-sort.js';
 
-/** "Show completed" is a per-viewer convenience, so it lives in localStorage. */
-const SHOW_COMPLETED_KEY = 'grove-bench:sidebar-show-completed';
-
 interface SessionEntry {
   id: string;
   branch: string;
@@ -21,9 +18,6 @@ interface SessionEntry {
   createdAt?: number;
   /** Timestamp (ms) of the last user interaction. */
   lastActiveAt?: number;
-  /** Epoch ms when the user marked the session completed; null/absent while
-   *  open. Completed sessions hide from the sidebar unless "Show completed". */
-  completedAt?: number | null;
 }
 
 class SessionStore {
@@ -54,10 +48,6 @@ class SessionStore {
    *  the same order. */
   sessionSort = $state<SessionSortState>({ ...DEFAULT_SORT });
 
-  /** Whether conversations marked completed are shown in the sidebar (and so
-   *  on the landing). */
-  showCompleted = $state(false);
-
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
@@ -65,24 +55,15 @@ class SessionStore {
   /** LIFO stack of recently-closed session IDs for Ctrl+Shift+T re-open. */
   private recentlyClosedStack: string[] = [];
 
-  constructor() {
-    try { this.showCompleted = localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; } catch { /* storage unavailable */ }
-  }
-
   get count() {
     return this.sessions.length;
   }
 
-  toggleShowCompleted() {
-    this.showCompleted = !this.showCompleted;
-    try { localStorage.setItem(SHOW_COMPLETED_KEY, this.showCompleted ? '1' : '0'); } catch { /* ignore */ }
-  }
-
   /** The sidebar's Conversations list before its triage filter: open tabs,
-   *  completed ones only when shown, in the sidebar's sort order. */
+   *  in the sidebar's sort order. */
   get openConversations(): SessionEntry[] {
     return sortSessions(
-      this.sessions.filter((s) => this.isOpenTab(s) && (this.showCompleted || !s.completedAt)),
+      this.sessions.filter((s) => this.isOpenTab(s)),
       this.sessionSort,
     );
   }
@@ -249,30 +230,6 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, lastActiveAt: now } : s
     );
-    // New user activity reopens a completed session — it is clearly not done.
-    if (this.sessions.find((s) => s.id === id)?.completedAt) {
-      this.setCompleted(id, false).catch(() => {});
-    }
-  }
-
-  get completedCount() {
-    return this.sessions.filter((s) => !!s.completedAt).length;
-  }
-
-  /** Mark a session completed (or reopen it). Applied optimistically and
-   *  persisted through main; rolled back if persistence fails. */
-  async setCompleted(id: string, completed: boolean): Promise<void> {
-    const previous = this.sessions.find((s) => s.id === id)?.completedAt ?? null;
-    const next = completed ? Date.now() : null;
-    if (!!previous === completed) return;
-    this.sessions = this.sessions.map((s) => (s.id === id ? { ...s, completedAt: next } : s));
-    if (completed) this.clearNeedsAttention(id);
-    try {
-      await window.groveBench.setSessionCompleted(id, completed);
-    } catch (e) {
-      console.warn('[setCompleted] persist failed, rolling back:', e);
-      this.sessions = this.sessions.map((s) => (s.id === id ? { ...s, completedAt: previous } : s));
-    }
   }
 
   updateDisplayName(id: string, displayName: string | null) {

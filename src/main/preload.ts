@@ -32,8 +32,6 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
   autoNameSession: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_AUTO_NAME, sessionId),
-  setSessionCompleted: (sessionId: string, completed: boolean) =>
-    ipcRenderer.invoke(IPC.SESSION_SET_COMPLETED, sessionId, completed),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations
@@ -416,6 +414,8 @@ const api: GroveBenchAPI = {
   },
   reportError: (report: import('../shared/types.js').AppErrorReport) =>
     ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
+  reportFreeze: (report: import('../shared/types.js').FreezeReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_FREEZE, report),
 
   // Taskbar attention badge
   setAttentionBadge: (count: number, dataUrl: string | null) =>

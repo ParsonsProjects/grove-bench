@@ -30,7 +30,7 @@ Common tool types:
 When a tool returns images, such as a screenshot from the Preview tab or an image file the agent read, they show as thumbnails under the tool. Click one to see it full size.
 
 ### Permission Requests
-When the agent wants to perform an action that requires approval, a permission block appears with **Allow**, **Deny**, and a third button that approves every later call of the same kind in this conversation. Its label says what it covers: **Allow all commands** for shell commands (any command, not just this one), **Allow all web fetches** for any web address, and **Always allow** plus the tool's name for other tools. These last while the conversation is live, through idle sleep, until you stop the conversation or restart Grove Bench. On a file edit it reads **Allow all edits (Edit mode)**: it switches the conversation to Edit mode, so file edits in the worktree, new files included, no longer ask, while commands still do. Switch back in the agent settings (`Alt+M`). Hover the button for details. For file edits, a diff preview is shown so you can review changes before approving.
+When the agent wants to perform an action that requires approval, a permission block appears with **Allow**, **Deny**, and a third button that approves every later call of the same kind in this conversation. Its label says what it covers: **Allow all commands** for shell commands (any command, not just this one), **Allow all web fetches** for any web address, and **Always allow** plus the tool's name for other tools. These last while the conversation is live, through idle sleep, until you mark the conversation completed or restart Grove Bench. On a file edit it reads **Allow all edits (Edit mode)**: it switches the conversation to Edit mode, so file edits in the worktree, new files included, no longer ask, while commands still do. Switch back in the agent settings (`Alt+M`). Hover the button for details. For file edits, a diff preview is shown so you can review changes before approving.
 
 A request or question nobody answers within 30 minutes is closed, so the agent isn't left waiting forever. The block then says there was no answer, and the agent is told it timed out, so it can try another way or stop. The conversation is marked **Needs you** while a request waits, and a desktop notification can tell you (see **Settings**).
 
@@ -50,14 +50,14 @@ Extended thinking from the agent appears as expandable sections. Click to see th
 
 ## Copying and the Right-Click Menu
 
-Hover a code block or a table to reveal its copy icon. A table copies as Markdown, and also as a real table, so pasting into a spreadsheet or document gives you cells.
+Hover a code block or a table to reveal its copy icon. A table copies as cells: spreadsheets and documents paste a real table, and places that take plain text get the columns separated by tabs. For the Markdown source, Shift+click the copy icon, or right-click the table and choose **Copy table as Markdown**.
 
 Select text to get **Bookmark** and **To prompt**.
 
 Right-click anything in the thread for a menu of what you can do there. It lists the most specific things first:
 
 - **Selected text**: **Copy**, **Bookmark selection**, **Copy to prompt**
-- **A code block, table or link**: **Copy code**, **Copy table**, **Copy link**
+- **A code block, table or link**: **Copy code**, **Copy table**, **Copy table as Markdown**, **Copy link**
 - **The message itself**: **Copy message**. Your messages also get **Rewind to this message**, and document-like responses get **Read full-width**. Tool calls offer **Copy command**, **Copy path**, **Copy pattern** or **Copy input**, and **Copy output**.
 
 Text boxes keep their own spell check menu.
