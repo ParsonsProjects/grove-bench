@@ -18,7 +18,7 @@ export const FOUNDER = {
     'The little characters are there so you never have to wonder. One look at the sidebar says who’s working, who needs you and who’s done.',
     'It’s free and source-available. I hope it gives you back some of the time it gave me.',
   ],
-  name: 'Alan',
+  name: 'Parsons Projects',
 };
 
 export const FEATURES = [
@@ -32,7 +32,7 @@ export const FEATURES = [
     key: 'permissions',
     tone: 'amber',
     title: 'it asks before it acts.',
-    text: 'Pick a mode per conversation: Ask, Plan, Edit, Auto or Read-safe. Anything outside it waits for you.',
+    text: 'Pick a mode per conversation: Ask, Plan, Edit, Auto or Read-\u2060safe. Anything outside it waits for you.',
   },
   {
     key: 'status',
@@ -89,7 +89,7 @@ export const FAQ = [
   },
   {
     q: 'What do I need?',
-    a: 'Windows 10 or later, git 2.17 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key.',
+    a: 'Windows 10 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, conversations edit your folder in place and can’t be rewound.',
   },
   { q: 'Does it run on Mac or Linux?', a: 'No. Grove Bench is a Windows app.' },
   {
@@ -120,7 +120,6 @@ export const FAQ = [
 ];
 
 export const FOOTER = [
-  { label: 'download', href: links.releases, tone: 'green' },
   { label: 'github', href: links.github, tone: 'blue' },
   { label: 'help pages', href: DOCS, tone: 'amber' },
   { label: 'contributing', href: links.contributing, tone: 'pink' },

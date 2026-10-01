@@ -50,7 +50,7 @@
   <div class="page" bind:this={page}>
     <Rail {page} stops={STOPS} {k} />
     <main id="main">
-      <Hero title={['plant a task.', 'grow a branch.']} lede="Grove Bench is a free Windows app that runs several AI coding agents on one project at once. Every task gets its own git worktree, branch and terminal, so the agents never trip over each other." />
+      <Hero title={['plant a task.', 'grow a branch.']} lede="Grove Bench is a free Windows app for running several Claude Code agents on one project at once. Every task gets its own git worktree, branch and terminal, so the agents never trip over each other." />
       <Founder />
       <Features />
       <Steps />

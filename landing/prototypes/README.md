@@ -52,8 +52,11 @@ treeline as it scrolls up.
 ## Copy
 
 Facts follow `README.md`, `docs/help` and the source (requirements, modes,
-the FAQ's SmartScreen and privacy answers). The founder note is a draft in
-Alan's voice and is marked as one on the page; it needs rewriting.
+the FAQ's SmartScreen and privacy answers). Git is recommended, not
+required (`src/main/prerequisites.ts`), and Claude Code is optional with an
+API key, so the page never lists either as a must. The founder note is
+signed Parsons Projects; its text is still a draft, marked as one on the
+page.
 
 The app window is dark because the app is dark-only; it sits on the light
 page as a product shot.

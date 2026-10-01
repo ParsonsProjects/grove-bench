@@ -29,6 +29,12 @@
       grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
       gap: 64px;
     }
+    /* The heading stays in view while the note scrolls past. */
+    .grid > h2 {
+      position: sticky;
+      top: 110px;
+      align-self: start;
+    }
   }
   .note p {
     max-width: 60ch;

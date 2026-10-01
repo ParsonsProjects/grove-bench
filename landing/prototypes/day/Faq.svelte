@@ -11,7 +11,7 @@
 <section class="band b-dusk" id="faq" aria-labelledby="faq-h">
   <div class="inner grid">
     <div class="side rise" use:arrive>
-      <h2 class="h2" id="faq-h">yes, it’s really<br /><span class="tone-2">free.</span></h2>
+      <h2 class="h2" id="faq-h">fair questions,<br /><span class="tone-2">short answers.</span></h2>
       <div class="asker" aria-hidden="true">
         <Sprite state={opened ? 'answered' : 'asking'} seed="7c19e0d4" scale={6} label="" />
       </div>

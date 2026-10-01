@@ -39,7 +39,7 @@
       </div>
       <div>
         <a class="d-btn ghost" href={links.github} target="_blank" rel="noopener">{@html GithubIcon} View source</a>
-        <p class="btn-note">git 2.17+ and the Claude Code CLI</p>
+        <p class="btn-note">source-available, FSL-1.1-MIT</p>
       </div>
     </div>
   </div>

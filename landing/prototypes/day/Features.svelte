@@ -35,7 +35,7 @@
 </script>
 
 {#snippet worktrees(t)}
-  <div class="ground"></div>
+  <div class="ground tall"></div>
   <div class="row-trees">
     <div class="col"><Tree scale={4} /><span class="tag dark">main</span></div>
     {#each AGENTS as a, i}
@@ -216,11 +216,14 @@
     height: 18%;
     background: linear-gradient(180deg, #5ab868 0 4px, #4aaa58 4px);
   }
+  .ground.tall {
+    height: 26%;
+  }
   .row-trees {
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 18%;
+    bottom: 26%;
     display: flex;
     justify-content: space-evenly;
     align-items: flex-end;
@@ -242,6 +245,9 @@
   }
   .tag.dark {
     background: #2d2016;
+  }
+  .col:nth-child(even) > .tag {
+    top: calc(100% + 25px);
   }
   .seat {
     position: absolute;
@@ -286,8 +292,8 @@
     margin-top: 10px;
   }
   .pb {
-    padding: 3px 9px;
-    font-size: 11.5px;
+    padding: 3px 6px;
+    font-size: 10.5px;
     border: 1px solid;
   }
   .pb.allow {
@@ -320,7 +326,8 @@
     color: var(--blue);
   }
   .list {
-    padding: 10px 0;
+    padding: 8px 0;
+    line-height: 1.35;
   }
   .filters {
     display: flex;
@@ -343,7 +350,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 12px;
+    padding: 4px 12px;
   }
   .srow span {
     display: flex;

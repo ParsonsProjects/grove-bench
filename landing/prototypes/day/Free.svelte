@@ -6,11 +6,11 @@
 
 <section class="band b-free" aria-labelledby="free-h">
   <div class="inner">
-    <h2 class="h2 rise center" id="free-h" use:arrive>a whole grove of agents.<br /><span class="tone-g">free.</span></h2>
+    <h2 class="h2 rise center" id="free-h" use:arrive>the whole grove,<br /><span class="tone-g">one download.</span></h2>
     <div class="card rise" use:arrive>
       <div class="left">
         <p class="big">free.</p>
-        <p class="sub">Free and source-available, under FSL-1.1-MIT.</p>
+        <p class="sub">Source-available under <span class="nowrap">FSL-1.1-MIT</span>.</p>
         <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
       </div>
       <div class="right">
@@ -77,6 +77,9 @@
   .sub {
     font-size: 13px;
     color: var(--soft);
+  }
+  .nowrap {
+    white-space: nowrap;
   }
   .left .d-btn {
     margin-top: auto;
