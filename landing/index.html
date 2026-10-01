@@ -6,10 +6,10 @@
     <title>Grove Bench: run AI agents side by side, each on its own branch</title>
     <meta name="description" content="Grove Bench is a free, source-available Windows app that runs several AI coding agents on one project at once. Each works in its own git worktree, on its own branch, with its own terminal." />
     <meta name="keywords" content="AI coding agents, parallel AI agents, git worktree, multi-agent, Claude Code, Windows, developer tools, source available" />
-    <meta name="author" content="Alan Parsons" />
+    <meta name="author" content="Parsons Projects" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://ParsonsProjects.github.io/grove-bench/" />
-    <meta name="theme-color" content="#0c1426" />
+    <meta name="theme-color" content="#fffdf7" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
@@ -20,14 +20,14 @@
     <meta property="og:image" content="https://ParsonsProjects.github.io/grove-bench/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="A pixel-art tree at night. Each branch is a git worktree with an AI agent working at a bench." />
+    <meta property="og:image:alt" content="Grove Bench: a pixel path with an agent at work on a bench, the line Plant a task. Grow a branch., and the app sidebar with agents working, waiting and asleep." />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Grove Bench: AI agents side by side" />
     <meta name="twitter:description" content="Run several AI coding agents on one project at once. Each gets its own git worktree, branch and terminal. Free and source-available for Windows." />
     <meta name="twitter:image" content="https://ParsonsProjects.github.io/grove-bench/og-image.png" />
-    <meta name="twitter:image:alt" content="A pixel-art tree at night. Each branch is a git worktree with an AI agent working at a bench." />
+    <meta name="twitter:image:alt" content="Grove Bench: a pixel path with an agent at work on a bench, the line Plant a task. Grow a branch., and the app sidebar with agents working, waiting and asleep." />
 
     <!-- Structured Data -->
     <script type="application/ld+json">
@@ -47,11 +47,11 @@
       "url": "https://ParsonsProjects.github.io/grove-bench/",
       "downloadUrl": "https://github.com/ParsonsProjects/grove-bench/releases",
       "sourceOrganization": {
-        "@type": "Person",
-        "name": "Alan Parsons",
+        "@type": "Organization",
+        "name": "Parsons Projects",
         "url": "https://github.com/ParsonsProjects"
       },
-      "softwareRequirements": "Windows 10 or later, git 2.17 or later, Claude Code CLI",
+      "softwareRequirements": "Windows 10 or later. Claude Code with a Claude plan, or an Anthropic API key. Git 2.17 or later recommended.",
       "featureList": [
         "Several AI coding agents running in parallel on one project",
         "Each conversation in its own git worktree and branch",
@@ -71,22 +71,23 @@
     <!-- Static content for crawlers (SEO/GEO fallback for SPA) -->
     <noscript>
       <h1>Grove Bench: run AI agents side by side, each on its own branch</h1>
-      <p>Grove Bench is a free, source-available Windows app that runs several AI coding agents on one project at once. Each works in its own git worktree, on its own branch, with its own terminal.</p>
+      <p>Grove Bench is a free, source-available Windows app for running several AI coding agents on one project at once, starting with Claude Code. Every task gets its own git worktree, branch and terminal, so the agents never trip over each other.</p>
       <h2>Features</h2>
       <ul>
-        <li><strong>Worktrees:</strong> every conversation gets its own git worktree and branch, so agents never write over each other's files.</li>
-        <li><strong>Terminals:</strong> each conversation has its own terminal, opened in its worktree.</li>
-        <li><strong>Permissions:</strong> when an agent wants to edit a file or run a command, it waits for you to allow or deny it.</li>
-        <li><strong>Checkpoints:</strong> a checkpoint is saved each time you send a message, and you can rewind to any of them.</li>
-        <li><strong>Project memory:</strong> markdown notes that every conversation reads first.</li>
+        <li><strong>A branch for every agent:</strong> each conversation gets its own git worktree, branch and terminal. Your checkout stays as it is.</li>
+        <li><strong>It asks before it acts:</strong> pick a mode per conversation (Ask, Plan, Edit, Auto or Read-safe). Anything outside it waits for you.</li>
+        <li><strong>Status at a glance:</strong> a small pixel character shows whether each agent is working, needs you or has finished.</li>
+        <li><strong>Every message is a checkpoint:</strong> rewind the files and the conversation to before any message you sent.</li>
+        <li><strong>Naps when idle:</strong> after 30 idle minutes a conversation's agent sleeps to save memory and CPU, then wakes where it left off.</li>
+        <li><strong>Watch the context fill:</strong> a strip of grove grows along the status bar as the context window fills.</li>
       </ul>
       <h2>How it works</h2>
       <ol>
-        <li>Add a project: pick a folder that uses git.</li>
-        <li>Start conversations: each one gets a new branch, worktree and terminal.</li>
-        <li>Review and ship: read the diffs, then open a PR from the app or merge the branch your usual way.</li>
+        <li>Add a project: pick a folder on your computer, ideally a git repository.</li>
+        <li>Hand out tasks: each conversation starts on a new branch in its own worktree.</li>
+        <li>Review and ship: read the diff in the Changes tab, then open a pull request or merge the branch your usual way.</li>
       </ol>
-      <p>Needs Windows 10 or later, git 2.17 or later and the Claude Code CLI.</p>
+      <p>Needs Windows 10 or later, and either a Claude plan with Claude Code or an Anthropic API key. Git 2.17 or later is recommended.</p>
       <p><a href="https://github.com/ParsonsProjects/grove-bench/releases">Download for Windows</a> | <a href="https://github.com/ParsonsProjects/grove-bench">View on GitHub</a></p>
     </noscript>
 

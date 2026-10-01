@@ -1,7 +1,8 @@
 # Projects, Workspaces and Scratch Conversations
 
-> **Status: Proposal, Goal 1 partly built.** A minimal Goal 1 is in: a folder
-> without git can be added as a project (see "Goal 1: what was built"). There is
+> **Status: Proposal, Goal 1 partly built, Goal 4 prototyped.** A minimal Goal 1
+> is in: a folder without git can be added as a project (see "Goal 1: what was
+> built"). Conversation groups are a prototype (see "Groups: prototype"). There is
 > still no `Project` record or workspace list. The UI, help and docs already say
 > "conversation" and "project"; the code still says "session" and "repo" on
 > purpose (see `CLAUDE.md`, Terminology).
@@ -12,6 +13,8 @@
 2. One conversation can edit several repositories at once.
 3. A conversation can start with no project at all, in a scratch folder under
    the app's data directory.
+4. Conversations in different projects that belong to one piece of work can be
+   seen and handled together (see "Groups: prototype").
 
 ## Where we are today
 
@@ -214,6 +217,57 @@ the first version small. Worktrees for every workspace can follow.
   the scratch project and its folder. The clean-up dialog treats scratch
   folders like worktrees.
 
+## Groups: prototype
+
+Work that spans repositories is usually short-lived (one feature, merged within
+days) and done by one agent per repository, two to four at a time, rather than
+by one agent editing several. For that, a group of conversations is enough and
+much cheaper than Goal 2: each conversation keeps its own project, `cwd`,
+CLAUDE.md, skills and MCP config, so nothing keyed by repo path changes.
+
+What the prototype does:
+
+- **Data.** `ConversationGroup` (`src/shared/types.ts`): id, name and
+  conversation ids. Stored as `groups` in `app-state.json`
+  (`saveConversationGroups()` in `src/main/app-state.ts`, debounced and flushed
+  on quit). Loading drops malformed entries and repeated ids. While the file
+  can't be read, loading says so (null) rather than "no groups", and the
+  renderer saves nothing and hides groups until a load works, so a passing lock
+  can't wipe them.
+- **Rules.** `groupStore` (`src/renderer/stores/groups.svelte.ts`). A
+  conversation is in at most one group, and a group always has one: it is made
+  with its first conversation (from the heading, when that conversation's first
+  message is sent) and goes when its last leaves or is deleted
+  (`forgetConversation()`).
+- **Sidebar.** A Groups section between Conversations and Projects
+  (`SidebarGroups.svelte`), shown once there are two projects or any group. The
+  conversation menu adds New Group, Add to, Move to and Remove from. A grouped
+  row shows its group's name. The group header has attention counts, a + for a
+  new conversation, Ungroup, and a menu with Rename and Mark all completed.
+- **New conversation in a group.** The draft opens in the first project the
+  group has nothing in yet, with the group's branch name (the first member's
+  real branch: not a placeholder, not direct); in a project the group already
+  has a conversation in, it gets an automatic name. Whether that branch is new
+  or continued is decided at create time: the draft sends `continueBranch`, and
+  `SESSION_CREATE` continues the branch when the project has it, or refuses
+  when another checkout (a conversation, or the project folder) holds it. The
+  draft bar shows the group and can leave it; opening the draft from a
+  project's + also leaves it.
+
+Not done:
+
+- Deleting a group's conversations together (the per-conversation and
+  remove-project checks would need to run over the group).
+- Sharing context between the agents in a group, such as a group note added to
+  each conversation's prompt. Today the user carries the API contract between
+  them.
+- The conversation finder, the landing and the rail know nothing about groups.
+- Membership lives in `app-state.json`, not the manifest. A conversation the
+  startup sweep drops stays listed in its group's ids but isn't shown.
+
+If projects get a `Project` record later, groups don't depend on it: they hold
+conversation ids only.
+
 ## Phasing
 
 | Phase | Scope | User-visible change |
@@ -227,6 +281,9 @@ mostly UI gating. Phase 3 is the large one, and nearly all of its cost is in the
 renderer.
 
 ## Open questions
+
+- Are groups enough for cross-repository work, so Goal 2 can wait? Goal 2 only
+  pays off for tightly coupled changes that one agent should make on both sides.
 
 - Should additional git workspaces get their own worktree in phase 3, or is
   direct on the current branch enough for a first cut?

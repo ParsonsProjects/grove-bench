@@ -14,6 +14,8 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
 import { agentsStore } from '../stores/agents.svelte.js';
+import { groupStore } from '../stores/groups.svelte.js';
+import { draftStore } from '../stores/draft.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -431,6 +433,147 @@ describe('Sidebar rename', () => {
     finish();
 
     expect(await screen.findByText('Faster sidebar')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar groups', () => {
+  beforeEach(() => {
+    store.repos = ['/api', '/web', '/infra'];
+    store.sessions = [
+      { id: 'api1', branch: 'feat/billing', repoPath: '/api', status: 'running', displayName: 'Billing endpoint' },
+      { id: 'web1', branch: 'feat/billing', repoPath: '/web', status: 'running', displayName: 'Billing page' },
+    ] as any;
+    groupStore.groups = [];
+    groupStore.ready = true;
+  });
+
+  afterEach(() => {
+    groupStore.groups = [];
+    groupStore.nameRequest = null;
+    draftStore.discard();
+  });
+
+  const groupEl = (id: string) => document.querySelector(`[data-group="${id}"]`) as HTMLElement;
+  const make = (name: string, ids: string[]) => groupStore.create(name, ids)!;
+
+  it('has no Groups section with one project and no groups', () => {
+    store.repos = ['/api'];
+    render(Sidebar);
+    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+  });
+
+  it('hides groups until the saved ones are read', async () => {
+    groupStore.ready = false;
+    render(Sidebar);
+    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+    await fireEvent.contextMenu(screen.getByText('Billing endpoint'));
+    expect(screen.queryByText('New Group…')).not.toBeInTheDocument();
+  });
+
+  it('starts a group from a conversation\'s menu, named after it', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Billing endpoint'));
+    await fireEvent.click(screen.getByText('New Group…'));
+    const input = await screen.findByDisplayValue('Billing endpoint');
+    await fireEvent.input(input, { target: { value: 'Billing' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    const [group] = groupStore.groups;
+    expect(group).toMatchObject({ name: 'Billing', sessionIds: ['api1'] });
+    expect(mockGroveBench.setConversationGroups).toHaveBeenLastCalledWith([group]);
+    expect(within(groupEl(group.id)).getByText('Billing endpoint')).toBeInTheDocument();
+  });
+
+  it('adds a conversation to a group from its menu, and lists each with its project', async () => {
+    const group = make('Billing', ['api1']);
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Billing page'));
+    await fireEvent.click(screen.getByText('Add to Billing'));
+
+    expect(groupStore.get(group.id)?.sessionIds).toEqual(['api1', 'web1']);
+    const section = within(groupEl(group.id));
+    expect(section.getByText('Billing page')).toBeInTheDocument();
+    expect(section.getByText('web')).toBeInTheDocument();
+    expect(section.getByText('api')).toBeInTheDocument();
+  });
+
+  it('tags grouped conversations in the Conversations list', async () => {
+    make('Billing', ['api1']);
+    render(Sidebar);
+    // Projects start folded, and rows in the Groups section leave the tag
+    // out, so the one tag is on the Conversations list's row.
+    const tags = [...document.querySelectorAll('[data-row-group]')];
+    expect(tags.map((t) => t.textContent)).toEqual(['Billing']);
+    expect(tags[0].closest('[data-group]')).toBeNull();
+  });
+
+  it('opens a draft in the group, in a project it has nothing in yet', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    expect(draftStore.draft).toMatchObject({ repoPath: '/infra', groupId: group.id, start: { kind: 'new', branchName: 'feat/billing' } });
+  });
+
+  it('a new group from the heading opens a draft and is made only when it starts', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New group' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Group name' }), { target: { value: 'Billing' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(groupStore.groups).toEqual([]);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/api', newGroupName: 'Billing' });
+    // The draft row says which group it starts.
+    expect(screen.getByText('Billing')).toBeInTheDocument();
+  });
+
+  it('opening the draft from a project\'s + takes it out of the group', async () => {
+    const group = make('Billing', ['api1']);
+    store.repos = ['/api', '/web'];
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    expect(draftStore.draft?.groupId).toBe(group.id);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in web' }));
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ branchName: '' });
+  });
+
+  it('ungroups, keeping the conversations', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'Ungroup Billing' }));
+    expect(groupStore.groups).toEqual([]);
+    expect(groupEl(group.id)).toBeNull();
+    expect(screen.getByText('Billing page')).toBeInTheDocument();
+  });
+
+  it('marks every open conversation in the group completed: stops them and keeps them listed', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    render(Sidebar);
+
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    await fireEvent.click(screen.getByText('Mark all completed'));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
+    expect(store.sessions.map((s) => s.status)).toEqual(['stopped', 'stopped']);
+    // Off the Conversations list, still in the group.
+    expect(document.querySelectorAll('[data-row-group]')).toHaveLength(0);
+    expect(within(groupEl(group.id)).getByText('Billing page')).toBeInTheDocument();
+
+    // Nothing open is left to mark.
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    expect(screen.queryByText('Mark all completed')).toBeNull();
+  });
+
+  it('counts only the rows the filter shows', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    messageStore.setIsRunning('api1', true);
+    render(Sidebar);
+    const header = () => groupEl(group.id).querySelector('button[aria-expanded]') as HTMLElement;
+    expect(header().textContent).toContain('2');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Working 1' }));
+    expect(header().textContent).toContain('1');
+    expect(header().textContent).not.toContain('2');
   });
 });
 

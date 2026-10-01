@@ -78,6 +78,9 @@
         : `The agent will open ${start.branch} in a separate copy.`;
     }
     const from = start.baseBranch.trim() || 'the default branch';
+    if (draftStore.onGroupBranch) {
+      return `The agent will work on ${start.branchName.trim()}, the group's branch, in a separate copy: the project's own branch if it has one, else a new one from ${from}.`;
+    }
     return start.branchName.trim()
       ? `The agent will work on a new branch, ${start.branchName.trim()}, from ${from}, in a separate copy.`
       : `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message after the first reply.`;

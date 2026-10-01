@@ -6,6 +6,7 @@ import { agentsStore } from './agents.svelte.js';
 import { messageStore } from './messages.svelte.js';
 import { arrivalScene } from './arrivalScene.svelte.js';
 import { settingsStore } from './settings.svelte.js';
+import { groupStore } from './groups.svelte.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
@@ -47,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   draftStore.discard();
+  groupStore.groups = [];
   store.repos = [];
   store.sessions = [];
   store.activeSessionId = null;
@@ -321,5 +323,107 @@ describe('draftStore.start while it is still starting', () => {
     await started;
 
     expect(draftStore.draft?.text).toBe('second, still being typed');
+  });
+});
+
+describe('draft in a group', () => {
+  let billing: string;
+
+  beforeEach(() => {
+    groupStore.ready = true;
+    store.sessions = [{ id: 'api1', branch: 'feat/billing', repoPath: '/repo/one', status: 'running' }] as any;
+    billing = groupStore.create('Billing', ['api1'])!.id;
+  });
+
+  it('starts a new branch with the group\'s branch name, but not where the group has one', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    expect(draftStore.draft).toMatchObject({ groupId: billing, start: { kind: 'new', branchName: 'feat/billing', baseBranch: 'main' } });
+    expect(draftStore.onGroupBranch).toBe(true);
+    expect(draftStore.groupName).toBe('Billing');
+
+    // The group's conversation in /repo/one has the branch there already.
+    draftStore.setRepo('/repo/one');
+    expect(draftStore.draft?.start).toMatchObject({ kind: 'new', branchName: '' });
+    expect(draftStore.onGroupBranch).toBe(false);
+  });
+
+  it('moves an open draft into the group, keeping its message', () => {
+    draftStore.open('/repo/two');
+    draftStore.setText('keep me');
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    expect(draftStore.draft).toMatchObject({ groupId: billing, text: 'keep me', start: { branchName: 'feat/billing' } });
+  });
+
+  it('leaves the group when opened from a project, dropping the group\'s branch name', () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    draftStore.open('/repo/two');
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ kind: 'new', branchName: '' });
+  });
+
+  it('stays in the group when shown again without a project', () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    draftStore.open();
+    expect(draftStore.draft?.groupId).toBe(billing);
+  });
+
+  it('leaving the group keeps a branch the user picked', () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    draftStore.setStart({ kind: 'new', branchName: 'mine', baseBranch: 'main' });
+    draftStore.leaveGroup();
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ branchName: 'mine' });
+  });
+
+  it('asks main to continue the group\'s branch, and joins the group when it starts', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(createSessionMock()).toHaveBeenCalledWith(expect.objectContaining({ repoPath: '/repo/two', branchName: 'feat/billing', continueBranch: true }));
+    expect(groupStore.get(billing)?.sessionIds).toEqual(['api1', 'new1']);
+  });
+
+  it('doesn\'t ask to continue a branch the user renamed', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    draftStore.setStart({ kind: 'new', branchName: 'feat/other', baseBranch: 'main' });
+    await draftStore.start();
+    expect(createSessionMock().mock.calls[0][0]).not.toHaveProperty('continueBranch');
+    expect(groupStore.get(billing)?.sessionIds).toEqual(['api1', 'new1']);
+  });
+
+  it('starts anyway when the group was dropped meanwhile', async () => {
+    draftStore.open('/repo/two', { group: { groupId: billing } });
+    await settle();
+    groupStore.ungroup(billing);
+    expect(await draftStore.start()).toBe(true);
+    expect(groupStore.groups).toEqual([]);
+  });
+
+  describe('a new group', () => {
+    it('is made only when its first conversation starts', async () => {
+      groupStore.ungroup(billing);
+      draftStore.open('/repo/two', { group: { newGroupName: 'Payments' } });
+      expect(draftStore.groupName).toBe('Payments');
+      expect(groupStore.groups).toEqual([]);
+
+      await draftStore.start();
+      expect(groupStore.groups).toEqual([expect.objectContaining({ name: 'Payments', sessionIds: ['new1'] })]);
+    });
+
+    it('leaves nothing behind when the draft is discarded', () => {
+      groupStore.ungroup(billing);
+      draftStore.open('/repo/two', { group: { newGroupName: 'Payments' } });
+      draftStore.discard();
+      expect(groupStore.groups).toEqual([]);
+    });
+
+    it('is replaced by joining an existing group', () => {
+      draftStore.open('/repo/two', { group: { newGroupName: 'Payments' } });
+      draftStore.open('/repo/two', { group: { groupId: billing } });
+      expect(draftStore.draft?.newGroupName).toBeUndefined();
+      expect(draftStore.draft?.groupId).toBe(billing);
+    });
   });
 });
