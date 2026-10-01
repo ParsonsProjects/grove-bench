@@ -101,6 +101,8 @@ export interface AgentSummary {
   backgroundModel?: string;
   /** How the agent handles MCP servers. Absent: no MCP support Grove can drive. */
   mcp?: McpSupport;
+  /** Untracked files Grove writes into the agent's worktrees for it. */
+  generatedFiles?: string[];
 }
 
 /** One agent's install and sign-in state. */

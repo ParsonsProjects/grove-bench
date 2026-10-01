@@ -14,6 +14,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { unsavedFileCount } from '../lib/unsaved-files.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { lazyComponent } from '../lib/lazy-component.js';
@@ -310,7 +311,7 @@
             const status = await window.groveBench.getGitStatus(s.id);
             // A status git couldn't read may hide changes: treat it as dirty.
             unknown = !!status.error;
-            dirty = unsavedFileCount(status.entries) > 0 || unknown;
+            dirty = unsavedFileCount(status.entries, agentsStore.generatedFiles()) > 0 || unknown;
           } catch {
             dirty = unknown = true;
           }
@@ -433,7 +434,7 @@
     // Best effort: a failed check leaves its warning out rather than
     // blocking the delete.
     const uncommitted = window.groveBench.getGitStatus(id)
-      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = unsavedFileCount(status.entries); })
+      .then((status) => { if (confirmDestroyId === id) destroyUncommitted = unsavedFileCount(status.entries, agentsStore.generatedFiles()); })
       .catch(() => {});
     const unmerged = resolveBaseBranch(session.repoPath)
       .then(async (base) => {
@@ -522,7 +523,7 @@
     void (async () => {
       const dirty = await mapLimit(worktreeSessions, REMOVE_CHECK_CONCURRENCY, (s) =>
         window.groveBench.getGitStatus(s.id)
-          .then((status) => unsavedFileCount(status.entries) > 0)
+          .then((status) => unsavedFileCount(status.entries, agentsStore.generatedFiles()) > 0)
           .catch(() => false),
       );
       if (!current()) return;

@@ -1,4 +1,5 @@
 import type { AgentSummary } from '../../shared/types.js';
+import { DEFAULT_GROVE_WRITTEN } from '../lib/unsaved-files.js';
 
 /** The registered agents (adapters), loaded once per launch: the list only
  *  changes when the app is updated. */
@@ -41,6 +42,13 @@ class AgentsStore {
   supports(id: string | null | undefined, capability: string): boolean {
     const agent = this.get(id ?? this.defaultId);
     return agent ? agent.capabilities[capability] !== false : true;
+  }
+
+  /** Files Grove writes into worktrees for any agent (AgentSummary.generatedFiles),
+   *  or Claude Code's until the list loads. */
+  generatedFiles(): ReadonlySet<string> {
+    if (!this.loaded) return DEFAULT_GROVE_WRITTEN;
+    return new Set(this.list.flatMap((a) => a.generatedFiles ?? []));
   }
 
   /** Agents that support a capability, e.g. 'plugins' or 'mcpConfig'. */

@@ -1340,6 +1340,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     setupUrl: 'https://code.claude.com/docs/en/setup',
   };
   readonly mcp = CLAUDE_MCP_SUPPORT;
+  readonly generatedFiles = ['.claude/settings.local.json'];
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -1901,11 +1902,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // ─── Skill management (native format: .claude/skills/<name>/SKILL.md) ───
 
   async listSkills(worktreePath: string) {
-    return skillsModule.listSkills(worktreePath);
+    return skillsModule.listSkills(worktreePath, skillsModule.CLAUDE_SKILL_DIRS);
   }
 
   async addSkill(worktreePath: string, def: SkillDefinition) {
-    return skillsModule.writeSkill(worktreePath, def);
+    return skillsModule.writeSkill(worktreePath, def, skillsModule.CLAUDE_SKILL_DIRS);
   }
 
   // ─── MCP server configuration (delegates to `claude mcp` CLI) ───

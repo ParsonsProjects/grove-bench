@@ -13,6 +13,7 @@ import { panelStore } from '../stores/panels.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
 import { AGENT_SPRITES } from '../lib/agent-sprite.js';
+import { agentsStore } from '../stores/agents.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -718,6 +719,8 @@ describe('Sidebar delete conversation', () => {
   });
 
   it('does not count the settings file Grove writes into every worktree', async () => {
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, generatedFiles: ['.claude/settings.local.json'] }];
+    agentsStore.loaded = true;
     mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: '.claude/settings.local.json', status: 'untracked', staged: false }] } as any);
     await openDeleteDialog();
     await screen.findByRole('button', { name: 'Delete' });

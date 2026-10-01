@@ -398,6 +398,11 @@ export interface AgentAdapter {
 
   // ─── Optional worktree configuration ───
 
+  /** Untracked files generateWorktreeSettings writes, relative to the
+   *  worktree with forward slashes. Deleting a worktree doesn't count them as
+   *  unsaved work. */
+  readonly generatedFiles?: readonly string[];
+
   /** Generate agent-specific settings files inside a worktree directory.
    *  E.g. Claude Code creates `.claude/settings.local.json`. `repoPath` is the
    *  project the worktree belongs to, for settings carried over from it. */

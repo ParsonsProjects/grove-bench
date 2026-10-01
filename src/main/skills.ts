@@ -1,17 +1,32 @@
 /**
  * Skill discovery for agent sessions.
  *
- * Claude Code loads skills from `.claude/skills/<name>/SKILL.md` at two levels:
- * the user's home directory (`~/.claude/skills`) and the project (which for a
- * Grove Bench session is the worktree — project skills are checked into git,
- * so every worktree carries them). Plugin-provided skills have no stable
- * on-disk location we can scan; those are learned from the SDK's system_init
+ * Skills follow the open Agent Skills format: a `<name>/SKILL.md` folder
+ * with YAML frontmatter. Agents keep them under their own folder name at two
+ * levels: the user's home directory and the project (which for a Grove Bench
+ * session is the worktree — project skills are checked into git, so every
+ * worktree carries them). Each adapter passes its folder (SkillDirs); Claude
+ * Code's is `.claude/skills`. Plugin-provided skills have no stable on-disk
+ * location we can scan; those are learned from the agent's system_init
  * message instead (see AgentSessionManager's known-skills registry).
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SkillDefinition, SkillInfo } from '../shared/types.js';
+
+/** Where an agent keeps skills, relative to the project and to the user's
+ *  home directory (often the same, e.g. `.claude/skills`). */
+export interface SkillDirs {
+  project: string;
+  user: string;
+}
+
+/** Claude Code's skill folders. */
+export const CLAUDE_SKILL_DIRS: SkillDirs = {
+  project: path.join('.claude', 'skills'),
+  user: path.join('.claude', 'skills'),
+};
 
 /**
  * Extract `name` and `description` from a SKILL.md YAML frontmatter block.
@@ -36,7 +51,7 @@ export function parseSkillFrontmatter(content: string): { name?: string; descrip
   return result;
 }
 
-/** Scan one `.claude/skills` directory for `<name>/SKILL.md` manifests. */
+/** Scan one skills directory for `<name>/SKILL.md` manifests. */
 export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillInfo[] {
   let entries: fs.Dirent[];
   try {
@@ -71,9 +86,9 @@ export function scanSkillsDir(dir: string, source: SkillInfo['source']): SkillIn
  * List the skills a session at `worktreePath` can see on disk. Project skills
  * shadow user skills of the same name, matching the CLI's precedence.
  */
-export function listSkills(worktreePath: string): SkillInfo[] {
-  const project = scanSkillsDir(path.join(worktreePath, '.claude', 'skills'), 'project');
-  const user = scanSkillsDir(path.join(os.homedir(), '.claude', 'skills'), 'user');
+export function listSkills(worktreePath: string, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo[] {
+  const project = scanSkillsDir(path.join(worktreePath, dirs.project), 'project');
+  const user = scanSkillsDir(path.join(os.homedir(), dirs.user), 'user');
   const byName = new Map<string, SkillInfo>();
   for (const skill of [...user, ...project]) {
     byName.set(skill.name, skill); // project entries overwrite user entries
@@ -108,18 +123,19 @@ export function skillManifestContent(def: SkillDefinition): string {
 }
 
 /**
- * Write a new skill in Claude Code's native format. Project scope writes into
- * the worktree (`<worktree>/.claude/skills`); user scope writes to
- * `~/.claude/skills`. Rejects names that collide with an existing skill at
- * the same scope — overwriting someone's manifest silently would be data loss.
+ * Write a new skill as `<name>/SKILL.md` in the agent's skill folder. Project
+ * scope writes into the worktree (`<worktree>/.claude/skills` for Claude
+ * Code); user scope writes under the home directory. Rejects names that
+ * collide with an existing skill at the same scope — overwriting someone's
+ * manifest silently would be data loss.
  */
-export function writeSkill(worktreePath: string, def: SkillDefinition): SkillInfo {
+export function writeSkill(worktreePath: string, def: SkillDefinition, dirs: SkillDirs = CLAUDE_SKILL_DIRS): SkillInfo {
   validateSkillName(def.name);
   if (!def.description.trim()) throw new Error('Skill description is required');
   if (!def.instructions.trim()) throw new Error('Skill instructions are required');
 
-  const root = def.scope === 'project' ? worktreePath : os.homedir();
-  const skillDir = path.join(root, '.claude', 'skills', def.name);
+  const root = def.scope === 'project' ? path.join(worktreePath, dirs.project) : path.join(os.homedir(), dirs.user);
+  const skillDir = path.join(root, def.name);
   const manifestPath = path.join(skillDir, 'SKILL.md');
   if (fs.existsSync(manifestPath)) {
     throw new Error(`A ${def.scope} skill named "${def.name}" already exists`);

@@ -1523,6 +1523,7 @@ export function registerHandlers() {
       isDefault: a.id === defaultId,
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
       ...(a.mcp ? { mcp: a.mcp } : {}),
+      ...(a.generatedFiles?.length ? { generatedFiles: [...a.generatedFiles] } : {}),
     }));
   });
 
