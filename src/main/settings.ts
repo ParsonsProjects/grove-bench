@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  acpAgents: [],
 
   // Memory
   memoryAutoSave: true,
@@ -217,6 +218,12 @@ const settingsSchema = z.object({
   cavemanMode: z.enum(['off', 'lite', 'full', 'ultra']).catch(DEFAULT_SETTINGS.cavemanMode),
   workingDirectories: z.array(z.string()).catch(DEFAULT_SETTINGS.workingDirectories),
   defaultSystemPromptAppend: z.string().catch(DEFAULT_SETTINGS.defaultSystemPromptAppend),
+  acpAgents: z.array(z.object({
+    id: z.string().catch(''),
+    name: z.string().catch(''),
+    command: z.string(),
+    args: z.array(z.string()).catch([]),
+  })).catch(DEFAULT_SETTINGS.acpAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),

@@ -138,13 +138,14 @@ class MockAdapter implements AgentAdapter {
     permissions: true,
     permissionModes: true,
     resume: true,
+    rewind: true,
     modelSwitching: true,
     thinking: true,
     usage: true,
     plugins: false,
-    imageAttachments: false,
+    imageAttachments: true,
     structuredOutput: false,
-    sandbox: false,
+    sandbox: true,
   };
 
   control: MockQueryControl | null = null;
@@ -470,6 +471,18 @@ describe('Read-safe mode sandbox enforcement', () => {
     expect(sandbox.filesystem?.allowWrite).toEqual(['/repo-wt']);
 
     await sessionManager.destroySession('test-auto-sandbox');
+  });
+
+  it('passes no sandbox to an agent that has none', async () => {
+    (mockAdapter.capabilities as Record<string, boolean>).sandbox = false;
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-no-sandbox', branch: 'main', cwd: '/repo-wt', repoPath: '/repo', window: win,
+      adapterType: 'mock', permissionMode: 'readSafe',
+    });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig?.sandbox).toBeNull();
+    await sessionManager.destroySession('test-no-sandbox');
   });
 
   it('passes native auto mode to the adapter without a Grove sandbox', async () => {
@@ -2107,6 +2120,27 @@ describe('AgentSessionManager.sendMessage()', () => {
     await sessionManager.destroySession('test-send-images');
   });
 
+  it('leaves images out for an agent that can\'t take them, and says so', async () => {
+    (mockAdapter.capabilities as Record<string, boolean>).imageAttachments = false;
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-no-images', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const images = [{ data: 'iVBOR', mediaType: 'image/png' as const, name: 'shot.png' }];
+    expect(await sessionManager.sendMessage('test-no-images', 'Look', images)).toBe(true);
+
+    expect(attachments.saveImages).not.toHaveBeenCalled();
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith({ text: 'Look', images: undefined });
+    const history = sessionManager.getEventHistory('test-no-images');
+    expect(history.some((e) => e.type === 'status' && /can't take images/.test(e.message))).toBe(true);
+
+    await sessionManager.destroySession('test-no-images');
+  });
+
   it('records a tool result with references to the images the tool returned', async () => {
     const win = makeMockWindow();
     await sessionManager.createSession({
@@ -2507,6 +2541,36 @@ describe('AgentSessionManager.rewindFiles()', () => {
     expect(rewindEvent![1]).toMatchObject({ type: 'rewind', toMessageId: 'pre-clear-uuid', filesOnly: true });
 
     await sessionManager.destroySession('test-rewind-files-only');
+  });
+
+  it('starts the agent on a new conversation when it can\'t rewind', async () => {
+    (mockAdapter.capabilities as Record<string, boolean>).rewind = false;
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rewind-fresh', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    await sessionManager.sendMessage('test-rewind-fresh', 'First');
+    await new Promise((r) => setTimeout(r, 50));
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'reply one', uuid: 'sdk-uuid-1' });
+    await new Promise((r) => setTimeout(r, 50));
+    await sessionManager.sendMessage('test-rewind-fresh', 'Second');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const session = sessionManager.getSession('test-rewind-fresh');
+    const secondUuid = (session!.eventHistory.filter((e) => e.type === 'user_message')[1] as any).uuid;
+    await sessionManager.rewindFiles('test-rewind-fresh', secondUuid);
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Resuming would bring back the rewound turns, so the agent starts over.
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+    expect(session!.eventHistory.some((e) => e.type === 'status' && /can't forget part of a conversation/.test(e.message))).toBe(true);
+
+    await sessionManager.destroySession('test-rewind-fresh');
   });
 
   it('forks the provider conversation at the last kept assistant message', async () => {

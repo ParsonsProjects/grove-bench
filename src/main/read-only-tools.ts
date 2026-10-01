@@ -27,6 +27,7 @@
 
 import path from 'node:path';
 import { isPathInside } from './agent-utils.js';
+import type { ToolView } from '../shared/tool-view.js';
 
 /** Tools that never mutate anything. Tools listed in TOOL_PATH_FIELDS are
  *  additionally path-scoped to the worktree. */
@@ -243,12 +244,44 @@ export function isReadOnlyBashCommand(command: string, cwd?: string): boolean {
   return segments.every((s) => isReadOnlySimpleCommand(s, cwd));
 }
 
+/** Characters that let a command run another in some shell even though bash
+ *  would not: PowerShell runs `(cmd)`, `@(cmd)`, `{ }` blocks and `$var`
+ *  method calls, cmd.exe expands `%var%` and escapes with `^`, and control
+ *  characters such as a lone carriage return, which PowerShell reads as a
+ *  line break the bash split doesn't make. */
+const NON_BASH_EXEC_CHARS = /[(){}@$%^\x00-\x1f\x7f]/;
+
+/**
+ * Read-safe classification of a call an adapter described with a ToolView
+ * (an agent other than Claude Code). Stricter than the Claude rules: the
+ * agent's own word that a call only reads is honoured only when every path it
+ * names is inside the worktree (no path named means no way to check, so it
+ * prompts), and commands run in a shell Grove doesn't know, so anything one
+ * of the common Windows shells could execute is refused before the bash
+ * allowlist runs.
+ */
+function isReadOnlyView(view: ToolView, cwd: string | undefined): boolean {
+  if (view.kind === 'read' || view.kind === 'search') {
+    const paths = [view.path, ...(view.morePaths ?? [])].filter((p): p is string => typeof p === 'string' && p !== '');
+    if (paths.length === 0 || !cwd) return false;
+    return paths.every((p) => isPathInside(cwd, path.resolve(cwd, p)));
+  }
+  if (view.kind === 'shell') {
+    const command = view.command;
+    if (typeof command !== 'string' || NON_BASH_EXEC_CHARS.test(command)) return false;
+    return isReadOnlyBashCommand(command, cwd);
+  }
+  return false;
+}
+
 /**
  * True when a tool call is recognizably read-only, scoped to the worktree at
  * `cwd`, and safe to auto-approve in Read-safe mode. Anything unrecognized returns
- * false and prompts normally.
+ * false and prompts normally. `toolView` is the adapter's description of the
+ * call; without one the call is read as a Claude Code tool.
  */
-export function isReadOnlyToolCall(toolName: string, toolInput: unknown, cwd?: string): boolean {
+export function isReadOnlyToolCall(toolName: string, toolInput: unknown, cwd?: string, toolView?: ToolView): boolean {
+  if (toolView) return isReadOnlyView(toolView, cwd);
   if (READ_ONLY_TOOLS.has(toolName)) {
     const fields = TOOL_PATH_FIELDS[toolName];
     if (!fields) return true;

@@ -13,6 +13,7 @@ import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import type { AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
+import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
 
 // ─── Chat message types ───
 
@@ -37,6 +38,8 @@ export interface ChatToolCallMessage {
   awaitingPermission?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** What the call does, when the adapter described it (see shared/tool-view.ts). */
+  toolView?: ToolView;
   /** Images the tool returned (a screenshot, an image file it read). */
   images?: StoredImage[];
 }
@@ -104,6 +107,8 @@ export interface ChatPermissionMessage {
   isPlanExecution?: boolean;
   /** Adapter-agnostic tool category for display logic. */
   toolCategory?: import('../../shared/types.js').ToolCategory;
+  /** What the call does, when the adapter described it (see shared/tool-view.ts). */
+  toolView?: ToolView;
   /** Plan text extracted by the adapter for plan execution permissions. */
   planText?: string;
 }
@@ -917,7 +922,7 @@ class MessageStore {
         pending.push({
           toolName: m.toolName,
           toolUseId: m.toolUseId,
-          summary: this.summarizeToolInput(m.toolName, m.toolInput),
+          summary: this.summarizeToolInput(m),
           elapsedSeconds: p?.elapsedSeconds,
         });
       }
@@ -925,16 +930,12 @@ class MessageStore {
     return pending;
   }
 
-  private summarizeToolInput(toolName: string, input: unknown, toolCategory?: import('../../shared/types.js').ToolCategory): string {
-    if (typeof input !== 'object' || input === null) return '';
-    const obj = input as Record<string, unknown>;
-    // Use toolCategory when available (adapter-agnostic), fall back to tool name heuristics
-    if ((toolCategory === 'bash' || obj.command) && obj.command) return String(obj.command).slice(0, 60);
-    if ((toolCategory === 'agent' || obj.prompt) && obj.prompt) return String(obj.prompt).slice(0, 60);
-    if (obj.file_path) return String(obj.file_path);
-    if (obj.pattern) return String(obj.pattern);
-    if (obj.description) return String(obj.description).slice(0, 60);
-    return '';
+  private summarizeToolInput(call: { toolName: string; toolInput: unknown; toolView?: ToolView }): string {
+    const view = toolViewOf(call);
+    // Commands and summaries can run long; paths and patterns show whole.
+    if (view.command) return view.command.slice(0, 60);
+    if (view.path || view.pattern) return toolViewSummary(view);
+    return toolViewSummary(view).slice(0, 60);
   }
 
   /**
@@ -972,14 +973,11 @@ class MessageStore {
         continue;
       }
 
-      if (
-        inTurn &&
-        m.kind === 'tool_call' &&
-        (m.toolName === 'Edit' || m.toolName === 'Write') &&
-        !m.isError
-      ) {
-        const input = m.toolInput as Record<string, unknown>;
-        const fp = String(input?.file_path ?? input?.filePath ?? '');
+      if (inTurn && m.kind === 'tool_call' && !m.isError) {
+        // Edits Grove can show as a diff: replacements or a whole-file write.
+        const view = toolViewOf(m);
+        if (view.kind !== 'edit' || (!view.edits?.length && view.write === undefined)) continue;
+        const fp = view.path ?? '';
         if (!fp) continue;
 
         const existing = byFile.get(fp);
@@ -1350,7 +1348,7 @@ class MessageStore {
         this.activityBySession[sessionId] = {
           activity: 'tool_starting',
           toolName: event.toolName,
-          toolSummary: this.summarizeToolInput(event.toolName, event.toolInput, event.toolCategory),
+          toolSummary: this.summarizeToolInput(event),
         };
         this.pushMessage(sessionId, {
           kind: 'tool_call',
@@ -1361,7 +1359,12 @@ class MessageStore {
           uuid: event.uuid,
           pending: true,
           toolCategory: event.toolCategory,
+          ...(event.toolView ? { toolView: event.toolView } : {}),
         });
+        break;
+
+      case 'tool_update':
+        this.onToolUpdate(sessionId, event);
         break;
 
       case 'tool_result':
@@ -1684,17 +1687,38 @@ class MessageStore {
     this.flushQueue(sessionId);
   }
 
+  /** Fill in a tool call the agent reported earlier (see the tool_update event). */
+  private onToolUpdate(sessionId: string, event: Extract<AgentEvent, { type: 'tool_update' }>) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    let changed = false;
+    const patch = {
+      ...(event.toolName !== undefined ? { toolName: event.toolName } : {}),
+      ...(event.toolInput !== undefined ? { toolInput: event.toolInput } : {}),
+      ...(event.toolCategory !== undefined ? { toolCategory: event.toolCategory } : {}),
+      ...(event.toolView !== undefined ? { toolView: event.toolView } : {}),
+    };
+    const updated = msgs.map((m) => {
+      // The permission prompt for the call shows the same details.
+      if ((m.kind === 'tool_call' || m.kind === 'permission') && m.toolUseId === event.toolUseId) {
+        changed = true;
+        return { ...m, ...patch };
+      }
+      return m;
+    });
+    if (changed) this.setMessagesForMutation(sessionId, updated);
+  }
+
   private onToolResult(sessionId: string, event: Extract<AgentEvent, { type: 'tool_result' }>) {
     // Build a single updated array that handles both the tool_call result
     // and any matching permission/question resolution in one pass.
     const msgs = this.getMessagesForMutation(sessionId);
     let changed = false;
-    let matchedToolName: string | undefined;
+    let matchedCall: ChatToolCallMessage | undefined;
     const updated = msgs.map((m) => {
       // Update the matching tool_call (also clear awaitingPermission)
       if (m.kind === 'tool_call' && m.toolUseId === event.toolUseId) {
         changed = true;
-        matchedToolName = m.toolName;
+        matchedCall = m;
         return {
           ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false,
           ...(event.images?.length ? { images: event.images } : {}),
@@ -1725,7 +1749,7 @@ class MessageStore {
       this.toolProgressBySession[sessionId] = { ...prog };
     }
     // Refresh git status after file-modifying tool calls
-    if (this.sideEffects && matchedToolName && ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit'].includes(matchedToolName)) {
+    if (this.sideEffects && matchedCall && changesFiles(toolViewOf(matchedCall), matchedCall.toolCategory)) {
       gitStatusStore.scheduleRefresh(sessionId, 300);
     }
   }
@@ -1781,6 +1805,7 @@ class MessageStore {
         suggestions: event.suggestions,
         isPlanExecution: event.isPlanExecution,
         toolCategory: event.toolCategory,
+        ...(event.toolView ? { toolView: event.toolView } : {}),
         planText: event.planText,
       });
     }
@@ -2411,7 +2436,7 @@ class MessageStore {
 function permissionNotificationBody(event: Extract<AgentEvent, { type: 'permission_request' }>): string {
   if (event.isPlanExecution) return 'A plan is ready for review';
   if (event.toolCategory === 'question') return 'Agent is waiting for an answer';
-  return `The agent ${approvalRequest(event.toolName)}`;
+  return `The agent ${approvalRequest(event.toolName, toolViewOf(event))}`;
 }
 
 export const messageStore = new MessageStore();

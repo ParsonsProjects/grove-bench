@@ -16,7 +16,7 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 
 ## Grovekeepers (Agents)
 
-There is one group per installed agent, each with:
+There is one group per agent, each with:
 
 - **Credentials**: Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
 - **Default model**: Pick the model new conversations with this agent start on. The list comes from the agent itself and updates after a conversation starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
@@ -27,6 +27,7 @@ There is one group per installed agent, each with:
   - **Edit**: accepts file edits inside the worktree
   - **Auto**: Claude's classifier approves or blocks each action instead of asking
   - **Read-safe**: Grove Bench's own mode, under the "Grove Bench" divider. Accepts edits and read-only commands; everything else asks
+  - For agents that speak ACP (Gemini CLI, GitHub Copilot CLI and any you add), Grove Bench applies the modes itself, on the requests the agent sends before it runs a tool. **Ask** puts every request to you, **Edit** approves file edits inside the worktree, and **Read-safe** also approves read-only commands inside the worktree. The agent's own modes and options (for example Gemini CLI's YOLO or Plan) show as separate controls once a conversation has started
 - **Default effort**, **Default thinking**, **Default speed**: The conversation controls the agent declares for its default model (for Claude Agent, each one shows only when the default model offers it). Pick the value new conversations start with; each conversation can still change it from the status bar
 
 If a conversation starts on a model that doesn't offer the saved mode, it starts in Code instead.
@@ -38,6 +39,16 @@ If a conversation starts on a model that doesn't offer the saved mode, it starts
 - **Response style**: Normal, or one of three "caveman" styles that cut the agent's wording to use about 65 to 75% fewer output tokens. Code blocks stay normal. **Caveman lite** drops filler and hedging, **Caveman full** also drops articles, and **Caveman ultra** compresses the most, with abbreviations
 - **Show thinking summaries** (shown when an agent offers it, such as Claude Agent): Show a short summary of the model's thinking in the conversation. Newer Claude models send no thinking text unless asked, so with this off their thinking doesn't show. Some older models, such as Haiku 4.5, may still show theirs. It doesn't change how much the model thinks or what it costs. Applies to agents started after the change (on by default)
 - **Let the agent use the Preview browser**: Give the agent its own page in the [Preview tab](preview-tab.md#the-agents-browser) to open local pages, take screenshots, read, click and type in. Applies to agents started after the change (on by default)
+
+### Other agents (ACP)
+
+Grove Bench can run any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio. Gemini CLI (`gemini --acp`) and GitHub Copilot CLI (`copilot --acp`) are built in: install one, sign in with it in a terminal, and pick it as the agent for a new conversation. Add others, such as Codex through `codex-acp`, with a name, the command (a name on PATH or a full path) and its arguments. Restart Grove Bench after adding or removing one.
+
+With ACP agents:
+
+- Grove Bench's memory and Preview browser tools are offered to every ACP agent. They are served on this computer only, with a key for each conversation. Agents that can't connect to a server by address start a small bridge program that comes with Grove Bench
+- Rewinding a conversation starts the agent on a new conversation from that point, since ACP agents can't forget part of one
+- Skills, plugins and plan usage are not managed for them
 
 ## The gate (Permissions)
 

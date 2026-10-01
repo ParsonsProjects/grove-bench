@@ -3,6 +3,7 @@
  * (`ExitPlanMode`, `mcp__linear__create_issue`); the UI says what the tool
  * does, or at least drops the plumbing.
  */
+import { claudeToolView, type ToolView } from '../../shared/tool-view.js';
 
 /** `mcp__<server>__<tool_name>` → its server and `tool name`. */
 export function parseMcpToolName(toolName: string): { server: string; tool: string } | null {
@@ -22,21 +23,19 @@ export function toolLabel(toolName: string): string {
 
 /** What the agent is asking to do, for a permission it's waiting on, such
  *  as "wants to run a command". Lower case, to follow "The agent" or to be
- *  capitalised on its own. */
-export function approvalRequest(toolName: string): string {
-  switch (toolName) {
-    case 'ExitPlanMode':
+ *  capitalised on its own. `view` describes the call (see shared/tool-view.ts);
+ *  without one it is read as a Claude Code tool. */
+export function approvalRequest(toolName: string, view: ToolView = claudeToolView(toolName, undefined)): string {
+  switch (view.kind) {
+    case 'plan':
       return 'has a plan for you to approve';
-    case 'Edit':
-    case 'Write':
-    case 'MultiEdit':
-    case 'NotebookEdit':
+    case 'edit':
       return 'wants to edit a file';
-    case 'Bash':
+    case 'shell':
       return 'wants to run a command';
-    case 'WebFetch':
+    case 'fetch':
       return 'wants to fetch a web page';
-    case 'WebSearch':
+    case 'web_search':
       return 'wants to search the web';
     default:
       return `wants to use ${toolLabel(toolName)}`;

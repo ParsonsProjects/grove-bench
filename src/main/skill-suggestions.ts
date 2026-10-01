@@ -18,6 +18,7 @@ import { z } from 'zod';
 import type { AgentEvent, SkillInfo, SkillSuggestion } from '../shared/types.js';
 import { loadSkillSuggestionCache, saveSkillSuggestionCache } from './app-state.js';
 import { logger } from './logger.js';
+import { toolViewOf } from '../shared/tool-view.js';
 
 // ─── Extraction from event logs ───
 
@@ -46,8 +47,9 @@ export function extractActivity(sessionId: string, events: AgentEvent[]): Sessio
       // Skip Grove's own injected turns (memory restore notices, PR prompts…)
       if (!text || text.startsWith('[System]')) continue;
       prompts.push(text.slice(0, 500));
-    } else if (event.type === 'assistant_tool_use' && event.toolName === 'Bash') {
-      const command = (event.toolInput as { command?: unknown } | null)?.command;
+    } else if (event.type === 'assistant_tool_use') {
+      const view = toolViewOf(event);
+      const command = view.kind === 'shell' ? view.command : undefined;
       if (typeof command === 'string' && command.trim()) {
         const normalized = normalizeCommand(command);
         if (normalized && !COMMAND_STOPLIST.test(normalized)) {

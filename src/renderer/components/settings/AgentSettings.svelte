@@ -13,6 +13,8 @@
   import CheckboxSetting from './CheckboxSetting.svelte';
   import ListSetting from './ListSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
+  import { Input } from '$lib/components/ui/input/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
@@ -114,6 +116,23 @@
 
   /** Thinking summaries is one setting, offered only by some agents. */
   const summaryAgents = $derived(agentGroups.filter((a) => a.thinkingSummaries));
+
+  // The user's own ACP agents (read at launch).
+  let acpName = $state('');
+  let acpCommand = $state('');
+  let acpArgs = $state('');
+  function addAcpAgent() {
+    const command = acpCommand.trim();
+    if (!command) return;
+    settingsStore.addAcpAgent({
+      name: acpName.trim() || command,
+      command,
+      args: acpArgs.trim() ? acpArgs.trim().split(/\s+/) : [],
+    });
+    acpName = '';
+    acpCommand = '';
+    acpArgs = '';
+  }
 </script>
 
 {#if agentGroups.length === 0}
@@ -292,4 +311,43 @@
     description="Gives the agent its own page in the Preview tab to open, screenshot, read, click and type in. Local addresses only. Applies to agents started after the change."
     bind:checked={settingsStore.draft.previewAgentTools}
   />
+</SettingsGroup>
+
+<SettingsGroup
+  title="Other agents (ACP)"
+  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI and GitHub Copilot CLI are built in. Restart Grove Bench after a change."
+  card
+>
+  <div data-setting="acp-agents" class="flex flex-col gap-2">
+    {#if settingsStore.draft.acpAgents.length > 0}
+      <ul class="flex flex-col gap-1" aria-label="Other agents">
+        {#each settingsStore.draft.acpAgents as agent, i (i)}
+          <li class="flex items-center justify-between gap-1 pl-2 text-xs min-w-0 bg-muted">
+            <span class="truncate"><span class="text-foreground">{agent.name}</span> <code class="text-muted-foreground">{[agent.command, ...agent.args].join(' ')}</code></span>
+            <button
+              type="button"
+              onclick={() => settingsStore.removeAcpAgent(i)}
+              class="size-6 shrink-0 inline-flex items-center justify-center text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Remove agent {agent.name}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <div class="flex items-center gap-2">
+      <Input type="text" bind:value={acpName} placeholder="Name" aria-label="Agent name" class="w-32" />
+      <Input type="text" bind:value={acpCommand} placeholder="Command" aria-label="Agent command" class="w-40" />
+      <Input
+        type="text"
+        bind:value={acpArgs}
+        placeholder="Arguments"
+        aria-label="Agent arguments"
+        onkeydown={(e) => { if (e.key === 'Enter') addAcpAgent(); }}
+        class="flex-1"
+      />
+      <Button variant="secondary" onclick={addAcpAgent}>Add</Button>
+    </div>
+  </div>
 </SettingsGroup>

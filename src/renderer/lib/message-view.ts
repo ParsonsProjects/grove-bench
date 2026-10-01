@@ -1,6 +1,7 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import type { ActivityViewMode } from '../../shared/types.js';
 import { parseMcpToolName } from './tool-names.js';
+import { changesFiles, toolViewOf } from '../../shared/tool-view.js';
 
 /** See ActivityViewMode in shared/types.ts for what each mode shows. */
 export type MessageViewMode = ActivityViewMode;
@@ -18,18 +19,16 @@ export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking)',
 };
 
-/** Built-in tools shown in summary mode: the ones that change files or run commands. */
-const SUMMARY_VISIBLE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash']);
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
  *  too frequent for Summary. */
 const GROVE_MCP_SERVERS = new Set(['grove-preview', 'grove-memory']);
 
-/** Whether summary mode shows a tool call. Other MCP tools stay in view:
- *  they can act outside the project, such as creating a ticket or sending a
- *  message. */
-function shownInSummary(toolName: string): boolean {
-  if (SUMMARY_VISIBLE_TOOLS.has(toolName)) return true;
-  const mcp = parseMcpToolName(toolName);
+/** Whether summary mode shows a tool call: the ones that change files or run
+ *  commands, and MCP tools other than Grove's own, since they can act outside
+ *  the project, such as creating a ticket or sending a message. */
+function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
+  if (changesFiles(toolViewOf(call), call.toolCategory)) return true;
+  const mcp = parseMcpToolName(call.toolName);
   return !!mcp && !GROVE_MCP_SERVERS.has(mcp.server);
 }
 
@@ -51,7 +50,7 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
   if (mode === 'summary') {
     // A tool that returned images (a preview screenshot, an image file read)
     // stays in view so the images do.
-    if (msg.kind === 'tool_call') return shownInSummary(msg.toolName) || !!msg.images?.length;
+    if (msg.kind === 'tool_call') return shownInSummary(msg) || !!msg.images?.length;
     return true;
   }
 

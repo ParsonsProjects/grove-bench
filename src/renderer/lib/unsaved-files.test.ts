@@ -17,4 +17,9 @@ describe('unsavedFileCount', () => {
   it('still counts that file once someone has committed and changed it', () => {
     expect(unsavedFileCount([e('.claude/settings.local.json', 'modified')])).toBe(1);
   });
+
+  it('skips the files the agents say Grove wrote for them', () => {
+    const written = new Set(['.agent/state.json']);
+    expect(unsavedFileCount([e('.agent/state.json', 'untracked'), e('.claude/settings.local.json', 'untracked')], written)).toBe(1);
+  });
 });

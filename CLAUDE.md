@@ -41,6 +41,10 @@ src/
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, custom agents)
+      grove-tools.ts   # Grove's memory and Preview tools, defined once
+      grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
+      mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)
       preview-mcp-server.ts # Agent browser tools (grove-preview)
   renderer/            # Electron renderer (Svelte UI)
     App.svelte         # Root component
@@ -99,6 +103,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
+- Adapters describe tool calls with a provider-neutral `ToolView`
+  (`src/shared/tool-view.ts`); the UI and Read-safe mode read that, never a
+  provider's tool names. Events without one are read as Claude Code tools
 - Panels, dialogs and tabs that open on demand load on first use via
   `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
   (and libraries only they use, such as xterm) out of the startup bundle
@@ -112,6 +119,7 @@ Everything else goes in `devDependencies`, or it ships in the installer
 unused. `scripts/smoke-deps.mjs` checks the packaged app (Package workflow).
 
 - `@anthropic-ai/claude-agent-sdk` — Claude Code agent integration
+- `@modelcontextprotocol/sdk`: serves Grove's tools over MCP HTTP (bundled)
 - `@xterm/xterm` — Terminal emulation in renderer
 - `node-pty` — PTY spawning in main process
 - `bits-ui` — UI component library

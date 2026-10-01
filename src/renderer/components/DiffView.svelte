@@ -78,19 +78,23 @@
   }
 
   import { createPatch } from 'diff';
+  import type { ToolView } from '../../shared/tool-view.js';
 
-  export function computeDiffLines(toolName: string, input: Record<string, unknown>, filePath: string): DiffLine[] {
-    if (toolName === 'Edit') {
-      const oldStr = String(input?.old_string ?? '');
-      const newStr = String(input?.new_string ?? '');
-      if (!oldStr && !newStr) return [];
-      const patch = createPatch(filePath || 'file', oldStr, newStr, '', '', { context: 3 });
-      return parseDiffLines(patch);
+  /** Diff lines for an edit call: each replacement as a patch, or a whole-file
+   *  write as added lines. */
+  export function computeDiffLines(view: ToolView, filePath: string): DiffLine[] {
+    if (view.edits?.length) {
+      const out: DiffLine[] = [];
+      for (const edit of view.edits) {
+        if (!edit.oldText && !edit.newText) continue;
+        const patch = createPatch(filePath || 'file', edit.oldText, edit.newText, '', '', { context: 3 });
+        out.push(...parseDiffLines(patch));
+      }
+      return out;
     }
-    if (toolName === 'Write') {
-      const content = String(input?.content ?? '');
-      if (!content) return [];
-      return content.split('\n').map((line, i) => ({
+    if (view.write !== undefined) {
+      if (!view.write) return [];
+      return view.write.split('\n').map((line, i) => ({
         type: 'add' as const,
         text: line,
         lineNum: i + 1,

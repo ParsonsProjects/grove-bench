@@ -32,6 +32,9 @@ asarUnpack:
   # The agent SDK's native `claude` binary: the OS can't run a file inside
   # app.asar, so the app runs it from app.asar.unpacked (claude-code.ts).
   - "**/@anthropic-ai/claude-agent-sdk-*/**"
+  # The MCP stdio bridge, which agents start as a separate process
+  # (adapters/mcp-bridge/launch.ts).
+  - "dist/main/mcp-stdio-bridge.js"
 
 win:
   target:

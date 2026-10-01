@@ -42,6 +42,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'default-controls', section: 'agents', label: 'Default permission mode, effort, thinking and speed', keywords: 'ask plan edit auto read-safe fast' },
   { id: 'system-prompt', section: 'agents', label: 'System prompt append', keywords: 'custom instructions' },
   { id: 'working-directories', section: 'agents', label: 'Additional working directories', keywords: 'folders paths access' },
+  { id: 'acp-agents', section: 'agents', label: 'Other agents (ACP)', keywords: 'agent client protocol gemini copilot codex custom add' },
   { id: 'response-style', section: 'agents', label: 'Response style', keywords: 'caveman terse brief tokens' },
   { id: 'thinking-summaries', section: 'agents', label: 'Show thinking summaries', keywords: 'reasoning' },
   { id: 'preview-agent-tools', section: 'agents', label: 'Let the agent use the Preview browser', keywords: 'screenshot browser tools' },

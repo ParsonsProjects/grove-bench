@@ -4,6 +4,7 @@
  * Any AI agent (Claude Code, Codex CLI, Aider, Gemini CLI, etc.) can be
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
+import type { ToolView } from '../../shared/tool-view.js';
 import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
@@ -15,6 +16,10 @@ export interface AgentCapabilities {
   permissionModes: boolean;
   /** Supports resuming a previous conversation */
   resume: boolean;
+  /** Can resume a conversation cut off at an earlier point, forgetting the
+   *  turns after it (AdapterConfig.resumeAtUuid). Rewinding a conversation on
+   *  an agent without it starts the agent on a new conversation. */
+  rewind?: boolean;
   /** Supports switching models at runtime */
   modelSwitching: boolean;
   /** Supports adjusting the thinking/reasoning level at runtime */
@@ -61,6 +66,9 @@ export interface PermissionRequest {
   isPlanExecution?: boolean;
   /** Adapter-agnostic tool category for renderer display logic. */
   toolCategory?: ToolCategory;
+  /** What the call does, for adapters whose tools aren't Claude Code's (see
+   *  shared/tool-view.ts). Read-safe mode and the prompt's display use it. */
+  toolView?: ToolView;
   /** Plan text extracted by the adapter for plan execution permissions. */
   planText?: string;
 }
@@ -389,6 +397,11 @@ export interface AgentAdapter {
   getConversationTitle?(providerSessionId: string, cwd: string): Promise<string | null>;
 
   // ─── Optional worktree configuration ───
+
+  /** Untracked files generateWorktreeSettings writes, relative to the
+   *  worktree with forward slashes. Deleting a worktree doesn't count them as
+   *  unsaved work. */
+  readonly generatedFiles?: readonly string[];
 
   /** Generate agent-specific settings files inside a worktree directory.
    *  E.g. Claude Code creates `.claude/settings.local.json`. `repoPath` is the

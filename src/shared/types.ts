@@ -1,3 +1,5 @@
+import type { ToolView } from './tool-view.js';
+
 // ─── Worktree ───
 
 export interface WorktreeConfig {
@@ -99,6 +101,8 @@ export interface AgentSummary {
   backgroundModel?: string;
   /** How the agent handles MCP servers. Absent: no MCP support Grove can drive. */
   mcp?: McpSupport;
+  /** Untracked files Grove writes into the agent's worktrees for it. */
+  generatedFiles?: string[];
 }
 
 /** One agent's install and sign-in state. */
@@ -174,10 +178,14 @@ export const PERMISSION_TIMEOUT_MINUTES = 30;
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView }
+  /** More about a tool call the agent already reported: a title, its input
+   *  or its edits once known (ACP agents fill a call in as it runs). Only
+   *  the fields present change. */
+  | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[] }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; planText?: string }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
@@ -1297,6 +1305,16 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
+/** An agent the user added that speaks the Agent Client Protocol over stdio. */
+export interface AcpAgentSetting {
+  /** Stable id (the adapter id is `acp-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** Program to run, on PATH or a full path. */
+  command: string;
+  args: string[];
+}
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1327,6 +1345,8 @@ export interface GroveBenchSettings {
   cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
+  /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
+  acpAgents: AcpAgentSetting[];
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
@@ -1749,3 +1769,4 @@ export const IPC = {
   /** Main → renderer: (sessionId, PreviewKeyForward). */
   PREVIEW_KEY: 'preview:key',
 } as const;
+

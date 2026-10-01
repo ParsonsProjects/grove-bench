@@ -39,6 +39,10 @@ export interface ManagedSession {
   pendingElicitations: Map<string, PendingElicitation>;
   /** Tools the user has chosen to always allow for this session */
   alwaysAllowedTools: Set<string>;
+  /** Names of the tools this session's agent asked to run as file edits
+   *  (category 'edit'), so leaving an edit-accepting mode can take them back
+   *  out of alwaysAllowedTools whatever the agent calls them. */
+  editToolNames?: Set<string>;
   providerSessionId: string | null;
   /** Set by rewindFiles(): provider chain-entry uuid to fork the conversation
    *  at on the next query start (resume truncated at this point, forkSession).

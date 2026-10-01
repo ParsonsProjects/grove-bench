@@ -46,7 +46,10 @@ function externalsOf(mainDir) {
   const found = new Set();
   for (const file of fs.readdirSync(mainDir).filter((f) => f.endsWith('.js'))) {
     const code = fs.readFileSync(path.join(mainDir, file), 'utf8');
-    for (const [, spec] of code.matchAll(/\brequire\("([^"./][^"]*)"\)/g)) found.add(spec);
+    // A require() written inside a string is code text, not a load: ajv
+    // (bundled with the MCP SDK) keeps `require("ajv/...")` strings for the
+    // standalone validators it can generate.
+    for (const [, spec] of code.matchAll(/(?<![`'"])\brequire\("([^"./][^"]*)"\)/g)) found.add(spec);
     // The SDK is loaded with import() through new Function, so Vite leaves it alone.
     for (const [, spec] of code.matchAll(/dynamicImport[\w$]*\("([^"]+)"\)/g)) found.add(spec);
   }
@@ -103,6 +106,24 @@ async function checkPackagedDeps() {
     process.exit(1);
   }
   console.log(`Packaged dependencies OK: ${seen.size} packages, and the agent SDK loads.`);
+
+  // The MCP stdio bridge runs outside the app: agents start this executable
+  // in Node mode on the unpacked copy. Without its settings it exits with 2
+  // and says what is missing, which shows it was found and ran.
+  const bridge = path.join(path.dirname(process.execPath), 'resources', 'app.asar.unpacked', 'dist', 'main', 'mcp-stdio-bridge.js');
+  if (!fs.existsSync(bridge)) {
+    console.log(`The MCP stdio bridge is not unpacked: ${bridge}`);
+    process.exit(1);
+  }
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  delete env.GROVE_MCP_URL;
+  delete env.GROVE_MCP_AUTHORIZATION;
+  const run = spawnSync(process.execPath, [bridge], { env, encoding: 'utf8', timeout: 30_000, input: '' });
+  if (run.status !== 2 || !run.stderr.includes('GROVE_MCP_URL')) {
+    console.log(`The MCP stdio bridge did not run as expected (exit ${run.status}): ${run.stderr || run.error}`);
+    process.exit(1);
+  }
+  console.log('The MCP stdio bridge is unpacked and runs.');
 }
 
 if (process.versions.electron) await checkPackagedDeps();

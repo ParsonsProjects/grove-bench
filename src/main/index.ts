@@ -29,8 +29,9 @@ app.setPath('userData', path.join(app.getPath('appData'), 'grove-bench'));
 // shortcut with the running application (prevents icon from disappearing).
 app.setAppUserModelId('com.parsonsprojects.grove-bench');
 
-// Register built-in agent adapters before anything else uses them
-initAdapters();
+// Register agent adapters before anything else uses them. The user's own
+// ACP agents come from settings, so a change applies after a restart.
+initAdapters(settings.loadSettings().acpAgents);
 
 // Custom schemes can only be registered before the app is ready.
 registerAttachmentScheme();
