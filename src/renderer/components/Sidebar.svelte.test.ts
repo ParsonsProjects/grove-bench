@@ -39,6 +39,7 @@ afterEach(() => {
   store.repos = [];
   store.activeSessionId = null;
   store.finderOpen = false;
+  store.deferredResume = {};
   store.sessionSort = { key: 'name', dir: 'asc' };
   messageStore.messagesBySession = {};
   messageStore.isRunning = {};
@@ -159,6 +160,14 @@ describe('Sidebar session rows', () => {
     expect(done.tagName).toBe('BUTTON');
     expect(done.parentElement!.closest('button')).toBeNull();
     expect(done).toHaveAccessibleName('Mark Sidebar revamp completed');
+  });
+
+  it('offers Mark completed, not delete, on a tab restored at startup', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'stopped', displayName: 'Sidebar revamp' }] as any;
+    store.deferResume('s1');
+    render(Sidebar);
+    expect(screen.getByTitle('Mark completed')).toBeInTheDocument();
+    expect(screen.queryByTitle('Delete conversation')).toBeNull();
   });
 
   it('swaps the age for the quick action on keyboard focus anywhere in the row', async () => {
@@ -361,6 +370,7 @@ describe('Sidebar attention triage', () => {
     mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
     render(Sidebar);
 
+    expect(screen.getByText('1 completed')).toBeInTheDocument();
     await fireEvent.contextMenu(await screen.findByText('Quiet one'));
 
     expect(screen.getByRole('menu')).toBeInTheDocument();

@@ -7,11 +7,15 @@ import { sessionRepoColor } from './session-repo-color.js';
  * The state a conversation's character shows in the sidebar. The wake-up
  * scene uses it too, so the character wears the same colour in both.
  * `destroying` is tracked by the sidebar, which runs the removal.
+ *
+ * A tab restored at startup is 'stopped' until it reconnects, but it is
+ * still open, not completed, so it shows as sleeping: agent off until opened.
  */
 export function sessionSpriteState(session: { id: string; status: string }, destroying = false): AgentSpriteState {
+  const restoredTab = session.status === 'stopped' && !!store.deferredResume[session.id];
   return agentSpriteState({
     destroying,
-    status: session.status,
+    status: restoredTab ? 'sleeping' : session.status,
     hasPending: messageStore.needsInput(session.id),
     isRunning: messageStore.getIsRunning(session.id),
     needsAttention: !!store.needsAttention[session.id],

@@ -8,7 +8,7 @@ Each conversation displays a colored dot in the sidebar indicating its current s
 - **Red**: something went wrong
 - **Gray**: quiet, nothing to do
 
-With **Show grove characters** on, a small pixel agent shows the state instead, wearing the same color. Its pose tells the gray states apart: sitting when ready, asleep when sleeping or stopped. The plain dot does the same with a hollow square for sleeping and stopped. Hover either one to see the state's name.
+With **Show grove characters** on, a small pixel agent shows the state instead, wearing the same color. Its pose tells the gray states apart: sitting when ready, asleep when sleeping or completed. The plain dot does the same with a hollow square for sleeping and completed. Hover either one to see the state's name.
 
 ## Conversation Status
 
@@ -21,8 +21,8 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 | 🟢 Green | Flashing | **Finished a turn** | The agent finished while you were in another conversation |
 | 🔴 Red | None | **Error** | Conversation encountered an error |
 | ⚪ Light gray | None | **Ready** | Conversation is active and idle, waiting for input |
-| ⚫ Gray, hollow | None | **Sleeping** | Idle for a while, so its agent was shut down to save memory and CPU. Still open; wakes when you open it |
-| ⚫ Gray, hollow | None | **Stopped** | Conversation has been stopped |
+| ⚫ Gray, hollow | None | **Sleeping** | Idle for a while, so its agent was shut down to save memory and CPU, or still open from when Grove Bench last closed. Still open; wakes when you open it |
+| ⚫ Gray, hollow | None | **Completed** | You marked the conversation completed |
 | ⚫ Muted | Pulsing | **Deleting** | Conversation is being removed |
 
 If your system is set to reduce motion, the dots stay still.
@@ -35,4 +35,4 @@ If your system is set to reduce motion, the dots stay still.
 - **Red**: Something went wrong. Check the Thread tab for error details. You may need to restart the conversation.
 - **Light gray**: The agent is idle and ready for your next instruction.
 - **Hollow gray, sleeping**: The conversation is asleep. Open it or send it a message and its agent starts again where it left off, with the same mode and "always allow" choices. Its terminal and anything running there were left alone. The agent's page in the Preview tab was closed; your page stays. Set how long a conversation waits before sleeping in Settings → Tending (Background work).
-- **Hollow gray, stopped**: The conversation is stopped. Its agent, background commands and terminal have been shut down, including any dev servers they started. You can send a new message to restart it.
+- **Hollow gray, completed**: You marked the conversation completed. Its agent, background commands and terminal have been shut down, including any dev servers they started. Open it again (`Ctrl+R` finds it) and its agent starts again.

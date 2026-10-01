@@ -5,6 +5,7 @@ import { messageStore } from '../stores/messages.svelte.js';
 
 afterEach(() => {
   store.needsAttention = {};
+  store.deferredResume = {};
   messageStore.setIsRunning('s1', false);
 });
 
@@ -13,6 +14,11 @@ describe('sessionSpriteState', () => {
     expect(sessionSpriteState({ id: 's1', status: 'running' })).toBe('ready');
     expect(sessionSpriteState({ id: 's1', status: 'stopped' })).toBe('stopped');
     expect(sessionSpriteState({ id: 's1', status: 'sleeping' })).toBe('sleeping');
+  });
+
+  it('shows a tab restored at startup as sleeping, not completed', () => {
+    store.deferResume('s1');
+    expect(sessionSpriteState({ id: 's1', status: 'stopped' })).toBe('sleeping');
   });
 
   it('shows a running turn and an unread one', () => {

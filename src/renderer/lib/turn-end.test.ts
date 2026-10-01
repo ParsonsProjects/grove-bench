@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { TurnEndWatcher, TURN_SETTLE_MS } from './turn-end.js';
+import { TurnEndWatcher, TURN_SETTLE_MS, flagsUnread } from './turn-end.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -52,5 +52,20 @@ describe('TurnEndWatcher', () => {
     watcher.update('s2', true);
     vi.advanceTimersByTime(TURN_SETTLE_MS);
     expect(ended).toEqual(['s1']);
+  });
+});
+
+describe('flagsUnread', () => {
+  it('flags a turn that finished in a conversation you are not looking at', () => {
+    expect(flagsUnread({ id: 's1', status: 'running' }, 's2')).toBe(true);
+    expect(flagsUnread({ id: 's1', status: 'running' }, null)).toBe(true);
+  });
+
+  it('does not flag the open conversation', () => {
+    expect(flagsUnread({ id: 's1', status: 'running' }, 's1')).toBe(false);
+  });
+
+  it('does not flag a turn that ended because the conversation was stopped', () => {
+    expect(flagsUnread({ id: 's1', status: 'stopped' }, null)).toBe(false);
   });
 });

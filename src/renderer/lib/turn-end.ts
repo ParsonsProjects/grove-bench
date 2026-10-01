@@ -2,6 +2,16 @@
 export const TURN_SETTLE_MS = 1000;
 
 /**
+ * Whether a finished turn marks its conversation unread: not while you're
+ * looking at it, and not when the turn ended because the conversation was
+ * stopped (marked completed, or its agent shut down), as there is nothing
+ * new to read.
+ */
+export function flagsUnread(session: { id: string; status: string }, activeSessionId: string | null): boolean {
+  return session.id !== activeSessionId && session.status !== 'stopped';
+}
+
+/**
  * Spots conversations finishing a turn: running, then idle for `settleMs`.
  * A turn can look finished for a moment and then carry on (the agent picks
  * up again straight after a result), so a brief idle gap doesn't count. That

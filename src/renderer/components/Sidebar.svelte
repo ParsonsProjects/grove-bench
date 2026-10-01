@@ -675,10 +675,11 @@
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
    *  active sort. This is the always-visible "working set"; the landing's picker shows the same list. */
   let activeSessions = $derived(
-    store.openConversations.filter((s) => matchesTriageFilter(triageFilter, triageOf(s))),
+    store.openConversations.filter(rowVisible),
   );
 
-  let stoppedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
+  /** Conversations marked completed: stopped and not an open tab. */
+  let completedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
 
   /** Attention counts for one repo's header (all of its sessions, any status). */
   function repoCounts(repo: string) {
@@ -815,8 +816,8 @@
         {/if}
       </button>
       {#if !isDestroying}
-        {#if isStopped}
-          <!-- Stopped session: delete (removes the worktree, after asking). -->
+        {#if !store.isOpenTab(session)}
+          <!-- Completed session: delete (removes the worktree, after asking). -->
           <button
             type="button"
             title="Delete conversation"
@@ -829,7 +830,8 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
           </button>
         {:else}
-          <!-- Live session: mark completed (stops the agent but keeps it resumable). -->
+          <!-- Open session (live, or restored and waiting to reconnect, like the
+               context menu): mark completed (stops the agent but keeps it resumable). -->
           <button
             type="button"
             title="Mark completed"
@@ -1003,8 +1005,8 @@
     <div class="flex items-center justify-between mt-5 mb-2 px-1">
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Projects</span>
       <div class="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-        {#if stoppedCount}
-          <span>{stoppedCount} stopped</span>
+        {#if completedCount}
+          <span>{completedCount} completed</span>
         {/if}
       </div>
     </div>
@@ -1198,7 +1200,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
         <Dialog.Description>
-          Remove stopped conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
+          Remove completed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1225,7 +1227,7 @@
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No stopped conversations inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No completed conversations inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>
