@@ -10,6 +10,7 @@
   import { sessionRepoColor } from '../lib/session-repo-color.js';
   import { alwaysAllowLabel } from '../lib/always-allow.js';
   import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
+  import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
 
   let {
     sessionId,
@@ -22,6 +23,7 @@
     decisionReason,
     isPlanExecution = false,
     toolCategory,
+    toolView,
     planText: planTextProp,
   }: {
     sessionId: string;
@@ -35,6 +37,8 @@
     decisionReason?: string;
     isPlanExecution?: boolean;
     toolCategory?: import('../../shared/types.js').ToolCategory;
+    /** The adapter's view of the call; without one it is read as a Claude Code tool. */
+    toolView?: ToolView;
     planText?: string;
   } = $props();
 
@@ -47,14 +51,17 @@
   let pendingDecision = $state<'allow' | 'deny' | null>(null);
 
   let input = $derived(toolInput as Record<string, unknown>);
-  let isEditTool = $derived(toolCategory === 'edit' || toolName === 'Edit' || toolName === 'Write');
-  let isBashTool = $derived(toolCategory === 'bash' || toolName === 'Bash');
+  let view = $derived(toolViewOf({ toolName, toolInput, toolView }));
+  /** File edits Grove can show as a diff (other edits, such as a notebook
+   *  cell, show their raw input). */
+  let isEditTool = $derived(toolCategory === 'edit' || (view.kind === 'edit' && (!!view.edits?.length || view.write !== undefined)));
+  let isBashTool = $derived(toolCategory === 'bash' || view.kind === 'shell');
   let isExitPlanMode = $derived(isPlanExecution);
-  let isWebFetch = $derived(toolCategory === 'web_fetch' || toolName === 'WebFetch' || toolName === 'mcp__WebFetch' || (typeof input?.url === 'string'));
-  let filePath = $derived(isEditTool ? String(input?.file_path ?? input?.filePath ?? '') : '');
-  let bashCommand = $derived(isBashTool ? String(input?.command ?? '') : '');
-  let fetchUrl = $derived(isWebFetch ? String(input?.url ?? '') : '');
-  let diffLines = $derived(isEditTool ? computeDiffLines(toolName, input, filePath) : []);
+  let isWebFetch = $derived(toolCategory === 'web_fetch' || view.kind === 'fetch' || (typeof input?.url === 'string'));
+  let filePath = $derived(isEditTool ? (view.path ?? '') : '');
+  let bashCommand = $derived(isBashTool ? (view.command ?? String(input?.command ?? '')) : '');
+  let fetchUrl = $derived(isWebFetch ? (view.url ?? String(input?.url ?? '')) : '');
+  let diffLines = $derived(isEditTool ? computeDiffLines(view, filePath) : []);
   let alwaysAllow = $derived(alwaysAllowLabel(toolName, toolCategory));
   /** "Approve and start fresh…" clears the conversation, so it asks first. */
   let confirmFresh = $state(false);
@@ -222,7 +229,7 @@
     {:else if !isBashTool}
       <span class="text-muted-foreground truncate flex-1">{summarizeInput(toolInput)}</span>
     {/if}
-    {#if !isResolved && isEditTool && diffLines.length > 0 && toolName === 'Edit'}
+    {#if !isResolved && isEditTool && diffLines.length > 0 && !!view.edits?.length}
       <button
         onclick={() => sideBySide = !sideBySide}
         class="text-xs text-muted-foreground hover:text-foreground select-none shrink-0"

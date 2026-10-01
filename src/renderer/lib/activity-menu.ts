@@ -1,6 +1,7 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import { isRenderedCopyButton, renderedCode, renderedTable } from './copy-mark.js';
 import { isPreviewableMarkdown } from './markdown-detect.js';
+import { toolViewOf } from '../../shared/tool-view.js';
 
 /** Text selected inside a pane, and the Activity row the selection starts in
  *  (null outside the Activity thread, e.g. the diff view). */
@@ -88,28 +89,17 @@ type Entry = Omit<ActivityMenuEntry, 'separator'>;
 
 const copy = (label: string, text: string): Entry => ({ label, action: { kind: 'copy', text } });
 
-function toolInputField(input: unknown, ...keys: string[]): string {
-  if (typeof input !== 'object' || input === null) return '';
-  const record = input as Record<string, unknown>;
-  for (const key of keys) {
-    if (record[key] != null && record[key] !== '') return String(record[key]);
-  }
-  return '';
-}
-
 /** Copy actions for a tool call, matching what its hover buttons copy. */
 function toolCallEntries(msg: Extract<ChatMessage, { kind: 'tool_call' }>): Entry[] {
   const entries: Entry[] = [];
-  const { toolName, toolInput } = msg;
-  if (toolName === 'Bash') {
-    const command = toolInputField(toolInput, 'command');
-    if (command) entries.push(copy('Copy command', command));
-  } else if (toolName === 'Edit' || toolName === 'Write' || toolName === 'Read') {
-    const path = toolInputField(toolInput, 'file_path', 'filePath');
-    if (path) entries.push(copy('Copy path', path));
-  } else if (toolName === 'Grep' || toolName === 'Glob') {
-    const pattern = toolInputField(toolInput, 'pattern');
-    if (pattern) entries.push(copy('Copy pattern', pattern));
+  const { toolInput } = msg;
+  const view = toolViewOf(msg);
+  if (view.kind === 'shell') {
+    if (view.command) entries.push(copy('Copy command', view.command));
+  } else if ((view.kind === 'edit' || view.kind === 'read') && view.path) {
+    entries.push(copy('Copy path', view.path));
+  } else if (view.kind === 'search' && view.pattern) {
+    entries.push(copy('Copy pattern', view.pattern));
   } else if (toolInput != null) {
     const json = JSON.stringify(toolInput, null, 2);
     if (json !== '{}') entries.push(copy('Copy input', json));

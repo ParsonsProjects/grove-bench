@@ -1,38 +1,41 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
+  import type { ToolView } from '../../shared/tool-view.js';
 
   let {
     sessionId,
     toolName,
-    toolInput,
+    view,
     result,
     pending,
     isError,
   }: {
     sessionId: string;
     toolName: string;
-    toolInput: unknown;
+    /** The read or search call (see shared/tool-view.ts). */
+    view: ToolView;
     result?: string;
     pending: boolean;
     isError?: boolean;
   } = $props();
 
+  /** A file read, which can open in the editor (a search names a folder or nothing). */
+  let isFileRead = $derived(view.kind === 'read' && !!view.path);
+
   function openInEditor() {
-    if (toolName === 'Read' && filePath) {
-      window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
+    if (isFileRead && view.path) {
+      window.groveBench.openInEditor(sessionId, view.path).catch(() => {});
     }
   }
 
   let collapsed = $state(true);
-  let input = $derived(toolInput as Record<string, unknown>);
 
-  let filePath = $derived(String(input?.file_path ?? input?.pattern ?? input?.path ?? ''));
+  /** What the copy button copies: the file read, or the search pattern. */
+  let filePath = $derived(view.kind === 'search' ? (view.pattern ?? view.path ?? '') : (view.path ?? ''));
 
   let summary = $derived.by(() => {
-    if (toolName === 'Read') return filePath;
-    if (toolName === 'Grep') return `grep: ${input?.pattern ?? ''}`;
-    if (toolName === 'Glob') return `glob: ${input?.pattern ?? ''}`;
-    return filePath;
+    if (view.kind === 'search') return `${toolName.toLowerCase()}: ${view.pattern ?? ''}`;
+    return view.path ?? '';
   });
 
   let resultLines = $derived(result ? result.split('\n') : []);
@@ -42,7 +45,7 @@
 <div class="py-1 my-1 border-l-4 border-border pl-3">
   <div class="flex items-center gap-2 text-xs group/fop-hdr">
     <span class="text-muted-foreground font-bold">{toolName}</span>
-    {#if toolName === 'Read' && filePath}
+    {#if isFileRead}
       <button
         onclick={openInEditor}
         class="text-foreground/80 truncate flex-1 text-left hover:text-primary hover:underline cursor-pointer"

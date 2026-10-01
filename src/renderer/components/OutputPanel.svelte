@@ -481,6 +481,7 @@
           {sessionId}
           toolName={msg.toolName}
           toolInput={msg.toolInput}
+          toolView={msg.toolView}
           result={msg.result}
           isError={msg.isError}
           pending={msg.pending}
@@ -500,6 +501,7 @@
           decisionReason={msg.decisionReason}
           isPlanExecution={msg.isPlanExecution}
           toolCategory={msg.toolCategory}
+          toolView={msg.toolView}
           planText={msg.planText}
         />
 

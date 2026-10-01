@@ -209,3 +209,38 @@ describe('isReadOnlyBashCommand — general commands', () => {
     expect(isReadOnlyBashCommand('   ', CWD)).toBe(false);
   });
 });
+
+describe('isReadOnlyToolCall with an adapter view', () => {
+  it('allows reads and searches whose paths are all inside the worktree', () => {
+    expect(isReadOnlyToolCall('read_file', {}, CWD, { kind: 'read', path: 'src/a.ts' })).toBe(true);
+    expect(isReadOnlyToolCall('grep', {}, CWD, { kind: 'search', pattern: 'x', path: path.join(CWD, 'src') })).toBe(true);
+    expect(isReadOnlyToolCall('read_many', {}, CWD, { kind: 'read', path: 'a.ts', morePaths: ['b.ts'] })).toBe(true);
+  });
+
+  it('prompts for reads that name no path or reach outside the worktree', () => {
+    expect(isReadOnlyToolCall('read_file', {}, CWD, { kind: 'read' })).toBe(false);
+    expect(isReadOnlyToolCall('read_file', {}, CWD, { kind: 'read', path: '../secret' })).toBe(false);
+    expect(isReadOnlyToolCall('read_many', {}, CWD, { kind: 'read', path: 'a.ts', morePaths: [path.resolve('/etc/passwd')] })).toBe(false);
+    expect(isReadOnlyToolCall('read_file', {}, undefined, { kind: 'read', path: 'a.ts' })).toBe(false);
+  });
+
+  it('runs commands through the shell allowlist', () => {
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'git status' })).toBe(true);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'rm -rf src' })).toBe(false);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell' })).toBe(false);
+  });
+
+  it('refuses commands another shell could run code from', () => {
+    // PowerShell runs a parenthesised command, cmd.exe expands %VAR%.
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'echo (Remove-Item src)' })).toBe(false);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'echo @(Remove-Item src)' })).toBe(false);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'echo %PATH%' })).toBe(false);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'echo $env:PATH' })).toBe(false);
+  });
+
+  it('prompts for edits and everything else', () => {
+    expect(isReadOnlyToolCall('Read', { file_path: 'a.ts' }, CWD, { kind: 'edit', path: 'a.ts' })).toBe(false);
+    expect(isReadOnlyToolCall('fetch', {}, CWD, { kind: 'fetch', url: 'https://x.dev' })).toBe(false);
+    expect(isReadOnlyToolCall('think', {}, CWD, { kind: 'other' })).toBe(false);
+  });
+});

@@ -852,10 +852,11 @@ class AgentSessionManager {
     // When leaving an edit-accepting mode (acceptEdits, readSafe or auto),
     // clear always-allowed edit tools so switching back to default/plan
     // re-enables permission prompts for edits.
-    // These tool names must match the adapter's 'edit' category (see categorizeToolName).
+    // Claude Code's edit tools, plus whatever tools this agent has asked to
+    // run as edits (the 'edit' category, recorded by requestPermission).
     const acceptsEdits = (m: string) => m === 'acceptEdits' || m === 'readSafe' || m === 'auto';
     if (acceptsEdits(prevMode) && !acceptsEdits(mode)) {
-      for (const tool of ['Edit', 'Write', 'MultiEdit']) {
+      for (const tool of ['Edit', 'Write', 'MultiEdit', ...(session.editToolNames ?? [])]) {
         session.alwaysAllowedTools.delete(tool);
       }
     }

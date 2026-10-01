@@ -4,12 +4,15 @@
   let {
     toolName,
     toolInput,
+    summary,
     result,
     pending,
     isError,
   }: {
     toolName: string;
     toolInput: unknown;
+    /** What the call does in a line, when its view has one (an agent's title). */
+    summary?: string;
     result?: string;
     pending: boolean;
     isError?: boolean;
@@ -42,7 +45,7 @@
     class="w-full flex items-center gap-2 text-left text-xs hover:bg-accent/30 -ml-1 pl-1 py-0.5"
   >
     <span class="text-muted-foreground font-bold">{toolName}</span>
-    <span class="text-muted-foreground/70 truncate flex-1">{summarizeInput(toolInput)}</span>
+    <span class="text-muted-foreground/70 truncate flex-1">{summary || summarizeInput(toolInput)}</span>
     {#if pending}
       <span class="w-2.5 h-2.5 bg-primary animate-pulse shrink-0"></span>
     {:else if isError}

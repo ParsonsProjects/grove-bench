@@ -2,6 +2,7 @@ import type { ChatMessage } from '../stores/messages.svelte.js';
 import { userMessageLabel } from './message-label.js';
 import { approvalRequest, toolLabel } from './tool-names.js';
 import { oneLine, plainSnippet } from '../../shared/plain-text.js';
+import type { ToolView } from '../../shared/tool-view.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
 export type SubtitleTone = 'working' | 'waiting' | 'context';
@@ -27,6 +28,17 @@ export function pendingPermissionTool(messages: ChatMessage[]): string | null {
     if ((m.kind === 'question' || m.kind === 'elicitation') && !m.resolved) return 'question';
   }
   return null;
+}
+
+/** The view the adapter gave the tool awaiting approval (see
+ *  shared/tool-view.ts), when it gave one. */
+export function pendingPermissionView(messages: ChatMessage[]): ToolView | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.kind === 'permission' && !m.resolved) return m.toolView;
+    if ((m.kind === 'question' || m.kind === 'elicitation') && !m.resolved) return undefined;
+  }
+  return undefined;
 }
 
 /** Most recent user/assistant text in the loaded messages (slash commands skipped). */
@@ -60,6 +72,8 @@ export interface SubtitleInput {
   activity: { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; toolSummary?: string };
   /** Tool awaiting user approval (null when none). */
   pendingTool: string | null;
+  /** The adapter's view of that tool, when it gave one. */
+  pendingToolView?: ToolView;
   /** Most recent conversation text (loaded messages or main-process preview). */
   lastText: string | null;
   /** First user prompt (loaded messages or main-process preview). */
@@ -74,7 +88,7 @@ export interface SubtitleInput {
 export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
   if (input.pendingTool) {
     return {
-      text: input.pendingTool === 'question' ? 'Waiting for your answer' : capitalise(approvalRequest(input.pendingTool)),
+      text: input.pendingTool === 'question' ? 'Waiting for your answer' : capitalise(approvalRequest(input.pendingTool, input.pendingToolView)),
       tone: 'waiting',
     };
   }

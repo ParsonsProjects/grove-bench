@@ -2530,3 +2530,43 @@ describe('rewind', () => {
     expect(messageStore.preservedEditHistory[ID]?.map((f) => f.filePath)).toEqual(['a.ts']);
   });
 });
+
+describe('ingestEvent — tool views', () => {
+  it('keeps the view an adapter attached to a tool call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'run_shell_command', toolInput: {}, toolUseId: 't1', uuid: 'u1',
+      toolView: { kind: 'shell', command: 'npm test' },
+    });
+    const msg = messageStore.getMessages(SID).find((m) => m.kind === 'tool_call');
+    expect(msg && msg.kind === 'tool_call' && msg.toolView).toEqual({ kind: 'shell', command: 'npm test' });
+  });
+
+  it('fills in a tool call and its permission prompt from tool_update', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'edit', toolInput: {}, toolUseId: 't2', uuid: 'u2',
+      toolView: { kind: 'edit', summary: 'Editing' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'edit', toolInput: {}, toolUseId: 't2', requestId: 'r2', toolCategory: 'edit',
+      toolView: { kind: 'edit', summary: 'Editing' },
+    });
+    const view = { kind: 'edit' as const, path: 'a.ts', edits: [{ oldText: 'a', newText: 'b' }] };
+    messageStore.ingestEvent(SID, { type: 'tool_update', toolUseId: 't2', toolName: 'replace', toolView: view });
+    const msgs = messageStore.getMessages(SID);
+    const call = msgs.find((m) => m.kind === 'tool_call');
+    const perm = msgs.find((m) => m.kind === 'permission');
+    expect(call && call.kind === 'tool_call' && [call.toolName, call.toolView]).toEqual(['replace', view]);
+    expect(perm && perm.kind === 'permission' && perm.toolView).toEqual(view);
+  });
+
+  it('lists edits from adapter views in the turn\'s file changes', () => {
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'go' });
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'edit', toolInput: {}, toolUseId: 't3', uuid: 'u3',
+      toolView: { kind: 'edit', path: '/w/a.ts', edits: [{ oldText: 'a', newText: 'b' }] },
+    });
+    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 't3', content: 'ok' });
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
+    expect(messageStore.getLastTurnFileChanges(SID).map((c) => c.filePath)).toEqual(['/w/a.ts']);
+  });
+});

@@ -2,6 +2,7 @@
   import { untrack, type Snippet } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
+  import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
   import { hunkLineIndices } from '../lib/diff-highlight.js';
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
@@ -993,8 +994,7 @@
           <div class="mt-2 border-t border-border/50 pt-2">
             <div class="text-xs text-muted-foreground mb-1.5 font-medium">Edit History</div>
             {#each history.edits as edit, idx}
-              {@const input = edit.toolInput as Record<string, unknown>}
-              {@const editDiffLines = computeDiffLines(edit.toolName, input, selectedEntry.filePath)}
+              {@const editDiffLines = computeDiffLines(toolViewOf(edit), selectedEntry.filePath)}
               {#if editDiffLines.length > 0}
                 <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
                   <div class="text-[10px] text-muted-foreground/60 mb-1">
