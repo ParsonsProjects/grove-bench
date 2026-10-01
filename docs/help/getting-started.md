@@ -50,7 +50,7 @@ When the agent is done, its work sits on the conversation's own branch, in a sep
    - **Create PR** in the status bar pushes the branch and opens a pull request. It shows when the GitHub CLI (`gh`) is installed and signed in.
    - Without it, **& Push** next to **Commit** pushes the branch so you can open a pull request on your git host's website.
    - To merge without a pull request, run `git merge <branch>` in your project folder. The branch name is shown in the status bar.
-4. **Tidy up**: right-click the conversation and choose **Mark Completed** to hide it, or **Delete Conversation** to remove its copy of the project.
+4. **Tidy up**: right-click the conversation and choose **Mark Completed** to stop its agent and take it off the Conversations list, or **Delete Conversation** to remove its copy of the project.
 
 A conversation that works in the **Project folder** changes your files in place, so there is nothing to merge. The same goes for every conversation in a project used without git.
 

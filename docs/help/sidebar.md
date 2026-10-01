@@ -39,21 +39,20 @@ The same three counts appear on each project header, so you can see at a glance 
 
 ## Completed conversations
 
-When a piece of work is done, right-click the conversation and choose **Mark Completed**. Completed conversations are hidden from both lists and a **Show completed** toggle appears next to the Projects header. They show a check mark when visible, can be reopened from the context menu, and reopen automatically if you send them another message.
+When a piece of work is done, right-click the conversation and choose **Mark Completed**, or hover it and click the tick. This shuts down its agent, background commands and terminal, including any dev servers they started, and takes it off the **Conversations** list. Its status shows as **Stopped**. Its copy of the project and its branch are kept, so you can go back to it: press `Ctrl+R` to find it, or `Ctrl+Shift+T` for the last one you marked completed. Opening it starts its agent again and puts it back under **Conversations**.
 
 ## Context Menu
 
 Right-click a conversation to access:
 
 - **Rename** — Give the conversation a custom display name
-- **Mark Completed** / **Reopen** — Hide a finished conversation, or bring it back
 - **Open Folder** — Open the worktree directory in your file explorer
-- **Stop** — Shut down a live conversation's agent but keep the conversation, so you can pick it up again later
+- **Mark Completed** — Shut down a live conversation's agent and take it off the Conversations list, but keep the conversation, so you can pick it up again later
 - **Delete Conversation**: remove the conversation and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
 
-Hovering a row, or moving to it with Tab, also shows a quick button: a power icon to stop a live conversation, or a bin to delete a stopped one (it asks first).
+Hovering a row, or moving to it with Tab, also shows a quick button: a tick to mark a live conversation completed, or a bin to delete a stopped one (it asks first).
 
-Stopping or deleting the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
+Marking completed or deleting the conversation you have open takes you back to the landing screen. It doesn't open another conversation in its place.
 
 Grove Bench also starts on the landing screen. The conversations you had open are listed there and under **Conversations**, and none of them starts its agent until you open it.
 
