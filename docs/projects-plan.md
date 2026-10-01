@@ -243,7 +243,7 @@ What the prototype does:
   (`SidebarGroups.svelte`), shown once there are two projects or any group. The
   conversation menu adds New Group, Add to, Move to and Remove from. A grouped
   row shows its group's name. The group header has attention counts, a + for a
-  new conversation, Ungroup, and a menu with Rename and Mark all completed.
+  new conversation, Ungroup, and a menu with Rename and Close all conversations.
 - **New conversation in a group.** The draft opens in the first project the
   group has nothing in yet, with the group's branch name (the first member's
   real branch: not a placeholder, not direct); in a project the group already

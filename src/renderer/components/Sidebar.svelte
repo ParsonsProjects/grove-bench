@@ -152,7 +152,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'destroy' | 'check' | 'add' | 'close';
+    icon: 'rename' | 'folder' | 'destroy' | 'add' | 'close' | 'ungroup';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -165,11 +165,12 @@
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
     ];
-    // Mark Completed stops a live session (it was called Stop) but keeps it
-    // resumable from Ctrl+R; not shown for already-stopped ones. For an open
-    // tab still waiting to reconnect it just closes the tab.
+    // Close Conversation stops a live session (it was called Stop, then Mark
+    // Completed) but keeps it resumable from Ctrl+R; not shown for
+    // already-stopped ones. For an open tab still waiting to reconnect it
+    // just closes the tab.
     if (store.isOpenTab(session)) {
-      items.push({ label: 'Mark Completed', icon: 'check', action: () => stopSession(sessionId) });
+      items.push({ label: 'Close Conversation', icon: 'close', action: () => requestClose([sessionId]) });
     }
     items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
@@ -184,7 +185,7 @@
     const current = groupStore.groupOf(sessionId);
     const items: MenuItem[] = [];
     if (current) {
-      items.push({ label: `Remove from ${current.name}`, icon: 'close', action: () => groupStore.remove(sessionId) });
+      items.push({ label: `Remove from ${current.name}`, icon: 'ungroup', action: () => groupStore.remove(sessionId) });
     }
     for (const g of groupStore.groups) {
       if (g.id === current?.id) continue;
@@ -406,10 +407,10 @@
     store.clearNeedsAttention(id);
   }
 
-  /** Mark Completed: stop a session non-destructively. Shuts down its agent,
+  /** Close Conversation: stop a session non-destructively. Shuts down its agent,
    *  background tasks and terminal (freeing any ports they held) but keeps the
    *  worktree so it can be resumed by clicking it (auto-resume in App.svelte).
-   *  Done means dealt with, so it no longer counts as unread. */
+   *  Closing it means it was dealt with, so it no longer counts as unread. */
   async function stopSession(id: string) {
     store.pushRecentlyClosed(id);
     store.clearNeedsAttention(id);
@@ -424,6 +425,28 @@
     try {
       await window.groveBench.closeSession(id);
     } catch { /* session may already be dead */ }
+  }
+
+  /** What closing does: the quick ✕'s tooltip, and its description for
+   *  screen readers (which already read its name, so it isn't repeated). */
+  const CLOSE_HINT = 'Stops the agent and terminal and takes it off the Conversations list. Open it again any time.';
+
+  /** Conversations waiting on the close confirmation, and how many of them
+   *  were mid-turn when it was asked. */
+  let confirmClose = $state<{ ids: string[]; midTurn: number } | null>(null);
+
+  /** Close conversations, asking first when any is in the middle of a turn:
+   *  closing stops that turn, and the ✕ is easy to click in passing. */
+  function requestClose(ids: string[]) {
+    const midTurn = ids.filter((id) => messageStore.getIsRunning(id)).length;
+    if (midTurn > 0) confirmClose = { ids, midTurn };
+    else for (const id of ids) void stopSession(id);
+  }
+
+  function closeConfirmed() {
+    const ids = confirmClose?.ids ?? [];
+    confirmClose = null;
+    for (const id of ids) void stopSession(id);
   }
 
   /** Open a draft conversation in `repo` (default: the open conversation's
@@ -701,8 +724,8 @@
     store.openConversations.filter(rowVisible),
   );
 
-  /** Conversations marked completed: stopped and not an open tab. */
-  let completedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
+  /** Closed conversations: stopped and not an open tab. */
+  let closedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
 
   /** Attention counts for a header (a project's or a group's conversations,
    *  any status). */
@@ -735,6 +758,8 @@
   class="relative border-r border-sidebar-border flex flex-col bg-sidebar shrink-0"
   style="width: {collapsed ? RAIL_WIDTH : sidebarWidth}px"
 >
+  <!-- Described once, for every row's ✕. -->
+  <span id="close-conversation-hint" hidden>{CLOSE_HINT}</span>
   <!-- Bookmarks, memory, clean-up and settings: in the footer, or down the rail -->
   {#snippet footerTools()}
     <Button
@@ -789,7 +814,7 @@
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
     <!-- Faded a little while its agent is off, matching its character: asleep
-         (back when opened), and a step further once completed. -->
+         (back when opened), and a step further once closed. -->
     {@const spriteState = sessionSpriteState(session, isDestroying)}
     {@const restFade = spriteState === 'stopped' ? 'opacity-60' : spriteState === 'sleeping' ? 'opacity-70' : ''}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
@@ -852,7 +877,7 @@
       </button>
       {#if !isDestroying}
         {#if !store.isOpenTab(session)}
-          <!-- Completed session: delete (removes the worktree, after asking). -->
+          <!-- Closed session: delete (removes the worktree, after asking). -->
           <button
             type="button"
             title="Delete conversation"
@@ -866,16 +891,17 @@
           </button>
         {:else}
           <!-- Open session (live, or restored and waiting to reconnect, like the
-               context menu): mark completed (stops the agent but keeps it resumable). -->
+               context menu): close it (stops the agent but keeps it resumable). -->
           <button
             type="button"
-            title="Mark completed"
-            aria-label="Mark {label} completed"
-            onclick={() => stopSession(session.id)}
+            title={`Close conversation\n${CLOSE_HINT}`}
+            aria-label="Close conversation {label}"
+            aria-describedby="close-conversation-hint"
+            onclick={() => requestClose([session.id])}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
               hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         {/if}
       {/if}
@@ -1044,7 +1070,7 @@
       row={sessionRow}
       {rowVisible}
       countsFor={headerCounts}
-      markCompleted={(id) => void stopSession(id)}
+      stopSessions={requestClose}
       filterLabel={triageFilter === 'all' ? null : TRIAGE_FILTER_LABELS[triageFilter]}
     />
 
@@ -1052,8 +1078,8 @@
     <div class="flex items-center justify-between mt-5 mb-2 px-1">
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Projects</span>
       <div class="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-        {#if completedCount}
-          <span>{completedCount} completed</span>
+        {#if closedCount}
+          <span>{closedCount} closed</span>
         {/if}
       </div>
     </div>
@@ -1238,7 +1264,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
         <Dialog.Description>
-          Remove completed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
+          Remove closed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1265,7 +1291,7 @@
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No completed conversations inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No closed conversations inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>
@@ -1366,6 +1392,32 @@
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmCleanup = false}>Cancel</Button>
         <Button variant="destructive" onclick={runCleanup}>Remove</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Close confirmation: only asked when a conversation is in the middle of a turn -->
+{#if confirmClose}
+  {@const { ids, midTurn } = confirmClose}
+  {@const one = ids.length === 1 ? store.sessions.find((s) => s.id === ids[0]) : null}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmClose = null; }}>
+    <Dialog.Content class="max-w-sm">
+      <Dialog.Header>
+        <Dialog.Title>{ids.length === 1 ? 'Close conversation?' : `Close ${ids.length} conversations?`}</Dialog.Title>
+        <Dialog.Description>
+          {#if one}
+            <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> is in the middle of a turn.
+            Closing it stops the turn and shuts down its terminal. You can open it again later.
+          {:else}
+            {midTurn} of them {midTurn === 1 ? 'is' : 'are'} in the middle of a turn.
+            Closing stops {midTurn === 1 ? 'that turn' : 'those turns'} and shuts down their terminals. You can open them again later.
+          {/if}
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmClose = null}>Cancel</Button>
+        <Button variant="destructive" onclick={closeConfirmed}>Stop and close</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
