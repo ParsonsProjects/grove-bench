@@ -206,12 +206,12 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
 
 /** How the CLI answers a resume of a conversation it no longer has (its
  *  transcript was deleted or moved): an error result, before any init. */
-const MISSING_CONVERSATION_RE = /^No conversation found with session ID\b/;
+const MISSING_CONVERSATION_RE = /No conversation found with session ID\b/;
 
 /** The CLI's "No conversation found" error, when `message` is that result. */
 export function missingConversationError(message: SDKMessage): string | null {
   if (message.type !== 'result' || !message.is_error || !('errors' in message)) return null;
-  return message.errors.find((e) => MISSING_CONVERSATION_RE.test(e.trim())) ?? null;
+  return message.errors.find((e) => MISSING_CONVERSATION_RE.test(e)) ?? null;
 }
 
 /**

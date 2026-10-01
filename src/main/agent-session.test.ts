@@ -3077,9 +3077,11 @@ describe('AgentSessionManager wake-from-sleep', () => {
 });
 
 describe('AgentSessionManager resume of a missing conversation', () => {
-  /** Resume `providerSessionId` and fail the run the way Claude Code does
-   *  when that conversation's transcript is gone. */
-  async function resumeMissing(id: string, providerSessionId?: string) {
+  const missing = (providerSessionId?: string) =>
+    new ResumeNotFoundError(`No conversation found with session ID: ${providerSessionId}`);
+
+  /** Start a session resuming `providerSessionId`; returns once its query is up. */
+  async function startResume(id: string, providerSessionId?: string) {
     const win = makeMockWindow();
     await sessionManager.createSession({
       id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
@@ -3087,12 +3089,20 @@ describe('AgentSessionManager resume of a missing conversation', () => {
     });
     await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).not.toBeNull());
     await new Promise((r) => setTimeout(r, 10));
-    mockAdapter.control!.error(new ResumeNotFoundError(`No conversation found with session ID: ${providerSessionId}`));
+    return win;
+  }
+
+  /** Resume `providerSessionId` and fail the run the way Claude Code does
+   *  when that conversation's transcript is gone. */
+  async function resumeMissing(id: string, providerSessionId?: string) {
+    const win = await startResume(id, providerSessionId);
+    mockAdapter.control!.error(missing(providerSessionId));
     return win;
   }
 
   const eventsOf = (win: ReturnType<typeof makeMockWindow>) =>
     win._send.mock.calls.map(([, event]: [string, AgentEvent | string]) => event).filter((e: unknown) => typeof e === 'object') as AgentEvent[];
+  const sentTexts = (handle: AgentQueryHandle) => vi.mocked(handle.sendMessage).mock.calls.map(([m]) => m.text);
 
   it('forgets the missing conversation and starts a new one', async () => {
     const win = await resumeMissing('test-gone', 'gone-id');
@@ -3105,7 +3115,7 @@ describe('AgentSessionManager resume of a missing conversation', () => {
 
     const events = eventsOf(win);
     expect(events).toContainEqual(expect.objectContaining({
-      type: 'status', level: 'warning', message: expect.stringContaining("couldn't find this conversation"),
+      type: 'status', level: 'warning', newConversation: true, message: expect.stringContaining("couldn't find this conversation"),
     }));
     // Not reported as stopped: the renderer would resume the same id again.
     expect(events.some((e) => e.type === 'process_exit' || e.type === 'error')).toBe(false);
@@ -3131,6 +3141,57 @@ describe('AgentSessionManager resume of a missing conversation', () => {
     await sessionManager.destroySession('test-gone-send');
   });
 
+  it('sends the new conversation a prompt the missing one never answered, ahead of later ones', async () => {
+    await startResume('test-gone-early', 'gone-id');
+    const oldHandle = mockAdapter.lastHandle!;
+    // Sent while the agent is still starting, before it reports the error.
+    expect(await sessionManager.sendMessage('test-gone-early', 'early')).toBe(true);
+    expect(sentTexts(oldHandle)).toEqual(['early']);
+
+    mockAdapter.control!.error(missing('gone-id'));
+    const later = sessionManager.sendMessage('test-gone-early', 'later');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    const newHandle = mockAdapter.lastHandle!;
+    expect(await later).toBe(true);
+    await vi.waitFor(() => expect(sentTexts(newHandle)).toEqual(['early', 'later']));
+    // A turn is running, so the conversation can't be put to sleep under it.
+    expect(sessionManager.getSession('test-gone-early')?.turnHandle).toBe(newHandle);
+
+    await sessionManager.destroySession('test-gone-early');
+  });
+
+  it('does not resend prompts the agent already had once it reported in', async () => {
+    await startResume('test-gone-init', 'kept-id');
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'kept-id', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-gone-init')?.status).toBe('running'));
+    await sessionManager.sendMessage('test-gone-init', 'answered');
+
+    expect(sessionManager.getSession('test-gone-init')?.promptsBeforeInit).toBeNull();
+
+    await sessionManager.destroySession('test-gone-init');
+  });
+
+  it('holds no prompts for a fresh conversation, which has nothing to lose', async () => {
+    await startResume('test-gone-none');
+    await sessionManager.sendMessage('test-gone-none', 'hi');
+
+    expect(sessionManager.getSession('test-gone-none')?.promptsBeforeInit).toBeNull();
+
+    await sessionManager.destroySession('test-gone-none');
+  });
+
+  it('tells the renderer when the new conversation fails to start', async () => {
+    const win = await startResume('test-gone-fail', 'gone-id');
+    mockAdapter.start = vi.fn(async () => { throw new Error('spawn failed'); });
+    mockAdapter.control!.error(missing('gone-id'));
+
+    await vi.waitFor(() => expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-gone-fail', 'error'));
+    expect(sessionManager.getSession('test-gone-fail')?.status).toBe('error');
+
+    await sessionManager.destroySession('test-gone-fail');
+  });
+
   it('reports the error when the run was not a resume', async () => {
     const win = await resumeMissing('test-gone-fresh');
 
@@ -3139,6 +3200,86 @@ describe('AgentSessionManager resume of a missing conversation', () => {
     expect(eventsOf(win)).toContainEqual(expect.objectContaining({ type: 'error' }));
 
     await sessionManager.destroySession('test-gone-fresh');
+  });
+
+  describe('rewind afterwards', () => {
+    /** Turns one and two ran in a conversation whose transcript then went
+     *  missing on a restart; three and four ran in the new one. */
+    async function conversationAfterSwitch(id: string) {
+      const win = makeMockWindow();
+      await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+      await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+      const turn = async (text: string, replyUuid?: string) => {
+        await sessionManager.sendMessage(id, text);
+        if (replyUuid) mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'reply', uuid: replyUuid });
+        mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+        await new Promise((r) => setTimeout(r, 20));
+      };
+      mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+      await turn('one', 'old-1');
+      await turn('two', 'old-2');
+
+      // Restarted on the same transcript, which is gone by now.
+      await sessionManager.stopQuery(id);
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+      expect(mockAdapter.lastConfig?.resumeSessionId).toBe('mock-session-id');
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBe(mockAdapter.lastHandle));
+      await new Promise((r) => setTimeout(r, 10));
+      mockAdapter.control!.error(missing('mock-session-id'));
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(3));
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBe(mockAdapter.lastHandle));
+
+      mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+      await turn('three', 'new-1');
+      await turn('four');
+
+      const session = sessionManager.getSession(id)!;
+      const uuidOf = (text: string) =>
+        (session.eventHistory.find((e) => e.type === 'user_message' && e.text === text) as { uuid: string }).uuid;
+      const rewind = async (text: string) => {
+        await sessionManager.rewindFiles(id, uuidOf(text));
+        await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(4));
+      };
+      return { session, rewind };
+    }
+
+    const markers = (events: AgentEvent[]) => events.filter((e) => e.type === 'status' && e.newConversation);
+
+    it('forks inside the new conversation', async () => {
+      const { rewind } = await conversationAfterSwitch('test-gone-rw-fork');
+      await rewind('four');
+
+      expect(mockAdapter.lastConfig?.resumeAtUuid).toBe('new-1');
+
+      await sessionManager.destroySession('test-gone-rw-fork');
+    });
+
+    it('starts over, not forking into the lost conversation, from the new one\'s first message', async () => {
+      const { session, rewind } = await conversationAfterSwitch('test-gone-rw-first');
+      await rewind('three');
+
+      expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+      expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+      // The marker from the switch still bounds the kept turns.
+      expect(markers(session.eventHistory)).toHaveLength(1);
+
+      await sessionManager.destroySession('test-gone-rw-first');
+    });
+
+    it('starts over from a message in the lost conversation and marks where', async () => {
+      const { session, rewind } = await conversationAfterSwitch('test-gone-rw-old');
+      await rewind('two');
+
+      expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+      expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+      // The switch's marker went with the rewound turns; old-1 is still kept,
+      // so a new marker stops a later rewind from forking at it.
+      expect(markers(session.eventHistory)).toEqual([expect.objectContaining({ message: expect.stringContaining('starts a new conversation from here') })]);
+      const markerAt = session.eventHistory.findIndex((e) => e.type === 'status' && e.newConversation);
+      expect(markerAt).toBeGreaterThan(session.eventHistory.findIndex((e) => e.type === 'assistant_text' && e.uuid === 'old-1'));
+
+      await sessionManager.destroySession('test-gone-rw-old');
+    });
   });
 });
 

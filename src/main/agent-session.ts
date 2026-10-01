@@ -10,10 +10,10 @@ import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import { adapterRegistry } from './adapters/index.js';
-import type { AgentAdapter, AgentQueryHandle } from './adapters/types.js';
+import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
-import { findRewindForkPoint, isAuthFailure } from './agent-utils.js';
+import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
@@ -220,6 +220,7 @@ class AgentSessionManager {
       statusBeforeSleep: null,
       sleepSettled: null,
       turnHandle: null,
+      promptsBeforeInit: null,
     };
 
     this.sessions.set(id, session);
@@ -273,8 +274,9 @@ class AgentSessionManager {
   }
 
   /** Relaunch a query loop after a stop/restart that arrived during startup.
-   *  Clears the startup guard first so the new run isn't itself deferred. */
-  private relaunchQuery(session: ManagedSession): void {
+   *  Clears the startup guard first so the new run isn't itself deferred.
+   *  `resend` goes to the new query first (see runQuery). */
+  private relaunchQuery(session: ManagedSession, resend: UserMessage[] = []): void {
     session.isStartingQuery = false;
     session.restartRequested = false;
     // The stop that triggered this relaunch is now being consumed by starting a
@@ -282,18 +284,24 @@ class AgentSessionManager {
     // the next natural completion of the new run.
     session.stoppedByUser = false;
     const emit = session.emit ?? this.createEmitter(session);
-    this.runQuery(session, emit).catch((err) => {
+    this.runQuery(session, emit, resend).catch((err) => {
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
       const errMsg = String(err?.message || err);
       const isAuthError = isAuthFailure(errMsg);
       emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
       session.status = 'error';
+      if (!session.window.isDestroyed()) {
+        session.window.webContents.send(IPC.SESSION_STATUS, session.id, 'error');
+      }
     });
   }
 
+  /** `resend`: prompts to send the new query before any other, carried over
+   *  from a run whose conversation turned out to be gone. */
   private async runQuery(
     session: ManagedSession,
     emit: (event: AgentEvent) => void,
+    resend: UserMessage[] = [],
   ) {
     const { id, abortController } = session;
 
@@ -464,6 +472,17 @@ class AgentSessionManager {
 
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // Only a resumed conversation can turn out to be missing.
+    session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
+    // Before resolving queryReady below, so they go ahead of sends waiting on it.
+    for (const prompt of resend) {
+      session.turnHandle = handle;
+      try {
+        handle.sendMessage(prompt);
+      } catch (e) {
+        logger.warn(`[runQuery] session=${id} failed to resend a prompt:`, e);
+      }
+    }
     // The truncated resume (if any) has been consumed by this start — later
     // restarts must resume the forked conversation normally.
     if (resumeAtUuid && session.pendingResumeAt === resumeAtUuid) {
@@ -479,9 +498,6 @@ class AgentSessionManager {
 
     // Show a connecting message in the thread while waiting for system_init
     emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
-
-    // Set when the agent no longer has the conversation this run resumed.
-    let conversationGone = false;
 
     // Process event stream from the adapter
     try {
@@ -510,6 +526,7 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          if (session.promptsBeforeInit?.handle === handle) session.promptsBeforeInit = null;
           // Remember reported skills so the disabled-skills allowlist can
           // include plugin skills the on-disk scan can't see.
           if (event.skills && event.skills.length > 0) {
@@ -616,14 +633,8 @@ class AgentSessionManager {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
       } else if (err instanceof ResumeNotFoundError && resumingProviderSession) {
-        // Its transcript is gone (deleted or moved). Forget the id, or every
-        // restart would resume it and fail the same way; a new conversation
-        // starts below.
-        logger.warn(`[runQuery] session=${id} provider session ${session.providerSessionId} not found, starting a new conversation:`, err.message);
-        session.providerSessionId = null;
-        session.pendingResumeAt = null;
-        worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
-        conversationGone = true;
+        this.replaceMissingConversation(session, handle, emit, err.message);
+        return;
       } else {
         const errMsg = err?.message || String(err);
         const stderr = err?.stderr || err?.cause?.stderr || '';
@@ -665,28 +676,6 @@ class AgentSessionManager {
       return;
     }
 
-    // The conversation it resumed is gone: start a new one in its place
-    // rather than report the agent stopped, which the renderer answers by
-    // resuming the same missing conversation again. The relaunch can't
-    // loop: providerSessionId is cleared above.
-    if (conversationGone) {
-      emit({
-        type: 'status',
-        level: 'warning',
-        message: `${session.adapter.displayName} couldn't find this conversation any more, so it starts a new one. The thread above stays, but the agent won't remember it.`,
-      });
-      session.queryHandle = null;
-      try { handle.close(); } catch { /* may already be closed */ }
-      // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
-      if (!session.resolveQueryReady) {
-        session.queryReady = new Promise<void>((resolve) => {
-          session.resolveQueryReady = resolve;
-        });
-      }
-      this.relaunchQuery(session);
-      return;
-    }
-
     // Query finished
     session.status = 'stopped';
     emit({ type: 'process_exit' });
@@ -721,6 +710,43 @@ class AgentSessionManager {
     }).catch(err => {
       logger.warn(`[memory-autosave] Auto-save failed for session ${id}: ${err}`);
     });
+  }
+
+  /**
+   * The conversation `handle` resumed is gone from the agent (its transcript
+   * was deleted or moved). Forget it, or every restart would resume it and
+   * fail the same way, and start a new conversation in its place. Reporting
+   * the agent stopped instead would make the renderer resume the same missing
+   * conversation again, in a loop. The new run can't end up here: it has no
+   * provider session to resume.
+   */
+  private replaceMissingConversation(session: ManagedSession, handle: AgentQueryHandle, emit: Emit, reason: string): void {
+    const { id } = session;
+    logger.warn(`[runQuery] session=${id} provider session ${session.providerSessionId} not found, starting a new conversation: ${reason}`);
+    session.providerSessionId = null;
+    session.pendingResumeAt = null;
+    worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+
+    // Prompts sent while it was starting went nowhere; the new one gets them.
+    const unanswered = session.promptsBeforeInit?.handle === handle ? session.promptsBeforeInit.prompts : [];
+    session.promptsBeforeInit = null;
+    if (session.turnHandle === handle) session.turnHandle = null;
+    session.queryHandle = null;
+    try { handle.close(); } catch { /* may already be closed */ }
+
+    emit({
+      type: 'status',
+      level: 'warning',
+      newConversation: true,
+      message: `${session.adapter.displayName} couldn't find this conversation any more, so it starts a new one. The thread above stays, but the agent won't remember it.`,
+    });
+    // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
+    if (!session.resolveQueryReady) {
+      session.queryReady = new Promise<void>((resolve) => {
+        session.resolveQueryReady = resolve;
+      });
+    }
+    this.relaunchQuery(session, unanswered);
   }
 
   /**
@@ -851,10 +877,9 @@ class AgentSessionManager {
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
-      queryHandle.sendMessage({
-        text: content,
-        images: images,
-      });
+      const message: UserMessage = { text: content, images };
+      queryHandle.sendMessage(message);
+      if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
       logger.debug(`[sendMessage] session=${id} sent successfully`);
       // Update last-active timestamp (fire-and-forget)
       worktreeManager.updateLastActive(id).catch(() => {});
@@ -1637,11 +1662,16 @@ class AgentSessionManager {
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
-    if (forkPoint && !canFork) {
+    // Starting over below turns the agent could fork from: mark where the new
+    // conversation begins, so a later rewind can't fork into the old one.
+    if (!(forkPoint && canFork) && lastTurnUuid(session.eventHistory)) {
       session.emit?.({
         type: 'status',
         level: 'warning',
-        message: `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
+        newConversation: true,
+        message: canFork
+          ? `${session.adapter.displayName} starts a new conversation from here. The thread above stays, but the agent won't remember it.`
+          : `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
       });
     }
 

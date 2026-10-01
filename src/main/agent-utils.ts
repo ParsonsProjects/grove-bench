@@ -509,7 +509,21 @@ export function findRewindForkPoint(
     (e) => e.type === 'user_message' && e.uuid === targetUuid,
   );
   if (idx < 0) return null;
-  for (let i = idx - 1; i >= 0; i--) {
+  return lastTurnUuid(events, idx);
+}
+
+/**
+ * The provider uuid of the last assistant-side event before `end` that is
+ * part of the agent's current conversation, or null. Events before the last
+ * `newConversation` marker belong to a conversation the agent no longer has,
+ * so a target before that marker has no fork point at all.
+ */
+export function lastTurnUuid(
+  events: import('../shared/types.js').AgentEvent[],
+  end = events.length,
+): string | null {
+  const start = events.findLastIndex((e) => e.type === 'status' && e.newConversation === true);
+  for (let i = end - 1; i > start; i--) {
     const e = events[i];
     if (
       (e.type === 'assistant_text' || e.type === 'assistant_tool_use' || e.type === 'thinking') &&

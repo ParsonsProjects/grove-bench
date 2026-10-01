@@ -579,6 +579,9 @@ describe('missingConversationError()', () => {
 
   it('picks out the missing-conversation error result', () => {
     expect(missingConversationError(missing as any)).toBe('No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170');
+    // Still recognised if a CLI version prefixes the text.
+    expect(missingConversationError({ ...missing, errors: ['Error: No conversation found with session ID: x'] } as any))
+      .toBe('Error: No conversation found with session ID: x');
   });
 
   it('ignores other results', () => {
