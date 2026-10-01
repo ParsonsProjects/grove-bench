@@ -19,7 +19,7 @@
     setting="default-thread-view"
     label="Default thread view"
     for="settings-thread-view"
-    description="{VIEW_MODE_DESCRIPTIONS[draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}. New conversations start in this view; each can switch from its status bar."
+    description="{VIEW_MODE_DESCRIPTIONS[draft.defaultActivityView] ?? VIEW_MODE_DESCRIPTIONS.summary}. New conversations start in this view; each can switch from its Thread tab."
   >
     <Select.Root type="single" value={draft.defaultActivityView} onValueChange={(v) => { if (v) settingsStore.draft.defaultActivityView = v as ActivityViewMode; }}>
       <Select.Trigger id="settings-thread-view" class="w-48">

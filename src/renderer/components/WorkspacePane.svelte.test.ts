@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, screen } from '@testing-library/svelte';
+import { render, cleanup, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import WorkspacePane from './WorkspacePane.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -89,6 +89,41 @@ describe('WorkspacePane in a conversation without git', () => {
     expect(await screen.findByRole('button', { name: /^Thread\s+Alt\+1/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Activity/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Switch to Thread to send messages (Alt+1)' })).toBeInTheDocument();
+  });
+});
+
+describe('WorkspacePane thread view picker', () => {
+  // jsdom lacks scrollIntoView, which bits-ui calls on the highlighted option.
+  Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+
+  beforeEach(() => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    messageStore.setActiveTab('n1', 'activity');
+  });
+
+  it('sits on the Thread tab only while it is open', async () => {
+    render(WorkspacePane, { sessionId: 'n1' });
+    expect(await screen.findByRole('button', { name: /^Thread view: / })).toBeInTheDocument();
+
+    messageStore.setActiveTab('n1', 'changes');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Thread view: / })).toBeNull());
+  });
+
+  it('switches the view from its list', async () => {
+    messageStore.setViewMode('n1', 'summary');
+    render(WorkspacePane, { sessionId: 'n1' });
+    const trigger = await screen.findByRole('button', { name: /^Thread view: Summary/ });
+
+    // jsdom has no pointer capture, so pick from the keyboard.
+    trigger.focus();
+    await fireEvent.keyDown(trigger, { key: 'Enter' });
+    const option = await screen.findByRole('option', { name: /^Focus/ });
+    option.focus();
+    await fireEvent.pointerMove(option);
+    await fireEvent.keyDown(document.activeElement ?? option, { key: 'Enter' });
+
+    await waitFor(() => expect(messageStore.getViewMode('n1')).toBe('focus'));
+    expect(screen.getByRole('button', { name: /^Thread view: Focus/ })).toBeInTheDocument();
   });
 });
 

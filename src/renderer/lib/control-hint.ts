@@ -18,3 +18,30 @@ export function controlHint(
   const current = mode.options.find((o) => o.value === value);
   return current?.description ? { label: current.label, description: current.description } : null;
 }
+
+export interface ControlSummaryItem {
+  id: string;
+  label: string;
+  tone?: ControlOption['tone'];
+}
+
+/**
+ * What the Agent settings button shows besides the model: the mode always
+ * (with its tone, since it governs what the agent may do), and every other
+ * control only when it is off its default. The popover has the full set.
+ */
+export function controlSummary(
+  controls: readonly ControlDescriptor[],
+  valueOf: (controlId: string) => string | undefined,
+): { mode?: ControlSummaryItem; details: ControlSummaryItem[] } {
+  let mode: ControlSummaryItem | undefined;
+  const details: ControlSummaryItem[] = [];
+  for (const ctl of controls) {
+    const value = valueOf(ctl.id) ?? ctl.default;
+    const option = ctl.options.find((o) => o.value === value);
+    const label = option?.label ?? value;
+    if (ctl.id === CONTROL_IDS.permissionMode) mode = { id: ctl.id, label, tone: option?.tone };
+    else if (value !== ctl.default) details.push({ id: ctl.id, label });
+  }
+  return { mode, details };
+}

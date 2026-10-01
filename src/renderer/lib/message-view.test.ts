@@ -3,10 +3,8 @@ import {
   isMessageVisible,
   filterVisibleMessages,
   hasAgentReply,
-  NEXT_VIEW_MODE,
   VIEW_MODE_LABELS,
   VIEW_MODE_DESCRIPTIONS,
-  VIEW_MODE_HINTS,
 } from './message-view.js';
 import { ACTIVITY_VIEW_MODES } from '../../shared/types.js';
 import type { ChatMessage } from '../stores/messages.svelte.js';
@@ -174,22 +172,10 @@ describe('filterVisibleMessages', () => {
 });
 
 describe('view mode tables', () => {
-  it('cycles through every mode exactly once', () => {
-    const seen = new Set<string>();
-    let mode = NEXT_VIEW_MODE.summary;
-    for (let i = 0; i < ACTIVITY_VIEW_MODES.length; i++) {
-      seen.add(mode);
-      mode = NEXT_VIEW_MODE[mode];
-    }
-    expect([...seen].sort()).toEqual([...ACTIVITY_VIEW_MODES].sort());
-    expect(mode).toBe(NEXT_VIEW_MODE.summary);
-  });
-
-  it('has a label, description and hint for every mode', () => {
+  it('has a label and description for every mode', () => {
     for (const mode of ACTIVITY_VIEW_MODES) {
       expect(VIEW_MODE_LABELS[mode]).toBeTruthy();
       expect(VIEW_MODE_DESCRIPTIONS[mode]).toBeTruthy();
-      expect(VIEW_MODE_HINTS[mode]).toBeTruthy();
     }
   });
 });

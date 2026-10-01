@@ -8,9 +8,10 @@
   import { onMount, onDestroy } from 'svelte';
   import { draftStore } from '../stores/draft.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
-  import { CONTROL_IDS, type ControlOption } from '../../shared/types.js';
+  import type { ControlOption } from '../../shared/types.js';
   import { toneText } from '../lib/control-tones.js';
-  import { controlHint } from '../lib/control-hint.js';
+  import { controlHint, controlSummary } from '../lib/control-hint.js';
+  import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
 
   let open = $state(false);
   /** Option under the pointer or focus, explained in the footer. Removing
@@ -25,14 +26,8 @@
   const modelLabel = $derived(draftStore.models.find((m) => m.value === model)?.label ?? model);
 
   const hint = $derived(controlHint(draftStore.descriptors, (id) => draftStore.controlValue(id), hovered));
-  /** Subtitle: the mode always, other controls only when off their default. */
-  const subtitleItems = $derived(draftStore.descriptors.flatMap((ctl) => {
-    const value = draftStore.controlValue(ctl.id);
-    const isMode = ctl.id === CONTROL_IDS.permissionMode;
-    if (!isMode && value === ctl.default) return [];
-    const option = ctl.options.find((o) => o.value === value);
-    return [{ id: ctl.id, label: option?.label ?? value, tone: isMode ? option?.tone : undefined }];
-  }));
+  /** The mode, and any other control off its default, for the button. */
+  const summary = $derived(controlSummary(draftStore.descriptors, (id) => draftStore.controlValue(id)));
 
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as Node;
@@ -59,31 +54,14 @@
 </script>
 
 <div class="relative" bind:this={rootRef}>
-  <button
+  <AgentSettingsTrigger
+    {agentName}
+    {modelLabel}
+    mode={summary.mode}
+    details={summary.details}
+    {open}
     onclick={() => open = !open}
-    class="flex items-center gap-2 pl-1.5 pr-1 py-0.5 border border-border whitespace-nowrap text-left transition-colors hover:bg-accent {open ? 'bg-accent' : ''}"
-    title="Agent settings — agent, model and mode for this conversation"
-    aria-haspopup="dialog"
-    aria-expanded={open}
-  >
-    <span class="w-1.5 h-1.5 shrink-0 bg-primary" aria-hidden="true"></span>
-    <span class="flex flex-col gap-px leading-snug">
-      <span class="text-foreground font-medium">{agentName}</span>
-      <span class="text-muted-foreground/80 text-[11px]">
-        {modelLabel || 'Provider default'}
-        {#each subtitleItems as item (item.id)}
-          <span class="text-muted-foreground/40">{' · '}</span><span class={item.tone ? toneText(item.tone) : ''}>{item.label}</span>
-        {/each}
-      </span>
-    </span>
-    <svg
-      class="w-3 h-3 shrink-0 text-muted-foreground/60 transition-transform {open ? 'rotate-180' : ''}"
-      viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 6l4 4 4-4" />
-    </svg>
-  </button>
+  />
 
   {#if open && draft}
     <div
