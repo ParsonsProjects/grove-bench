@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { controlHint } from './control-hint.js';
+import { controlHint, controlSummary } from './control-hint.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const mode: ControlDescriptor = {
@@ -37,5 +37,29 @@ describe('controlHint', () => {
 
   it('has nothing to say without a mode control', () => {
     expect(controlHint([effort], () => 'high', null)).toBeNull();
+  });
+});
+
+describe('controlSummary', () => {
+  const toned: ControlDescriptor = {
+    ...mode,
+    options: [{ value: 'default', label: 'Ask', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' }],
+  };
+
+  it('always gives the mode, with its tone, and leaves controls at their default out', () => {
+    const values: Record<string, string> = { permissionMode: 'plan', effort: 'high' };
+    expect(controlSummary([toned, effort], (id) => values[id])).toEqual({
+      mode: { id: 'permissionMode', label: 'Plan', tone: 'warning' },
+      details: [],
+    });
+  });
+
+  it('lists a control once it leaves its default', () => {
+    const values: Record<string, string> = { effort: 'low' };
+    expect(controlSummary([toned, effort], (id) => values[id]).details).toEqual([{ id: 'effort', label: 'Low' }]);
+  });
+
+  it('has no mode for an agent without one', () => {
+    expect(controlSummary([effort], () => undefined)).toEqual({ mode: undefined, details: [] });
   });
 });
