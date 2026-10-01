@@ -22,18 +22,18 @@
     row,
     rowVisible,
     countsFor,
-    markCompleted,
+    closeConversation,
     filterLabel,
   }: {
     /** The sidebar's conversation row: session, show project, label
      *  override, show group. */
     row: Snippet<[Session, boolean, string | null, boolean]>;
-    /** Whether a conversation passes the sidebar's filter and completed setting. */
+    /** Whether a conversation passes the sidebar's filter. */
     rowVisible: (s: Session) => boolean;
     /** A header's attention counts, as the project headers count them. */
     countsFor: (sessions: Session[]) => TriageCounts;
-    /** The sidebar's Mark Completed: stops a conversation and keeps it. */
-    markCompleted: (id: string) => void;
+    /** The sidebar's Close: stops a conversation and keeps it. */
+    closeConversation: (id: string) => void;
     /** The active triage filter's label, or null when showing all. */
     filterLabel: string | null;
   } = $props();
@@ -68,7 +68,7 @@
       { label: 'Rename group', icon: 'rename', action: () => { groupStore.nameRequest = { kind: 'rename', groupId }; } },
       // Done with the piece of work: every conversation leaves the working set.
       ...(open.length > 0
-        ? [{ label: 'Mark all completed', icon: 'check', action: () => { for (const s of open) markCompleted(s.id); } }]
+        ? [{ label: 'Close all conversations', icon: 'close', action: () => { for (const s of open) closeConversation(s.id); } }]
         : []),
       { label: 'Ungroup', icon: 'close', action: () => groupStore.ungroup(groupId), separator: true },
     ];

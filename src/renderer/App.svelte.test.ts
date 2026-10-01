@@ -95,10 +95,10 @@ describe('App unread flag', () => {
     expect(store.needsAttention.w).toBe(true);
   });
 
-  it('does not mark it unread when it is marked completed mid-turn', async () => {
+  it('does not mark it unread when it is closed mid-turn', async () => {
     await renderWithWorkingConversation();
 
-    // What Mark Completed does, then the 'stopped' status main sends back.
+    // What Close Conversation does, then the 'stopped' status main sends back.
     store.updateStatus('w', 'stopped');
     messageStore.markSessionStopped('w');
     flushSync();

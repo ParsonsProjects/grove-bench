@@ -23,7 +23,7 @@
 | `Ctrl+F` | Search in Thread tab |
 | `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
 | `Ctrl+N` | New conversation draft (in the open conversation's project) |
-| `Ctrl+Shift+T` | Reopen the last conversation you marked completed |
+| `Ctrl+Shift+T` | Reopen the last conversation you closed |
 | `Ctrl+B` | Open or close bookmarks |
 | `Ctrl+L` | Go to the address bar (Preview tab) |
 

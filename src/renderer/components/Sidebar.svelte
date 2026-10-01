@@ -165,11 +165,12 @@
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
     ];
-    // Mark Completed stops a live session (it was called Stop) but keeps it
-    // resumable from Ctrl+R; not shown for already-stopped ones. For an open
-    // tab still waiting to reconnect it just closes the tab.
+    // Close Conversation stops a live session (it was called Stop, then Mark
+    // Completed) but keeps it resumable from Ctrl+R; not shown for
+    // already-stopped ones. For an open tab still waiting to reconnect it
+    // just closes the tab.
     if (store.isOpenTab(session)) {
-      items.push({ label: 'Mark Completed', icon: 'check', action: () => stopSession(sessionId) });
+      items.push({ label: 'Close Conversation', icon: 'close', action: () => stopSession(sessionId) });
     }
     items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
@@ -406,10 +407,10 @@
     store.clearNeedsAttention(id);
   }
 
-  /** Mark Completed: stop a session non-destructively. Shuts down its agent,
+  /** Close Conversation: stop a session non-destructively. Shuts down its agent,
    *  background tasks and terminal (freeing any ports they held) but keeps the
    *  worktree so it can be resumed by clicking it (auto-resume in App.svelte).
-   *  Done means dealt with, so it no longer counts as unread. */
+   *  Closing it means it was dealt with, so it no longer counts as unread. */
   async function stopSession(id: string) {
     store.pushRecentlyClosed(id);
     store.clearNeedsAttention(id);
@@ -701,8 +702,8 @@
     store.openConversations.filter(rowVisible),
   );
 
-  /** Conversations marked completed: stopped and not an open tab. */
-  let completedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
+  /** Closed conversations: stopped and not an open tab. */
+  let closedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
 
   /** Attention counts for a header (a project's or a group's conversations,
    *  any status). */
@@ -789,7 +790,7 @@
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
     <!-- Faded a little while its agent is off, matching its character: asleep
-         (back when opened), and a step further once completed. -->
+         (back when opened), and a step further once closed. -->
     {@const spriteState = sessionSpriteState(session, isDestroying)}
     {@const restFade = spriteState === 'stopped' ? 'opacity-60' : spriteState === 'sleeping' ? 'opacity-70' : ''}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
@@ -852,7 +853,7 @@
       </button>
       {#if !isDestroying}
         {#if !store.isOpenTab(session)}
-          <!-- Completed session: delete (removes the worktree, after asking). -->
+          <!-- Closed session: delete (removes the worktree, after asking). -->
           <button
             type="button"
             title="Delete conversation"
@@ -866,16 +867,16 @@
           </button>
         {:else}
           <!-- Open session (live, or restored and waiting to reconnect, like the
-               context menu): mark completed (stops the agent but keeps it resumable). -->
+               context menu): close it (stops the agent but keeps it resumable). -->
           <button
             type="button"
-            title="Mark completed"
-            aria-label="Mark {label} completed"
+            title={'Close conversation\nStops the agent and terminal and moves it under Projects. Open it again any time.'}
+            aria-label="Close conversation {label}"
             onclick={() => stopSession(session.id)}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
               hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         {/if}
       {/if}
@@ -1044,7 +1045,7 @@
       row={sessionRow}
       {rowVisible}
       countsFor={headerCounts}
-      markCompleted={(id) => void stopSession(id)}
+      closeConversation={(id) => void stopSession(id)}
       filterLabel={triageFilter === 'all' ? null : TRIAGE_FILTER_LABELS[triageFilter]}
     />
 
@@ -1052,8 +1053,8 @@
     <div class="flex items-center justify-between mt-5 mb-2 px-1">
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Projects</span>
       <div class="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-        {#if completedCount}
-          <span>{completedCount} completed</span>
+        {#if closedCount}
+          <span>{closedCount} closed</span>
         {/if}
       </div>
     </div>
@@ -1238,7 +1239,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
         <Dialog.Description>
-          Remove completed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
+          Remove closed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1265,7 +1266,7 @@
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No completed conversations inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No closed conversations inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>
