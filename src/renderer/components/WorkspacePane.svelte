@@ -8,6 +8,8 @@
   import OutputPanel from './OutputPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
+  import ConversationGoal from './ConversationGoal.svelte';
+  import { goalStore } from '../stores/goals.svelte.js';
   import PromptEditor from './PromptEditor.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import GitNotice from './GitNotice.svelte';
@@ -257,6 +259,17 @@
       </button>
       {#if activeTab === 'activity'}
         <ThreadViewSelect {sessionId} />
+        {#if settingsStore.current.showConversationGoal && goalStore.get(sessionId).hidden}
+          <!-- The goal bar was closed for this conversation: bring it back. -->
+          <button
+            onclick={() => goalStore.setHidden(sessionId, false)}
+            class="pr-3 text-muted-foreground hover:text-foreground transition-colors"
+            title="Show the conversation goal"
+            aria-label="Show the conversation goal"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2h2v20H4Zm2 1h14v2H6Zm12 2h2v6h-2ZM6 11h14v2H6Z"/></svg>
+          </button>
+        {/if}
       {/if}
     </div>
     <button
@@ -325,6 +338,7 @@
 
   <!-- Tab content -->
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'activity' ? '' : 'hidden'}">
+    <ConversationGoal {sessionId} />
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">

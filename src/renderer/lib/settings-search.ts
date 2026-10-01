@@ -8,7 +8,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'permissions', grove: 'The gate', label: 'Permissions', description: 'What agents may do without asking you first.' },
   { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new conversations get their branch and worktree.' },
   { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
-  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions and sleeping idle conversations.' },
+  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions, conversation goals and sleeping idle conversations.' },
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
   { id: 'privacy', grove: 'Hedges', label: 'Privacy', description: 'Usage data and crash reports.' },
@@ -64,6 +64,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'memory-auto-compact', section: 'background', label: 'Auto-compact project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },
   { id: 'skill-suggestions', section: 'background', label: 'Suggest skills automatically' },
+  { id: 'conversation-goal', section: 'background', label: 'Show the conversation goal', keywords: 'summary thread pinned' },
   { id: 'idle-sleep', section: 'background', label: 'Sleep idle conversations', keywords: 'idle stop cpu memory minutes' },
 
   { id: 'mcp-servers', section: 'mcp', label: 'Configured MCP servers', keywords: 'approve remove health' },

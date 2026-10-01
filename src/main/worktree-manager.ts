@@ -5,7 +5,7 @@ import { app } from 'electron';
 import { git, FETCH_TIMEOUT_MS, isGitRepo, renameBranch as gitRenameBranch, branchHasRemote, validateBranchName, branchExists, getDefaultBranch, currentBranch, localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch } from './git.js';
 import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
-import type { BranchSwitchResult, BranchSyncResult, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, ConversationGoalSource, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
 
@@ -50,6 +50,13 @@ interface ManifestEntry {
   /** Who set displayName. Auto-naming never replaces a 'user' name. Absent
    *  on entries saved before this was tracked (see decideAutoName). */
   displayNameSource?: DisplayNameSource;
+  /** One-line goal pinned at the top of the Thread tab (see session-goal). */
+  goal?: string;
+  /** Who wrote the goal. Absent until one is generated or typed, which is
+   *  what lets the automatic one run only once. */
+  goalSource?: ConversationGoalSource;
+  /** The goal bar was closed for this conversation. */
+  goalHidden?: boolean;
   /** The session was destroyed but its directory could not be deleted (Windows
    *  file locks). The entry is hidden from listings and the background sweep
    *  retries the deletion as a known item instead of finding an orphan dir. */
@@ -65,6 +72,10 @@ interface ManifestEntry {
 }
 
 type Manifest = Record<string, ManifestEntry>;
+
+function goalOf(entry: ManifestEntry): ConversationGoal {
+  return { text: entry.goal || null, source: entry.goalSource ?? null, hidden: !!entry.goalHidden };
+}
 
 /** A path in comparable form: separators normalised and, on Windows, case
  *  folded. git prints worktree paths with forward slashes, and may not use
@@ -431,6 +442,45 @@ export class WorktreeManager {
       entry.displayName = next.displayName;
       entry.displayNameSource = next.source;
       return true;
+    });
+  }
+
+  /** A conversation's goal (undefined for unknown ids). */
+  async getGoal(worktreeId: string): Promise<ConversationGoal | undefined> {
+    const entry = (await this.loadManifest())[worktreeId];
+    return entry && !entry.pendingRemoval ? goalOf(entry) : undefined;
+  }
+
+  /** Save a goal. With `expected`, only while the goal is still what it was
+   *  when `expected` was read, so an edit made while one was being generated
+   *  is never overwritten. Returns the saved goal, or null when nothing was
+   *  saved. */
+  async saveGoal(
+    worktreeId: string,
+    text: string,
+    source: ConversationGoalSource,
+    expected?: ConversationGoal,
+  ): Promise<ConversationGoal | null> {
+    return this.withManifest((manifest) => {
+      const entry = manifest[worktreeId];
+      if (!entry || entry.pendingRemoval) return null;
+      if (expected) {
+        const now = goalOf(entry);
+        if (now.text !== expected.text || now.source !== expected.source) return null;
+      }
+      entry.goal = text || undefined;
+      entry.goalSource = source;
+      return goalOf(entry);
+    });
+  }
+
+  /** Close or reopen a conversation's goal bar. */
+  async setGoalHidden(worktreeId: string, hidden: boolean): Promise<ConversationGoal | null> {
+    return this.withManifest((manifest) => {
+      const entry = manifest[worktreeId];
+      if (!entry || entry.pendingRemoval) return null;
+      entry.goalHidden = hidden || undefined;
+      return goalOf(entry);
     });
   }
 

@@ -2,6 +2,16 @@
 
 The Thread tab (`Alt+1`) is the primary view for interacting with your agent. It displays the full conversation history including messages, tool calls, and permission requests.
 
+## Conversation Goal
+
+A bar at the top of the thread says, in one line, what the conversation is trying to get done. The agent writes it once, after its first reply, using its background model. Click the line to see all of it.
+
+- **Edit** (pencil): type your own goal and press `Enter` (`Esc` cancels). A goal you typed is never replaced automatically. Clear the text to remove it.
+- **Refresh**: write a new goal from the conversation so far, for when the work has moved on. This replaces the current goal, including one you typed, and costs one model call.
+- **Hide** (✕): close the bar for this conversation. The flag next to the Thread view picker brings it back.
+
+To turn goals off for every conversation, untick **Show the conversation goal** in **Settings > Tending**. No goals are written while it is off.
+
 ## Message Types
 
 ### User Messages

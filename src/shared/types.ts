@@ -89,6 +89,21 @@ export interface SessionInfo {
   displayName?: string | null;
 }
 
+/** Who wrote a conversation's goal: generated ('auto') or typed ('user').
+ *  A goal is only generated once; Refresh makes a new one on request. */
+export type ConversationGoalSource = 'auto' | 'user';
+
+/** The one-line goal pinned at the top of a conversation's Thread tab. */
+export interface ConversationGoal {
+  /** What the conversation is trying to get done, or null when there is
+   *  none yet (or the user cleared it). */
+  text: string | null;
+  /** Null until a goal has been generated or typed. */
+  source: ConversationGoalSource | null;
+  /** The bar was closed for this conversation. */
+  hidden: boolean;
+}
+
 // ─── Prerequisites ───
 
 /** A registered agent as the renderer sees it. */
@@ -972,6 +987,20 @@ export interface GroveBenchAPI {
    *  generated from its task. Returns the new name, or null when nothing
    *  changed (already named, pushed, no prompt yet, or generation failed). */
   autoNameBranch(sessionId: string): Promise<string | null>;
+  /** A conversation's goal, or null for an unknown conversation. */
+  getConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Save a goal the user typed. Empty text clears it; either way it is
+   *  never replaced automatically. */
+  setConversationGoal(sessionId: string, text: string): Promise<ConversationGoal | null>;
+  /** Generate a goal for a conversation that has never had one, after a
+   *  turn ends. Resolves to the new goal, or null when nothing changed (goals
+   *  turned off, one exists already, no reply yet, or generation failed). */
+  autoConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Generate a new goal now, replacing the current one, typed or not.
+   *  Rejects when generation fails. */
+  refreshConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Close (or reopen) the goal bar for one conversation. */
+  setConversationGoalHidden(sessionId: string, hidden: boolean): Promise<ConversationGoal | null>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -1344,6 +1373,10 @@ export interface GroveBenchSettings {
    *  suggestions in the status bar. Off by default — each analysis is a model
    *  call, so the status bar's manual "Suggest" button is the main route. */
   autoSkillSuggestions: boolean;
+  /** Pin a one-line goal at the top of each conversation's Thread tab,
+   *  generated after its first reply (one background model call per
+   *  conversation, plus one per Refresh). Default true. */
+  showConversationGoal: boolean;
 
   // Agent Defaults
   /** Model new conversations start on, keyed by adapter id. Missing or empty
@@ -1630,6 +1663,11 @@ export const IPC = {
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
   SESSION_AUTO_NAME: 'session:autoName',
+  SESSION_GOAL_GET: 'session:getGoal',
+  SESSION_GOAL_SET: 'session:setGoal',
+  SESSION_GOAL_AUTO: 'session:autoGoal',
+  SESSION_GOAL_REFRESH: 'session:refreshGoal',
+  SESSION_GOAL_HIDE: 'session:setGoalHidden',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',

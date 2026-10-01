@@ -33,6 +33,7 @@
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
+  import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
@@ -130,7 +131,10 @@
     if (flagsUnread(session, store.activeSessionId)) {
       store.markNeedsAttention(sessionId);
     }
-    void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+    // Then the goal, written once after the first reply (main skips the rest).
+    void autoNameSession(sessionId)
+      .then(() => autoNameBranch(sessionId))
+      .then(() => goalStore.autoGenerate(sessionId));
   });
   $effect(() => {
     for (const session of store.sessions) {
