@@ -30,8 +30,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: here('./prototypes/index.html'),
-        meadow: here('./prototypes/meadow.html'),
-        trail: here('./prototypes/trail.html'),
       },
     },
   },

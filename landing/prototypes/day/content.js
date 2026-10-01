@@ -91,7 +91,7 @@ export const FAQ = [
     q: 'What do I need?',
     a: 'Windows 10 or later, git 2.17 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key.',
   },
-  { q: 'Does it run on Mac or Linux?', a: 'Not yet. The first version is Windows only.' },
+  { q: 'Does it run on Mac or Linux?', a: 'No. Grove Bench is a Windows app.' },
   {
     q: 'Will the agents overwrite each other’s work?',
     a: 'No. In a git project each conversation works in its own worktree, on its own branch. Branches that change the same lines can still conflict when you merge them, as with any branches.',

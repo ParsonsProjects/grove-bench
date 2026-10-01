@@ -3,6 +3,8 @@
   import BenchSeat from '../shared/BenchSeat.svelte';
   import Walker from '../shared/Walker.svelte';
   import Sprite from '../shared/Sprite.svelte';
+  import Pixels from '../shared/Pixels.svelte';
+  import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
   import Clock from './Clock.svelte';
   import { arrive } from './scroll.svelte.js';
   import { STEPS } from './content.js';
@@ -29,7 +31,11 @@
                 {:else}
                   <div class="gate">
                     <Sprite state={t > 3.6 ? 'unread' : 'ready'} seed="a3f8b2c1" scale={3} label="" />
-                    <span class="arch" class:open={t > 3.6}>main</span>
+                    <span class="posts">
+                      <Pixels map={LAMP} palette={t > 3.6 ? { ...SCENERY_PALETTE, o: '#ffe7a8' } : SCENERY_PALETTE} scale={3} />
+                      <span class="arch" class:open={t > 3.6}>main</span>
+                      <Pixels map={LAMP} palette={t > 3.6 ? { ...SCENERY_PALETTE, o: '#ffe7a8' } : SCENERY_PALETTE} scale={3} />
+                    </span>
                   </div>
                 {/if}
               </div>
@@ -83,13 +89,19 @@
     align-items: flex-end;
     gap: 12px;
   }
+  .posts {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+  }
   .arch {
-    padding: 4px 12px 28px;
+    margin-bottom: 18px;
+    padding: 2px 10px;
     font-family: var(--pixel);
     font-size: 15px;
     color: #f4ecdd;
     background: #2d2016;
-    box-shadow: 0 0 0 3px #5a4130;
+    box-shadow: 0 0 0 2px #5a4130;
     transition: background 0.3s;
   }
   .arch.open {

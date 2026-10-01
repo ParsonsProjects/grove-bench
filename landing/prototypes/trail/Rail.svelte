@@ -39,6 +39,16 @@
         return { ...s, y: el.getBoundingClientRect().top + window.scrollY - top + 70 };
       })
       .filter(Boolean);
+    // The first bench sits where the walker starts, half way down the window,
+    // so the agent is sitting there when the page opens.
+    if (benches[0]) benches[0].y = Math.max(benches[0].y, window.innerHeight * 0.5 - top);
+    // The last bench sits at the end of the path, as far down as the walker
+    // can get, so the agent is asleep there when you reach the bottom.
+    const last = benches.at(-1);
+    if (last) {
+      const lowest = document.documentElement.scrollHeight - window.innerHeight * 0.5 - top;
+      last.y = Math.min(height - 24, lowest - 8);
+    }
     // A tree every so often, alternating sides, skipping the benches.
     const list = [];
     let side = 1;
@@ -61,8 +71,12 @@
     untrack(measure);
     const ro = new ResizeObserver(measure);
     ro.observe(page);
+    window.addEventListener('resize', measure);
     document.fonts?.ready.then(measure);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   });
 
   // Where the walker is, in page pixels: half way down the window.
@@ -72,7 +86,25 @@
   });
   const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const growth = (y) => (reduced ? 1 : Math.min(1, Math.max(0, (reached - y + 260) / 160)));
-  const seated = $derived(benches.find((b) => Math.abs(b.y - walkerY) < 56) ?? null);
+  // Sitting on a bench when close to one. Before the first bench and past the
+  // last it stays put, so it never walks off either end of the path.
+  const seated = $derived.by(() => {
+    if (!benches.length) return null;
+    if (walkerY <= benches[0].y + 56) return benches[0];
+    const last = benches.at(-1);
+    if (walkerY >= last.y - 56) return last;
+    return benches.find((b) => Math.abs(b.y - walkerY) < 56) ?? null;
+  });
+  // On arriving at a bench it sits down first (the plain seated pose), then
+  // takes up that section's pose.
+  let settled = $state(true);
+  $effect(() => {
+    seated;
+    if (reduced) return;
+    settled = false;
+    const t = setTimeout(() => (settled = true), 450);
+    return () => clearTimeout(t);
+  });
   // Lamps along the last stretch, lit at night.
   const lampsFrom = $derived(height * 0.78);
 </script>
@@ -95,7 +127,7 @@
   {#each benches as b (b.at)}
     <span class="bench" style="top: {b.y}px">
       {#if seated === b}
-        <BenchSeat state={b.state} seed={SEED} scale={k} label="" />
+        <BenchSeat state={settled ? b.state : 'ready'} seed={SEED} scale={k} label="" />
       {:else}
         <BenchSeat empty scale={k} />
       {/if}

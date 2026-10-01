@@ -1,7 +1,9 @@
 <script>
   import { treeGreens } from '../../src/lib/brand.js';
   import { DownloadIcon } from '../../src/lib/icons.js';
-  import { mix } from '../../src/pixel/palette.js';
+  import { onMount } from 'svelte';
+  import { mix, hexToRgb, rgbToOklab } from '../../src/pixel/palette.js';
+  import { BANDS } from './sky.js';
   import { scroll, clockText, isEvening } from './scroll.svelte.js';
   import { links } from './content.js';
 
@@ -9,11 +11,30 @@
    * The top bar. It takes on the sky's colour as you scroll, and its clock
    * runs from morning to night with the page.
    */
-  // The bar darkens over the sunset stretch of the page, and its text flips
-  // to light once the bar is more dark than light.
-  const dark = $derived(Math.min(1, Math.max(0, (scroll.progress - 0.6) / 0.12)));
-  const bg = $derived(mix('#fffdf7', '#0c1224', dark));
-  const evening = $derived(dark > 0.45);
+  // The bar takes the colour of the sky right behind it, and switches to
+  // light text when that sky is dark.
+  let bands = [];
+  function measure() {
+    bands = BANDS.map(([cls, top, bottom]) => {
+      const el = document.querySelector('.' + cls);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { y0: r.top + window.scrollY, y1: r.bottom + window.scrollY, top, bottom };
+    }).filter(Boolean);
+  }
+  onMount(() => {
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.body);
+    return () => ro.disconnect();
+  });
+  const bg = $derived.by(() => {
+    const y = scroll.y + 31;
+    const b = bands.find((x) => y >= x.y0 && y < x.y1);
+    if (!b) return scroll.progress > 0.5 ? '#090e1c' : '#fffdf7';
+    return mix(b.top, b.bottom, (y - b.y0) / Math.max(1, b.y1 - b.y0));
+  });
+  const evening = $derived(rgbToOklab(hexToRgb(bg))[0] < 0.6);
   const night = $derived(isEvening(scroll.progress));
   // The sun sinks through the afternoon; the moon rises after it.
   const sunY = $derived(Math.min(8, Math.max(0, (scroll.progress - 0.35) * 26)));
@@ -28,10 +49,10 @@
       <span>grove bench</span>
     </a>
     <nav class="links" aria-label="Sections">
+      <a href="#why">why</a>
       <a href="#features">features</a>
       <a href="#how">how it works</a>
       <a href="#faq">faq</a>
-      <a href="./index.html" class="proto">prototypes</a>
     </nav>
     <span class="clock" aria-hidden="true" title="The page turns from morning to night as you scroll">
       <svg width="14" height="14" viewBox="0 0 7 7" shape-rendering="crispEdges">
@@ -91,11 +112,6 @@
   }
   .links a:hover {
     color: inherit;
-  }
-  .proto {
-    padding-left: 18px;
-    border-left: 1px solid currentColor;
-    opacity: 0.7;
   }
   .clock {
     display: inline-flex;

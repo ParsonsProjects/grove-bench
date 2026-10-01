@@ -68,6 +68,11 @@
     font-size: 12px;
     color: var(--faint);
   }
+  @media (max-width: 640px) {
+    .right {
+      align-items: flex-start;
+    }
+  }
   .proto {
     padding-bottom: 30px;
     font-size: 11.5px;

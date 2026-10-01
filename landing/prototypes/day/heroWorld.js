@@ -104,6 +104,7 @@ export function heroWorld() {
         items: [
           { kind: 'you', text: 'Add search to the dashboard (UI-31)' },
           { kind: 'tool', tool: 'Write', detail: SEARCH_TS.path, add: SEARCH_TS.add },
+          { kind: 'perm', tool: 'Bash', detail: 'npm test', resolved: 'allowed' },
           { kind: 'bash', cmd: 'npm test', out: '9 passed' },
           { kind: 'text', text: 'Search is on the dashboard and matches as you type. 9 tests passed.' },
         ],

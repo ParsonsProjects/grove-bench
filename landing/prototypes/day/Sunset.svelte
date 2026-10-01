@@ -1,5 +1,6 @@
 <script>
   import Pixels from '../shared/Pixels.svelte';
+  import Tree from '../shared/Tree.svelte';
   import { SUN, SUN_COLORS } from './sky.js';
   import { scroll } from './scroll.svelte.js';
 
@@ -17,9 +18,11 @@
   });
 </script>
 
-<div class="sunset" bind:this={el} aria-hidden="true">
+<div class="sunset b-sunset" bind:this={el} aria-hidden="true">
   <span class="sun" style="transform: translate(-50%, {k * 120}px)"><Pixels map={SUN} palette={SUN_COLORS} scale={7} /></span>
-  <div class="hills"></div>
+  <div class="treeline">
+    {#each [3, 5, 2, 4, 3, 6, 2, 4, 3, 5, 3, 2, 4, 5, 3, 4] as s, i}<Tree scale={s} />{/each}
+  </div>
 </div>
 
 <style>
@@ -35,15 +38,18 @@
     bottom: 40px;
     filter: drop-shadow(0 0 24px rgb(255 207 110 / 0.7));
   }
-  .hills {
+  /* The grove against the sunset: dark silhouettes. */
+  .treeline {
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
-    height: 46px;
-    background:
-      linear-gradient(transparent 0 0),
-      repeating-linear-gradient(90deg, #3f3466 0 40px, #3a3060 40px 80px);
-    clip-path: polygon(0 60%, 8% 40%, 16% 55%, 26% 30%, 36% 50%, 48% 25%, 58% 45%, 70% 20%, 80% 45%, 90% 30%, 100% 50%, 100% 100%, 0 100%);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    overflow: hidden;
+    filter: brightness(0);
+    opacity: 0.62;
+    border-bottom: 6px solid #3a3066;
   }
 </style>

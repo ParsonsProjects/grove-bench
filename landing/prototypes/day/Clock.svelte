@@ -22,7 +22,8 @@
     }
     const t0 = performance.now();
     const tick = (now) => {
-      t = Math.min(max, (now - t0) / 1000);
+      // A frame time can be a hair before t0, so clamp at zero.
+      t = Math.min(max, Math.max(0, (now - t0) / 1000));
       if (t < max) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);

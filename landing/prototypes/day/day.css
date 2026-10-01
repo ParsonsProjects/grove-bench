@@ -4,7 +4,7 @@
    pastel cards, the grove as the illustration. */
 
 .day {
-  /* The sky, top to bottom. */
+  /* The sky, top to bottom. Keep in step with BANDS in sky.js. */
   --c0: #fffdf7;
   --c1: #fdf7ea;
   --c2: #faefd9;

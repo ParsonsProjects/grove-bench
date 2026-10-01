@@ -3,7 +3,7 @@
   import { FOUNDER, README, links } from './content.js';
 </script>
 
-<section class="band b-founder" aria-labelledby="founder-h">
+<section class="band b-founder" id="why" aria-labelledby="founder-h">
   <div class="inner grid">
     <h2 class="h2 rise" id="founder-h" use:arrive>{FOUNDER.title[0]}<br /><span class="tone-g">{FOUNDER.title[1]}</span></h2>
     <div class="note rise" use:arrive>

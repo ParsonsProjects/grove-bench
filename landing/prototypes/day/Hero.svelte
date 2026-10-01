@@ -1,7 +1,10 @@
 <script>
   import { onMount } from 'svelte';
   import Window from '../shared/app/Window.svelte';
-  import Tree from '../shared/Tree.svelte';
+  import Row from '../shared/app/Row.svelte';
+  import Chips from '../shared/app/Chips.svelte';
+  import ThreadItem from '../shared/app/ThreadItem.svelte';
+  import '../shared/app/app.css';
   import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
   import { heroWorld } from './heroWorld.js';
   import { arrive } from './scroll.svelte.js';
@@ -21,12 +24,25 @@
   let world = $state(heroWorld());
   let zoom = $state(0.9);
   let stageEl = $state();
+  // Below this width the whole window is too small to read, so the hero
+  // shows the sidebar and the open conversation's prompt instead.
+  let narrow = $state(false);
 
   onMount(() => {
+    const mq = window.matchMedia('(max-width: 760px)');
+    const fit = () => (narrow = mq.matches);
+    fit();
+    mq.addEventListener('change', fit);
+    return () => mq.removeEventListener('change', fit);
+  });
+
+  $effect(() => {
+    if (!stageEl) return;
     const ro = new ResizeObserver(([e]) => (zoom = Math.min(1, e.contentRect.width / W)));
     ro.observe(stageEl);
     return () => ro.disconnect();
   });
+  const selected = $derived(world.convs.find((c) => c.id === world.selected));
 
   const sel = () => world.convs.find((c) => c.id === world.selected);
   const handlers = {
@@ -97,25 +113,36 @@
   </div>
 
   <div class="inner shot-wrap">
-    <div class="horizon" aria-hidden="true">
-      {#each [4, 6, 3, 5, 4, 7, 3, 5] as s, i}<span style="--d: {i * 0.12}s"><Tree scale={s} dim={i % 2 === 0} /></span>{/each}
-    </div>
-    <div class="stage" bind:this={stageEl} style="height: {Math.round(H * zoom)}px">
-      <div class="frame" style="zoom: {zoom}">
-        <Window {world} {...handlers} />
-      </div>
-      <div class="pins" style="--z: {zoom}" aria-hidden="true">
-        {#each NOTES as n, i}
-          <span class="pin" style="left: calc({n.x}px * var(--z)); top: calc({n.y}px * var(--z))">{i + 1}</span>
+    {#if narrow}
+      <div class="gb compact">
+        <div class="c-chips"><Chips states={world.convs.map((c) => c.state)} /></div>
+        {#each world.convs as c (c.id)}
+          <Row {c} selected={c.id === world.selected} onclick={() => handlers.onselect(c.id)} />
         {/each}
+        <div class="c-thread">
+          {#each selected.items.slice(-3) as it, i (i)}
+            <ThreadItem {it} seed={selected.id} onanswer={handlers.onanswer} />
+          {/each}
+        </div>
       </div>
-    </div>
+    {:else}
+      <div class="stage" bind:this={stageEl} style="height: {Math.round(H * zoom)}px">
+        <div class="frame" style="zoom: {zoom}">
+          <Window {world} {...handlers} />
+        </div>
+        <div class="pins" style="--z: {zoom}" aria-hidden="true">
+          {#each NOTES as n, i}
+            <span class="pin" style="left: calc({n.x}px * var(--z)); top: calc({n.y}px * var(--z))">{i + 1}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
     <ol class="legend" use:arrive>
       {#each NOTES as n, i}
-        <li class="pop" style="transition-delay: {0.15 + i * 0.12}s"><span class="pin static">{i + 1}</span>{n.text}</li>
+        <li class="pop" style="transition-delay: {0.15 + i * 0.12}s">{#if !narrow}<span class="pin static">{i + 1}</span>{/if}{n.text}</li>
       {/each}
     </ol>
-    <p class="hint small">The app’s own layout, with sample conversations. Click a conversation, a tab or the prompt.</p>
+    <p class="hint small">{narrow ? 'The app’s sidebar and prompt, with sample conversations. Tap to try them.' : 'The app’s own layout, with sample conversations. Click a conversation, a tab or the prompt.'}</p>
   </div>
 </section>
 
@@ -155,34 +182,8 @@
   }
   .shot-wrap {
     position: relative;
-    padding-top: 56px;
+    padding-top: 48px;
     padding-bottom: 40px;
-  }
-  .horizon {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    padding-inline: 4%;
-    overflow: hidden;
-    pointer-events: none;
-  }
-  @media (max-width: 700px) {
-    .horizon {
-      zoom: 0.5;
-    }
-  }
-  .horizon span {
-    animation: sprout 0.7s steps(5) var(--d) both;
-  }
-  @keyframes sprout {
-    from {
-      transform: translateY(14px);
-      opacity: 0;
-    }
   }
   .stage {
     position: relative;
@@ -230,6 +231,26 @@
         0 0 0 9px rgb(242 184 75 / 0.15);
     }
   }
+  .compact {
+    position: relative;
+    z-index: 1;
+    overflow: hidden;
+    background: oklch(0.176 0 0);
+    box-shadow:
+      0 0 0 1px rgb(58 42 28 / 0.2),
+      0 24px 40px -20px rgb(58 42 28 / 0.45);
+  }
+  .c-chips {
+    padding: 10px 12px 6px;
+  }
+  .c-thread {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 12px 16px;
+    background: oklch(0.208 0 0);
+    border-top: 1px solid oklch(0.26 0 0);
+  }
   .legend {
     list-style: none;
     display: grid;
@@ -259,7 +280,6 @@
     text-align: center;
   }
   @media (prefers-reduced-motion: reduce) {
-    .horizon span,
     .pin {
       animation: none;
     }
