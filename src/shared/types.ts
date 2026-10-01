@@ -1292,9 +1292,6 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
-/** Floor for `memoryCompactTimeoutSeconds`: below this no pass could finish. */
-export const MEMORY_COMPACT_MIN_TIMEOUT_SECONDS = 30;
-
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1333,8 +1330,8 @@ export interface GroveBenchSettings {
    *  session-note pruning) when memory grows past its budget. Default false —
    *  it costs an LLM call; the panel's manual Compact button always works. */
   memoryAutoCompact: boolean;
-  /** Abort a memory compaction pass after this many seconds. Clamped to
-   *  MEMORY_COMPACT_MIN_TIMEOUT_SECONDS. Default 300 (5 minutes). */
+  /** Abort a memory compaction pass after this many seconds. 30 to 3600,
+   *  default 300 (5 minutes); see shared/compact-timeout.ts. */
   memoryCompactTimeoutSeconds: number;
   /** Model for background tasks (memory notes and compaction, commit
    *  messages, skill suggestions), keyed by adapter id. Missing or empty

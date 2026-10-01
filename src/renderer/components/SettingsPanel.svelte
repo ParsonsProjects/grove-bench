@@ -5,6 +5,7 @@
   import { pluginStore } from '../stores/plugins.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
   import { helpStore } from '../stores/help.svelte.js';
+  import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
@@ -54,7 +55,11 @@
   // However Settings closes (Esc, the X, Close, Ctrl+,), save what is still
   // waiting, such as text typed in the last half second.
   $effect(() => {
-    if (!open) untrack(() => { void settingsStore.save(); });
+    if (!open) untrack(() => {
+      void settingsStore.save();
+      // Reopening starts on the sections, not an old search.
+      query = '';
+    });
   });
 
   // The Plugins section configures the default agent (its IPC calls don't
@@ -78,7 +83,16 @@
     untrack(() => { if (content) content.scrollTop = 0; });
   });
 
-  const results = $derived(searchSettings(query, visibleSections.map((s) => s.id)));
+  /** Settings that only show in some setups, and when they do: search
+   *  shouldn't offer a row that isn't there. */
+  const SHOWN_WHEN: Record<string, () => boolean> = {
+    credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey),
+    'thinking-summaries': () => agentsStore.list.some((a) => a.capabilities.thinkingSummaries),
+    'project-colors': () => store.repos.length > 0,
+  };
+  const results = $derived(
+    searchSettings(query, visibleSections.map((s) => s.id)).filter((e) => SHOWN_WHEN[e.id]?.() ?? true),
+  );
 
   function sectionName(id: SettingsSectionId): string {
     return SETTINGS_SECTIONS.find((s) => s.id === id)?.grove ?? id;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { settingsStore } from '../../stores/settings.svelte.js';
-  import { MEMORY_COMPACT_MIN_TIMEOUT_SECONDS } from '../../../shared/types.js';
+  import { MEMORY_COMPACT_MAX_TIMEOUT_SECONDS, MEMORY_COMPACT_MIN_TIMEOUT_SECONDS } from '../../../shared/compact-timeout.js';
   import type { SettingsSectionId } from '$lib/settings-search.js';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import NumberSetting from './NumberSetting.svelte';
@@ -32,9 +32,10 @@
     label="Compaction timeout"
     unit="seconds"
     min={MEMORY_COMPACT_MIN_TIMEOUT_SECONDS}
+    max={MEMORY_COMPACT_MAX_TIMEOUT_SECONDS}
     value={settingsStore.draft.memoryCompactTimeoutSeconds}
     onchange={(v) => { settingsStore.draft.memoryCompactTimeoutSeconds = v; }}
-    description="Stop a compaction pass, manual or automatic, that runs longer than this. Minimum {MEMORY_COMPACT_MIN_TIMEOUT_SECONDS}."
+    description="Stop a compaction pass, manual or automatic, that runs longer than this. From {MEMORY_COMPACT_MIN_TIMEOUT_SECONDS} to {MEMORY_COMPACT_MAX_TIMEOUT_SECONDS} (an hour)."
   />
 </SettingsGroup>
 

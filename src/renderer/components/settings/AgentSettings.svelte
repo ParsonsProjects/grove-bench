@@ -69,8 +69,11 @@
   $effect(() => window.groveBench.onModelsChanged(() => {
     agentsStore.refresh().finally(() => { modelsVersion++; });
   }));
+  // Keyed on the default models' value, not the draft object: other saves
+  // (a status-bar toggle) replace the draft without changing them.
+  const defaultModelsKey = $derived(JSON.stringify(settingsStore.draft.defaultModels ?? {}));
   $effect(() => {
-    const defaults = settingsStore.draft.defaultModels ?? {};
+    const defaults = JSON.parse(defaultModelsKey) as Record<string, string>;
     void modelsVersion;
     // Untracked: the load reads agentsStore.loaded, which a models-changed
     // refresh flips twice, and each re-run would fetch every agent's models.

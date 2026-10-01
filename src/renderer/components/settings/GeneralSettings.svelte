@@ -68,7 +68,7 @@
                 type="color"
                 value={currentColor}
                 aria-label="Color for {name}"
-                oninput={(e) => {
+                onchange={(e) => {
                   const target = e.target as HTMLInputElement;
                   settingsStore.draft.repoColors = { ...settingsStore.draft.repoColors, [repo]: target.value };
                 }}

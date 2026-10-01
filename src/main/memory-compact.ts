@@ -6,7 +6,7 @@ import * as memory from './memory.js';
 import * as settings from './settings.js';
 import { adapterRegistry } from './adapters/index.js';
 import { backgroundModelFor } from './background-tasks.js';
-import { MEMORY_COMPACT_MIN_TIMEOUT_SECONDS } from '../shared/types.js';
+import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 
 // ─── Types ───
 
@@ -92,21 +92,12 @@ const MAX_SESSION_NOTES = 20;
 /** Minimum time between LLM compaction passes per repo. */
 const COMPACT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-/** Default safety timeout for the LLM compaction call, overridable via the
- *  memoryCompactTimeoutSeconds setting. Rewriting every memory file as JSON
- *  through a spawned CLI process is slow — 90s aborted real passes. */
-const DEFAULT_COMPACT_TIMEOUT_SECONDS = 300;
-
-/** Floor for the configurable timeout — below this no pass could ever finish. */
-const MIN_COMPACT_TIMEOUT_SECONDS = MEMORY_COMPACT_MIN_TIMEOUT_SECONDS;
-
-/** The configured compaction timeout in seconds, clamped to the minimum. */
+/** The safety timeout for the LLM compaction call, from the
+ *  memoryCompactTimeoutSeconds setting (default 5 minutes). Rewriting every
+ *  memory file as JSON through a spawned CLI process is slow: 90s aborted
+ *  real passes. */
 function compactTimeoutSeconds(): number {
-  const configured = settings.getSettings().memoryCompactTimeoutSeconds;
-  const seconds = Number.isFinite(configured) && configured > 0
-    ? configured
-    : DEFAULT_COMPACT_TIMEOUT_SECONDS;
-  return Math.max(MIN_COMPACT_TIMEOUT_SECONDS, seconds);
+  return effectiveCompactTimeoutSeconds(settings.getSettings().memoryCompactTimeoutSeconds);
 }
 
 /** Defensive hard cap applied to any single compacted file. */

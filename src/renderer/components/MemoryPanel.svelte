@@ -3,6 +3,7 @@
   import { memoryStore } from '../stores/memory.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { effectiveCompactTimeoutSeconds } from '../../shared/compact-timeout.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
@@ -45,7 +46,7 @@
   let compactStageLabel = $derived(
     compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
   );
-  let compactTimeoutSeconds = $derived(Math.max(30, settingsStore.current.memoryCompactTimeoutSeconds || 300));
+  let compactTimeoutSeconds = $derived(effectiveCompactTimeoutSeconds(settingsStore.current.memoryCompactTimeoutSeconds));
 
   function formatElapsed(seconds: number): string {
     const m = Math.floor(seconds / 60);

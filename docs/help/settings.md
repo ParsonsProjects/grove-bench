@@ -65,7 +65,7 @@ Control how the agent handles actions that need approval. The mode new conversat
 Memory and skill suggestions run on each conversation's own agent, using its background model (see [Grovekeepers (Agents)](#grovekeepers-agents)).
 
 - **Auto-save project memory** and **Auto-compact project memory**: see [Project memory](memory.md)
-- **Compaction timeout**: Stop a compaction pass, manual or automatic, that runs longer than this many seconds. The minimum is 30; a saved value below that counts as 30. Default 300 (5 minutes)
+- **Compaction timeout**: Stop a compaction pass, manual or automatic, that runs longer than this many seconds, from 30 to 3600 (an hour). A value saved outside that range is moved into it. Default 300 (5 minutes)
 - **Suggest skills automatically**: After each finished turn, look for requests and commands you repeat and suggest skills for them. Each run is a model call. Off by default; the **Suggest** button in the status bar's Skills popover does the same on demand
 - **Sleep idle conversations after**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a conversation's agent is shut down to save memory and CPU. The conversation stays in the Conversations list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running; the agent's page in the Preview tab closes. 0 turns it off. Default 30 minutes
 

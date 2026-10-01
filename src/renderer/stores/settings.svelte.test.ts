@@ -130,6 +130,50 @@ describe('auto-save', () => {
     expect(settingsStore.dirty).toBe(false);
   });
 
+  it('drops an old save error once nothing is left unsaved', async () => {
+    settingsStore.loaded = true;
+    mockGroveBench.saveSettings.mockRejectedValueOnce(new Error('disk full'));
+    await expect(settingsStore.updateNow({ alwaysOnTop: true })).rejects.toThrow('disk full');
+    expect(settingsStore.error).toBe('disk full');
+
+    // Try again with nothing to save.
+    await settingsStore.save();
+
+    expect(settingsStore.error).toBeNull();
+  });
+
+  it('drops the error when the change whose save failed is undone', async () => {
+    settingsStore.loaded = true;
+    mockGroveBench.saveSettings.mockRejectedValueOnce(new Error('disk full'));
+    settingsStore.draft.alwaysOnTop = true;
+    await settingsStore.save();
+    expect(settingsStore.error).toBe('disk full');
+
+    settingsStore.draft.alwaysOnTop = false;
+    settingsStore.scheduleSave();
+
+    expect(settingsStore.error).toBeNull();
+  });
+
+  it('waits for a pause before each retry while saves are failing', async () => {
+    settingsStore.loaded = true;
+    mockGroveBench.saveSettings.mockRejectedValue(new Error('disk full'));
+    settingsStore.draft.alwaysOnTop = true;
+    await settingsStore.save();
+    mockGroveBench.saveSettings.mockClear();
+
+    settingsStore.draft.defaultSystemPromptAppend = 'B';
+    settingsStore.scheduleSave();
+    settingsStore.draft.defaultSystemPromptAppend = 'Be';
+    settingsStore.scheduleSave();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mockGroveBench.saveSettings).toHaveBeenCalledTimes(1);
+    mockGroveBench.saveSettings.mockResolvedValue(undefined);
+  });
+
   it('keeps the edit and reports the error when a save fails', async () => {
     mockGroveBench.saveSettings.mockRejectedValueOnce(new Error('Restart Grove Bench and try again.'));
     settingsStore.draft.alwaysOnTop = true;
@@ -163,6 +207,18 @@ describe('load', () => {
     expect(mockGroveBench.saveSettings).toHaveBeenCalledTimes(1);
     expect(settingsStore.draft.alwaysOnTop).toBe(true);
     expect(settingsStore.loaded).toBe(true);
+  });
+
+  it('keeps an edit whose save fails instead of reloading over it', async () => {
+    mockGroveBench.saveSettings.mockRejectedValueOnce(new Error('disk full'));
+    mockGroveBench.getSettings.mockResolvedValue(DEFAULT_SETTINGS);
+    settingsStore.draft.alwaysOnTop = true;
+
+    await settingsStore.load();
+
+    expect(mockGroveBench.getSettings).not.toHaveBeenCalled();
+    expect(settingsStore.draft.alwaysOnTop).toBe(true);
+    expect(settingsStore.error).toBe('disk full');
   });
 
   it('sets error on failure', async () => {

@@ -226,9 +226,23 @@
     handleInput();
   }
 
+  /** Keys the @ picker takes. Held while its code is still loading, so
+   *  Enter can't send a half-typed @ reference (Escape closes it). */
+  const PICKER_KEYS = new Set(['Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown']);
+
   function handleKeydown(e: KeyboardEvent) {
     if (pickerOpen && pickerRef) {
       if (pickerRef.handleKeydown(e)) return;
+    } else if (pickerOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePicker();
+        return;
+      }
+      if (PICKER_KEYS.has(e.key) && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
     }
 
     // Command picker navigation

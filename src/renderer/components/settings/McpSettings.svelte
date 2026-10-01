@@ -55,6 +55,14 @@
   let json = $state('');
   /** Server whose Remove is waiting for a second click. */
   let confirmingRemove = $state<string | null>(null);
+  // A pending Remove is for one row of one list: drop it when the list
+  // changes (another project or agent, or a refresh).
+  $effect(() => {
+    void mcpConfigStore.servers;
+    void mcpConfigStore.cwd;
+    void mcpConfigStore.adapterType;
+    confirmingRemove = null;
+  });
 
   /** Scopes for an agent that doesn't describe its own. */
   const DEFAULT_SCOPES: { value: McpConfigScope; label: string; description: string }[] = [

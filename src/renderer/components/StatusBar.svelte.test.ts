@@ -77,6 +77,8 @@ describe('StatusBar Keys popover', () => {
   it('closes on Escape, with focus back on its button', async () => {
     render(StatusBar, { props: { sessionId: ACTIVE } });
     const button = screen.getByRole('button', { name: 'Keys' });
+    // A real click focuses the button; jsdom's doesn't.
+    button.focus();
     await fireEvent.click(button);
     expect(button).toHaveAttribute('aria-expanded', 'true');
 
@@ -85,6 +87,24 @@ describe('StatusBar Keys popover', () => {
     expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
     expect(button).toHaveAttribute('aria-expanded', 'false');
     expect(document.activeElement).toBe(button);
+  });
+
+  it('lets Escape through when focus is elsewhere, such as a dialog opened over it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+    const elsewhere = document.createElement('input');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    const reached = vi.fn();
+    document.addEventListener('keydown', reached);
+
+    await fireEvent.keyDown(elsewhere, { key: 'Escape' });
+
+    expect(reached).toHaveBeenCalled();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    document.removeEventListener('keydown', reached);
+    elsewhere.remove();
   });
 });
 

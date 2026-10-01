@@ -68,6 +68,8 @@ class SettingsStore {
    *  undo them. */
   async load() {
     await this.save();
+    // That save failed: keep the edit (and its error) rather than replace it.
+    if (this.dirty) return;
     this.loading = true;
     this.error = null;
     try {
@@ -92,8 +94,14 @@ class SettingsStore {
     const current = this.current as unknown as Record<string, unknown>;
     const draft = this.draft as unknown as Record<string, unknown>;
     const changed = Object.keys(draft).filter((k) => JSON.stringify(draft[k]) !== JSON.stringify(current[k]));
-    if (changed.length === 0) return;
-    const delay = changed.every((k) => TEXT_SETTINGS.has(k)) ? TEXT_SAVE_DELAY_MS : 0;
+    if (changed.length === 0) {
+      // A change whose save failed was undone: its error no longer applies.
+      if (this.loaded) this.error = null;
+      return;
+    }
+    // While a save is failing, every edit waits for a pause, so typing
+    // doesn't retry (and fail) on each key.
+    const delay = this.error || changed.every((k) => TEXT_SETTINGS.has(k)) ? TEXT_SAVE_DELAY_MS : 0;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       void this.save();
@@ -106,7 +114,13 @@ class SettingsStore {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = null;
     const run = this.saveChain.then(async () => {
-      if (!this.dirty) return;
+      if (!this.dirty) {
+        // Nothing is unsaved, so an earlier save error (say, from a
+        // status-bar toggle) no longer applies. Not before the first load,
+        // whose error is about loading.
+        if (this.loaded) this.error = null;
+        return;
+      }
       const next = $state.snapshot(this.draft) as GroveBenchSettings;
       this.saving = true;
       this.error = null;

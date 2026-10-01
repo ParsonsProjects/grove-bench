@@ -78,10 +78,7 @@ function createWindow() {
   // Apply persisted settings on startup
   const appSettings = settings.loadSettings();
   if (appSettings.alwaysOnTop) mainWindow.setAlwaysOnTop(true);
-  try {
-    const { nativeTheme } = require('electron');
-    nativeTheme.themeSource = appSettings.theme;
-  } catch { /* nativeTheme may not be available */ }
+  // The saved theme isn't applied yet (see applyImmediateEffects).
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);

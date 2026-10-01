@@ -1,7 +1,8 @@
 import path from 'node:path';
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { z } from 'zod';
-import { MEMORY_COMPACT_MIN_TIMEOUT_SECONDS, type GroveBenchSettings } from '../shared/types.js';
+import type { GroveBenchSettings } from '../shared/types.js';
+import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 import { logger } from './logger.js';
@@ -216,9 +217,8 @@ const settingsSchema = z.object({
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),
-  // Raised to the floor, as compaction does, so Settings shows the value in use.
-  memoryCompactTimeoutSeconds: z.number().finite().nonnegative()
-    .transform((s) => (s > 0 && s < MEMORY_COMPACT_MIN_TIMEOUT_SECONDS ? MEMORY_COMPACT_MIN_TIMEOUT_SECONDS : s))
+  // Stored as compaction will use it, so Settings shows the value in use.
+  memoryCompactTimeoutSeconds: z.number().transform(effectiveCompactTimeoutSeconds)
     .catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
@@ -333,5 +333,8 @@ export function applyImmediateEffects(win: BrowserWindow | null, settings: Grove
   if (win && !win.isDestroyed()) {
     win.setAlwaysOnTop(settings.alwaysOnTop);
   }
-  nativeTheme.themeSource = settings.theme;
+  // `theme` isn't applied to nativeTheme.themeSource until the app has a
+  // light palette (TODO.md, Light theme): Settings can't change it, and it
+  // also sets prefers-color-scheme for Preview pages. Electron's default,
+  // following Windows, stays in place.
 }

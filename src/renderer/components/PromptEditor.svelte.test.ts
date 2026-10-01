@@ -154,6 +154,26 @@ describe('PromptEditor: attachments', () => {
 });
 
 describe('PromptEditor: @ file picker', () => {
+  it('does not send on Enter while the picker is still loading', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage');
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const textarea = container.querySelector('textarea')!;
+    textarea.value = 'look at @app';
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    await fireEvent.input(textarea);
+
+    // Straight away, before the picker's code has loaded.
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+    textarea.dispatchEvent(enter);
+    await tick();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(textarea.value).toBe('look at @app');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(submit).not.toHaveBeenCalled();
+    submit.mockRestore();
+  });
+
   beforeEach(() => {
     messageStore.destroyAllSessions();
     messageStore.messagesBySession = { [SID]: [] };

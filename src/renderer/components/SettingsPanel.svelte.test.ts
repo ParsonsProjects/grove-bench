@@ -200,14 +200,17 @@ describe('SettingsPanel auto-save', () => {
 });
 
 describe('SettingsPanel number settings', () => {
-  it('refuses a compaction timeout under the minimum and saves a valid one', async () => {
+  it('refuses a compaction timeout out of range and saves a valid one', async () => {
     await renderPanel();
     await openSection('Background work');
     const field = screen.getByLabelText('Compaction timeout');
 
+    await fireEvent.input(field, { target: { value: '5000' } });
+    await fireEvent.blur(field);
+    expect(screen.getByText(/Enter a number from 30 to 3600\. Not saved\./)).toBeInTheDocument();
     await fireEvent.input(field, { target: { value: '5' } });
     await fireEvent.blur(field);
-    expect(screen.getByText(/Enter 30 or more\. Not saved\./)).toBeInTheDocument();
+    expect(screen.getByText(/Enter a number from 30 to 3600\. Not saved\./)).toBeInTheDocument();
     expect(field).toHaveAttribute('aria-invalid', 'true');
     await new Promise((r) => setTimeout(r, 20));
     expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
@@ -215,6 +218,15 @@ describe('SettingsPanel number settings', () => {
     await fireEvent.input(field, { target: { value: '60' } });
     await fireEvent.blur(field);
     await waitFor(() => expect(lastSaved().memoryCompactTimeoutSeconds).toBe(60));
+    expect(screen.queryByText(/Not saved/)).not.toBeInTheDocument();
+  });
+
+  it('does not flag a saved value it is only showing', async () => {
+    mockGroveBench.getSettings.mockResolvedValue({ ...settings(), idleSleepMinutes: 2.5 });
+    await renderPanel();
+    await openSection('Background work');
+
+    expect(screen.getByLabelText('Sleep idle conversations after')).toHaveValue('2.5');
     expect(screen.queryByText(/Not saved/)).not.toBeInTheDocument();
   });
 
@@ -248,6 +260,24 @@ describe('SettingsPanel sections and search', () => {
 
     expect(sectionTab('Notifications')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('checkbox', { name: 'Flash the taskbar button' })).toBeInTheDocument();
+  });
+
+  it('starts on the sections again after closing with a search typed', async () => {
+    const { rerender, onclose } = await renderPanel();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'idle' } });
+
+    await rerender({ open: false, onclose });
+    await rerender({ open: true, onclose });
+
+    expect(screen.getByRole('searchbox', { name: 'Search settings' })).toHaveValue('');
+    expect(screen.getByRole('tablist')).not.toHaveClass('hidden');
+  });
+
+  it('does not offer a setting this setup does not show', async () => {
+    await renderPanel();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'thinking summaries' } });
+
+    expect(screen.queryByRole('button', { name: /Show thinking summaries/ })).not.toBeInTheDocument();
   });
 
   it('has a row for every searchable setting', async () => {
@@ -289,6 +319,39 @@ describe('SettingsPanel agent loading', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(mockGroveBench.getModels).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SettingsPanel agent models', () => {
+  it('does not fetch models again when another save replaces the draft', async () => {
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Claude Agent default mode' });
+    mockGroveBench.getModels.mockClear();
+
+    // What a status-bar toggle does.
+    await settingsStore.updateNow({ disabledSkills: ['lint'] });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockGroveBench.getModels).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsPanel project colors', () => {
+  it('saves a picked color once, when the picker closes', async () => {
+    store.repos = ['C:/dev/grove-bench'];
+    try {
+      await renderPanel();
+      const picker = screen.getByLabelText('Color for grove-bench');
+
+      await fireEvent.input(picker, { target: { value: '#112233' } });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+
+      await fireEvent.change(picker, { target: { value: '#112233' } });
+      await waitFor(() => expect(lastSaved().repoColors).toEqual({ 'C:/dev/grove-bench': '#112233' }));
+    } finally {
+      store.repos = [];
+    }
   });
 });
 
@@ -349,6 +412,20 @@ describe('SettingsPanel MCP servers', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(mockGroveBench.mcpConfigRemove).toHaveBeenCalledWith('github', undefined, undefined, undefined));
+  });
+
+  it('drops a pending Remove when the list changes', async () => {
+    mockGroveBench.mcpConfigList.mockResolvedValue([{ name: 'github', target: 'npx github-mcp', status: 'connected' }]);
+    await renderPanel();
+    await openSection('MCP servers');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    expect(screen.getByText('Remove github?')).toBeInTheDocument();
+
+    // Another project's list, with a server of the same name.
+    await mcpConfigStore.showProject('C:/dev/other');
+
+    await waitFor(() => expect(screen.queryByText('Remove github?')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
   });
 
   it('shows a failed add next to the add form', async () => {

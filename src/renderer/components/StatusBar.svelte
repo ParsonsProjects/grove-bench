@@ -383,13 +383,16 @@
     { title: 'Tabs', keys: Object.entries(TAB_BY_KEY).map(([key, tab]) => [`${TAB_LABELS[tab]} tab`, `Alt+${key}`]) },
   ];
 
-  /** Escape closes the Keys popover, focus back on its button. Capture
-   *  phase, and only while this bar shows (see handlePrEscape). */
+  /** Escape closes the Keys popover. Capture phase, and only while this bar
+   *  shows (see handlePrEscape). The key is kept, and focus goes back to the
+   *  Keys button, only when focus was in the popover: Escape pressed in a
+   *  dialog opened over it (Ctrl+,) or in the prompt must still reach them. */
   function handleShortcutsEscape(e: KeyboardEvent) {
     if (e.key !== 'Escape' || !shortcutsOpen) return;
     if (!(shortcutsRef?.checkVisibility?.() ?? true)) return;
-    e.stopPropagation();
     shortcutsOpen = false;
+    if (!shortcutsRef?.contains(document.activeElement)) return;
+    e.stopPropagation();
     shortcutsButtonRef?.focus();
   }
 
