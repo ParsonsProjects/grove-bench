@@ -117,7 +117,7 @@ Everything else goes in `devDependencies`, or it ships in the installer
 unused. `scripts/smoke-deps.mjs` checks the packaged app (Package workflow).
 
 - `@anthropic-ai/claude-agent-sdk` — Claude Code agent integration
-- `@modelcontextprotocol/sdk` — serves Grove's tools over MCP HTTP (bundled)
+- `@modelcontextprotocol/sdk`: serves Grove's tools over MCP HTTP (bundled)
 - `@xterm/xterm` — Terminal emulation in renderer
 - `node-pty` — PTY spawning in main process
 - `bits-ui` — UI component library
