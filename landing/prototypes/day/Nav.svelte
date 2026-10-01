@@ -94,6 +94,8 @@
     display: inline-flex;
     align-items: center;
     gap: 10px;
+    padding-block: 8px;
+    white-space: nowrap;
     font-size: 17px;
     font-weight: 800;
     letter-spacing: -0.04em;
@@ -109,6 +111,7 @@
   .links a {
     color: var(--soft);
     text-decoration: none;
+    white-space: nowrap;
   }
   .links a:hover {
     color: inherit;
@@ -127,7 +130,9 @@
     padding: 6px 14px;
     font-size: 13px;
   }
-  @media (max-width: 760px) {
+  /* The section links need about 900px; below that the bar keeps the
+     brand, the clock and the download button. */
+  @media (max-width: 899px) {
     .links {
       display: none;
     }
@@ -135,9 +140,30 @@
       margin-left: auto;
     }
   }
+  /* On phones the bar spans the full width rather than the column beside
+     the trail. */
+  @media (max-width: 760px) {
+    .nav .bar {
+      width: 100%;
+      margin-left: 0;
+      padding-inline: 16px;
+    }
+  }
   @media (max-width: 400px) {
+    .bar {
+      gap: 12px;
+    }
     .get span {
       display: none;
+    }
+  }
+  @media (max-width: 359px) {
+    .bar {
+      gap: 8px;
+    }
+    .brand {
+      gap: 7px;
+      font-size: 15px;
     }
   }
 </style>

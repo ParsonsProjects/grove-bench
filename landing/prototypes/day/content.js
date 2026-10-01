@@ -93,6 +93,10 @@ export const FAQ = [
     q: 'What do I need?',
     a: 'Windows 10 or later, and either a Claude plan (Pro, Max, Team or Enterprise) with Claude Code installed and signed in, or an Anthropic API key. Git 2.17 or later is recommended: without it, conversations edit your folder in place and can’t be rewound.',
   },
+  {
+    q: 'Which agents does it work with?',
+    a: 'Claude Code for now. The app talks to agents through adapters, so more can be added, and that’s the plan.',
+  },
   { q: 'Does it run on Mac or Linux?', a: 'No. Grove Bench is a Windows app.' },
   {
     q: 'Will the agents overwrite each other’s work?',

@@ -166,6 +166,19 @@
       padding-top: 92px;
     }
   }
+  /* Laptop screens are short once the browser's own bars are counted
+     (1366x768 leaves about 650px), so bring the app window up. */
+  @media (min-width: 960px) and (max-height: 820px) {
+    .head {
+      padding-top: 52px;
+    }
+    .ctas {
+      margin-top: 22px;
+    }
+    .shot-wrap {
+      padding-top: 36px;
+    }
+  }
   .h1 {
     max-width: 18ch;
   }

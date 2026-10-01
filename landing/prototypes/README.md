@@ -93,7 +93,11 @@ page as a product shot.
 
 ## Checked
 
-- Chromium at 1440, 1280, 1024 and 390 px wide, with and without reduced
-  motion (with it, everything is visible and scenes rest on their last frame).
-- No horizontal scrolling at any of those widths.
+- Chromium at 15 sizes, from 320x568 to 2560x1440, including the common
+  Windows laptop sizes (1366x768, 1536x864) and the widths where the layout
+  switches (760, 860, 900, 960). An audit script checked each one for
+  sideways scrolling, clipped text, words past the edge, trail art over
+  words and small tap targets on phones.
+- With reduced motion, everything is visible and scenes rest on their last
+  frame.
 - Not yet: other browsers, real phones, screen readers.

@@ -20,7 +20,7 @@
     </div>
     <div class="right">
       <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download</a>
-      <p>Source-available under FSL-1.1-MIT</p>
+      <p>Source-available under <span class="nowrap">FSL-1.1-MIT</span></p>
     </div>
   </div>
   <p class="inner proto">Prototype. The conversations shown are samples; the characters are the app’s own sprites.</p>
@@ -51,11 +51,13 @@
     list-style: none;
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 20px;
-    margin-top: 16px;
+    gap: 0 20px;
+    margin-top: 10px;
     font-size: 13px;
   }
   .links a {
+    display: inline-block;
+    padding-block: 6px;
     color: var(--soft);
     text-decoration: none;
   }
@@ -73,7 +75,11 @@
     font-size: 12px;
     color: var(--faint);
   }
-  @media (max-width: 640px) {
+  .nowrap {
+    white-space: nowrap;
+  }
+  /* Once it wraps under the links, line it up on the left. */
+  @media (max-width: 900px) {
     .right {
       align-items: flex-start;
     }

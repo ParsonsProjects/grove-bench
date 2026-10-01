@@ -96,11 +96,13 @@
   .links {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 22px;
-    margin-top: 18px;
+    gap: 0 22px;
+    margin-top: 12px;
     font-size: 13px;
   }
   .links a {
+    display: inline-block;
+    padding-block: 6px;
     color: var(--blue-ink);
   }
   @media (max-width: 760px) {

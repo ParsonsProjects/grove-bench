@@ -120,9 +120,20 @@
     line-height: 1.65;
     color: var(--fg);
   }
+  .who span {
+    white-space: nowrap;
+  }
   @media (max-width: 760px) {
     .items {
       padding: 12px;
+    }
+  }
+  /* Small phones: drop the key hint and the status words, keep the
+     character. */
+  @media (max-width: 420px) {
+    .tab i,
+    .who span {
+      display: none;
     }
   }
 </style>
