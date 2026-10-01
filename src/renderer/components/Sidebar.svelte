@@ -152,7 +152,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'destroy' | 'check' | 'add' | 'close';
+    icon: 'rename' | 'folder' | 'destroy' | 'add' | 'close' | 'ungroup';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -170,7 +170,7 @@
     // already-stopped ones. For an open tab still waiting to reconnect it
     // just closes the tab.
     if (store.isOpenTab(session)) {
-      items.push({ label: 'Close Conversation', icon: 'close', action: () => stopSession(sessionId) });
+      items.push({ label: 'Close Conversation', icon: 'close', action: () => requestClose([sessionId]) });
     }
     items.push(...groupMenuItems(sessionId));
     items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
@@ -185,7 +185,7 @@
     const current = groupStore.groupOf(sessionId);
     const items: MenuItem[] = [];
     if (current) {
-      items.push({ label: `Remove from ${current.name}`, icon: 'close', action: () => groupStore.remove(sessionId) });
+      items.push({ label: `Remove from ${current.name}`, icon: 'ungroup', action: () => groupStore.remove(sessionId) });
     }
     for (const g of groupStore.groups) {
       if (g.id === current?.id) continue;
@@ -425,6 +425,28 @@
     try {
       await window.groveBench.closeSession(id);
     } catch { /* session may already be dead */ }
+  }
+
+  /** What closing does: the quick ✕'s tooltip, and its description for
+   *  screen readers (which already read its name, so it isn't repeated). */
+  const CLOSE_HINT = 'Stops the agent and terminal and takes it off the Conversations list. Open it again any time.';
+
+  /** Conversations waiting on the close confirmation, and how many of them
+   *  were mid-turn when it was asked. */
+  let confirmClose = $state<{ ids: string[]; midTurn: number } | null>(null);
+
+  /** Close conversations, asking first when any is in the middle of a turn:
+   *  closing stops that turn, and the ✕ is easy to click in passing. */
+  function requestClose(ids: string[]) {
+    const midTurn = ids.filter((id) => messageStore.getIsRunning(id)).length;
+    if (midTurn > 0) confirmClose = { ids, midTurn };
+    else for (const id of ids) void stopSession(id);
+  }
+
+  function closeConfirmed() {
+    const ids = confirmClose?.ids ?? [];
+    confirmClose = null;
+    for (const id of ids) void stopSession(id);
   }
 
   /** Open a draft conversation in `repo` (default: the open conversation's
@@ -736,6 +758,8 @@
   class="relative border-r border-sidebar-border flex flex-col bg-sidebar shrink-0"
   style="width: {collapsed ? RAIL_WIDTH : sidebarWidth}px"
 >
+  <!-- Described once, for every row's ✕. -->
+  <span id="close-conversation-hint" hidden>{CLOSE_HINT}</span>
   <!-- Bookmarks, memory, clean-up and settings: in the footer, or down the rail -->
   {#snippet footerTools()}
     <Button
@@ -870,9 +894,10 @@
                context menu): close it (stops the agent but keeps it resumable). -->
           <button
             type="button"
-            title={'Close conversation\nStops the agent and terminal and moves it under Projects. Open it again any time.'}
+            title={`Close conversation\n${CLOSE_HINT}`}
             aria-label="Close conversation {label}"
-            onclick={() => stopSession(session.id)}
+            aria-describedby="close-conversation-hint"
+            onclick={() => requestClose([session.id])}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
               hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
@@ -1045,7 +1070,7 @@
       row={sessionRow}
       {rowVisible}
       countsFor={headerCounts}
-      closeConversation={(id) => void stopSession(id)}
+      stopSessions={requestClose}
       filterLabel={triageFilter === 'all' ? null : TRIAGE_FILTER_LABELS[triageFilter]}
     />
 
@@ -1367,6 +1392,32 @@
       <Dialog.Footer>
         <Button variant="secondary" onclick={() => confirmCleanup = false}>Cancel</Button>
         <Button variant="destructive" onclick={runCleanup}>Remove</Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}
+
+<!-- Close confirmation: only asked when a conversation is in the middle of a turn -->
+{#if confirmClose}
+  {@const { ids, midTurn } = confirmClose}
+  {@const one = ids.length === 1 ? store.sessions.find((s) => s.id === ids[0]) : null}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o) confirmClose = null; }}>
+    <Dialog.Content class="max-w-sm">
+      <Dialog.Header>
+        <Dialog.Title>{ids.length === 1 ? 'Close conversation?' : `Close ${ids.length} conversations?`}</Dialog.Title>
+        <Dialog.Description>
+          {#if one}
+            <span class="text-foreground font-medium">{sessionRowLabel(one)}</span> is in the middle of a turn.
+            Closing it stops the turn and shuts down its terminal. You can open it again later.
+          {:else}
+            {midTurn} of them {midTurn === 1 ? 'is' : 'are'} in the middle of a turn.
+            Closing stops {midTurn === 1 ? 'that turn' : 'those turns'} and shuts down their terminals. You can open them again later.
+          {/if}
+        </Dialog.Description>
+      </Dialog.Header>
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => confirmClose = null}>Cancel</Button>
+        <Button variant="destructive" onclick={closeConfirmed}>Stop and close</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>

@@ -240,6 +240,39 @@ describe('Sidebar session rows', () => {
     expect(store.activeSessionId).toBeNull();
   });
 
+  it('describes the quick close for screen readers without repeating its name', async () => {
+    render(Sidebar);
+    const close = screen.getByTitle(/^Close conversation/);
+    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
+    expect(close).toHaveAccessibleDescription(/^Stops the agent and terminal and takes it off the Conversations list/);
+  });
+
+  it('closes an idle conversation straight away', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(screen.queryByText('Close conversation?')).toBeNull();
+  });
+
+  it('asks before closing a conversation in the middle of a turn', async () => {
+    messageStore.setIsRunning('s1', true);
+    render(Sidebar);
+
+    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    expect(await screen.findByText('Close conversation?')).toBeInTheDocument();
+    expect(screen.getByText(/is in the middle of a turn/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+    expect(store.sessions[0].status).toBe('running');
+
+    // The context menu asks too.
+    await fireEvent.contextMenu(screen.getAllByText('Sidebar revamp')[0]);
+    await fireEvent.click(screen.getByText('Close Conversation'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(store.sessions[0].status).toBe('stopped');
+  });
+
   it('colours the branch icon by the PR health shown in the status bar', async () => {
     const icon = () => screen.getByRole('img', { name: /^Worktree/ });
     render(Sidebar);
@@ -576,6 +609,22 @@ describe('Sidebar groups', () => {
     // Nothing open is left to close.
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
     expect(screen.queryByText('Close all conversations')).toBeNull();
+  });
+
+  it('asks once before closing a group with a conversation mid-turn, then closes them all', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    messageStore.setIsRunning('api1', true);
+    render(Sidebar);
+
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    await fireEvent.click(screen.getByText('Close all conversations'));
+    expect(await screen.findByText('Close 2 conversations?')).toBeInTheDocument();
+    expect(screen.getByText(/1 of them is in the middle of a turn/)).toBeInTheDocument();
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
   });
 
   it('counts only the rows the filter shows', async () => {
