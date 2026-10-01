@@ -31,7 +31,8 @@
   }
 
   /** Table renderer: marked's default table plus a copy button that holds the
-   *  Markdown source. The click handler adds the rendered table as HTML. */
+   *  Markdown source (for the menu's Copy table as Markdown). The click
+   *  handler copies the rendered table as HTML and tab-separated text. */
   const tableRenderer = {
     table(this: Renderer, token: Tokens.Table) {
       const encoded = encodeCopyText(token.raw.trim());
@@ -78,7 +79,7 @@
       if (btn.classList.contains('table-copy-btn')) {
         const table = renderedTable(btn);
         if (!table) return;
-        await writeRichText(table.markdown, table.html);
+        await writeRichText(table.tsv, table.html);
       } else {
         const code = renderedCode(btn);
         if (code === null) return;

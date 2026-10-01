@@ -466,8 +466,12 @@ describe('OutputPanel: right-click menu', () => {
 
     await fireEvent.contextMenu(screen.getByText('2'));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy table' }));
-    // No ClipboardItem in jsdom, so rich copy falls back to the Markdown.
-    expect(writeText).toHaveBeenCalledWith(table);
+    // No ClipboardItem in jsdom, so rich copy falls back to the plain text.
+    expect(writeText).toHaveBeenCalledWith('a\tb\n1\t2');
+
+    await fireEvent.contextMenu(screen.getByText('2'));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy table as Markdown' }));
+    expect(writeText).toHaveBeenLastCalledWith(table);
   });
 
   it('acts on selected text', async () => {
