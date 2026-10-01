@@ -379,9 +379,16 @@ export function transformMessage(
     }
 
     case 'assistant': {
+      // A subagent's messages carry the id of the Agent call that started it.
+      // Its tool calls still show what it is doing, but its text and thinking
+      // are its own conversation, not a reply to the user. The CLI holds them
+      // back for a foreground subagent, yet forwards them for one in the
+      // background, where they would read as the main agent's reply.
+      const isSubagent = !!message.parent_tool_use_id;
       const content = message.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
+          if (isSubagent && block.type !== 'tool_use') continue;
           if (block.type === 'text') {
             events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid });
           } else if (block.type === 'tool_use') {
@@ -403,10 +410,9 @@ export function transformMessage(
           }
         }
       }
-      // Only track token usage from the main conversation — subagent messages
-      // carry a parent_tool_use_id and would cause the status-bar values to
-      // fluctuate wildly as their smaller contexts overwrite the main context size.
-      const isSubagent = !!(message as any).parent_tool_use_id;
+      // Only track token usage from the main conversation: subagent usage
+      // would cause the status-bar values to fluctuate wildly as their
+      // smaller contexts overwrite the main context size.
       const usage = (message.message as any)?.usage;
       if (usage && !isSubagent) {
         events.push({

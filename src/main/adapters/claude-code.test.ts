@@ -900,8 +900,19 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events.find((e) => e.type === 'usage')).toBeUndefined();
-      // text should still come through
-      expect(events.find((e) => e.type === 'assistant_text')).toMatchObject({ text: 'subagent reply' });
+    });
+
+    it('drops a subagent\'s text and thinking but keeps its tool calls', () => {
+      // A background subagent's report arrives like this; shown, it would read
+      // as the main agent's reply.
+      const subagent = (block: object) => transformMessage(
+        { type: 'assistant', uuid: 'u6', parent_tool_use_id: 'tu-agent-123', message: { content: [block] } } as any,
+        makeCtx(),
+      );
+      expect(subagent({ type: 'text', text: 'I\'ve sent the full report to your caller.' })).toEqual([]);
+      expect(subagent({ type: 'thinking', thinking: 'Spot-checking...' })).toEqual([]);
+      expect(subagent({ type: 'tool_use', id: 'tu-sub-1', name: 'Grep', input: { pattern: 'cron' } }))
+        .toContainEqual(expect.objectContaining({ type: 'assistant_tool_use', toolUseId: 'tu-sub-1' }));
     });
   });
 
