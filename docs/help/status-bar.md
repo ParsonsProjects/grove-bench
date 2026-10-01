@@ -30,9 +30,13 @@ Read-safe and Auto differ in who decides: Read-safe uses a fixed allowlist insid
 
 The Mode, Effort, Thinking and Speed columns are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a column (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.
 
+## Activity
+
+Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details.
+
 ## Project and Branch
 
-The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. Under it are the sync state (commits to push or pull) and the pull request.
+The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request.
 
 Click the branch name to switch branches. Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
 

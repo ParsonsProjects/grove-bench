@@ -236,6 +236,11 @@
   .grove-tooltip {
     animation: none;
   }
+  /* The pulsing status dots: their colour carries the state, the pulse is
+     only emphasis. Tailwind's animate-pulse has no reduced-motion check. */
+  .animate-pulse {
+    animation: none;
+  }
 }
 
 @layer base {

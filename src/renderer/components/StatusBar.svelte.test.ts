@@ -427,3 +427,60 @@ describe('StatusBar PR', () => {
     expect(screen.queryByText('push failed')).toBeNull();
   });
 });
+
+describe('StatusBar activity', () => {
+  afterEach(() => {
+    delete messageStore.messagesBySession[ACTIVE];
+    messageStore.isRunning = {};
+  });
+
+  it('says it is waiting for you while a permission prompt is open, even mid-turn', () => {
+    messageStore.setIsRunning(ACTIVE, true);
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: false } as any];
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('activity').textContent?.trim()).toBe('waiting for you');
+  });
+
+  it('goes back to the agent\'s state once answered', () => {
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: true } as any];
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('activity').textContent?.trim()).toBe('idle');
+  });
+});
+
+describe('StatusBar popovers close on Escape', () => {
+  afterEach(() => {
+    delete messageStore.usageBySession[ACTIVE];
+    delete messageStore.contextWindowBySession[ACTIVE];
+  });
+
+  it('closes Keys and puts focus back on its button', async () => {
+    const { queryByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const keys = screen.getByRole('button', { name: 'Keys' });
+    keys.focus();
+    await fireEvent.click(keys);
+    expect(queryByTestId('shortcuts')).not.toBeNull();
+    screen.getByRole('button', { name: 'All shortcuts in Help' }).focus();
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(queryByTestId('shortcuts')).toBeNull();
+    expect(document.activeElement).toBe(keys);
+  });
+
+  it('closes the context popover without stopping anything else', async () => {
+    messageStore.contextWindowBySession[ACTIVE] = 200_000;
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 50_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Context 25% used/ }));
+    expect(screen.queryByText('Summarise to free space')).not.toBeNull();
+
+    const later = vi.fn();
+    window.addEventListener('keydown', later);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    window.removeEventListener('keydown', later);
+
+    expect(screen.queryByText('Summarise to free space')).toBeNull();
+    expect(later).not.toHaveBeenCalled();
+  });
+});

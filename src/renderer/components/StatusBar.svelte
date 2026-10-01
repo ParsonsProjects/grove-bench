@@ -184,6 +184,8 @@
   });
   let model = $derived(messageStore.getModel(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
+  /** A permission prompt or question is waiting on the user. */
+  let needsInput = $derived(messageStore.needsInput(sessionId));
   /** The agent path to creating a PR needs a live, idle session. */
   let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
   let activity = $derived(messageStore.getActivity(sessionId));
@@ -315,6 +317,33 @@
     prPopoverOpen = false;
     createPrMenuOpen = false;
     if (focusWasInStack) trigger?.focus();
+  }
+
+  /** The bar itself, to tell whether this conversation's pane is on screen. */
+  let barRef = $state<HTMLDivElement | null>(null);
+
+  /** Escape closes this bar's other popovers too, the same way: capture
+   *  phase, only while the bar is visible, and focus back on the trigger if
+   *  it was inside. Stopping it here also keeps Escape from reaching the
+   *  prompt, where it would stop the agent. */
+  function handlePopoverEscape(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    const open = ([
+      [tasksExpanded, tasksRef, () => { tasksExpanded = false; }],
+      [bgTasksExpanded, bgTasksRef, () => { bgTasksExpanded = false; }],
+      [contextExpanded, contextRef, () => { contextExpanded = false; }],
+      [shortcutsOpen, shortcutsRef, () => { shortcutsOpen = false; }],
+      [mcpExpanded, mcpRef, () => { mcpExpanded = false; }],
+      [skillsExpanded, skillsRef, () => { skillsExpanded = false; }],
+    ] as const).filter(([isOpen]) => isOpen);
+    if (open.length === 0) return;
+    if (!(barRef?.checkVisibility?.() ?? true)) return;
+    e.stopPropagation();
+    for (const [, ref, close] of open) {
+      const focusWasInside = !!ref?.contains(document.activeElement);
+      close();
+      if (focusWasInside) ref?.querySelector('button')?.focus();
+    }
   }
 
   // ─── MCP server control ───
@@ -660,6 +689,7 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('keydown', handlePrEscape, true);
+    window.addEventListener('keydown', handlePopoverEscape, true);
     window.addEventListener('click', handleClickOutside);
     // The MCP controls depend on what the agent supports (loaded once).
     agentsStore.load();
@@ -672,6 +702,7 @@
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('keydown', handlePrEscape, true);
+    window.removeEventListener('keydown', handlePopoverEscape, true);
     window.removeEventListener('click', handleClickOutside);
     stopSignInPoll();
   });
@@ -687,7 +718,7 @@
      branch and context keep their room: Keys (F1 has the list) and MCP /
      Skills below 672px (MCP stays while a server is down), the project name
      below 768px, and the last turn's cost below 1024px. -->
-<div class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
+<div bind:this={barRef} class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">
   <SessionControlsPopover {sessionId} {modelOptions} />
 
   <span class="w-px self-stretch bg-border"></span>
@@ -695,8 +726,14 @@
   <!-- Activity stack: session state on top; transient chips (rate limit,
        pending tools, background tasks, memory compaction) underneath. -->
   <div class="flex flex-col gap-px leading-snug">
-  <span class="flex items-center gap-1.5">
-    {#if isRunning}
+  <span class="flex items-center gap-1.5 whitespace-nowrap" data-testid="activity">
+    {#if needsInput}
+      <!-- Blocked on a permission prompt or a question: the one state that
+           needs you, so it wins over what the agent was doing. Amber, like
+           the Thread tab's dot for the same thing. -->
+      <span class="w-1.5 h-1.5 bg-amber-500 animate-pulse"></span>
+      <span class="text-amber-400">waiting for you</span>
+    {:else if isRunning}
       <span class="w-1.5 h-1.5 {activity.activity === 'thinking' ? 'bg-purple-400' : 'bg-primary'} animate-pulse"></span>
       {#if activity.activity === 'thinking'}
         <span class="text-purple-400">thinking</span>
@@ -1041,16 +1078,12 @@
     <div bind:this={skillsRef}>
       <button
         onclick={toggleSkillsPopover}
-        class="flex items-center gap-1 whitespace-nowrap transition-colors
-          {enabledSkillCount === 0 ? 'text-red-400 hover:text-red-300'
-            : disabledSkillCount > 0 ? 'text-orange-400 hover:text-orange-300'
-            : 'text-muted-foreground hover:text-foreground'}"
+        class="flex items-center gap-1 whitespace-nowrap transition-colors text-muted-foreground hover:text-foreground"
         title="Skills — click to manage{disabledSkillCount > 0 ? ` (${disabledSkillCount} disabled)` : ''}"
       >
-        <span class="w-1.5 h-1.5
-          {enabledSkillCount === 0 ? 'bg-red-500'
-            : disabledSkillCount > 0 ? 'bg-orange-400'
-            : 'bg-green-500'}"></span>
+        <!-- Turning skills off is a choice, not a fault, so no warning
+             colours here (MCP's are for real failures): grey with none on. -->
+        <span class="w-1.5 h-1.5 {enabledSkillCount === 0 ? 'bg-muted-foreground/40' : 'bg-green-500'}"></span>
         Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
         {#if suggestions.length > 0}
           <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your conversations">+{suggestions.length}</span>
@@ -1212,7 +1245,7 @@
         <button
           onclick={toggleBranchPicker}
           disabled={isRunning}
-          class="text-muted-foreground/70 hover:text-foreground truncate max-w-40 transition-colors disabled:hover:text-muted-foreground/70"
+          class="text-muted-foreground/70 hover:text-foreground truncate max-w-40 transition-colors border-b border-dashed border-muted-foreground/40 disabled:border-transparent disabled:hover:text-muted-foreground/70"
           title={`${sessionRepoPath ? `${store.repoDisplayName(sessionRepoPath)} / ` : ''}${sessionBranch}${isRunning
             ? ' (switch branches once the agent finishes its turn)'
             : ': click to switch branch'}`}
