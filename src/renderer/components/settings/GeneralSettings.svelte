@@ -9,6 +9,7 @@
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
+  import UpdateSettings from '../UpdateSettings.svelte';
 
   const draft = $derived(settingsStore.draft);
 </script>
@@ -109,4 +110,8 @@
     description="Check spelling in the prompt editor."
     bind:checked={settingsStore.draft.spellcheck}
   />
+</SettingsGroup>
+
+<SettingsGroup title="Updates">
+  <UpdateSettings />
 </SettingsGroup>

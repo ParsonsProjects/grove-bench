@@ -43,6 +43,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   theme: 'system',
   alwaysOnTop: false,
 
+  // Updates
+  autoDownloadUpdates: true,
+
   // Appearance
   repoColors: {},
   groveCharacters: true,
@@ -232,6 +235,8 @@ const settingsSchema = z.object({
   branchNamingRule: z.string().catch(DEFAULT_SETTINGS.branchNamingRule),
   theme: z.enum(['system', 'dark', 'light']).catch(DEFAULT_SETTINGS.theme),
   alwaysOnTop: z.boolean().catch(DEFAULT_SETTINGS.alwaysOnTop),
+
+  autoDownloadUpdates: z.boolean().catch(DEFAULT_SETTINGS.autoDownloadUpdates),
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
   groveCharacters: z.boolean().catch(DEFAULT_SETTINGS.groveCharacters),

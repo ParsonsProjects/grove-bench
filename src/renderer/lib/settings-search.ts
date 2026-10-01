@@ -33,6 +33,8 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'project-colors', section: 'general', label: 'Project colors', keywords: 'accent colour repository' },
   { id: 'always-on-top', section: 'general', label: 'Always on top', keywords: 'window' },
   { id: 'spellcheck', section: 'general', label: 'Spell checking', keywords: 'spelling prompt editor' },
+  { id: 'updates', section: 'general', label: 'Updates', keywords: 'version check for updates releases' },
+  { id: 'auto-download-updates', section: 'general', label: 'Download updates automatically', keywords: 'install background restart' },
 
   { id: 'credentials', section: 'agents', label: 'Credentials', keywords: 'api key sign in login authentication' },
   { id: 'default-model', section: 'agents', label: 'Default model', keywords: 'opus sonnet haiku' },

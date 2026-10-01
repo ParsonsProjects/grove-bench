@@ -65,6 +65,7 @@ TODO.md                # Gap analysis vs competitors
 - `vite.preload.config.mjs` — Vite config for preload script
 - `vitest.config.mts` — Test config (projects: main, renderer)
 - `svelte.config.mjs` — Svelte compiler config
+- `.npmrc`: npm settings. `min-release-age=7` only installs versions published 7+ days ago; `engine-strict` makes the `engines.npm` range (>=11.10.0, the first npm with that setting) a hard error. `landing/.npmrc` repeats them. `scripts/check-release-age.mjs` checks lockfile changes in the Dependency age workflow
 
 ## Commands
 

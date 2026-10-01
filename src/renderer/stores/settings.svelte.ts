@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   branchNamingRule: '',
   theme: 'system',
   alwaysOnTop: false,
+  autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
   diffViewMode: 'unified',

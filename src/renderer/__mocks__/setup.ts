@@ -57,8 +57,9 @@ const mockGroveBench = {
   repoKind: vi.fn(() => Promise.resolve('git' as import('../../shared/types.js').ProjectKind)),
   hasGitIdentity: vi.fn(() => Promise.resolve(true)),
   onUpdateStatus: vi.fn(() => () => {}),
+  getUpdateState: vi.fn(() => Promise.resolve({ currentVersion: '0.0.0-test', enabled: true, status: null } as import('../../shared/types.js').UpdateState)),
   downloadUpdate: vi.fn(() => Promise.resolve()),
-  installUpdate: vi.fn(),
+  restartToUpdate: vi.fn(() => Promise.resolve()),
   winIsMaximized: vi.fn(() => Promise.resolve(false)),
   winMinimize: vi.fn(),
   winMaximize: vi.fn(),
@@ -194,7 +195,7 @@ const mockGroveBench = {
   pluginUninstall: vi.fn(() => Promise.resolve()),
   pluginEnable: vi.fn(() => Promise.resolve()),
   pluginDisable: vi.fn(() => Promise.resolve()),
-  checkForUpdate: vi.fn(() => Promise.resolve()),
+  checkForUpdate: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').UpdateStatus | null)),
 };
 
 function notMocked(name: string): Promise<never> {

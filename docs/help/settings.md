@@ -12,6 +12,7 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 - **Project colors**: The accent color for each project in the sidebar. **Use default** puts a project back on its default color
 - **Always on top**: Keep the Grove Bench window above other windows
 - **Spell checking**: Check spelling in the prompt editor
+- **Updates**: Shows the version you're running, with a link to all releases. **Check for updates** checks now and says what it found. With **Download updates automatically** on (the default), a new version downloads in the background and installs the next time you quit. When it's ready, **Restart to update** appears in the title bar to install it straight away: it stops every conversation the way quitting does (asking first if any are still working), installs, and reopens Grove Bench, where your conversations reopen. **What's new** next to it opens that version's release notes. With the option off, the title bar shows **Update available** and waits for you to click it to download. Updates are only checked in the installed app
 
 ## Grovekeepers (Agents)
 
