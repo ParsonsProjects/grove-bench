@@ -33,6 +33,14 @@ npm run build     # builds into landing/dist
   so every pose, colour, look and scene is what the app draws. The deploy
   workflow also runs when those files change.
 
+## Share image
+
+`public/og-image.png` (1200x630) is rendered from `og.html` and
+`src/og/OgImage.svelte`, using the page's own characters and app sidebar.
+To update it, run `npm run dev`, open `/grove-bench/og.html` in a 1200x630
+window (Chrome DevTools' device toolbar works) and take a screenshot. The
+build leaves `og.html` out of the site.
+
 ## Analytics events
 
 Only after consent: `download_click`, `github_click` and `docs_click` (with a
