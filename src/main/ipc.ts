@@ -549,6 +549,7 @@ export function registerHandlers() {
     // bookmarks file that can't be read right now doesn't fail the delete.
     try { bookmarks.removeBookmarksForSession(id); } catch (err) { logger.warn(`Could not remove bookmarks for ${id}:`, err); }
     void removeImages(id); // images shown in its Activity thread
+    goalAutoAttempts.delete(id);
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -609,17 +610,17 @@ export function registerHandlers() {
     if (!settings.getSettings().showConversationGoal || goalInFlight.has(sessionId)) return null;
     const attempts = goalAutoAttempts.get(sessionId) ?? 0;
     if (attempts >= MAX_GOAL_AUTO_ATTEMPTS) return null;
-    const current = await worktreeManager.getGoal(sessionId);
-    // Only ever once: a goal generated or typed before, even one the user
-    // cleared, stays as it is. Refresh makes a new one on request. None for
-    // a conversation whose bar was closed: nobody would see it.
-    if (!current || current.source || current.hidden) return null;
-    const input = goalInputFromEvents(prelaunchPrefixedEvents(sessionId));
-    if (input.prompts.length === 0 || !input.reply) return null; // no reply to summarise yet
-
+    // Marked before the first await, so a second call can't pass the checks.
     goalInFlight.add(sessionId);
-    goalAutoAttempts.set(sessionId, attempts + 1);
     try {
+      const current = await worktreeManager.getGoal(sessionId);
+      // Only ever once: a goal generated or typed before, even one the user
+      // cleared, stays as it is. Refresh makes a new one on request. None for
+      // a conversation whose bar was closed: nobody would see it.
+      if (!current || current.source || current.hidden) return null;
+      const input = goalInputFromEvents(prelaunchPrefixedEvents(sessionId));
+      if (input.prompts.length === 0 || !input.reply) return null; // no reply to summarise yet
+      goalAutoAttempts.set(sessionId, attempts + 1);
       return await generateAndSaveGoal(sessionId, current, input);
     } catch (e) {
       logger.warn(`Automatic goal failed for ${sessionId}:`, e);
@@ -633,12 +634,12 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.SESSION_GOAL_REFRESH, async (_event, sessionId: string): Promise<ConversationGoal | null> => {
-    const current = await worktreeManager.getGoal(sessionId);
-    if (!current) return null;
-    // The automatic one is still running: its result is on the way.
-    if (goalInFlight.has(sessionId)) return current;
+    // One is already being written: its result is on the way.
+    if (goalInFlight.has(sessionId)) return (await worktreeManager.getGoal(sessionId)) ?? null;
     goalInFlight.add(sessionId);
     try {
+      const current = await worktreeManager.getGoal(sessionId);
+      if (!current) return null;
       const input = goalInputFromEvents(prelaunchPrefixedEvents(sessionId));
       // Not saved when the goal was edited meanwhile: the edit stands.
       return (await generateAndSaveGoal(sessionId, current, input)) ?? (await worktreeManager.getGoal(sessionId)) ?? null;

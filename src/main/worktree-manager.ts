@@ -116,8 +116,12 @@ export class WorktreeManager {
     }
   }
 
-  /** Serialize manifest reads/writes to prevent concurrent clobber. */
-  private async withManifest<T>(fn: (manifest: Manifest) => T | Promise<T>): Promise<T> {
+  /** Serialize manifest reads/writes to prevent concurrent clobber. The
+   *  manifest is written back unless `changed` says `fn` left it as it was. */
+  private async withManifest<T>(
+    fn: (manifest: Manifest) => T | Promise<T>,
+    changed: (result: T) => boolean = () => true,
+  ): Promise<T> {
     const prev = this.manifestLock;
     let resolve!: () => void;
     this.manifestLock = new Promise((r) => { resolve = r; });
@@ -125,7 +129,7 @@ export class WorktreeManager {
     try {
       const manifest = await this.loadManifest();
       const result = await fn(manifest);
-      await this.saveManifest(manifest);
+      if (changed(result)) await this.saveManifest(manifest);
       return result;
     } finally {
       resolve();
@@ -471,17 +475,19 @@ export class WorktreeManager {
       entry.goal = text || undefined;
       entry.goalSource = source;
       return goalOf(entry);
-    });
+    }, (saved) => saved !== null);
   }
 
   /** Close or reopen a conversation's goal bar. */
   async setGoalHidden(worktreeId: string, hidden: boolean): Promise<ConversationGoal | null> {
+    let changed = false;
     return this.withManifest((manifest) => {
       const entry = manifest[worktreeId];
       if (!entry || entry.pendingRemoval) return null;
+      changed = !!entry.goalHidden !== hidden;
       entry.goalHidden = hidden || undefined;
       return goalOf(entry);
-    });
+    }, () => changed);
   }
 
   /**

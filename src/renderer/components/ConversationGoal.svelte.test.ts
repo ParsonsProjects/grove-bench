@@ -69,6 +69,13 @@ describe('ConversationGoal', () => {
     expect(await screen.findByText('No goal yet')).toBeInTheDocument();
   });
 
+  it('treats a conversation main has no entry for yet as having no goal', async () => {
+    // A new worktree conversation: its pane asks before main has saved it.
+    await renderWith(null as unknown as Goal);
+    expect(goalStore.get(SID)).toEqual({ text: null, source: null, hidden: false });
+    expect(await screen.findByText('No goal yet')).toBeInTheDocument();
+  });
+
   it('shows nothing before the agent has replied', async () => {
     await renderWith(goal({ text: null, source: null }), [REPLIED[0]]);
     expect(screen.queryByTestId('conversation-goal')).not.toBeInTheDocument();
@@ -93,6 +100,18 @@ describe('ConversationGoal', () => {
     await fireEvent.keyDown(again, { key: 'Escape' });
     expect(mockGroveBench.setConversationGoal).toHaveBeenCalledTimes(1);
     expect(screen.getByText('Ship dark mode')).toBeInTheDocument();
+  });
+
+  it('leaves Enter and Escape to an IME that is composing', async () => {
+    await renderWith(goal());
+    await fireEvent.click(screen.getByLabelText('Edit the goal'));
+    const input = screen.getByLabelText('Conversation goal');
+    await fireEvent.input(input, { target: { value: 'ダーク' } });
+    await fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    await fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+
+    expect(mockGroveBench.setConversationGoal).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Conversation goal')).toBeInTheDocument();
   });
 
   it('refreshes the goal, and says why when that fails', async () => {
@@ -121,8 +140,10 @@ describe('ConversationGoal', () => {
 });
 
 describe('goalStore.autoGenerate', () => {
-  it('asks main only while the conversation has never had a goal', async () => {
+  it('asks main only while the conversation has never had a goal and its bar is open', async () => {
     goalStore.goals = { [SID]: goal({ source: 'user' }) };
+    await goalStore.autoGenerate(SID);
+    goalStore.goals = { [SID]: goal({ text: null, source: null, hidden: true }) };
     await goalStore.autoGenerate(SID);
     expect(mockGroveBench.autoConversationGoal).not.toHaveBeenCalled();
 
@@ -132,5 +153,30 @@ describe('goalStore.autoGenerate', () => {
     expect(mockGroveBench.autoConversationGoal).toHaveBeenCalledWith(SID);
     expect(goalStore.get(SID).text).toBe('Add a dark mode toggle');
     expect(goalStore.isGenerating(SID)).toBe(false);
+  });
+
+  it('shows the busy state only once main is actually writing one', async () => {
+    vi.useFakeTimers();
+    try {
+      goalStore.goals = { [SID]: goal({ text: null, source: null }) };
+      // Main skips at once: no flash.
+      mockGroveBench.autoConversationGoal.mockResolvedValueOnce(null);
+      await goalStore.autoGenerate(SID);
+      expect(goalStore.isGenerating(SID)).toBe(false);
+
+      // Main writes one: busy after a moment, done when it arrives.
+      let finish!: (g: Goal) => void;
+      mockGroveBench.autoConversationGoal.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+      const pending = goalStore.autoGenerate(SID);
+      expect(goalStore.isGenerating(SID)).toBe(false);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(goalStore.isGenerating(SID)).toBe(true);
+      finish(goal());
+      await pending;
+      expect(goalStore.isGenerating(SID)).toBe(false);
+      expect(goalStore.get(SID).text).toBe('Add a dark mode toggle');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

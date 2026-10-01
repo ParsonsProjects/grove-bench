@@ -36,6 +36,7 @@ const SETTINGS = {
   toolDenyRules: [],
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
+  // On here (off by default) so the demo shows the goal bar.
   showConversationGoal: true,
   defaultModels: {},
   adapterDefaults: {},

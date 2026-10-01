@@ -305,7 +305,8 @@ describe('conversation goal', () => {
     const saved = await manager.saveGoal('wt-123', 'Generated', 'auto', { text: null, source: null, hidden: false });
 
     expect(saved).toBeNull();
-    expect((savedManifest as any)['wt-123'].goal).toBe('Mine');
+    // Nothing changed, so the manifest isn't rewritten.
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 
   it('hides and shows the bar without touching the goal, and ignores unknown ids', async () => {
@@ -317,8 +318,11 @@ describe('conversation goal', () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
     expect(await manager.setGoalHidden('wt-123', false)).toEqual({ text: 'Fix sort', source: 'auto', hidden: false });
     expect((savedManifest as any)['wt-123'].goalHidden).toBeUndefined();
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    mockFs.writeFile.mockClear();
+    expect(await manager.setGoalHidden('wt-123', false)).toEqual({ text: 'Fix sort', source: 'auto', hidden: false });
     expect(await manager.setGoalHidden('wt-unknown', true)).toBeNull();
-    expect(savedManifest['wt-unknown']).toBeUndefined();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 });
 

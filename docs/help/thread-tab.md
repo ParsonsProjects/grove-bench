@@ -10,7 +10,7 @@ A bar at the top of the thread says, in one line, what the conversation is tryin
 - **Refresh**: write a new goal from the conversation so far, for when the work has moved on. This replaces the current goal, including one you typed, and costs one model call.
 - **Hide** (✕): close the bar for this conversation. The flag next to the Thread view picker brings it back.
 
-To turn goals off for every conversation, untick **Show the conversation goal** in **Settings > Tending**. No goals are written while it is off.
+Goals are off until you tick **Show the conversation goal** in **Settings > Tending**. Untick it to turn them off again; no goals are written while it is off.
 
 ## Message Types
 

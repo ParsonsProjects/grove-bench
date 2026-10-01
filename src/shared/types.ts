@@ -93,6 +93,9 @@ export interface SessionInfo {
  *  A goal is only generated once; Refresh makes a new one on request. */
 export type ConversationGoalSource = 'auto' | 'user';
 
+/** Longest goal the user can type. */
+export const MAX_USER_GOAL_LENGTH = 500;
+
 /** The one-line goal pinned at the top of a conversation's Thread tab. */
 export interface ConversationGoal {
   /** What the conversation is trying to get done, or null when there is
@@ -1375,7 +1378,8 @@ export interface GroveBenchSettings {
   autoSkillSuggestions: boolean;
   /** Pin a one-line goal at the top of each conversation's Thread tab,
    *  generated after its first reply (one background model call per
-   *  conversation, plus one per Refresh). Default true. */
+   *  conversation, plus one per Refresh). Off by default, as each goal is a
+   *  model call the user didn't ask for. */
   showConversationGoal: boolean;
 
   // Agent Defaults

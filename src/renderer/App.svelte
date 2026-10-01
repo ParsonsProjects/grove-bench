@@ -131,10 +131,10 @@
     if (flagsUnread(session, store.activeSessionId)) {
       store.markNeedsAttention(sessionId);
     }
-    // Then the goal, written once after the first reply (main skips the rest).
-    void autoNameSession(sessionId)
-      .then(() => autoNameBranch(sessionId))
-      .then(() => goalStore.autoGenerate(sessionId));
+    void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+    // Alongside, as it needs neither name: the goal, written once after the
+    // first reply (main skips the rest).
+    void goalStore.autoGenerate(sessionId);
   });
   $effect(() => {
     for (const session of store.sessions) {

@@ -11,6 +11,8 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { hasAgentReply } from '$lib/message-view.js';
+  import { MAX_USER_GOAL_LENGTH } from '../../shared/types.js';
+  import GoalFlagIcon from './GoalFlagIcon.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -25,8 +27,11 @@
   let draft = $state('');
   let input = $state<HTMLInputElement>();
 
+  // Also on each turn start and end, so a read that failed is tried again
+  // (load does nothing once the goal is in).
   $effect(() => {
     const id = sessionId;
+    void running;
     untrack(() => { void goalStore.load(id); });
   });
 
@@ -56,6 +61,8 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Enter or Escape while an IME is composing belongs to the IME.
+    if (e.isComposing) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       commit();
@@ -73,8 +80,7 @@
 {#if visible}
   <div class="flex items-start gap-2 px-4 py-1 border-b border-border bg-card/40 text-xs shrink-0 min-w-0" data-testid="conversation-goal">
     <span class="flex items-center gap-1 py-0.5 text-muted-foreground shrink-0">
-      <!-- A pixel flag on its pole. -->
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0" aria-hidden="true"><path d="M4 2h2v20H4Zm2 1h14v2H6Zm12 2h2v6h-2ZM6 11h14v2H6Z"/></svg>
+      <GoalFlagIcon />
       Goal
     </span>
 
@@ -85,7 +91,7 @@
         onkeydown={handleKeydown}
         onblur={commit}
         type="text"
-        maxlength={500}
+        maxlength={MAX_USER_GOAL_LENGTH}
         placeholder="What should this conversation get done?"
         aria-label="Conversation goal"
         class="flex-1 min-w-0 bg-transparent border border-input px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-ring placeholder:text-muted-foreground"

@@ -590,7 +590,7 @@ describe('conversation goal', () => {
 
     expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000001')).toEqual({ text: 'Add a dark mode toggle', source: 'auto', hidden: false });
     expect(generateGoal).toHaveBeenCalledWith(
-      { prompts: ['Add a dark mode toggle'], reply: 'Added it to settings.' }, live.adapter, wt,
+      { prompts: ['Add a dark mode toggle'], skipped: 0, reply: 'Added it to settings.' }, live.adapter, wt,
     );
     // Saved only if nothing changed while it was generated.
     expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000001', 'Add a dark mode toggle', 'auto', NO_GOAL);
@@ -631,6 +631,32 @@ describe('conversation goal', () => {
     await invoke(IPC.SESSION_GOAL_AUTO, 'g0000006');
     expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000006')).toBeNull();
     expect(generateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes one call when two arrive together', async () => {
+    liveWithReply('g0000009');
+    let finish!: (goal: string) => void;
+    vi.mocked(generateGoal).mockReturnValue(new Promise((r) => { finish = r; }));
+
+    const first = invoke(IPC.SESSION_GOAL_AUTO, 'g0000009');
+    const second = invoke(IPC.SESSION_GOAL_AUTO, 'g0000009');
+    expect(await second).toBeNull();
+    await flush();
+    finish('Add a dark mode toggle');
+    expect(await first).toMatchObject({ text: 'Add a dark mode toggle' });
+    expect(generateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets the attempts of a deleted conversation', async () => {
+    liveWithReply('g0000010');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    expect(generateGoal).toHaveBeenCalledTimes(2);
+
+    await invoke(IPC.SESSION_DESTROY, 'g0000010', false);
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    expect(generateGoal).toHaveBeenCalledTimes(3);
   });
 
   it('refreshes over a typed goal, and reports a failure', async () => {

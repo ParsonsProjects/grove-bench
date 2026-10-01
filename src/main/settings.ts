@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disabledSkills: [],
   autoSkillSuggestions: false,
-  showConversationGoal: true,
+  showConversationGoal: false,
 
   // Agent Defaults
   defaultModels: {},

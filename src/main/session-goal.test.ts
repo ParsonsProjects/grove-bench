@@ -11,11 +11,10 @@ import {
   generateGoal,
   GOAL_SYSTEM_PROMPT,
   MAX_GOAL_LENGTH,
-  MAX_USER_GOAL_LENGTH,
 } from './session-goal.js';
 import { buildContentBlock } from '../shared/prompt-text.js';
+import { MAX_USER_GOAL_LENGTH, type AgentEvent } from '../shared/types.js';
 import type { AgentAdapter } from './adapters/types.js';
-import type { AgentEvent } from '../shared/types.js';
 
 function makeAdapter(generateText?: (sys: string, user: string, opts?: any) => Promise<string>): AgentAdapter {
   return {
@@ -25,69 +24,92 @@ function makeAdapter(generateText?: (sys: string, user: string, opts?: any) => P
   } as unknown as AgentAdapter;
 }
 
-describe('goalInputFromEvents', () => {
-  it('collects real user messages in order and keeps the latest reply', () => {
-    const events: AgentEvent[] = [
-      { type: 'user_message', text: '/model opus' },
-      { type: 'user_message', text: 'Add CSV export to reports' },
-      { type: 'assistant_text', text: 'Looking at the reports page.', uuid: 'a1' },
-      { type: 'user_message', text: '   ' },
-      { type: 'assistant_text', text: 'Done: CSV export added.', uuid: 'a2' },
-      { type: 'user_message', text: 'Also add Excel' },
-      { type: 'assistant_text', text: '   ', uuid: 'a3' },
-    ];
+const user = (text: string): AgentEvent => ({ type: 'user_message', text });
+const reply = (text: string, uuid = text): AgentEvent => ({ type: 'assistant_text', text, uuid });
 
-    expect(goalInputFromEvents(events)).toEqual({
+describe('goalInputFromEvents', () => {
+  it('collects real user messages in order, slash commands and empty ones skipped', () => {
+    const events = [
+      user('/model opus'),
+      user('Add CSV export to reports'),
+      reply('Looking at the reports page.'),
+      user('   '),
+      user('Also add Excel'),
+    ];
+    expect(goalInputFromEvents(events)).toMatchObject({
       prompts: ['Add CSV export to reports', 'Also add Excel'],
-      reply: 'Done: CSV export added.',
+      skipped: 0,
     });
+  });
+
+  it('takes every text block of the latest turn that has text', () => {
+    const events = [
+      user('Audit the API'),
+      reply('Old turn.'),
+      user('Now fix what you found'),
+      reply('Findings: two bugs.'),
+      { type: 'tool_use_summary', summary: 'edited files', toolUseIds: [] } as AgentEvent,
+      reply('Next steps: run the tests.'),
+      user('Thanks'),
+      reply('   '),
+    ];
+    expect(goalInputFromEvents(events).reply).toBe('Findings: two bugs.\n\nNext steps: run the tests.');
   });
 
   it('shows attached files as a name label, not their content', () => {
     const sent = `${buildContentBlock('file', 'src/a.ts', 'const a = 1;')}\n\nFix this`;
-    const { prompts } = goalInputFromEvents([{ type: 'user_message', text: sent }]);
-    expect(prompts).toEqual(['[src/a.ts] Fix this']);
+    expect(goalInputFromEvents([user(sent)]).prompts).toEqual(['[src/a.ts] Fix this']);
+  });
+
+  it('keeps the first message and the most recent ones that fit, and counts the rest', () => {
+    const events = [
+      user('FIRST task'),
+      ...Array.from({ length: 20 }, (_, i) => user(`msg ${i} ${'x'.repeat(900)}`)),
+      user('/compact'),
+      user('LATEST change'),
+    ];
+    const { prompts, skipped } = goalInputFromEvents(events);
+    expect(prompts[0]).toBe('FIRST task');
+    expect(prompts.at(-1)).toBe('LATEST change');
+    expect(prompts.some((p) => p.startsWith('msg 0 '))).toBe(false);
+    // Every message is accounted for: kept, or counted as left out.
+    expect(prompts.length - 2 + skipped).toBe(20);
+    expect(prompts.join('').length).toBeLessThan(8_100);
+  });
+
+  it('caps long messages', () => {
+    const { prompts } = goalInputFromEvents([user('z'.repeat(9_000)), user('y'.repeat(5_000))]);
+    expect(prompts[0].length).toBeLessThan(4_100);
+    expect(prompts[1]).toMatch(/^y{1000}\n\.\.\. \(truncated\)$/);
   });
 
   it('has no prompts or reply for an empty history', () => {
-    expect(goalInputFromEvents([])).toEqual({ prompts: [], reply: null });
+    expect(goalInputFromEvents([])).toEqual({ prompts: [], skipped: 0, reply: null });
   });
 });
 
 describe('buildGoalPrompt', () => {
   it('fences the messages and the reply off as data', () => {
-    const prompt = buildGoalPrompt({ prompts: ['Fix the login bug'], reply: 'Fixed it.' });
+    const prompt = buildGoalPrompt({ prompts: ['Fix the login bug'], skipped: 0, reply: 'Fixed it.' });
     expect(prompt).toContain('<message>\nFix the login bug\n</message>');
     expect(prompt).toContain('<reply>\nFixed it.\n</reply>');
     expect(prompt).toMatch(/do not answer them/);
     expect(prompt.trim().endsWith('Write the goal for this conversation.')).toBe(true);
   });
 
+  it('says how many messages were left out, outside the fences', () => {
+    const prompt = buildGoalPrompt({ prompts: ['first', 'latest'], skipped: 3, reply: null });
+    expect(prompt).toContain('<message>\nfirst\n</message>\n(3 more messages left out here)\n<message>\nlatest\n</message>');
+  });
+
   it('leaves the reply out when there is none', () => {
-    expect(buildGoalPrompt({ prompts: ['Fix it'], reply: null })).not.toContain('<reply>');
+    expect(buildGoalPrompt({ prompts: ['Fix it'], skipped: 0, reply: null })).not.toContain('<reply>');
   });
 
   it('keeps only the end of a long reply', () => {
-    const reply = `${'a'.repeat(3_000)}THE END`;
-    const prompt = buildGoalPrompt({ prompts: ['x'], reply });
+    const prompt = buildGoalPrompt({ prompts: ['x'], skipped: 0, reply: `${'a'.repeat(3_000)}THE END` });
     expect(prompt).toContain('THE END');
     expect(prompt).not.toContain('a'.repeat(2_500));
-  });
-
-  it('keeps the first message and the most recent ones when they do not all fit', () => {
-    const prompts = ['FIRST task', ...Array.from({ length: 20 }, (_, i) => `msg ${i} ${'x'.repeat(900)}`), 'LATEST change'];
-    const prompt = buildGoalPrompt({ prompts, reply: null });
-    expect(prompt).toContain('FIRST task');
-    expect(prompt).toContain('LATEST change');
-    expect(prompt).toMatch(/\(\d+ earlier messages left out\)/);
-    expect(prompt).not.toContain('msg 0 ');
-    expect(prompt.length).toBeLessThan(10_000);
-  });
-
-  it('caps one long message', () => {
-    const prompt = buildGoalPrompt({ prompts: ['start', 'y'.repeat(5_000)], reply: null });
-    expect(prompt).toContain('... (truncated)');
-    expect(prompt).not.toContain('y'.repeat(1_001));
   });
 });
 
@@ -103,6 +125,24 @@ describe('cleanGoal', () => {
     expect(cleanGoal('"Fix login"')).toBe('Fix login');
     expect(cleanGoal('# Fix **login**')).toBe('Fix login');
     expect(cleanGoal('- Fix login')).toBe('Fix login');
+  });
+
+  it('drops a label or lead-in on its own line', () => {
+    expect(cleanGoal('**Goal:**\n\nFix the login bug')).toBe('Fix the login bug');
+    expect(cleanGoal('Here is the goal:\n\nAdd CSV export')).toBe('Add CSV export');
+    expect(cleanGoal('## Goal\nShip dark mode')).toBe('Ship dark mode');
+  });
+
+  it('keeps names that look like markdown', () => {
+    expect(cleanGoal('Add tests under src/__tests__/auth for the __init__.py loader'))
+      .toBe('Add tests under src/__tests__/auth for the __init__.py loader');
+    expect(cleanGoal('Lint src/**/*.ts and lib/**/*.js')).toBe('Lint src/**/*.ts and lib/**/*.js');
+  });
+
+  it('keeps backticks that are part of the goal', () => {
+    expect(cleanGoal('Add a `--dry-run` flag to `deploy`')).toBe('Add a `--dry-run` flag to `deploy`');
+    expect(cleanGoal('`npm test` should pass on CI')).toBe('`npm test` should pass on CI');
+    expect(cleanGoal('`Fix login`')).toBe('Fix login');
   });
 
   it('keeps the first paragraph on one line', () => {
@@ -138,7 +178,7 @@ describe('cleanUserGoal and clampGoal', () => {
 describe('generateGoal', () => {
   it('asks the agent on its background model and cleans the answer', async () => {
     const generateText = vi.fn(async () => 'Goal: "Add CSV export"');
-    const goal = await generateGoal({ prompts: ['Add CSV export'], reply: 'Done.' }, makeAdapter(generateText), '/wt');
+    const goal = await generateGoal({ prompts: ['Add CSV export'], skipped: 0, reply: 'Done.' }, makeAdapter(generateText), '/wt');
 
     expect(goal).toBe('Add CSV export');
     expect(generateText).toHaveBeenCalledWith(
@@ -149,19 +189,19 @@ describe('generateGoal', () => {
   });
 
   it('throws for an agent that cannot generate text', async () => {
-    await expect(generateGoal({ prompts: ['x'], reply: null }, makeAdapter(), '/wt'))
+    await expect(generateGoal({ prompts: ['x'], skipped: 0, reply: null }, makeAdapter(), '/wt'))
       .rejects.toThrow('does not support text generation');
   });
 
   it('throws when there is nothing to summarise, without asking the agent', async () => {
     const generateText = vi.fn(async () => 'x');
-    await expect(generateGoal({ prompts: [], reply: 'hi' }, makeAdapter(generateText), '/wt'))
+    await expect(generateGoal({ prompts: [], skipped: 0, reply: 'hi' }, makeAdapter(generateText), '/wt'))
       .rejects.toThrow('no messages');
     expect(generateText).not.toHaveBeenCalled();
   });
 
   it('throws on an empty answer', async () => {
-    await expect(generateGoal({ prompts: ['x'], reply: null }, makeAdapter(async () => '   '), '/wt'))
+    await expect(generateGoal({ prompts: ['x'], skipped: 0, reply: null }, makeAdapter(async () => '   '), '/wt'))
       .rejects.toThrow('empty goal');
   });
 });
