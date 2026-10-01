@@ -9,6 +9,7 @@
   import { fly } from 'svelte/transition';
   import { store } from '../stores/sessions.svelte.js';
   import { draftStore } from '../stores/draft.svelte.js';
+  import { groupStore } from '../stores/groups.svelte.js';
   import DraftAgentControl from './DraftAgentControl.svelte';
   import DraftStartPicker from './DraftStartPicker.svelte';
 
@@ -18,6 +19,8 @@
 
   const draft = $derived(draftStore.draft);
   const start = $derived(draft?.start);
+  /** The group the conversation joins when it starts. */
+  const group = $derived(draft?.groupId ? groupStore.get(draft.groupId) : null);
 
   const whereLabel = $derived.by(() => {
     if (!start) return '';
@@ -123,6 +126,23 @@
       </div>
     {/if}
   </div>
+
+  {#if group}
+    <span class="w-px self-stretch bg-border"></span>
+    <span class="flex items-center gap-1 min-w-0 text-[11px]" title="Joins the group {group.name} when it starts">
+      <span class="text-muted-foreground/60 shrink-0">Group</span>
+      <span class="text-foreground/80 truncate max-w-32">{group.name}</span>
+      <button
+        type="button"
+        onclick={() => draftStore.leaveGroup()}
+        class="w-4 h-4 flex items-center justify-center shrink-0 text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors"
+        title="Start it outside the group"
+        aria-label="Don't add to {group.name}"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </span>
+  {/if}
 
   <span class="ml-auto text-[11px] text-muted-foreground/50 text-right">Nothing is created until you send</span>
 </div>

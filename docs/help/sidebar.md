@@ -1,14 +1,25 @@
 # Sidebar & Projects
 
-The sidebar on the left has two sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Projects** lists each project (a folder, usually a git repository) with all of its conversations, where stopped conversations can be resumed, deleted, or cleaned up.
+The sidebar on the left has three sections. **Conversations** is the live working set: every conversation that is running, working, waiting on you, or sleeping, across all projects. **Groups** lists conversations that belong to one piece of work, usually in different projects. **Projects** lists each project (a folder, usually a git repository) with all of its conversations, where stopped conversations can be resumed, deleted, or cleaned up.
 
 ## Projects
 
 Each project you have added appears as a group under **Projects**. Today a project is a single folder: a git repository, or a plain folder used without git (see Getting Started). Its name is shown with a colored accent unique to that project.
 
-Conversations within a project are listed below the project name, including the ones that are also under **Conversations**; click either row to open it. If multiple conversations share the same branch, they are grouped together under that branch name. Click the branch name to fold the group.
+Conversations within a project are listed below the project name, including the ones that are also under **Conversations**; click either row to open it. If multiple conversations share the same branch, they are listed together under that branch name. Click the branch name to fold the group.
 
 To remove a project, hover its header and click the bin. Grove Bench asks first and says what goes with it: every conversation in the project and its copy of the project (worktree). It warns you when any of them is still running (its agent will be stopped) or has uncommitted changes. You can also delete their branches, and it warns you when a branch has commits its base branch doesn't. The project folder itself is never touched.
+
+## Groups
+
+A group is a few conversations that belong to one piece of work, usually one per project. For example, an API change in one project and the web change that uses it in another. Each conversation still runs in its own project with its own agent, branch and project instructions. The group only lists them together, so you can see how the whole piece of work is going.
+
+- **Start a group**: right-click a conversation and choose **New Group…**, or click **+** next to the **Groups** heading. The heading shows once you have more than one project. Starting a group from the heading opens its first conversation straight away.
+- **Add a conversation**: right-click it and choose **Add to** the group, or click **+** on the group's header to start a new one in it. A new one opens in a project the group has nothing in yet, and starts on the same branch name as the others, so the work has one branch name in every project. If that branch already exists in the project, it continues on it. You can change the project or branch before you send the first message, or click **✕** next to the group's name in the bar to start it outside the group.
+- **Leave a group**: right-click the conversation and choose **Remove from** the group. A conversation is in at most one group, so **Move to** puts it in another.
+- **Finish**: right-click the group's header to **Mark all completed** or **Rename group**. **Ungroup** (also the **✕** on the header) removes the group and keeps its conversations.
+
+Groups are short-lived. A group goes away when its last conversation leaves it or is deleted. A grouped conversation shows its group's name on its second line under **Conversations** and **Projects**. Groups don't share memory, skills or settings: those still belong to each project.
 
 ## Conversation List
 
@@ -16,7 +27,7 @@ Each conversation in the sidebar shows:
 
 - **Status dot** — A colored indicator showing the conversation's current state (see [Conversation States](session-states.md)). With **Show grove characters** on (Settings → The grove (General), on by default), a small pixel agent shows the state instead
 - **Conversation name** — Either the branch name or a custom name you've assigned. It has the first line to itself
-- **Second line**: under **Conversations**, which project it belongs to (when you have more than one), then what the agent is doing or last said
+- **Second line**: its group, if it is in one. Under **Conversations**, which project it belongs to (when you have more than one), then what the agent is doing or last said
 - **Active indicator** — The currently selected conversation is highlighted
 
 Click a conversation to switch to it. The workspace will show that conversation's activity, changes, and terminal.
@@ -49,6 +60,7 @@ Right-click a conversation to access:
 - **Mark Completed** / **Reopen** — Hide a finished conversation, or bring it back
 - **Open Folder** — Open the worktree directory in your file explorer
 - **Stop** — Shut down a live conversation's agent but keep the conversation, so you can pick it up again later
+- **New Group…**, **Add to**, **Move to**, **Remove from**: put the conversation in a group, or take it out (see Groups above)
 - **Delete Conversation**: remove the conversation and its copy of the project, and optionally its branch. It warns first when files have uncommitted changes, or, if you also delete the branch, when the branch has commits its base branch doesn't have
 
 Hovering a row, or moving to it with Tab, also shows a quick button: a power icon to stop a live conversation, or a bin to delete a stopped one (it asks first).

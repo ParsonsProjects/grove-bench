@@ -35,7 +35,7 @@ const m = vi.hoisted(() => {
     adapterRegistry: fns('get', 'getDefault', 'list'),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
-      'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels',
+      'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
       'loadAppState', 'saveOpenTabs', 'saveCollapsedRepos', 'saveSessionSort', 'saveSidebarWidth', 'saveUnreadSessionIds',
       'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),

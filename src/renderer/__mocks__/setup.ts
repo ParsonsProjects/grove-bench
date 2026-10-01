@@ -116,6 +116,8 @@ const mockGroveBench = {
   setSidebarWidth: vi.fn(),
   getCollapsedPanels: vi.fn(() => Promise.resolve({} as import('../../shared/types.js').CollapsedPanels)),
   setCollapsedPanels: vi.fn(),
+  getConversationGroups: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').ConversationGroup[])),
+  setConversationGroups: vi.fn(),
   getUnreadSessions: vi.fn(() => Promise.resolve([] as string[])),
   setUnreadSessions: vi.fn(),
   onAppError: vi.fn(() => () => {}),

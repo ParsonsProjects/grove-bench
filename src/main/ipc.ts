@@ -32,7 +32,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { installDependencies } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
@@ -1683,6 +1683,12 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
     saveCollapsedPanels(panels);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_GROUPS, () => loadConversationGroups());
+
+  ipcMain.on(IPC.APP_STATE_SET_GROUPS, (_event, groups: unknown) => {
+    saveConversationGroups(groups);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_UNREAD, () => {

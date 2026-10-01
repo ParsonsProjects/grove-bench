@@ -25,6 +25,7 @@ import {
   saveKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog,
   mergeProjects, listProjects, rememberProject, forgetProject,
+  loadConversationGroups, saveConversationGroups,
 } from './app-state.js';
 
 /** The file as the last write left it, so read-modify-write chains see their own updates. */
@@ -249,3 +250,32 @@ describe('projects', () => {
   });
 });
 
+
+describe('conversation groups', () => {
+  const billing = { id: 'g1', name: 'Billing', createdAt: 1, sessionIds: ['a', 'b'] };
+
+  it('saves straight away and reads back', () => {
+    const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['keep'] });
+    saveConversationGroups([billing]);
+    expect(disk.get()).toMatchObject({ groups: [billing], openTabIds: ['keep'] });
+    expect(loadConversationGroups()).toEqual([billing]);
+  });
+
+  it('has none until the first is saved', () => {
+    useDisk(undefined);
+    expect(loadConversationGroups()).toEqual([]);
+  });
+
+  it('drops a malformed group and keeps the rest', () => {
+    const state = validateAppState({ groups: [billing, { id: '', name: 'x', createdAt: 1, sessionIds: [] }, { name: 'no id' }, 'junk'] });
+    expect(state.groups).toEqual([billing]);
+    expect(validateAppState({ groups: 'nope' }).groups).toBeUndefined();
+  });
+
+  it('ignores junk from the renderer instead of saving it', () => {
+    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, groups: [billing] });
+    saveConversationGroups('everything');
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(loadConversationGroups()).toEqual([billing]);
+  });
+});
