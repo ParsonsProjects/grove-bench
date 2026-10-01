@@ -3,8 +3,10 @@
 // them, `npm run build:prototypes` builds them into dist-prototypes/.
 //
 // The prototypes draw the grove characters from the app's own sprite code
-// (src/renderer/lib) through the `@app-art` alias, so they always match what
-// the app shows.
+// (src/renderer/lib, imported in prototypes/shared/app-art.js), so they always
+// match what the app shows. Plain relative imports rather than an alias: the
+// app's dev server scans every HTML file in the repo, and an alias it doesn't
+// know reads as a missing package there.
 
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -18,11 +20,8 @@ export default defineConfig({
   // Relative, so the build works from any folder.
   base: './',
   plugins: [svelte({ configFile: here('./svelte.config.js') })],
-  resolve: {
-    alias: { '@app-art': here('../src/renderer/lib') },
-  },
   server: {
-    // The alias reaches outside landing/.
+    // The app-art imports reach outside landing/.
     fs: { allow: [here('..')] },
   },
   build: {
@@ -31,10 +30,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: here('./prototypes/index.html'),
-        grovekeeper: here('./prototypes/grovekeeper.html'),
-        crew: here('./prototypes/crew.html'),
-        pocket: here('./prototypes/pocket.html'),
-        race: here('./prototypes/race.html'),
+        live: here('./prototypes/live.html'),
+        story: here('./prototypes/story.html'),
+        loops: here('./prototypes/loops.html'),
       },
     },
   },

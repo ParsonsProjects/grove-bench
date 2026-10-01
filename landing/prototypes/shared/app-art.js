@@ -22,8 +22,8 @@ export {
   agentLook,
   agentColors,
   toRuns,
-} from '@app-art/agent-sprite';
-export { PIXEL_TREE, PIXEL_TREE_W, PIXEL_TREE_H } from '@app-art/pixel-tree';
+} from '../../../src/renderer/lib/agent-sprite.ts';
+export { PIXEL_TREE, PIXEL_TREE_W, PIXEL_TREE_H } from '../../../src/renderer/lib/pixel-tree.ts';
 export {
   WALK_BACK,
   WALK_FRONT,
@@ -40,5 +40,5 @@ export {
   WAKE_PATH_HEAD_START_SECONDS,
   wakePhase,
   arrivePhase,
-} from '@app-art/grove-walk';
-export { GROVE_H, GROVE_STEP_MS, GroveGrowth, groveLayout, groveRuns, grovePaths } from '@app-art/context-grove';
+} from '../../../src/renderer/lib/grove-walk.ts';
+export { GROVE_H, GROVE_STEP_MS, GroveGrowth, groveLayout, groveRuns, grovePaths } from '../../../src/renderer/lib/context-grove.ts';

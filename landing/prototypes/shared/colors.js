@@ -22,14 +22,6 @@ export function stateColor(state) {
   return CLASS_COLOR[AGENT_SPRITES[state]?.colorClass] ?? CLASS_COLOR['text-foreground/60'];
 }
 
-/** The state's name as the app shows it on hover. */
-export function stateLabel(state) {
-  return AGENT_SPRITES[state]?.label ?? state;
-}
-
-/** Project accent colours for the laptop logo. */
-export const PROJECT_COLORS = ['#6ec87a', '#60a5fa', '#f472b6', '#facc15', '#a78bfa', '#fb923c'];
-
 /** Sidebar filter chips: a colour always means the same thing. */
 export const FILTERS = [
   { key: 'needs', label: 'Needs you', color: CLASS_COLOR['text-amber-500'] },
