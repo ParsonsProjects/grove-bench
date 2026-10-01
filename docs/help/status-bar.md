@@ -40,7 +40,7 @@ When the bar is wide enough, it shows how long the last turn took. With an API k
 
 ## Project and Branch
 
-The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request.
+The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request. Click `↑N` to push those commits. If a push fails, from here or from the Changes tab, **push failed** appears: click it to see the error, copy it, **Retry** the push or **Dismiss** the note. It also goes away by itself once nothing is left to push.
 
 Click the branch name to switch branches. Type to filter local and remote branches, then click one or press `Enter`. If the name you type doesn't exist yet, **Create branch** makes it from the current commit and switches to it.
 

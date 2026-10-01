@@ -415,17 +415,37 @@ describe('StatusBar PR', () => {
     await waitFor(() => expect(screen.queryByText('push failed')).toBeNull());
   });
 
-  it('shows a push that failed in the Changes tab, and dismisses it on click', async () => {
+  it('shows a push that failed in the Changes tab, with the error a click away', async () => {
     vi.mocked(window.groveBench.push).mockRejectedValue(new Error('rejected: non-fast-forward'));
     render(StatusBar, { props: { sessionId: ACTIVE } });
     // The Changes tab's "& Push" goes through the same store call.
     await prStore.push(ACTIVE).catch(() => {});
 
-    const note = await screen.findByRole('button', { name: 'push failed' });
-    expect(note.getAttribute('title')).toContain('rejected: non-fast-forward');
-    await fireEvent.click(note);
+    // Clicking it shows why: it used to dismiss the error unread.
+    await fireEvent.click(await screen.findByRole('button', { name: 'push failed' }));
+    expect(screen.getByTestId('push-error').textContent).toContain('rejected: non-fast-forward');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
 
     expect(screen.queryByText('push failed')).toBeNull();
+    expect(screen.queryByTestId('push-error')).toBeNull();
+  });
+
+  it('retries a failed push from its popover: the new error on failure, closed on success', async () => {
+    vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('rejected: non-fast-forward'));
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await prStore.push(ACTIVE).catch(() => {});
+    await fireEvent.click(await screen.findByRole('button', { name: 'push failed' }));
+
+    vi.mocked(window.groveBench.push).mockRejectedValueOnce(new Error('could not read Username'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByTestId('push-error').textContent).toContain('could not read Username'));
+
+    vi.mocked(window.groveBench.push).mockResolvedValueOnce(undefined as never);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByTestId('push-error')).toBeNull());
+    expect(screen.queryByText('push failed')).toBeNull();
+    expect(window.groveBench.push).toHaveBeenCalledTimes(3);
   });
 });
 

@@ -13,6 +13,7 @@
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
   import BranchPicker from './BranchPicker.svelte';
+  import CopyButton from './CopyButton.svelte';
   import StatusBarPopover from './StatusBarPopover.svelte';
   import StatusBarPr from './StatusBarPr.svelte';
 
@@ -51,6 +52,24 @@
       // Kept in prStore and shown as "push failed".
     } finally {
       pushing = false;
+    }
+  }
+
+  // "push failed" opens the error with Retry and Dismiss. The store clears
+  // the error as a push starts, so the popover keeps showing the last one
+  // while a retry runs, then closes if it went through.
+  let pushErrorOpen = $state(false);
+  let retrying = $state(false);
+  let shownPushError = $state('');
+  $effect(() => { if (pushError) shownPushError = pushError; });
+  $effect(() => { if (!pushError && !retrying) pushErrorOpen = false; });
+
+  async function retryPush() {
+    retrying = true;
+    try {
+      await doPush();
+    } finally {
+      retrying = false;
     }
   }
 
@@ -175,14 +194,41 @@
           </span>
         {/if}
 
-        {#if pushError}
-          <button
-            onclick={() => prStore.dismissPushError(sessionId)}
-            class="text-red-400 hover:text-red-300 truncate max-w-32 transition-colors"
-            title={`${pushError}\n\nClick to dismiss`}
-          >
-            push failed
-          </button>
+        {#if pushError || retrying}
+          <StatusBarPopover bind:open={pushErrorOpen} anchored={false} panelClass="bg-popover border border-border shadow-xl p-3 text-xs w-96" testid="push-error">
+            {#snippet trigger()}
+              <button
+                onclick={() => pushErrorOpen = !pushErrorOpen}
+                class="text-red-400 hover:text-red-300 truncate max-w-32 transition-colors"
+                title="The last push failed. Click to see why, and to retry"
+                aria-expanded={pushErrorOpen}
+              >
+                push failed
+              </button>
+            {/snippet}
+
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <span class="font-medium text-foreground">Push failed</span>
+              <CopyButton text={shownPushError} class="size-5 shrink-0" />
+            </div>
+            <pre class="font-mono text-[11px] text-red-400/90 whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-3">{shownPushError}</pre>
+            <div class="flex justify-end gap-2">
+              <button
+                onclick={() => prStore.dismissPushError(sessionId)}
+                disabled={retrying}
+                class="px-2 py-1 border border-border hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+              >
+                Dismiss
+              </button>
+              <button
+                onclick={retryPush}
+                disabled={retrying || pushing}
+                class="px-2 py-1 border border-border text-foreground hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-wait"
+              >
+                {retrying ? 'Pushing…' : 'Retry'}
+              </button>
+            </div>
+          </StatusBarPopover>
         {/if}
 
         {#if prInfo}
