@@ -447,6 +447,7 @@ const api: Record<string, unknown> = {
   setControl: async () => {},
   pluginList: async () => ({ installed: [], available: [] }),
   checkForUpdate: async () => null,
+  getUpdateState: async () => ({ currentVersion: '0.0.0-demo', enabled: false, status: null }),
   ptyIsAlive: async () => false,
   winIsMaximized: async () => false,
   // The MCP settings tab reads `.length` of this list.

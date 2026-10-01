@@ -1,12 +1,17 @@
 # Auto-update plan
 
-> **Status: Proposed.** Nothing here is built yet. Decisions so far:
+> **Status: Parts 1 and 3 built; Part 2 (release automation) still to do.** Decisions so far:
 > - Cover both the in-app updater and release automation.
 > - Download updates in the background and prompt to restart.
 > - Release weekly.
 > - Going stable is decided later.
 > - Code signing is not a blocker.
-> - Add a 7-day minimum package age for npm installs. **Done:** Part 3 is implemented on this branch.
+> - Add a 7-day minimum package age for npm installs.
+>
+> **Built so far:** Part 3 (minimum package age) and Part 1 (in-app updater). Part 1 follows the plan below, with three additions:
+> - The pill's old `hsl(var(--primary) / ...)` styles were invalid with the theme's `oklch` colours, so it showed with no background. It now uses Tailwind colour classes.
+> - A second restart request is ignored. Calling `quitAndInstall` twice makes electron-updater's quit hook start the installer again.
+> - Settings links to all releases rather than one release page.
 
 ## Where things stand
 
@@ -36,7 +41,7 @@ Things that already work and should stay:
 - **Unsigned updates.** Unsigned updates install because `app-update.yml` has no `publisherName`, so `NsisUpdater.verifySignature` has nothing to check against. Once signing is added, updates will start being verified automatically.
 - **Differential downloads.** They use the uploaded `.blockmap` (`disableDifferentialDownload` defaults to false, `AppUpdater.js:153`). This matters with a ~110 MB installer.
 
-## Part 1: in-app updater
+## Part 1: in-app updater (implemented)
 
 ### Behaviour
 
