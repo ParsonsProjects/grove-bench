@@ -78,10 +78,7 @@ function createWindow() {
   // Apply persisted settings on startup
   const appSettings = settings.loadSettings();
   if (appSettings.alwaysOnTop) mainWindow.setAlwaysOnTop(true);
-  try {
-    const { nativeTheme } = require('electron');
-    nativeTheme.themeSource = appSettings.theme;
-  } catch { /* nativeTheme may not be available */ }
+  // The saved theme isn't applied yet (see applyImmediateEffects).
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);
@@ -102,7 +99,7 @@ function createWindow() {
     mainWindow?.flashFrame(false);
   });
 
-  initAutoUpdater(mainWindow);
+  initAutoUpdater(mainWindow, { shutdown });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -160,25 +157,42 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// Graceful shutdown: stop every agent and shell. Worktrees, branches and
-// checkpoints are left alone; conversations reopen on the next launch.
+/** Nothing running: no live conversation, none still closing (one closed
+ *  just before quitting), no terminal. */
+function nothingRunning(): boolean {
+  return sessionManager.count === 0 && sessionManager.closingCount === 0 && terminalManager.count === 0;
+}
+
+let shutdownDone: Promise<void> | null = null;
+
+/**
+ * Graceful shutdown: stop every agent and shell. Worktrees, branches and
+ * checkpoints are left alone; conversations reopen on the next launch.
+ * Runs once: quitting and "Restart to update" both wait on it.
+ */
+function shutdown(): Promise<void> {
+  shutdownDone ??= (async () => {
+    if (nothingRunning()) return;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.APP_CLOSING);
+    }
+    logger.info(`Closing ${sessionManager.count} sessions...`);
+    // closeAll() also waits for conversations already closing.
+    await runQuitCleanup(() => Promise.all([terminalManager.killAll(), sessionManager.closeAll()]));
+  })();
+  return shutdownDone;
+}
+
 app.on('before-quit', (event) => {
   if (isQuitting) return;
-  // Nothing running: no live conversation, none still closing (one closed
-  // just before quitting), no terminal.
-  if (sessionManager.count === 0 && sessionManager.closingCount === 0 && terminalManager.count === 0) {
+  if (!shutdownDone && nothingRunning()) {
     logger.close();
     return;
   }
 
   event.preventDefault();
   isQuitting = true;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(IPC.APP_CLOSING);
-  }
-  logger.info(`Closing ${sessionManager.count} sessions...`);
-  // closeAll() also waits for conversations already closing.
-  runQuitCleanup(() => Promise.all([terminalManager.killAll(), sessionManager.closeAll()])).finally(() => {
+  shutdown().finally(() => {
     logger.close();
     app.quit();
   });

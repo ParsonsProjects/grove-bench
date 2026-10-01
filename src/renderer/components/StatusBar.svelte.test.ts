@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import '@testing-library/jest-dom/vitest';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 
 import StatusBar from './StatusBar.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -10,6 +11,7 @@ import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
+import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
@@ -57,6 +59,53 @@ describe('StatusBar keyboard shortcuts', () => {
     await fireEvent.keyDown(window, { key: 'm', altKey: true });
 
     expect(cycle).not.toHaveBeenCalled();
+  });
+});
+
+describe('StatusBar Keys popover', () => {
+  it('lists each tab under the key that switches to it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+
+    const popover = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    for (const [key, tab] of Object.entries(TAB_BY_KEY)) {
+      const row = within(popover).getByText(`${TAB_LABELS[tab]} tab`).closest('div')!;
+      expect(row).toHaveTextContent(`Alt+${key}`);
+    }
+    expect(within(popover).getByText('Settings').closest('div')).toHaveTextContent('Ctrl+,');
+  });
+
+  it('closes on Escape, with focus back on its button', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    const button = screen.getByRole('button', { name: 'Keys' });
+    // A real click focuses the button; jsdom's doesn't.
+    button.focus();
+    await fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('lets Escape through when focus is elsewhere, such as a dialog opened over it', async () => {
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+    const elsewhere = document.createElement('input');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    const reached = vi.fn();
+    document.addEventListener('keydown', reached);
+
+    await fireEvent.keyDown(elsewhere, { key: 'Escape' });
+
+    expect(reached).toHaveBeenCalled();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument();
+    document.removeEventListener('keydown', reached);
+    elsewhere.remove();
   });
 });
 
@@ -240,19 +289,6 @@ describe('StatusBar context actions', () => {
     expect(fill[0].className).toContain('bg-red-400');
     expect((fill[0] as HTMLElement).style.width).toBe('90%');
     expect(screen.getByText('Context 90%').className).toContain('text-red-400');
-  });
-});
-
-describe('StatusBar Keys', () => {
-  it('lists the tab shortcuts as they are bound', async () => {
-    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
-
-    const rows = [...getByTestId('shortcuts').querySelectorAll('div.flex')]
-      .map((r) => `${r.querySelector('span')?.textContent} ${r.querySelector('kbd')?.textContent}`);
-    expect(rows).toContain('Checkpoints Alt+3');
-    expect(rows).toContain('Terminal Alt+4');
-    expect(rows).toContain('Preview Alt+5');
   });
 });
 
@@ -485,24 +521,10 @@ describe('StatusBar activity', () => {
   });
 });
 
-describe('StatusBar popovers close on Escape', () => {
+describe('StatusBar context popover closes on Escape', () => {
   afterEach(() => {
     delete messageStore.usageBySession[ACTIVE];
     delete messageStore.contextWindowBySession[ACTIVE];
-  });
-
-  it('closes Keys and puts focus back on its button', async () => {
-    const { queryByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    const keys = screen.getByRole('button', { name: 'Keys' });
-    keys.focus();
-    await fireEvent.click(keys);
-    expect(queryByTestId('shortcuts')).not.toBeNull();
-    screen.getByRole('button', { name: 'All shortcuts in Help' }).focus();
-
-    await fireEvent.keyDown(window, { key: 'Escape' });
-
-    expect(queryByTestId('shortcuts')).toBeNull();
-    expect(document.activeElement).toBe(keys);
   });
 
   it('closes the context popover without stopping anything else', async () => {

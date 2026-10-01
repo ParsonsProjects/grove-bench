@@ -4,7 +4,8 @@
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
-  import FilePickerPopup from './FilePickerPopup.svelte';
+  import type FilePickerPopup from './FilePickerPopup.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
@@ -74,6 +75,9 @@
   let pickerQuery = $state('');
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
+  // The @ file picker (and fuse.js, which only it uses here) loads the first
+  // time @ is typed.
+  const loadFilePicker = lazyComponent(() => import('./FilePickerPopup.svelte'));
 
   // File attachments (drag-drop, paste, file picker), restored and kept in
   // the store like the draft so they outlive this editor.
@@ -222,9 +226,23 @@
     handleInput();
   }
 
+  /** Keys the @ picker takes. Held while its code is still loading, so
+   *  Enter can't send a half-typed @ reference (Escape closes it). */
+  const PICKER_KEYS = new Set(['Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown']);
+
   function handleKeydown(e: KeyboardEvent) {
     if (pickerOpen && pickerRef) {
       if (pickerRef.handleKeydown(e)) return;
+    } else if (pickerOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePicker();
+        return;
+      }
+      if (PICKER_KEYS.has(e.key) && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
     }
 
     // Command picker navigation
@@ -495,13 +513,15 @@
   ></div>
 
   {#if pickerOpen}
-    <FilePickerPopup
-      bind:this={pickerRef}
-      {sessionId}
-      query={pickerQuery}
-      onselect={selectFile}
-      onclose={closePicker}
-    />
+    {#await loadFilePicker() then Picker}
+      <Picker
+        bind:this={pickerRef}
+        {sessionId}
+        query={pickerQuery}
+        onselect={selectFile}
+        onclose={closePicker}
+      />
+    {/await}
   {/if}
 
   <!-- Slash command autocomplete -->

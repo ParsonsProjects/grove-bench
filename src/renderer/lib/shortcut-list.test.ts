@@ -17,11 +17,11 @@ describe('SHORTCUT_GROUPS', () => {
   it('labels each tab shortcut with the tab it opens', () => {
     const tabs = SHORTCUT_GROUPS.find((g) => g.title === 'Tabs')!.rows;
     expect(tabs.map((r) => `${formatShortcut(r.key)} ${r.label}`)).toEqual([
-      'Alt+1 Thread',
-      'Alt+2 Changes',
-      'Alt+3 Checkpoints',
-      'Alt+4 Terminal',
-      'Alt+5 Preview',
+      'Alt+1 Thread tab',
+      'Alt+2 Changes tab',
+      'Alt+3 Checkpoints tab',
+      'Alt+4 Terminal tab',
+      'Alt+5 Preview tab',
     ]);
     expect(tabs).toHaveLength(Object.keys(TAB_BY_KEY).length);
   });
@@ -36,7 +36,7 @@ describe('SHORTCUT_GROUPS', () => {
     expect(agent.map((r) => `${formatShortcut(r.key)} ${r.label}`)).toEqual([
       'Alt+M Cycle mode',
       'Alt+T Toggle thinking',
-      'Alt+E Cycle effort',
+      'Alt+E Cycle effort level',
     ]);
   });
 });
@@ -46,6 +46,7 @@ describe('formatShortcut', () => {
     [{ key: 't', ctrl: true, shift: true }, 'Ctrl+Shift+T'],
     [{ key: '1', alt: true }, 'Alt+1'],
     [{ key: 'f1' }, 'F1'],
+    [{ key: ',', ctrl: true }, 'Ctrl+,'],
   ])('%o -> %s', (k, out) => {
     expect(formatShortcut(k)).toBe(out);
   });

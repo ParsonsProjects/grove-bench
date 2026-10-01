@@ -6,7 +6,7 @@
  */
 import type { ShortcutKey } from '../../shared/grove-shortcuts.js';
 import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../shared/types.js';
-import { TAB_BY_KEY, type WorkspaceTab } from './keyboard-shortcuts.js';
+import { TAB_BY_KEY, TAB_LABELS } from './keyboard-shortcuts.js';
 
 export interface ShortcutRow {
   label: string;
@@ -18,19 +18,10 @@ export interface ShortcutGroup {
   rows: ShortcutRow[];
 }
 
-const TAB_NAMES: Record<WorkspaceTab, string> = {
-  activity: 'Thread',
-  changes: 'Changes',
-  checkpoints: 'Checkpoints',
-  plan: 'Plan',
-  terminal: 'Terminal',
-  preview: 'Preview',
-};
-
 const CONTROL_LABELS: Record<string, string> = {
   [CONTROL_IDS.permissionMode]: 'Cycle mode',
   [CONTROL_IDS.thinking]: 'Toggle thinking',
-  [CONTROL_IDS.effort]: 'Cycle effort',
+  [CONTROL_IDS.effort]: 'Cycle effort level',
 };
 
 /** "Alt+M" -> { key: 'm', alt: true }. */
@@ -48,21 +39,16 @@ function parseCombo(combo: string): ShortcutKey {
 
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
-    title: 'Conversations',
+    title: 'General',
     rows: [
-      { label: 'New conversation', key: { key: 'n', ctrl: true } },
       { label: 'Conversation finder', key: { key: 'r', ctrl: true } },
-      { label: 'Reopen closed', key: { key: 't', ctrl: true, shift: true } },
-      { label: 'Search messages', key: { key: 'f', ctrl: true } },
+      { label: 'New conversation', key: { key: 'n', ctrl: true } },
+      { label: 'Reopen closed tab', key: { key: 't', ctrl: true, shift: true } },
       { label: 'Bookmarks', key: { key: 'b', ctrl: true } },
+      { label: 'Search messages', key: { key: 'f', ctrl: true } },
+      { label: 'Settings', key: { key: ',', ctrl: true } },
+      { label: 'Help', key: { key: 'f1' } },
     ],
-  },
-  {
-    title: 'Tabs',
-    rows: Object.entries(TAB_BY_KEY).map(([key, tab]) => ({
-      label: TAB_NAMES[tab],
-      key: { key, alt: true },
-    })),
   },
   {
     title: 'Agent',
@@ -72,8 +58,11 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     })),
   },
   {
-    title: 'Help',
-    rows: [{ label: 'Open Help', key: { key: 'f1' } }],
+    title: 'Tabs',
+    rows: Object.entries(TAB_BY_KEY).map(([key, tab]) => ({
+      label: `${TAB_LABELS[tab]} tab`,
+      key: { key, alt: true },
+    })),
   },
 ];
 

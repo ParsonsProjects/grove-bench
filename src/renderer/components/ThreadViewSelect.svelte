@@ -2,7 +2,7 @@
   /**
    * The Thread tab's view picker (Detailed / Summary / Focus). It sits on the
    * tab itself while Thread is the open tab, next to what it changes. Per
-   * conversation; new ones start in Settings > Default Thread View.
+   * conversation; new ones start in Settings > General > Default thread view.
    */
   import { Select as SelectPrimitive } from 'bits-ui';
   import * as Select from '$lib/components/ui/select/index.js';

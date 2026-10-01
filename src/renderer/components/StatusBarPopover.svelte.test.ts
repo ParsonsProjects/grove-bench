@@ -55,7 +55,7 @@ describe('StatusBarPopover', () => {
     expect(onScreen).toHaveBeenCalled();
   });
 
-  it('leaves Escape to what has focus elsewhere, such as a dialog opened over it', async () => {
+  it('lets Escape through to what has focus elsewhere, such as a dialog opened over it, and closes', async () => {
     renderOpen();
     const finder = document.createElement('input');
     document.body.appendChild(finder);
@@ -64,10 +64,11 @@ describe('StatusBarPopover', () => {
     finder.addEventListener('keydown', finderGotIt);
 
     await fireEvent.keyDown(finder, { key: 'Escape' });
-    finder.remove();
 
     expect(finderGotIt).toHaveBeenCalled();
-    expect(screen.queryByTestId('panel')).not.toBeNull();
+    expect(document.activeElement).toBe(finder);
+    expect(screen.queryByTestId('panel')).toBeNull();
+    finder.remove();
   });
 
   it('slides in when asked to', async () => {

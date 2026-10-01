@@ -89,7 +89,7 @@ When the agent has MCP servers configured, an **MCP** badge shows how many are c
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
 - **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this conversation, so new conversations in the project also start without it
 
-New servers are added from Settings → MCP.
+New servers are added from Settings → Tool shed (MCP servers).
 
 Each server in the popover shows a status dot:
 
@@ -119,7 +119,7 @@ Click the bar for details and two actions:
 - **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail.
 - **Start fresh…** (`/clear`): clears the conversation and the agent's memory of it. It asks you to confirm first. Your files are not changed.
 
-With **Show grove characters** on (Settings > General), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
+With **Show grove characters** on (Settings → The grove (General)), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 
 ## Rate Limiting
 

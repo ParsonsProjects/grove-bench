@@ -1322,7 +1322,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude" in a terminal and sign in, then try again.';
+  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Grovekeepers (Agents), or run "claude" in a terminal and sign in, then try again.';
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',

@@ -36,9 +36,10 @@
   --secondary: oklch(0.279 0 0);
   --secondary-foreground: oklch(0.835 0 0);
 
-  /* Muted: #313131 bg / #858585 text */
+  /* Muted: #313131 bg. Muted text is lighter than VS Code's #858585 so it
+     keeps 4.5:1 contrast (WCAG AA) on the background, cards and muted bg. */
   --muted: oklch(0.279 0 0);
-  --muted-foreground: oklch(0.576 0 0);
+  --muted-foreground: oklch(0.66 0 0);
 
   /* Accent: #04395e (selection highlight) */
   --accent: oklch(0.310 0.065 245);
@@ -85,7 +86,7 @@
   --secondary: oklch(0.279 0 0);
   --secondary-foreground: oklch(0.835 0 0);
   --muted: oklch(0.279 0 0);
-  --muted-foreground: oklch(0.576 0 0);
+  --muted-foreground: oklch(0.66 0 0);
   --accent: oklch(0.310 0.065 245);
   --accent-foreground: oklch(0.835 0 0);
   --destructive: oklch(0.608 0.220 22);

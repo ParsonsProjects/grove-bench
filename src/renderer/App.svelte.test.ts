@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, screen, cleanup } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 
 import App from './App.svelte';
 import { store } from './stores/sessions.svelte.js';
@@ -46,5 +46,17 @@ describe('App startup', () => {
     // Both stay listed as open, and neither starts its agent until opened.
     expect(store.deferredResume).toEqual({ a: true, b: true });
     expect(mockGroveBench.resumeSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('App shortcuts', () => {
+  it('opens and closes Settings with Ctrl+,', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(App);
+
+    await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+    expect(settingsStore.panelOpen).toBe(true);
+    await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+    expect(settingsStore.panelOpen).toBe(false);
   });
 });

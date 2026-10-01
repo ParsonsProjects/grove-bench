@@ -23,8 +23,8 @@
 | `Ctrl+F` | Search in Thread tab |
 | `Ctrl+R` | Open conversation finder (quick-switch between conversations) |
 | `Ctrl+N` | New conversation draft (in the open conversation's project) |
-| `Ctrl+Shift+T` | Reopen the conversation you closed last |
-| `Ctrl+B` | Show or hide bookmarks |
+| `Ctrl+Shift+T` | Reopen the last conversation tab you closed |
+| `Ctrl+B` | Open or close bookmarks |
 | `Ctrl+L` | Go to the address bar (Preview tab) |
 
 Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See [Preview tab](preview-tab.md#keys-inside-the-page).
@@ -41,6 +41,7 @@ Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl+,` | Open or close Settings |
 | `Enter` | Send message |
 | `Shift+Enter` | New line in prompt editor |
 | `Escape` | Close a popup, picker or panel |

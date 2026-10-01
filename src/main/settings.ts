@@ -1,7 +1,8 @@
 import path from 'node:path';
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
+import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 import { logger } from './logger.js';
@@ -41,6 +42,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   branchNamingRule: '', // empty = copy the repo's recent branch names
   theme: 'system',
   alwaysOnTop: false,
+
+  // Updates
+  autoDownloadUpdates: true,
 
   // Appearance
   repoColors: {},
@@ -216,7 +220,9 @@ const settingsSchema = z.object({
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),
-  memoryCompactTimeoutSeconds: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
+  // Stored as compaction will use it, so Settings shows the value in use.
+  memoryCompactTimeoutSeconds: z.number().transform(effectiveCompactTimeoutSeconds)
+    .catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
@@ -229,6 +235,8 @@ const settingsSchema = z.object({
   branchNamingRule: z.string().catch(DEFAULT_SETTINGS.branchNamingRule),
   theme: z.enum(['system', 'dark', 'light']).catch(DEFAULT_SETTINGS.theme),
   alwaysOnTop: z.boolean().catch(DEFAULT_SETTINGS.alwaysOnTop),
+
+  autoDownloadUpdates: z.boolean().catch(DEFAULT_SETTINGS.autoDownloadUpdates),
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
   groveCharacters: z.boolean().catch(DEFAULT_SETTINGS.groveCharacters),
@@ -330,5 +338,8 @@ export function applyImmediateEffects(win: BrowserWindow | null, settings: Grove
   if (win && !win.isDestroyed()) {
     win.setAlwaysOnTop(settings.alwaysOnTop);
   }
-  nativeTheme.themeSource = settings.theme;
+  // `theme` isn't applied to nativeTheme.themeSource until the app has a
+  // light palette (TODO.md, Light theme): Settings can't change it, and it
+  // also sets prefers-color-scheme for Preview pages. Electron's default,
+  // following Windows, stays in place.
 }

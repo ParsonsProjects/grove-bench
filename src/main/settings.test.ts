@@ -158,12 +158,13 @@ describe('applyImmediateEffects', () => {
     expect(win.setAlwaysOnTop).toHaveBeenCalledWith(true);
   });
 
-  it('sets nativeTheme.themeSource', () => {
+  it('leaves nativeTheme following the system until there is a light theme', () => {
     const win = { isDestroyed: vi.fn(() => false), setAlwaysOnTop: vi.fn() } as any;
+    nativeTheme.themeSource = 'system';
     const s = loadSettings();
-    s.theme = 'dark';
+    s.theme = 'light';
     applyImmediateEffects(win, s);
-    expect(nativeTheme.themeSource).toBe('dark');
+    expect(nativeTheme.themeSource).toBe('system');
   });
 
   it('handles null window', () => {
@@ -307,6 +308,17 @@ describe('schema versioning', () => {
 });
 
 describe('validateSettings', () => {
+  it('stores the compaction timeout as compaction will use it', () => {
+    const timeout = (v: unknown) => validateSettings({ memoryCompactTimeoutSeconds: v }).memoryCompactTimeoutSeconds;
+    expect(timeout(5)).toBe(30);
+    expect(timeout(45)).toBe(45);
+    expect(timeout(45.5)).toBe(46);
+    expect(timeout(3_000_000)).toBe(3600);
+    expect(timeout(0)).toBe(300);
+    expect(timeout(-1)).toBe(300);
+    expect(timeout('soon')).toBe(300);
+  });
+
   it('falls back per field on invalid values instead of discarding the file', () => {
     const s = validateSettings({
       theme: 'neon',

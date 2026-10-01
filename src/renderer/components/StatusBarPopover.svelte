@@ -4,12 +4,12 @@
    * owner keeps `open` and decides what opening does; this closes it on a
    * click outside and on Escape, and keeps the panel inside the window.
    *
-   * Escape is handled in the capture phase, so it closes this before anything
-   * under it reacts, and gives focus back to the trigger. It is left alone
-   * while the popover is off screen (every conversation's pane stays mounted,
-   * and one left open in a hidden pane must not swallow Escape meant for what
-   * is on screen) and while focus is somewhere else, such as a dialog or the
-   * conversation finder opened over it.
+   * Escape closes it while it is on screen (every conversation's pane stays
+   * mounted, and one left open in a hidden pane must not react to Escape
+   * meant for what is on screen). Only when focus was inside does it keep the
+   * key, in the capture phase, and give focus back to the trigger: Escape
+   * pressed in a dialog opened over it (Ctrl+,), the conversation finder or
+   * the prompt must still reach them.
    *
    * Closes when it unmounts too: a chip that goes away and comes back (the
    * pending tools count, say) must not reopen its popover by itself.
@@ -28,6 +28,8 @@
     panelClass = 'bg-popover border border-border shadow-xl p-3 text-xs w-80',
     class: className = '',
     testid,
+    label,
+    id,
   }: {
     open?: boolean;
     /** What opens it. Mark the toggle with data-popover-trigger when it isn't
@@ -45,6 +47,10 @@
     panelClass?: string;
     class?: string;
     testid?: string;
+    /** Names the panel as a dialog, for screen readers and getByRole. */
+    label?: string;
+    /** For the trigger's aria-controls. */
+    id?: string;
   } = $props();
 
   let root = $state<HTMLDivElement | null>(null);
@@ -60,13 +66,12 @@
     };
     const onKeydown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !(root?.checkVisibility?.() ?? true)) return;
-      const focused = document.activeElement;
-      const focusInside = !!focused && !!root?.contains(focused);
-      if (!focusInside && focused && focused !== document.body) return;
-      e.stopPropagation();
       open = false;
-      if (focusInside) {
-        (root?.querySelector<HTMLElement>('[data-popover-trigger]') ?? root?.querySelector<HTMLElement>('button'))?.focus();
+      const focused = document.activeElement;
+      if (focused && focused !== document.body && !root?.contains(focused)) return;
+      e.stopPropagation();
+      if (focused && root?.contains(focused)) {
+        (root.querySelector<HTMLElement>('[data-popover-trigger]') ?? root.querySelector<HTMLElement>('button'))?.focus();
       }
     };
     window.addEventListener('click', onClick);
@@ -88,11 +93,11 @@
   <!-- One block, not an {#if animate} inside {#if open}: a transition is
        local, so it only plays when its own block opens or closes. -->
   {#if open && animate}
-    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class="{placement} {panelClass}" data-testid={testid}>
+    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class="{placement} {panelClass}" data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
       {@render children()}
     </div>
   {:else if open}
-    <div use:keepInViewport class="{placement} {panelClass}" data-testid={testid}>
+    <div use:keepInViewport class="{placement} {panelClass}" data-testid={testid} {id} role={label ? 'dialog' : undefined} aria-label={label}>
       {@render children()}
     </div>
   {/if}
