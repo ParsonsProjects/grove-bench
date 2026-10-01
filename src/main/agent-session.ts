@@ -362,6 +362,12 @@ class AgentSessionManager {
       });
     }
 
+    // Only hand the agent what it says it supports (AgentCapabilities).
+    const caps = session.adapter.capabilities;
+    if (session.outputFormat && !caps.structuredOutput) {
+      logger.warn(`[runQuery] ${id}: ${session.adapter.id} has no structured output; the output format is ignored`);
+    }
+
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -375,12 +381,13 @@ class AgentSessionManager {
       customSystemPrompt: session.customSystemPrompt,
       allowedTools: session.allowedTools,
       skills: skillsFilter ?? null,
-      outputFormat: session.outputFormat,
+      outputFormat: caps.structuredOutput ? session.outputFormat : null,
       // Read-safe mode gets OS-level sandbox enforcement as a backstop beneath
       // the read-only classifier (explicit per-session sandbox settings win).
       // Mode is read at query start: switching into read-safe mid-query keeps
       // classifier-only protection until the next query (re)start.
-      sandbox: session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox(session.worktreePath) : null),
+      sandbox: !caps.sandbox ? null
+        : session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox(session.worktreePath) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),
@@ -393,8 +400,10 @@ class AgentSessionManager {
       extraEnv: { ...gitIdentityEnv, ...(session.extraEnv ?? {}) },
       controls: session.controls,
       thinkingSummaries: currentSettings.showThinkingSummaries,
-      resumeSessionId: session.providerSessionId,
-      resumeAtUuid,
+      // An agent that can't resume starts a new conversation each time; the
+      // thread still shows the earlier turns from Grove's own event log.
+      resumeSessionId: caps.resume ? session.providerSessionId : null,
+      resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
@@ -764,6 +773,12 @@ class AgentSessionManager {
     // Attached images are saved to disk and the event refers to them, so the
     // thread can show them again when the conversation is reopened.
     const uuid = crypto.randomUUID();
+    // The composer only offers attachments to agents that take images; this
+    // catches any that arrive anyway (a paste racing an agent switch).
+    if (images?.length && !session.adapter.capabilities.imageAttachments) {
+      session.emit?.({ type: 'status', level: 'warning', message: `${session.adapter.displayName} can't take images, so the attached image${images.length > 1 ? 's were' : ' was'} left out.` });
+      images = undefined;
+    }
     const storedImages = images?.length ? await saveImages(id, images) : [];
     const userEvent: AgentEvent = {
       type: 'user_message', text: content, uuid,
@@ -1571,6 +1586,9 @@ class AgentSessionManager {
     const forkPoint = session.providerSessionId
       ? findRewindForkPoint(session.eventHistory, userMessageId)
       : null;
+    // Without a truncating resume the agent would keep the rewound turns in
+    // its memory, so it starts over instead (the else branch below).
+    const canFork = session.adapter.capabilities.resume && session.adapter.capabilities.rewind === true;
 
     // Truncate event history to the rewind point so replays after refresh
     // don't resurrect events that occurred after the rewound turn.
@@ -1584,8 +1602,15 @@ class AgentSessionManager {
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
+    if (forkPoint && !canFork) {
+      session.emit?.({
+        type: 'status',
+        level: 'warning',
+        message: `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
+      });
+    }
 
-    if (forkPoint) {
+    if (forkPoint && canFork) {
       // True rewind: resume the same conversation truncated at the last kept
       // chain entry, forked to a new provider session — the agent keeps the
       // turns before the rewind point and genuinely forgets everything after.

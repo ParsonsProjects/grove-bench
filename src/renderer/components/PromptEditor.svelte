@@ -4,6 +4,8 @@
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { store as sessionStore } from '../stores/sessions.svelte.js';
   import FilePickerPopup from './FilePickerPopup.svelte';
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -77,6 +79,9 @@
 
   // File attachments (drag-drop, paste, file picker), restored and kept in
   // the store like the draft so they outlive this editor.
+  /** Whether this conversation's agent takes image attachments. */
+  let allowImages = $derived(agentsStore.supports(sessionStore.sessions.find((s) => s.id === sessionId)?.agentType, 'imageAttachments'));
+
   let attachedFiles = $state<AttachedFile[]>(untrack(() => [...messageStore.getAttachments(sessionId)]));
   $effect(() => {
     messageStore.setAttachments(sessionId, $state.snapshot(attachedFiles));
@@ -413,7 +418,7 @@
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
-    const { files: newFiles, skipped } = await processFiles(files, attachedFiles);
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles, { allowImages });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }
@@ -436,7 +441,7 @@
 
     // Clipboard images all arrive named "image.png" — rename collisions so
     // pasting several screenshots attaches each one instead of only the first.
-    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true });
+    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true, allowImages });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }
@@ -458,7 +463,7 @@
     const files = fileInput?.files;
     if (!files || files.length === 0) return;
 
-    const { files: newFiles, skipped } = await processFiles(files, attachedFiles);
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles, { allowImages });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }

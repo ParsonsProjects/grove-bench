@@ -36,6 +36,13 @@ class AgentsStore {
     return id ? this.list.find((a) => a.id === id) : undefined;
   }
 
+  /** Whether an agent supports a capability. True until the list loads, and
+   *  for an agent it doesn't know, so nothing is held back by a slow load. */
+  supports(id: string | null | undefined, capability: string): boolean {
+    const agent = this.get(id ?? this.defaultId);
+    return agent ? agent.capabilities[capability] !== false : true;
+  }
+
   /** Agents that support a capability, e.g. 'plugins' or 'mcpConfig'. */
   supporting(capability: string): AgentSummary[] {
     return this.list.filter((a) => a.capabilities[capability]);

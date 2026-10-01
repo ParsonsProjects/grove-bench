@@ -16,6 +16,10 @@ export interface AgentCapabilities {
   permissionModes: boolean;
   /** Supports resuming a previous conversation */
   resume: boolean;
+  /** Can resume a conversation cut off at an earlier point, forgetting the
+   *  turns after it (AdapterConfig.resumeAtUuid). Rewinding a conversation on
+   *  an agent without it starts the agent on a new conversation. */
+  rewind?: boolean;
   /** Supports switching models at runtime */
   modelSwitching: boolean;
   /** Supports adjusting the thinking/reasoning level at runtime */

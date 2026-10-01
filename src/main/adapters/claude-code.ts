@@ -1344,6 +1344,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     permissions: true,
     permissionModes: true,
     resume: true,
+    rewind: true,
     modelSwitching: true,
     thinking: true,
     thinkingSummaries: true,

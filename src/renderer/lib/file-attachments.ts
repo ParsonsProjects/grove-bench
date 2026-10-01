@@ -96,6 +96,9 @@ export interface ProcessFilesOptions {
    *  images all arrive named "image.png", so pasting must rename — otherwise
    *  every paste after the first is dropped. */
   renameDuplicates?: boolean;
+  /** False when the conversation's agent can't take images: they are
+   *  skipped with a reason instead of attached. */
+  allowImages?: boolean;
 }
 
 /**
@@ -117,6 +120,10 @@ export function processFiles(
     const kind = classifyFile(file);
     if (!kind) {
       skipped.push(`${file.name} (unsupported type)`);
+      continue;
+    }
+    if (kind === 'image' && options.allowImages === false) {
+      skipped.push(`${file.name} (this agent can't take images)`);
       continue;
     }
 
