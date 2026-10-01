@@ -198,9 +198,17 @@ describe('SessionControlsPopover', () => {
     expect(dialog.querySelector('[data-testid="usage"]')).toHaveTextContent(/isn't reported/);
   });
 
-  it('Done and Escape close the popover', async () => {
+  it('applies a choice without closing, and has no Done button', async () => {
+    const dialog = await openPopover();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Haiku 4.5' }));
+    expect(mockGroveBench.setModel).toHaveBeenCalledWith(SID, 'claude-haiku-4-5-20251001');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+  });
+
+  it('a click outside and Escape close the popover', async () => {
     await openPopover();
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await fireEvent.click(document.body);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTitle(/Agent settings/));

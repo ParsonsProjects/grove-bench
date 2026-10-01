@@ -135,21 +135,15 @@
         {/each}
       </div>
 
-      <div class="flex items-center justify-between gap-4 mt-3 pt-2 border-t border-border">
-        {#if hint}
-          <p class="text-[11px] text-muted-foreground max-w-md" aria-live="polite">
+      <!-- No Done button, as in SessionControlsPopover: choices apply on
+           click, and the hint keeps the full width with two lines reserved. -->
+      {#if hint}
+        <div class="mt-3 pt-2 border-t border-border">
+          <p class="text-[11px] min-h-[2lh] text-muted-foreground" aria-live="polite">
             <span class="text-foreground">{hint.label}:</span> {hint.description}
           </p>
-        {:else}
-          <span></span>
-        {/if}
-        <button
-          onclick={() => open = false}
-          class="px-3 py-1 border border-border text-foreground hover:bg-accent transition-colors"
-        >
-          Done
-        </button>
-      </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

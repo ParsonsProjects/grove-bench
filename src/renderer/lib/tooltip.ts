@@ -13,9 +13,13 @@
  * Styles live in `styles/globals.css` under `.grove-tooltip`.
  */
 
-/** Delay before a tooltip shows when none was showing just before. */
-export const SHOW_DELAY_MS = 300;
-/** After a tooltip hides, the next one within this window shows at once. */
+/**
+ * Delay before a tooltip shows when none was showing just before. Long enough
+ * that passing over a control on the way somewhere else shows nothing; the
+ * same as Bits UI's Tooltip default (`delayDuration`).
+ */
+export const SHOW_DELAY_MS = 700;
+/** After a tooltip hides, the next one within this window shows at once (Bits UI's `skipDelayDuration`). */
 export const WARM_WINDOW_MS = 300;
 
 const GAP_PX = 4;

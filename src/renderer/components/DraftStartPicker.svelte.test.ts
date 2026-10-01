@@ -60,13 +60,13 @@ describe('DraftStartPicker', () => {
     expect(screen.queryByRole('button', { name: 'taken' })).not.toBeInTheDocument();
   });
 
-  it('picks a PR, which starts in Plan mode', async () => {
+  it('picks a PR, keeping the default mode', async () => {
     const onclose = vi.fn();
     render(DraftStartPicker, { onclose });
     await fireEvent.click(screen.getByRole('button', { name: 'Branch or PR' }));
     await fireEvent.click(await screen.findByRole('button', { name: /#7 Add login/ }));
     expect(draftStore.draft?.start).toEqual({ kind: 'existing', branch: 'feat/a', pr: { number: 7, title: 'Add login' } });
-    expect(draftStore.controlValue('permissionMode')).toBe('plan');
+    expect(draftStore.controlValue('permissionMode')).toBe('default');
     expect(onclose).toHaveBeenCalled();
   });
 
