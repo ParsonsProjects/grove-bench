@@ -11,7 +11,7 @@
 
 <p class="text-xs text-muted-foreground leading-relaxed">
   Memory and skill suggestions run on each conversation's own agent, using its background model, set under
-  <button type="button" class="text-primary hover:underline" onclick={() => ongoto('agents')}>Agents</button>.
+  <button type="button" class="text-primary hover:underline" onclick={() => ongoto('agents')}>Grovekeepers (Agents)</button>.
 </p>
 
 <SettingsGroup title="Project memory">

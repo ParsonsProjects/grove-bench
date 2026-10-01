@@ -70,8 +70,13 @@ async function renderPanel() {
   return { ...result, onclose };
 }
 
+/** A section's tab, by its plain name (shown under its grove name). */
+function sectionTab(label: string) {
+  return screen.getByRole('tab', { name: new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`) });
+}
+
 async function openSection(label: string) {
-  await fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${label}`) }));
+  await fireEvent.click(sectionTab(label));
 }
 
 async function openAgentSection() {
@@ -108,7 +113,7 @@ describe('SettingsPanel default permission mode', () => {
     expect(screen.queryByText(/bypass/i)).not.toBeInTheDocument();
     expect(screen.getByText(/set per agent/)).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Grovekeepers (Agents)' }));
     expect(await screen.findByText('Default permission mode')).toBeInTheDocument();
   });
 
@@ -228,13 +233,20 @@ describe('SettingsPanel number settings', () => {
 });
 
 describe('SettingsPanel sections and search', () => {
+  it('shows each section by its grove name, with its plain name under it', async () => {
+    await renderPanel();
+    expect(sectionTab('Notifications')).toHaveTextContent('Bells');
+    await openSection('Notifications');
+    expect(screen.getByRole('heading', { name: 'Bells' })).toBeInTheDocument();
+  });
+
   it('opens a search result in its section', async () => {
     await renderPanel();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'taskbar' } });
 
     await fireEvent.click(await screen.findByRole('button', { name: /Flash the taskbar button/ }));
 
-    expect(screen.getByRole('tab', { name: 'Notifications' })).toHaveAttribute('aria-selected', 'true');
+    expect(sectionTab('Notifications')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('checkbox', { name: 'Flash the taskbar button' })).toBeInTheDocument();
   });
 

@@ -21,6 +21,10 @@ describe('searchSettings', () => {
     );
   });
 
+  it('finds a section\'s settings by its grove name', () => {
+    expect(ids('tool shed').sort()).toEqual(['mcp-add', 'mcp-servers']);
+  });
+
   it('leaves out sections that are not shown', () => {
     expect(ids('mcp', ['general', 'agents'])).toEqual([]);
   });

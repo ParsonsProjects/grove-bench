@@ -1,16 +1,17 @@
 import Fuse from 'fuse.js';
 
-/** The Settings panel's sections, in nav order. */
+/** The Settings panel's sections, in nav order. Each has a grove name, in
+ *  keeping with the app, shown with its plain name under it. */
 export const SETTINGS_SECTIONS = [
-  { id: 'general', label: 'General', description: 'How the app looks and behaves.' },
-  { id: 'agents', label: 'Agents', description: 'Sign-in, models and defaults for each agent, and settings for all of them.' },
-  { id: 'permissions', label: 'Permissions', description: 'What agents may do without asking you first.' },
-  { id: 'git', label: 'Git & worktrees', description: 'How new conversations get their branch and worktree.' },
-  { id: 'notifications', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
-  { id: 'background', label: 'Background work', description: 'Project memory, skill suggestions and sleeping idle conversations.' },
-  { id: 'mcp', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
-  { id: 'plugins', label: 'Plugins', description: 'Add and manage plugins.' },
-  { id: 'privacy', label: 'Privacy', description: 'Usage data and crash reports.' },
+  { id: 'general', grove: 'The grove', label: 'General', description: 'How the app looks and behaves.' },
+  { id: 'agents', grove: 'Grovekeepers', label: 'Agents', description: 'Sign-in, models and defaults for each agent, and settings for all of them.' },
+  { id: 'permissions', grove: 'The gate', label: 'Permissions', description: 'What agents may do without asking you first.' },
+  { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new conversations get their branch and worktree.' },
+  { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
+  { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, skill suggestions and sleeping idle conversations.' },
+  { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
+  { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
+  { id: 'privacy', grove: 'Hedges', label: 'Privacy', description: 'Usage data and crash reports.' },
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
@@ -71,14 +72,13 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'crash-reports', section: 'privacy', label: 'Send crash reports', keywords: 'errors' },
 ];
 
-// The section's name counts too, so "notif" finds every notification setting.
+// The section's names count too, so "notif" or "bells" finds every
+// notification setting.
 const fuse = new Fuse(
-  SETTINGS_INDEX.map((entry) => ({
-    entry,
-    label: entry.label,
-    keywords: entry.keywords ?? '',
-    section: SETTINGS_SECTIONS.find((s) => s.id === entry.section)!.label,
-  })),
+  SETTINGS_INDEX.map((entry) => {
+    const section = SETTINGS_SECTIONS.find((s) => s.id === entry.section)!;
+    return { entry, label: entry.label, keywords: entry.keywords ?? '', section: `${section.grove} ${section.label}` };
+  }),
   {
     keys: [{ name: 'label', weight: 2 }, 'keywords', { name: 'section', weight: 0.5 }],
     // Stricter than Fuse's default (0.6), so "idle" doesn't also find "side-by-side".

@@ -80,8 +80,8 @@
 
   const results = $derived(searchSettings(query, visibleSections.map((s) => s.id)));
 
-  function sectionLabel(id: SettingsSectionId): string {
-    return SETTINGS_SECTIONS.find((s) => s.id === id)?.label ?? id;
+  function sectionName(id: SettingsSectionId): string {
+    return SETTINGS_SECTIONS.find((s) => s.id === id)?.grove ?? id;
   }
 
   /** Open a search result: its section, scrolled to the setting. */
@@ -144,48 +144,56 @@
       orientation="vertical"
       class="flex flex-1 min-h-0"
     >
-      <div class="w-52 shrink-0 border-r border-border flex flex-col gap-2 p-3 overflow-y-auto">
-        <Input
-          type="search"
-          bind:value={query}
-          placeholder="Search settings"
-          aria-label="Search settings"
-          class="h-8"
-          onkeydown={onSearchKeydown}
-        />
+      <div class="w-52 shrink-0 border-r border-border flex flex-col">
+        <!-- Search stays put; the list under it scrolls in a short window. -->
+        <div class="p-3 pb-2 shrink-0">
+          <Input
+            type="search"
+            bind:value={query}
+            placeholder="Search settings"
+            aria-label="Search settings"
+            class="h-8"
+            onkeydown={onSearchKeydown}
+          />
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto px-3 pb-3">
 
-        {#if query.trim()}
-          <ul class="flex flex-col gap-0.5" aria-label="Matching settings">
-            {#each results as entry (entry.id)}
-              <li>
-                <button
-                  type="button"
-                  onclick={() => goTo(entry)}
-                  class="w-full text-left px-2 py-1.5 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span class="block text-sm text-foreground">{entry.label}</span>
-                  <span class="block text-xs text-muted-foreground">{sectionLabel(entry.section)}</span>
-                </button>
-              </li>
-            {:else}
-              <li class="px-2 py-1.5 text-xs text-muted-foreground">No settings match.</li>
+          {#if query.trim()}
+            <ul class="flex flex-col gap-0.5" aria-label="Matching settings">
+              {#each results as entry (entry.id)}
+                <li>
+                  <button
+                    type="button"
+                    onclick={() => goTo(entry)}
+                    class="w-full text-left px-2 py-1.5 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span class="block text-sm text-foreground">{entry.label}</span>
+                    <span class="block text-xs text-muted-foreground">{sectionName(entry.section)}</span>
+                  </button>
+                </li>
+              {:else}
+                <li class="px-2 py-1.5 text-xs text-muted-foreground">No settings match.</li>
+              {/each}
+            </ul>
+          {/if}
+
+          <Tabs.List class="flex flex-col gap-0.5 {query.trim() ? 'hidden' : ''}" aria-label="Settings sections">
+            {#each visibleSections as s (s.id)}
+              <Tabs.Trigger
+                value={s.id}
+                class="w-full text-left px-3 py-1.5 text-sm border-l-2 border-transparent text-muted-foreground transition-colors hover:text-foreground hover:bg-accent/30 data-[state=active]:border-primary data-[state=active]:bg-accent/50 data-[state=active]:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span class="block">
+                  {s.grove}
+                  {#if s.id === 'plugins' && pluginStore.installed.length > 0}
+                    <span class="text-muted-foreground ml-0.5">({pluginStore.installed.length})</span>
+                  {/if}
+                </span>
+                <span class="block text-xs text-muted-foreground">{s.label}</span>
+              </Tabs.Trigger>
             {/each}
-          </ul>
-        {/if}
-
-        <Tabs.List class="flex flex-col gap-0.5 {query.trim() ? 'hidden' : ''}" aria-label="Settings sections">
-          {#each visibleSections as s (s.id)}
-            <Tabs.Trigger
-              value={s.id}
-              class="w-full text-left px-3 py-1.5 text-sm border-l-2 border-transparent text-muted-foreground transition-colors hover:text-foreground hover:bg-accent/30 data-[state=active]:border-primary data-[state=active]:bg-accent/50 data-[state=active]:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {s.label}
-              {#if s.id === 'plugins' && pluginStore.installed.length > 0}
-                <span class="text-muted-foreground ml-0.5">({pluginStore.installed.length})</span>
-              {/if}
-            </Tabs.Trigger>
-          {/each}
-        </Tabs.List>
+          </Tabs.List>
+        </div>
       </div>
 
       <div bind:this={content} class="flex-1 min-w-0 overflow-y-auto">
@@ -194,8 +202,8 @@
             {#if section === s.id}
               <div class="max-w-2xl flex flex-col gap-8">
                 <div>
-                  <h3 class="text-base font-semibold text-foreground">{s.label}</h3>
-                  <p class="text-xs text-muted-foreground mt-1">{s.description}</p>
+                  <h3 class="text-base font-semibold text-foreground">{s.grove}</h3>
+                  <p class="text-xs text-muted-foreground mt-1">{s.label}: {s.description}</p>
                 </div>
 
                 {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins'}
