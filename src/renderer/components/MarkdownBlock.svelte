@@ -6,6 +6,7 @@
   import { splitStreamingMarkdown } from '$lib/markdown-stream.js';
   import { writeRichText, encodeCopyText } from '$lib/clipboard.js';
   import { COPY_MARK, isRenderedCopyButton, renderedCode, renderedTable } from '$lib/copy-mark.js';
+  import { HIGHLIGHT_MARK, highlightWhenVisible } from '$lib/code-highlight.js';
 
   const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>`;
 
@@ -13,8 +14,10 @@
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  /** Code renderer; `highlight` false skips highlight.js (used while streaming,
-   *  where the whole block is re-rendered on every flush). */
+  /** Code renderer. With `highlight`, a block in a language highlight.js
+   *  knows is marked to be coloured once it is on screen (lib/code-highlight);
+   *  without it (while streaming, where the whole block is re-rendered on
+   *  every flush) it stays plain. Either way it renders as escaped text. */
   function codeRenderer(highlight: boolean) {
     return {
       code({ text, lang }: { text: string; lang?: string }) {
@@ -22,8 +25,7 @@
         const copyBtn = `<button class="code-copy-btn" data-copy="${COPY_MARK}" title="Copy">${COPY_SVG}</button>`;
 
         if (highlight && lang && hljs.getLanguage(lang)) {
-          const highlighted = hljs.highlight(text, { language: lang }).value;
-          return `<div class="code-block-wrapper"><pre class="hljs"><code class="language-${lang}">${highlighted}</code></pre>${copyBtn}</div>`;
+          return `<div class="code-block-wrapper"><pre class="hljs"><code class="language-${lang}" data-hl="${HIGHLIGHT_MARK}">${escapeHtml(text)}</code></pre>${copyBtn}</div>`;
         }
         return `<div class="code-block-wrapper"><pre class="hljs"><code>${escapeHtml(text)}</code></pre>${copyBtn}</div>`;
       },
@@ -119,6 +121,15 @@
     };
     container.addEventListener('click', onClick);
     return () => container.removeEventListener('click', onClick);
+  });
+
+  // Colour the code blocks once they are on screen (lib/code-highlight), not
+  // while the reply renders. Runs again for each new render of a finished
+  // reply; a streaming one stays plain.
+  $effect(() => {
+    void html;
+    if (!container || streaming) return;
+    return highlightWhenVisible(container);
   });
 </script>
 

@@ -1214,6 +1214,8 @@ export interface GroveBenchAPI {
   onAppError(callback: (report: AppErrorReport) => void): () => void;
   /** Send an uncaught renderer error to main for the file log. */
   reportError(report: AppErrorReport): void;
+  /** Send a frame the window took long over to main for the file log. */
+  reportFreeze(report: FreezeReport): void;
 
   // Taskbar attention badge
   /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
@@ -1462,6 +1464,17 @@ export interface AppErrorReport {
   timestamp: number;
 }
 
+/** A frame (or, where the browser can't time frames, a task) the window
+ *  took over 100 ms on, sent to main for the freeze log. */
+export interface FreezeReport {
+  kind: 'frame' | 'task';
+  durationMs: number;
+  /** Of that, style and layout, when the browser says. */
+  renderMs?: number;
+  /** The scripts that ran longest in it, longest first, as text. */
+  scripts?: string[];
+}
+
 // ─── Memory ───
 
 export interface MemoryEntry {
@@ -1698,6 +1711,8 @@ export const IPC = {
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */
   APP_REPORT_ERROR: 'app:reportError',
+  /** Renderer → main: a frame the window took long over, for the file log. */
+  APP_REPORT_FREEZE: 'app:reportFreeze',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
   /** Main → renderer: show the spell check menu for a misspelled word. */
   SPELLCHECK_MENU: 'spellcheck:menu',

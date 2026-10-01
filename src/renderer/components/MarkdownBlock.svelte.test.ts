@@ -101,6 +101,33 @@ describe('MarkdownBlock while streaming', () => {
   });
 });
 
+describe('MarkdownBlock code highlighting', () => {
+  it('renders code as plain text first and colours it afterwards', async () => {
+    const { container } = render(MarkdownBlock, { content: '```ts\nconst a = 1;\n```' });
+    const code = container.querySelector('pre > code')!;
+    expect(code.textContent).toBe('const a = 1;');
+    expect(code.querySelector('.hljs-keyword')).toBeNull();
+
+    await waitFor(() => expect(code.querySelector('.hljs-keyword')).not.toBeNull());
+    expect(code.textContent).toBe('const a = 1;');
+  });
+
+  it('colours a reply again when its content changes', async () => {
+    const { container, rerender } = render(MarkdownBlock, { content: '```ts\nconst a = 1;\n```' });
+    await waitFor(() => expect(container.querySelector('.hljs-keyword')).not.toBeNull());
+
+    await rerender({ content: '```ts\nlet b = 2;\n```' });
+    await waitFor(() => expect(container.querySelector('.hljs-keyword')).toHaveTextContent('let'));
+  });
+
+  it('leaves a streaming code block plain', async () => {
+    const { container } = render(MarkdownBlock, { content: '```ts\nconst a = 1;\n```\n\nDone', streaming: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(container.querySelector('pre > code')).toHaveTextContent('const a = 1;');
+    expect(container.querySelector('.hljs-keyword')).toBeNull();
+  });
+});
+
 describe('MarkdownBlock tables', () => {
   it('renders a copy button next to each table', () => {
     render(MarkdownBlock, { content: `Intro\n\n${TABLE}\n\nMiddle\n\n${TABLE}` });
