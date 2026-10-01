@@ -50,7 +50,7 @@ Extended thinking from the agent appears as expandable sections. Click to see th
 
 ## Copying and the Right-Click Menu
 
-Hover a code block or a table to reveal its copy icon. A table copies as cells: spreadsheets and documents paste a real table, and places that take plain text get the columns separated by tabs. For the Markdown source, right-click the table and choose **Copy table as Markdown**.
+Hover a code block or a table to reveal its copy icon. A table copies as cells: spreadsheets and documents paste a real table, and places that take plain text get the columns separated by tabs. For the Markdown source, Shift+click the copy icon, or right-click the table and choose **Copy table as Markdown**.
 
 Select text to get **Bookmark** and **To prompt**.
 

