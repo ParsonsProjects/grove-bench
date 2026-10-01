@@ -911,6 +911,22 @@ describe('Sidebar projects tree', () => {
     expect(store.activeSessionId).toBe('live');
   });
 
+  it('fades completed rows a step further than sleeping ones', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'zz', branch: 'feat-zz', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep one' },
+    ] as any;
+    render(Sidebar);
+    const completed = (await screen.findByText('First on shared')).closest('button')!;
+    // The project's row, after the one under Conversations.
+    const asleep = screen.getAllByText('Asleep one')[1].closest('button')!;
+    const live = screen.getAllByText('Live one')[1].closest('button')!;
+    expect(completed).toHaveClass('opacity-60');
+    expect(asleep).toHaveClass('opacity-70');
+    expect(live).not.toHaveClass('opacity-60');
+    expect(live).not.toHaveClass('opacity-70');
+  });
+
   it('folds and unfolds a branch group from its header', async () => {
     render(Sidebar);
     const header = await screen.findByRole('button', { name: /shared \(2\)/ });

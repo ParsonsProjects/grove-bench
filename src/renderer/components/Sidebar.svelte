@@ -788,8 +788,10 @@
   {#snippet sessionRow(session: (typeof store.sessions)[number], showProject: boolean, labelOverride: string | null, showGroup: boolean)}
     {@const isDestroying = destroying.has(session.id)}
     {@const isStopped = session.status === 'stopped'}
-    <!-- Faded a little while asleep (agent off until opened), matching its character. -->
-    {@const isSleeping = sessionSpriteState(session, isDestroying) === 'sleeping'}
+    <!-- Faded a little while its agent is off, matching its character: asleep
+         (back when opened), and a step further once completed. -->
+    {@const spriteState = sessionSpriteState(session, isDestroying)}
+    {@const restFade = spriteState === 'stopped' ? 'opacity-60' : spriteState === 'sleeping' ? 'opacity-70' : ''}
     {@const repoColor = getRepoColor(store.repos, session.repoPath, settingsStore.current.repoColors)}
     {@const ts = session.lastActiveAt ?? session.createdAt}
     {@const subtitle = rowSubtitle(session)}
@@ -812,7 +814,7 @@
         title={subtitle ? `${label}\n${subtitle.text}` : label}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors
           {isDestroying ? 'opacity-50 cursor-not-allowed' : store.activeSessionId === session.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}
-          {isSleeping ? 'opacity-70' : ''}"
+          {restFade}"
       >
         <!-- Line 1 is the conversation's name, so it gets the width; the project goes on line 2. -->
         <div class="w-full flex items-center gap-2 min-w-0">
