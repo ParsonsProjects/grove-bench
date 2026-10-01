@@ -412,6 +412,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
   reportFreeze: (report: import('../shared/types.js').FreezeReport) =>
     ipcRenderer.send(IPC.APP_REPORT_FREEZE, report),
+  reportTiming: (report: import('../shared/types.js').TimingReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_TIMING, report),
+  recordPerformanceTrace: () => ipcRenderer.invoke(IPC.PERF_RECORD_TRACE),
+  showPerformanceFile: (which: 'log' | 'trace') => ipcRenderer.invoke(IPC.PERF_SHOW_FILE, which),
 
   // Taskbar attention badge
   setAttentionBadge: (count: number, dataUrl: string | null) =>

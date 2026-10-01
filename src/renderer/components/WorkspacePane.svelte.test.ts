@@ -143,3 +143,16 @@ describe('WorkspacePane tabs', () => {
     expect(await screen.findByText('Working tree clean')).toBeInTheDocument();
   });
 });
+
+describe('WorkspacePane load timing', () => {
+  it('reports how long fetching, replaying and first drawing the history took', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ label: string; sessionId: string; steps: { name: string }[]; detail: string }];
+    expect(report.label).toBe('conversation view');
+    expect(report.sessionId).toBe('n1');
+    expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay', 'first draw']);
+    expect(report.detail).toMatch(/^\d+ events, shown$/);
+  });
+});

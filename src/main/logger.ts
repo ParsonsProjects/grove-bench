@@ -24,7 +24,8 @@ let logStream: fs.WriteStream | null = null;
 let logDir: string;
 let writesSinceCheck = 0;
 
-function getLogDir(): string {
+/** The logs folder under userData, created on first use. */
+export function getLogDir(): string {
   if (!logDir) {
     logDir = path.join(app.getPath('userData'), 'logs');
     fs.mkdirSync(logDir, { recursive: true });

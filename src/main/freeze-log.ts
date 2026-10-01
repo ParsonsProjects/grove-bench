@@ -1,19 +1,21 @@
 /**
- * Freeze log: notes in the log file when the app stopped responding, so a
- * freeze someone reports can be traced to its cause afterwards.
+ * Freeze log: notes in the performance log (perf-log.ts) when the app
+ * stopped responding, so a freeze someone reports can be traced to its
+ * cause afterwards.
  *
  * Two places can freeze the whole window. The main process passes input to
  * the window, so while its event loop is blocked nothing responds; a timer
- * here that should run every TICK_MS notices when it ran late. And the
- * window itself can take long over a frame; it reports those frames (see
+ * here that should run every TICK_MS notices when it ran late, and names
+ * the IPC calls and process launches that ran meanwhile. And the window
+ * itself can take long over a frame; it reports those frames (see
  * renderer/lib/freeze-watch.ts) and they are written here.
  *
- * The timestamps line up with the rest of the log ("Resuming session",
- * "Creating session"), which says what the user was doing at the time.
+ * Launching a process blocks the main process until the OS has created it,
+ * which on Windows can take tens of milliseconds, so every launch is timed.
  */
 import type { IpcMain, PowerMonitor } from 'electron';
 import type { FreezeReport } from '../shared/types.js';
-import { logger } from './logger.js';
+import { perfLine } from './perf-log.js';
 
 /** How often the main-process timer runs. */
 export const TICK_MS = 50;
@@ -24,34 +26,96 @@ export const STALL_GAP_MS = 150;
 const SLEEP_GAP_MS = 30_000;
 /** At most this many freeze lines a minute, so a bad state can't flood the log. */
 const MAX_LINES_PER_MINUTE = 30;
-/** IPC calls remembered to name the ones that ran during a stall. */
-const RECENT_IPC = 32;
+/** IPC calls and process launches remembered, to name the ones that ran
+ *  during a stall. */
+const RECENT = 32;
 
-interface IpcCall {
-  channel: string;
+/** Something that ran on the main process: an IPC handler or a launch. */
+interface Activity {
+  name: string;
   start: number;
-  /** Time the handler ran before returning (or reaching its first await). */
-  syncMs: number;
+  /** Time it held the main process (an IPC handler: until it returned or
+   *  reached its first await; a launch: until the OS created the process). */
+  ms: number;
+}
+
+/** Totals since the last health line (see perf-health.ts). */
+export interface FreezeStats {
+  stalls: number;
+  stallMs: number;
+  slowFrames: number;
+  launches: number;
+  launchMs: number;
+  slowestLaunch: { name: string; ms: number } | null;
+  /** How late the timer ran: the main process's event-loop delay, in ms.
+   *  Null when it didn't run. */
+  loopDelay: { p50: number; p99: number; max: number } | null;
+}
+
+const emptyStats = (): Omit<FreezeStats, 'loopDelay'> => ({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null });
+
+/** The nearest-rank percentile `p` (0 to 1) of ascending `sorted`. */
+function percentile(sorted: number[], p: number): number {
+  return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 }
 
 export interface FreezeLogOptions {
   /** Monotonic clock in ms. */
   now?: () => number;
-  warn?: (line: string) => void;
+  write?: (line: string) => void;
 }
 
-export function createFreezeLog({ now = () => performance.now(), warn = (line) => logger.warn(line) }: FreezeLogOptions = {}) {
+/** Shells a process may be launched through (`shell: true`); the command
+ *  they run says more than the shell's name. */
+const SHELLS = new Set(['cmd.exe', 'cmd', 'sh', 'bash', 'powershell.exe', 'pwsh.exe']);
+
+/** A short, safe word from an argument: a path's last part, and nothing
+ *  that could carry a message, a token or other text. */
+function launchWord(arg: string): string | null {
+  const word = arg.replace(/["']/g, '').split(/[\\/]/).pop() ?? '';
+  return /^[\w.@+:-]{1,40}$/.test(word) ? word : null;
+}
+
+/** How a launch is named in the log: the program and its first argument
+ *  (a git subcommand, a script), or for a shell the command it runs. */
+export function launchLabel(file: unknown, args: unknown): string {
+  const name = typeof file === 'string' ? (file.split(/[\\/]/).pop() || file) : 'process';
+  const rest = Array.isArray(args) ? args.slice(1).filter((a): a is string => typeof a === 'string') : [];
+  if (SHELLS.has(name.toLowerCase())) {
+    const flag = rest.findIndex((a) => /^([/-]c|-command)$/i.test(a));
+    const words = (flag >= 0 ? rest.slice(flag + 1).join(' ') : '')
+      .replace(/["']/g, '').trim().split(/\s+/)
+      .map(launchWord).filter((w): w is string => !!w).slice(0, 2);
+    return words.length > 0 ? `${name}: ${words.join(' ')}` : name;
+  }
+  const first = rest.find((a) => !a.startsWith('-'));
+  const word = first ? launchWord(first) : null;
+  return word ? `${name} ${word}` : name;
+}
+
+export function createFreezeLog({ now = () => performance.now(), write = (line) => perfLine('freeze', line) }: FreezeLogOptions = {}) {
   let lastTick = now();
   let suspended = false;
-  const recent: IpcCall[] = [];
+  const ipcCalls: Activity[] = [];
+  const launches: Activity[] = [];
+  let stats = emptyStats();
+  /** How late each tick ran since the last takeStats (about 12,000 for ten
+   *  minutes); the health line's event-loop delay comes from these, so it
+   *  needs no timer of its own. */
+  let delays: number[] = [];
   let windowStart = now();
   let linesThisWindow = 0;
   let dropped = 0;
 
+  function remember(list: Activity[], item: Activity): void {
+    list.push(item);
+    if (list.length > RECENT) list.shift();
+  }
+
   function emit(line: string): void {
     const t = now();
     if (t - windowStart >= 60_000) {
-      if (dropped > 0) warn(`[freeze] ${dropped} more freezes in the last minute were not logged`);
+      if (dropped > 0) write(`${dropped} more freezes in the last minute were not logged`);
       windowStart = t;
       linesThisWindow = 0;
       dropped = 0;
@@ -61,7 +125,7 @@ export function createFreezeLog({ now = () => performance.now(), warn = (line) =
       return;
     }
     linesThisWindow++;
-    warn(line);
+    write(line);
   }
 
   /** Run TICK_MS apart. Logs a stall when this run comes late. */
@@ -69,13 +133,44 @@ export function createFreezeLog({ now = () => performance.now(), warn = (line) =
     const t = now();
     const gap = t - lastTick;
     lastTick = t;
-    if (suspended || gap < STALL_GAP_MS || gap >= SLEEP_GAP_MS) return;
+    if (suspended || gap >= SLEEP_GAP_MS) return;
+    delays.push(Math.max(0, gap - TICK_MS));
+    if (gap < STALL_GAP_MS) return;
+    stats.stalls++;
+    stats.stallMs += gap;
     const from = t - gap;
-    const during = recent.filter((c) => c.start >= from - 1 && c.start <= t);
-    const ipc = during.length > 0
-      ? `; IPC calls during it: ${during.map((c) => `${c.channel} (${Math.round(c.syncMs)} ms)`).join(', ')}`
-      : '';
-    emit(`[freeze] main process didn't run for ${Math.round(gap)} ms${ipc}`);
+    const during = (list: Activity[]) => list
+      .filter((c) => c.start >= from - 1 && c.start <= t)
+      .map((c) => `${c.name} (${Math.round(c.ms)} ms)`)
+      .join(', ');
+    const ipc = during(ipcCalls);
+    const launched = during(launches);
+    emit(`main process didn't run for ${Math.round(gap)} ms`
+      + (ipc ? `; IPC calls during it: ${ipc}` : '')
+      + (launched ? `; processes started: ${launched}` : ''));
+  }
+
+  /** Time every process launch from now on (all of them go through
+   *  `ChildProcess.prototype.spawn`: spawn, execFile, execa). That method
+   *  isn't documented, so where it's missing launches go untimed. */
+  function timeProcessLaunches(proto: object): void {
+    const target = proto as { spawn?: (this: unknown, options: unknown) => unknown };
+    const original = target.spawn;
+    if (typeof original !== 'function') return;
+    target.spawn = function (this: unknown, options: unknown) {
+      const start = now();
+      try {
+        return original.call(this, options);
+      } finally {
+        const ms = now() - start;
+        const opts = (options ?? {}) as { file?: unknown; args?: unknown };
+        const name = launchLabel(opts.file, opts.args);
+        remember(launches, { name, start, ms });
+        stats.launches++;
+        stats.launchMs += ms;
+        if (!stats.slowestLaunch || ms > stats.slowestLaunch.ms) stats.slowestLaunch = { name, ms };
+      }
+    };
   }
 
   /** Time the synchronous part of every handler registered with
@@ -87,8 +182,7 @@ export function createFreezeLog({ now = () => performance.now(), warn = (line) =
       try {
         return listener(event, ...args);
       } finally {
-        recent.push({ channel, start, syncMs: now() - start });
-        if (recent.length > RECENT_IPC) recent.shift();
+        remember(ipcCalls, { name: channel, start, ms: now() - start });
       }
     });
   }
@@ -97,7 +191,8 @@ export function createFreezeLog({ now = () => performance.now(), warn = (line) =
   function logWindowFreeze(report: unknown): void {
     const r = sanitizeReport(report);
     if (!r) return;
-    const parts = [`[freeze] window took ${Math.round(r.durationMs)} ms over a ${r.kind}`];
+    stats.slowFrames++;
+    const parts = [`window took ${Math.round(r.durationMs)} ms over a ${r.kind}`];
     if (r.renderMs !== undefined) parts.push(`(style and layout ${Math.round(r.renderMs)} ms)`);
     let line = parts.join(' ');
     if (r.scripts && r.scripts.length > 0) line += `; longest scripts: ${r.scripts.join('; ')}`;
@@ -107,7 +202,21 @@ export function createFreezeLog({ now = () => performance.now(), warn = (line) =
   return {
     tick,
     timeIpcHandlers,
+    timeProcessLaunches,
     logWindowFreeze,
+    /** The totals since the last call, for the health line. */
+    takeStats(): FreezeStats {
+      const sorted = delays.sort((a, b) => a - b);
+      const loopDelay = sorted.length > 0
+        ? { p50: percentile(sorted, 0.5), p99: percentile(sorted, 0.99), max: sorted[sorted.length - 1] }
+        : null;
+      const taken = { ...stats, loopDelay };
+      stats = emptyStats();
+      delays = [];
+      return taken;
+    },
+    /** Start (or restart) the clock the next tick is measured from. */
+    start(): void { suspended = false; lastTick = now(); },
     /** The system is going to sleep: the timer stops, that's not a freeze. */
     suspend(): void { suspended = true; },
     resume(): void { suspended = false; lastTick = now(); },
@@ -138,6 +247,9 @@ export const freezeLog = createFreezeLog();
 /** Start the main-process timer. Call once the app is ready (it listens to
  *  power events, which need that). */
 export function startStallWatch(powerMonitor: Pick<PowerMonitor, 'on'>): void {
+  // From now, not from when this file loaded: the wait for the app to be
+  // ready isn't a freeze.
+  freezeLog.start();
   const timer = setInterval(freezeLog.tick, TICK_MS);
   timer.unref?.();
   powerMonitor.on('suspend', freezeLog.suspend);

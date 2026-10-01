@@ -5,6 +5,8 @@ import { CONTROL_IDS, PERMISSION_MODES } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
+import { perfSteps } from './perf-steps.js';
+import { perfLine } from './perf-log.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
@@ -241,6 +243,7 @@ class AgentSessionManager {
     });
 
     this.runQuery(session, emit).catch((err) => {
+        perfSteps.fail(id, 'agent failed to start');
         console.error(`[runQuery] session=${id} FAILED:`, err);
         const errMsg = String(err.message || err);
         const isAuthError = isAuthFailure(errMsg);
@@ -357,8 +360,11 @@ class AgentSessionManager {
     // Resumed sessions rebuild their checkpoint state on system_init instead.
     const resumingProviderSession = !!session.providerSessionId;
     if (!resumingProviderSession && session.gitBacked) {
+      const baselineStart = performance.now();
       session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
         if (!written) logger.warn(`Checkpoint baseline not captured for ${id}`);
+        // Runs beside the agent starting, so it has its own line.
+        perfLine('steps', `checkpoint baseline ${id}: ${Math.round(performance.now() - baselineStart)} ms`);
       });
     }
 
@@ -368,6 +374,8 @@ class AgentSessionManager {
       logger.warn(`[runQuery] ${id}: ${session.adapter.id} has no structured output; the output format is ignored`);
     }
 
+    // Git identity, skills and the baseline above.
+    perfSteps.step(id, 'agent setup');
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -461,6 +469,7 @@ class AgentSessionManager {
       return;
     }
 
+    perfSteps.step(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
     // The truncated resume (if any) has been consumed by this start — later
@@ -504,6 +513,7 @@ class AgentSessionManager {
 
         // Intercept system_init to capture provider session ID and update status
         if (event.type === 'system_init') {
+          perfSteps.finish(id, 'agent ready');
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
           // Remember reported skills so the disabled-skills allowlist can
@@ -1298,12 +1308,15 @@ class AgentSessionManager {
     }
     const emit = session.emit ?? this.createEmitter(session);
     const asleep = session.sleepSettled;
+    perfSteps.begin(id, 'wake');
     (async () => {
       await asleep;
+      perfSteps.step(id, 'finish sleeping');
       // Closed or deleted while the sleep was still finishing.
-      if (session.destroying) return;
+      if (session.destroying) { perfSteps.fail(id, 'closed'); return; }
       await this.runQuery(session, emit);
     })().catch((err) => {
+      perfSteps.fail(id, 'agent failed to start');
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
       const errMsg = String(err?.message || err);
       const isAuthError = isAuthFailure(errMsg);

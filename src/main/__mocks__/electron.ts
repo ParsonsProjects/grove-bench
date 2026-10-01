@@ -98,6 +98,11 @@ export const Notification = Object.assign(
   { isSupported: vi.fn(() => true) },
 );
 
+export const contentTracing = {
+  startRecording: vi.fn(),
+  stopRecording: vi.fn(),
+};
+
 export default {
   app,
   BrowserWindow,
@@ -112,4 +117,5 @@ export default {
   nativeTheme,
   contextBridge,
   Notification,
+  contentTracing,
 };

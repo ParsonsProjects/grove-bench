@@ -35,6 +35,9 @@ import * as bookmarks from './bookmarks.js';
 import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
+import { perfSteps, logWindowTiming } from './perf-steps.js';
+import { recordTrace, lastTracePath } from './perf-trace.js';
+import { perfLogPath } from './perf-log.js';
 import { installDependencies } from './deps-install.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
@@ -231,6 +234,8 @@ export function registerHandlers() {
   // ─── Sessions ───
 
   ipcMain.handle(IPC.SESSION_CREATE, async (event, opts: CreateSessionOpts) => {
+    // Step timings (perf-steps.ts) start here; the id comes later.
+    const startedAt = performance.now();
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
     const permissionMode = isPermissionMode(opts.permissionMode) ? opts.permissionMode : undefined;
@@ -256,6 +261,8 @@ export function registerHandlers() {
       logger.info(`Creating direct session: branch=${branch || '(no git)'}, repo=${opts.repoPath}`);
 
       const entry = await worktreeManager.registerDirect(opts.repoPath, branch, { noGit });
+      perfSteps.begin(entry.id, 'new conversation', startedAt);
+      perfSteps.step(entry.id, 'checks');
 
       const session = await sessionManager.createSession({
         id: entry.id,
@@ -270,6 +277,7 @@ export function registerHandlers() {
         noGit,
       });
 
+      perfSteps.step(session.id, 'session');
       logger.info(`Direct session created: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType, ...(noGit ? { noGit: true } : {}) };
     }
@@ -300,6 +308,8 @@ export function registerHandlers() {
     }
 
     logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${!!opts.useExisting}`);
+    perfSteps.begin(id, 'new conversation', startedAt);
+    perfSteps.step(id, 'checks');
 
     // Helper to emit agent events before the session object exists.
     // Events are buffered so history replay can show them even if the
@@ -329,6 +339,7 @@ export function registerHandlers() {
           id,
           adapterType: opts.adapterType,
         });
+        perfSteps.step(id, 'worktree');
         signal.throwIfAborted();
 
         // Auto-copy untracked files (.env, etc.)
@@ -341,6 +352,7 @@ export function registerHandlers() {
         } catch (e) {
           logger.warn('Failed to copy untracked files:', e);
         }
+        perfSteps.step(id, 'copy files');
 
         // Install npm dependencies if enabled and the project has a package.json
         if (settings.getSettings().autoInstallDeps) {
@@ -355,6 +367,7 @@ export function registerHandlers() {
             emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
             logger.info(`Running npm install in worktree ${worktree.id} (cache: ${npmCache})`);
             await installDependencies(worktree.path, npmCache, signal);
+            perfSteps.step(id, 'install dependencies');
             logger.info(`npm install completed for worktree ${worktree.id}`);
           } catch (e) {
             if (signal.aborted) throw e;
@@ -381,12 +394,15 @@ export function registerHandlers() {
           controls,
         });
 
+        perfSteps.step(id, 'session');
         logger.info(`Session created: id=${worktree.id}`);
       } catch (err: any) {
         if (signal.aborted) {
+          perfSteps.fail(id, 'deleted');
           logger.info(`Session setup stopped for ${id}: the conversation was deleted`);
           return;
         }
+        perfSteps.fail(id, 'setup failed');
         const msg = err.message || String(err);
         logger.error(`Session setup failed for ${id}:`, msg);
         emitPrelaunch({ type: 'error', message: msg });
@@ -409,6 +425,7 @@ export function registerHandlers() {
   });
 
   ipcMain.handle(IPC.SESSION_RESUME, async (event, id: string, repoPath: string) => {
+    const startedAt = performance.now();
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('No window found');
 
@@ -428,6 +445,7 @@ export function registerHandlers() {
     // The renderer already shows the tab and its input while this runs, so
     // register the resume as a pending setup: prompts sent meanwhile are held
     // by sendMessage() until the session exists.
+    perfSteps.begin(id, 'resume', startedAt);
     const resumePromise = (async () => {
       const worktree = await worktreeManager.getWorktreeOrManifest(id);
       if (!worktree) {
@@ -441,6 +459,7 @@ export function registerHandlers() {
       // ...on the agent it ran with. A Codex conversation must not come back on Claude.
       const adapterType = await worktreeManager.getAdapterType(id);
       logger.info(`Resuming session: id=${id}, branch=${worktree.branch}, providerSession=${providerSessionId ?? 'none'}, model=${savedModel ?? 'default'}`);
+      perfSteps.step(id, 'lookup');
 
       const session = await sessionManager.createSession({
         id: worktree.id,
@@ -454,9 +473,11 @@ export function registerHandlers() {
         noGit: !!worktree.noGit,
       });
 
+      perfSteps.step(id, 'session');
       logger.info(`Session resumed: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType };
     })();
+    resumePromise.catch(() => perfSteps.fail(id, 'resume failed'));
     sessionManager.trackPendingSetup(id, resumePromise);
     return resumePromise;
   });
@@ -1709,6 +1730,25 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_REPORT_FREEZE, (_event, report: unknown) => {
     freezeLog.logWindowFreeze(report);
+  });
+
+  ipcMain.on(IPC.APP_REPORT_TIMING, (_event, report: unknown) => {
+    logWindowTiming(report);
+  });
+
+  ipcMain.handle(IPC.PERF_RECORD_TRACE, () => recordTrace());
+
+  ipcMain.handle(IPC.PERF_SHOW_FILE, async (_event, which: unknown) => {
+    // Paths come from here, never from the renderer.
+    const file = which === 'trace' ? lastTracePath() : which === 'log' ? perfLogPath() : null;
+    if (!file) return;
+    try {
+      await fs.access(file);
+      shell.showItemInFolder(file);
+    } catch {
+      // Not written yet: open the folder it will be in.
+      await shell.openPath(path.dirname(file));
+    }
   });
 
   // ─── OS notifications ───

@@ -33,7 +33,8 @@ src/
     prerequisites.ts   # Git/Claude detection & version checks
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
-    freeze-log.ts      # Logs main-process stalls and slow window frames (100 ms+)
+    freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launch timing
+    perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
