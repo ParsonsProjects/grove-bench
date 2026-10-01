@@ -1297,6 +1297,23 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
   return null;
 }
 
+/**
+ * Query options that keep generateText to a single reply. The model gets no
+ * tools: a tool call would use up the one turn and fail the query with
+ * "Reached maximum number of turns (1)". No plan mode either, as its reminder
+ * tells the model to explore the code before answering; 'dontAsk' still
+ * denies anything that isn't pre-approved.
+ */
+export const TEXT_GENERATION_OPTIONS: Pick<
+  import('@anthropic-ai/claude-agent-sdk').Options,
+  'tools' | 'strictMcpConfig' | 'permissionMode' | 'maxTurns'
+> = {
+  tools: [],
+  strictMcpConfig: true,
+  permissionMode: 'dontAsk',
+  maxTurns: 1,
+};
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -1983,8 +2000,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cwd: options?.cwd ?? process.cwd(),
         abortController,
         systemPrompt,
-        permissionMode: 'plan',
-        maxTurns: 1,
+        ...TEXT_GENERATION_OPTIONS,
         ...(options?.model ? { model: options.model } : {}),
         // `env` replaces the inherited environment rather than merging, so
         // only pass it when there is a saved key to add.

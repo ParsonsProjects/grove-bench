@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -1010,5 +1010,20 @@ describe('transformMessage()', () => {
       const events = transformMessage({ type: 'unknown_type' } as any, makeCtx());
       expect(events).toEqual([]);
     });
+  });
+});
+
+// ─── generateText options ───
+
+describe('TEXT_GENERATION_OPTIONS', () => {
+  it('gives the one-turn query no tools to call, so it cannot run out of turns', () => {
+    expect(TEXT_GENERATION_OPTIONS.maxTurns).toBe(1);
+    expect(TEXT_GENERATION_OPTIONS.tools).toEqual([]);
+    // Project, user and plugin MCP servers would add tools back.
+    expect(TEXT_GENERATION_OPTIONS.strictMcpConfig).toBe(true);
+  });
+
+  it('stays out of plan mode, whose reminder sends the model exploring', () => {
+    expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
   });
 });
