@@ -120,6 +120,7 @@ const mockGroveBench = {
   setUnreadSessions: vi.fn(),
   onAppError: vi.fn(() => () => {}),
   reportError: vi.fn(),
+  reportFreeze: vi.fn(),
   setAttentionBadge: vi.fn(),
   onSpellcheckMenu: vi.fn(() => () => {}),
   spellcheckReplace: vi.fn(),

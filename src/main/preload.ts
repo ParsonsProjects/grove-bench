@@ -412,6 +412,8 @@ const api: GroveBenchAPI = {
   },
   reportError: (report: import('../shared/types.js').AppErrorReport) =>
     ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
+  reportFreeze: (report: import('../shared/types.js').FreezeReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_FREEZE, report),
 
   // Taskbar attention badge
   setAttentionBadge: (count: number, dataUrl: string | null) =>
