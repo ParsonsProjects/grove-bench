@@ -4,16 +4,18 @@
   import Row from '../shared/app/Row.svelte';
   import Chips from '../shared/app/Chips.svelte';
   import ThreadItem from '../shared/app/ThreadItem.svelte';
+  import Sprite from '../shared/Sprite.svelte';
+  import { WAKE_SCENE_MS } from '../shared/app-art.js';
   import '../shared/app/app.css';
   import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
   import { heroWorld } from './heroWorld.js';
-  import { arrive } from './scroll.svelte.js';
-  import { CHIPS, links } from './content.js';
+  import { links } from './content.js';
 
   /**
-   * Headline, buttons, and the app itself with notes pinned around it. The
-   * window can be clicked: switch conversation, change tab, answer the
-   * prompt. `title` is the headline as [dark part, blue part].
+   * Headline, buttons, and the app itself. The window can be clicked: switch
+   * conversation, change tab, answer the prompt. A line under it says what
+   * the conversation you point at (or the open one) is doing. `title` is the
+   * headline's two lines.
    *
    * @type {{ title: [string, string], lede: string }}
    */
@@ -50,6 +52,16 @@
       world.selected = id;
       const c = sel();
       if (c.state === 'unread') c.state = 'ready';
+      // Opening a sleeping conversation wakes its agent, as in the app.
+      if (c.state === 'sleeping') {
+        c.state = 'starting';
+        c.scene = 'wake';
+        c.run += 1;
+        setTimeout(() => {
+          c.scene = null;
+          c.state = 'ready';
+        }, WAKE_SCENE_MS);
+      }
     },
     ontab(tab) {
       world.tab = tab;
@@ -80,26 +92,28 @@
     },
   };
 
-  // Numbered pins on the window (in its own pixels), explained underneath.
-  const NOTES = [
-    { x: -16, y: 242, text: 'An amber question mark: this one needs you.' },
-    { x: 650, y: 333, text: 'You decide what each agent may run.' },
-    { x: 792, y: 523, text: 'Every conversation has its own branch and worktree.' },
-    { x: -16, y: 350, text: 'Asleep: idle for a while. It wakes when you open it.' },
-  ];
+  // What each state means, in the help pages' words (docs/help/session-states.md).
+  const MEANS = {
+    permission: 'Waiting for you: it wants to run a command. Allow or deny it in the prompt.',
+    working: 'Working: it edits files and runs commands on its own branch.',
+    unread: 'Finished a turn while you were elsewhere. Open it to read the reply.',
+    ready: 'Ready: waiting for your next message.',
+    starting: 'Waking up: its agent starts again where it left off.',
+    sleeping: 'Sleeping: idle for a while, so its agent was shut down to save memory. It wakes when you open it.',
+  };
+  // The conversation the pointer (or keyboard focus) is on, if any.
+  let hoverId = $state(null);
+  const pointAt = (e) => {
+    const row = e.target.closest?.('[data-target^="row-"]');
+    hoverId = row ? row.dataset.target.slice(4) : null;
+  };
+  const shown = $derived(world.convs.find((c) => c.id === hoverId) ?? selected);
 </script>
 
 <section class="band b-hero" id="top">
   <div class="inner head">
-    <div class="copy">
-      <h1 class="h1">{title[0]}<br /><span class="tone-2">{title[1]}</span></h1>
-      <p class="lede">{lede}</p>
-      <ul class="chips" aria-label="Features">
-        {#each CHIPS as c, i}
-          <li class="chip {['amber', 'blue', 'pink', 'green', 'lilac'][i]}">{c}</li>
-        {/each}
-      </ul>
-    </div>
+    <h1 class="h1 prompt"><span class="gt" aria-hidden="true">&gt;</span>{title[0]}<br />{title[1]}<span class="caret" aria-hidden="true"></span></h1>
+    <p class="lede">{lede}</p>
     <div class="ctas">
       <div>
         <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
@@ -113,76 +127,61 @@
   </div>
 
   <div class="inner shot-wrap">
-    {#if narrow}
-      <div class="gb compact">
-        <div class="c-chips"><Chips states={world.convs.map((c) => c.state)} /></div>
-        {#each world.convs as c (c.id)}
-          <Row {c} selected={c.id === world.selected} onclick={() => handlers.onselect(c.id)} />
-        {/each}
-        <div class="c-thread">
-          {#each selected.items.slice(-3) as it, i (i)}
-            <ThreadItem {it} seed={selected.id} onanswer={handlers.onanswer} />
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="app" onpointerover={pointAt} onfocusin={pointAt} onpointerleave={() => (hoverId = null)} onfocusout={() => (hoverId = null)}>
+      {#if narrow}
+        <div class="gb compact">
+          <div class="c-chips"><Chips states={world.convs.map((c) => c.state)} /></div>
+          {#each world.convs as c (c.id)}
+            <Row {c} target="row-{c.id}" selected={c.id === world.selected} onclick={() => handlers.onselect(c.id)} />
           {/each}
+          <div class="c-thread">
+            {#each selected.items.slice(-3) as it, i (i)}
+              <ThreadItem {it} seed={selected.id} onanswer={handlers.onanswer} />
+            {/each}
+          </div>
         </div>
-      </div>
-    {:else}
-      <div class="stage" bind:this={stageEl} style="height: {Math.round(H * zoom)}px">
-        <div class="frame" style="zoom: {zoom}">
-          <Window {world} {...handlers} />
+      {:else}
+        <div class="stage" bind:this={stageEl} style="height: {Math.round(H * zoom)}px">
+          <div class="frame" style="zoom: {zoom}">
+            <Window {world} {...handlers} />
+          </div>
         </div>
-        <div class="pins" style="--z: {zoom}" aria-hidden="true">
-          {#each NOTES as n, i}
-            <span class="pin" style="left: calc({n.x}px * var(--z)); top: calc({n.y}px * var(--z))">{i + 1}</span>
-          {/each}
-        </div>
-      </div>
-    {/if}
-    <ol class="legend" use:arrive>
-      {#each NOTES as n, i}
-        <li class="pop" style="transition-delay: {0.15 + i * 0.12}s">{#if !narrow}<span class="pin static">{i + 1}</span>{/if}{n.text}</li>
-      {/each}
-    </ol>
-    <p class="hint small">{narrow ? 'The app’s sidebar and prompt, with sample conversations. Tap to try them.' : 'The app’s own layout, with sample conversations. Click a conversation, a tab or the prompt.'}</p>
+      {/if}
+    </div>
+    <div class="caption" aria-live="polite">
+      <Sprite state={shown.state} seed={shown.id} projectColor={shown.projectColor} scale={3} label="" />
+      <p><b>{shown.name}</b><span>{MEANS[shown.state] ?? ''}</span></p>
+    </div>
+    <p class="hint small">{narrow ? 'Sample conversations in the app’s sidebar. Tap one, or answer the prompt.' : 'Sample conversations in the app’s own layout. Point at one to see what its character means, or click around.'}</p>
   </div>
 </section>
 
 <style>
   .head {
-    display: grid;
-    gap: 28px;
-    padding-top: 64px;
-    align-items: start;
+    padding-top: 72px;
   }
   @media (min-width: 960px) {
     .head {
-      grid-template-columns: minmax(0, 1fr) auto;
-      padding-top: 84px;
+      padding-top: 92px;
     }
   }
-  .lede {
-    max-width: 58ch;
-    margin-top: 18px;
+  .h1 {
+    max-width: 18ch;
   }
-  .chips {
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 18px;
+  .lede {
+    max-width: 60ch;
+    margin-top: 22px;
   }
   .ctas {
     display: flex;
     flex-wrap: wrap;
     gap: 14px;
-  }
-  @media (min-width: 960px) {
-    .ctas {
-      padding-top: 10px;
-    }
+    margin-top: 28px;
   }
   .shot-wrap {
     position: relative;
-    padding-top: 48px;
+    padding-top: 52px;
     padding-bottom: 40px;
   }
   .stage {
@@ -195,41 +194,6 @@
       0 0 0 1px rgb(58 42 28 / 0.2),
       0 30px 60px -20px rgb(58 42 28 / 0.45),
       0 12px 24px -12px rgb(58 42 28 / 0.3);
-  }
-  .pins {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-  }
-  .pin {
-    position: absolute;
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    margin: -12px 0 0 -12px;
-    font-family: var(--pixel);
-    font-size: 14px;
-    font-weight: 700;
-    color: #2a1a00;
-    background: var(--gold);
-    box-shadow:
-      0 0 0 2px var(--ink),
-      0 0 0 6px rgb(242 184 75 / 0.35);
-    animation: beat 2.4s steps(2) infinite;
-  }
-  .pin.static {
-    position: static;
-    flex: none;
-    margin: 0;
-    animation: none;
-  }
-  @keyframes beat {
-    50% {
-      box-shadow:
-        0 0 0 2px var(--ink),
-        0 0 0 9px rgb(242 184 75 / 0.15);
-    }
   }
   .compact {
     position: relative;
@@ -251,37 +215,32 @@
     background: oklch(0.208 0 0);
     border-top: 1px solid oklch(0.26 0 0);
   }
-  .legend {
-    list-style: none;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-    gap: 14px 24px;
-    margin-top: 26px;
-  }
-  .legend li {
+  /* What the pointed-at conversation is doing, like a sidebar row. */
+  .caption {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    align-items: center;
+    gap: 14px;
+    min-height: 64px;
+    margin-top: 18px;
+    padding: 10px 14px;
+    background: rgb(255 255 255 / 0.55);
+    border: 1px solid var(--line);
+  }
+  .caption p {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
     font-size: 13.5px;
-    line-height: 1.5;
+    line-height: 1.45;
+  }
+  .caption b {
+    font-weight: 700;
+  }
+  .caption span {
     color: var(--soft);
   }
-  .pop {
-    transition:
-      opacity 0.5s ease,
-      transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-  }
-  :global(.js-motion) .legend:not(:global(.in)) .pop {
-    opacity: 0;
-    transform: translateY(10px);
-  }
   .hint {
-    margin-top: 14px;
+    margin-top: 12px;
     text-align: center;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .pin {
-      animation: none;
-    }
   }
 </style>

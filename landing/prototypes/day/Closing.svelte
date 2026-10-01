@@ -5,6 +5,7 @@
   import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
   import { MOON, MOON_COLORS } from './sky.js';
   import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
+  import Branch from './Branch.svelte';
   import { arrive } from './scroll.svelte.js';
   import { links } from './content.js';
 
@@ -31,10 +32,14 @@
   <div class="stars" aria-hidden="true"></div>
   <span class="moon" aria-hidden="true"><Pixels map={MOON} palette={MOON_COLORS} scale={5} /></span>
   <div class="inner copy">
-    <h2 class="h1 rise" id="close-h" use:arrive>every grove started<br />with one tree.<br /><span class="tone-gold">plant yours.</span></h2>
+    <div class="rise" use:arrive>
+      <Branch name="main" />
+      <h2 class="h2" id="close-h">Every grove started with one tree.</h2>
+      <p class="h1 prompt last"><span class="gt" aria-hidden="true">&gt;</span>Plant yours.<span class="caret" aria-hidden="true"></span></p>
+    </div>
     <div class="btns rise" use:arrive>
       <div>
-        <a class="d-btn gold" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
+        <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
         <p class="btn-note">free · Windows 10 or later</p>
       </div>
       <div>
@@ -89,6 +94,9 @@
   .copy {
     position: relative;
     padding-top: 120px;
+  }
+  .last {
+    margin-top: 22px;
   }
   .btns {
     display: flex;

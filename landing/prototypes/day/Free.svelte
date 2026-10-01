@@ -1,34 +1,46 @@
 <script>
   import { DownloadIcon, GithubIcon } from '../../src/lib/icons.js';
+  import Branch from './Branch.svelte';
   import { arrive } from './scroll.svelte.js';
   import { INCLUDED, DOCS, links } from './content.js';
+  import '../shared/app/app.css';
+
+  /**
+   * Price and licence, with what you get shown as a file added in the app's
+   * Changes tab: one green line per thing.
+   */
 </script>
 
 <section class="band b-free" aria-labelledby="free-h">
   <div class="inner">
-    <h2 class="h2 rise center" id="free-h" use:arrive>the whole grove,<br /><span class="tone-g">one download.</span></h2>
-    <div class="card rise" use:arrive>
-      <div class="left">
-        <p class="big">free.</p>
-        <p class="sub">Source-available under <span class="nowrap">FSL-1.1-MIT</span>.</p>
-        <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
+    <div class="grid">
+      <div class="copy rise" use:arrive>
+        <Branch name="docs/license" />
+        <h2 class="h2" id="free-h">Free. The whole grove in one download.</h2>
+        <p class="lede">
+          Source-available under <span class="nowrap">FSL-1.1-MIT</span>, and each release becomes available under the MIT
+          License two years after it comes out.
+        </p>
+        <p class="lede">You bring the AI: a Claude plan (Pro, Max, Team or Enterprise) with Claude Code, or an Anthropic API key.</p>
+        <div class="btn">
+          <a class="d-btn" href={links.releases} target="_blank" rel="noopener">{@html DownloadIcon} Download for Windows</a>
+          <p class="btn-note">Windows 10 or later</p>
+        </div>
       </div>
-      <div class="right">
-        <h3>what you get</h3>
-        <ul>
-          {#each INCLUDED as item, i}
-            <li style="transition-delay: {0.1 + i * 0.08}s"><i aria-hidden="true"></i>{item}</li>
+      <div class="gb diff rise" use:arrive>
+        <div class="tabs" aria-hidden="true"><span class="on">Changes <i class="t-faint">Alt+2</i></span></div>
+        <p class="file"><b class="t-green">A</b> what-you-get.md <span class="add">+{INCLUDED.length}</span></p>
+        <ul aria-label="What you get">
+          <li class="hunk" aria-hidden="true">@@ -0,0 +1,{INCLUDED.length} @@</li>
+          {#each INCLUDED as item}
+            <li><span aria-hidden="true">{'+ '}</span>{item}</li>
           {/each}
         </ul>
       </div>
     </div>
-    <p class="fine rise" use:arrive>
-      You bring the AI: a Claude plan (Pro, Max, Team or Enterprise) with Claude Code, or an Anthropic API key. Each
-      release becomes available under the MIT License two years after it comes out.
-    </p>
     <div class="look rise" use:arrive>
       <div>
-        <h3>want to look around first?</h3>
+        <h3>Want to look around first?</h3>
         <p>Read the source, or the same help pages the app ships with.</p>
       </div>
       <div class="btns">
@@ -43,88 +55,77 @@
   .inner {
     padding-block: 96px 120px;
   }
-  .center {
-    text-align: center;
-  }
-  .card {
+  .grid {
     display: grid;
-    max-width: 860px;
-    margin: 36px auto 0;
-    background: #fffdf8;
-    box-shadow:
-      0 0 0 1px var(--line),
-      0 24px 50px -24px rgb(90 50 20 / 0.45);
+    gap: 36px;
+    align-items: center;
   }
-  @media (min-width: 760px) {
-    .card {
-      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  @media (min-width: 900px) {
+    .grid {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 56px;
     }
   }
-  .left {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 28px;
-    background: var(--p-amber);
-  }
-  .big {
-    font-size: clamp(54px, 5vw + 20px, 84px);
-    font-weight: 800;
-    letter-spacing: -0.06em;
-    line-height: 1;
-  }
-  .sub {
-    font-size: 13px;
-    color: var(--soft);
+  .copy .lede {
+    max-width: 52ch;
+    margin-top: 14px;
   }
   .nowrap {
     white-space: nowrap;
   }
-  .left .d-btn {
-    margin-top: auto;
+  .btn {
+    display: inline-block;
+    margin-top: 26px;
   }
-  .right {
-    padding: 28px;
+  .diff {
+    box-shadow:
+      0 0 0 1px rgb(90 50 20 / 0.2),
+      0 24px 50px -24px rgb(90 50 20 / 0.5);
   }
-  h3 {
-    font-size: 16px;
-    font-weight: 800;
-    letter-spacing: -0.03em;
+  .tabs {
+    display: flex;
+    background: var(--side);
+    border-bottom: 1px solid var(--border);
+  }
+  .tabs span {
+    margin-bottom: -1px;
+    padding: 7px 14px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--primary);
+  }
+  .tabs i {
+    margin-left: 6px;
+    font-style: normal;
+  }
+  .file {
+    display: flex;
+    gap: 8px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    border-bottom: 1px solid var(--border);
   }
   ul {
     list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-top: 16px;
+    padding: 10px 0 14px;
+    font-size: 13px;
+    line-height: 1.75;
   }
+  /* Wrapped lines hang after the + mark. */
   li {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    font-size: 13.5px;
-    color: var(--soft);
+    padding: 0 14px 0 calc(14px + 2ch);
+    text-indent: -2ch;
+    color: oklch(0.85 0.12 151);
+    background: oklch(0.792 0.209 151.711 / 0.1);
   }
-  li i {
-    flex: none;
-    width: 18px;
-    height: 18px;
-    margin-top: 2px;
-    background: var(--p-green);
-    box-shadow: inset 0 0 0 1px rgb(58 154 72 / 0.4);
-    /* A pixel tick. */
-    background-image: linear-gradient(#2a7a36, #2a7a36), linear-gradient(#2a7a36, #2a7a36), linear-gradient(#2a7a36, #2a7a36);
-    background-size: 2px 2px, 2px 2px, 6px 2px;
-    background-repeat: no-repeat;
-    background-position: 4px 9px, 6px 11px, 8px 7px;
+  li span {
+    white-space: pre;
   }
-  .fine {
-    max-width: 640px;
-    margin: 18px auto 0;
-    font-size: 12px;
-    color: var(--faint);
-    text-align: center;
+  li.hunk {
+    margin-bottom: 4px;
+    padding-left: 14px;
+    text-indent: 0;
+    color: var(--cyan);
+    background: none;
   }
   .look {
     display: flex;
@@ -132,10 +133,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 18px;
-    max-width: 860px;
-    margin: 48px auto 0;
+    margin-top: 64px;
     padding-top: 26px;
     border-top: 1px solid var(--line);
+  }
+  h3 {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
   .look p {
     margin-top: 4px;

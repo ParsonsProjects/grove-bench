@@ -1,7 +1,7 @@
 /* Day into night: a light, open page that turns to dusk and night as you
    scroll down. Each band's colours run into the next, so the page reads as
-   one sky. Layout concept: wide margins, two-tone lowercase headlines,
-   pastel cards, the grove as the illustration. */
+   one sky. Type, buttons and labels come from the app itself (square, flat,
+   JetBrains Mono, branch names); the grove is the illustration. */
 
 .day {
   /* The sky, top to bottom. Keep in step with BANDS in sky.js. */
@@ -29,14 +29,6 @@
   --green-ink: #2a7a36;
   --gold: #f2b84b;
   --amber: oklch(0.769 0.188 70.08);
-
-  /* Pastel card grounds. */
-  --p-green: #e3f3e2;
-  --p-amber: #fdecc8;
-  --p-blue: #e3ecfb;
-  --p-pink: #fbe3ea;
-  --p-lilac: #ece6fb;
-  --p-mint: #dff4ee;
 
   --head: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
   --pixel: 'Pixelify Sans', 'JetBrains Mono', monospace;
@@ -104,34 +96,59 @@
   }
 }
 
-/* Two-tone lowercase headlines. */
+/* Headings: plain sentence case in one colour, in the app's font. */
 .h1,
 .h2 {
   font-family: var(--head);
-  font-weight: 800;
-  letter-spacing: -0.045em;
-  line-height: 1.02;
-  text-transform: lowercase;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
   text-wrap: balance;
 }
 .h1 {
-  font-size: clamp(38px, 4.4vw + 14px, 72px);
+  font-size: clamp(34px, 3.4vw + 14px, 62px);
 }
 .h2 {
-  font-size: clamp(30px, 2.6vw + 14px, 50px);
+  font-size: clamp(27px, 1.6vw + 16px, 40px);
 }
-.tone-2 {
+
+/* A message you send the agent, as the app's Thread tab shows it: a prompt
+   mark and a blue bar. Used for the opening and closing lines. */
+.prompt {
+  position: relative;
+  padding: 0.1em 0 0.15em 1.35em;
+  border-left: 4px solid var(--blue);
+  background: linear-gradient(90deg, oklch(0.541 0.181 254.624 / 0.08), transparent 75%);
+}
+/* The prompt mark hangs, so wrapped lines line up after it. */
+.prompt .gt {
+  position: absolute;
+  left: 0.4em;
   color: var(--blue);
 }
-.tone-g {
-  color: var(--green);
+.b-dusk .prompt,
+.b-night .prompt {
+  border-left-color: #8db4ff;
+  background: linear-gradient(90deg, rgb(141 180 255 / 0.1), transparent 75%);
 }
-.tone-gold {
-  color: var(--gold);
-}
-.b-dusk .tone-2,
-.b-night .tone-2 {
+.b-dusk .prompt .gt,
+.b-night .prompt .gt {
   color: #8db4ff;
+}
+/* The input caret, blinking after the line. */
+.caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.85em;
+  margin-left: 0.12em;
+  vertical-align: -0.06em;
+  background: currentColor;
+  animation: caret 1.1s steps(1) infinite;
+}
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
 }
 
 .lede {
@@ -149,95 +166,45 @@
   color: var(--green-ink);
 }
 
-/* Buttons: soft and square, like the reference, with a pixel underside. */
+/* Buttons: the app's own, square and flat with a 1px edge, sized up to a
+   comfortable tap target. */
 .d-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 10px 20px;
+  min-height: 42px;
+  padding: 9px 18px;
   font-family: var(--head);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
   color: #fff;
   background: var(--blue);
-  border: 0;
+  border: 1px solid var(--blue);
   cursor: pointer;
-  box-shadow:
-    inset 0 -3px 0 rgb(0 0 0 / 0.22),
-    0 6px 16px -6px oklch(0.541 0.181 254.624 / 0.6);
-  transition:
-    transform 0.08s steps(2),
-    filter 0.15s;
+  transition: filter 0.15s;
 }
 .d-btn:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.1);
 }
 .d-btn:active {
-  transform: translateY(2px);
+  filter: brightness(0.95);
 }
 .d-btn.ghost {
   color: var(--ink);
-  background: #fff;
-  box-shadow:
-    inset 0 0 0 1px var(--line),
-    inset 0 -3px 0 rgb(0 0 0 / 0.06),
-    0 6px 16px -10px rgb(58 42 28 / 0.4);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
 }
-.b-dusk .d-btn.ghost,
-.b-night .d-btn.ghost,
-.b-foot .d-btn.ghost {
-  color: var(--ink);
-  background: rgb(255 255 255 / 0.08);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.d-btn.gold {
-  color: #2a1a00;
-  background: var(--gold);
-  box-shadow:
-    inset 0 -3px 0 rgb(0 0 0 / 0.18),
-    0 6px 18px -6px rgb(242 184 75 / 0.5);
+.d-btn.ghost:hover {
+  filter: none;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .btn-note {
   margin-top: 6px;
   font-size: 11.5px;
   color: var(--faint);
   text-align: center;
-}
-
-/* Pastel chips. */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-  background: var(--chip, var(--p-amber));
-}
-.chip.green {
-  --chip: var(--p-green);
-}
-.chip.amber {
-  --chip: var(--p-amber);
-}
-.chip.blue {
-  --chip: var(--p-blue);
-}
-.chip.pink {
-  --chip: var(--p-pink);
-}
-.chip.lilac {
-  --chip: var(--p-lilac);
-}
-.chip.mint {
-  --chip: var(--p-mint);
-}
-.chip.dark {
-  color: #fff;
-  background: var(--ink);
 }
 
 /* Things that rise into place when their section arrives. Visible at rest:
@@ -255,5 +222,8 @@
 @media (prefers-reduced-motion: reduce) {
   .rise {
     transition: none;
+  }
+  .caret {
+    animation: none;
   }
 }

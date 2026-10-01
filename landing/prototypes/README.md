@@ -29,6 +29,24 @@ npm run build:prototypes   # builds into landing/dist-prototypes/ (git-ignored)
   imports: the app's dev server scans every HTML file in the repo and reports
   an unknown alias as missing packages.
 
+### The look
+
+Type, buttons and labels come from the app, not from a generic product page:
+
+- Headings are plain sentence case in JetBrains Mono. The opening and
+  closing lines are messages you send, with the Thread tab's prompt mark,
+  blue bar and a blinking caret.
+- Each section is labelled with a branch name (`Branch.svelte`): the trail is
+  main and the sections branch off it.
+- Buttons are the app's: square, flat, 1px edge.
+- The founder note is a commit in the Terminal tab (`git log -1`, signed off
+  by Parsons Projects; cmd.exe prompt, as the app's terminal uses).
+- What you get is a file added in the Changes tab, one green line each.
+- The FAQ is a Thread: each question is your message, opening it shows the
+  reply.
+- Under the hero window, a line says what the conversation you point at is
+  doing, in the help pages' words. Opening the sleeping one wakes it.
+
 ### The path
 
 - The agent starts on the first bench, half way down the window, and stands
@@ -38,6 +56,9 @@ npm run build:prototypes   # builds into landing/dist-prototypes/ (git-ignored)
   asking, asleep.
 - It never walks off either end: the last bench is at the end of the path,
   as far down as it can get, so at the bottom of the page it's asleep there.
+- Each feature sits on a side path off the trail, pictures alternating
+  sides. Side paths grow out as the agent nears them; any element with
+  `data-spur` gets one.
 - Trees ahead of it sprout as it nears them and stay grown. Lamps along the
   last stretch light up at night.
 - The art is 4x on wide screens, 3x on mid-size and 2x on phones.

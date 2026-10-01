@@ -7,10 +7,11 @@ export const DOCS = 'https://github.com/ParsonsProjects/grove-bench/tree/main/do
 export const README = 'https://github.com/ParsonsProjects/grove-bench#readme';
 export { links };
 
-export const CHIPS = ['worktrees', 'terminals', 'permissions', 'checkpoints', 'project memory'];
 
 export const FOUNDER = {
-  title: ['for the developer with', 'more ideas than hands.'],
+  // Shown as a commit: the title is its subject line, so no full stop.
+  title: 'For the developer with more ideas than hands',
+  commit: '7f3a9c2e41b8d05a6c19f3e2b7d4a8c0e5f1b923',
   draft: true,
   paragraphs: [
     'I wanted to hand out more than one task at a time. Running AI agents one after another meant a lot of waiting. Running them side by side in the same folder meant they edited the same files and broke each other’s tests.',
@@ -21,55 +22,56 @@ export const FOUNDER = {
   name: 'Parsons Projects',
 };
 
+// `where` is where each one lives in the app (docs/help).
 export const FEATURES = [
   {
     key: 'worktrees',
-    tone: 'green',
-    title: 'a branch for every agent.',
+    where: 'New conversation',
+    title: 'A branch for every agent',
     text: 'Each conversation gets its own git worktree, branch and terminal. Your checkout stays as it is.',
   },
   {
     key: 'permissions',
-    tone: 'amber',
-    title: 'it asks before it acts.',
+    where: 'Thread tab',
+    title: 'It asks before it acts',
     text: 'Pick a mode per conversation: Ask, Plan, Edit, Auto or Read-\u2060safe. Anything outside it waits for you.',
   },
   {
     key: 'status',
-    tone: 'blue',
-    title: 'status at a glance.',
+    where: 'Sidebar',
+    title: 'Status at a glance',
     text: 'Typing means working. An amber question mark means it needs you. A wave means it finished.',
   },
   {
     key: 'checkpoints',
-    tone: 'pink',
-    title: 'every message is a checkpoint.',
+    where: 'Checkpoints tab',
+    title: 'Every message is a checkpoint',
     text: 'Went the wrong way? Rewind the files and the conversation to before any message you sent.',
   },
   {
     key: 'sleep',
-    tone: 'lilac',
-    title: 'naps when idle.',
+    where: 'Settings → Tending',
+    title: 'Naps when idle',
     text: 'After 30 idle minutes a conversation’s agent sleeps to save memory and CPU, then wakes where it left off.',
   },
   {
     key: 'context',
-    tone: 'mint',
-    title: 'watch the context fill.',
+    where: 'Status bar',
+    title: 'Watch the context fill',
     text: 'A strip of grove grows along the status bar as the context window fills, and thins out after /compact.',
   },
 ];
 
 export const STEPS = [
-  { ui: '+ Project', title: 'add a project.', text: 'Pick a folder on your computer, ideally a git repository.' },
+  { ui: '+ Project', title: 'Add a project', text: 'Pick a folder on your computer, ideally a git repository.' },
   {
     ui: '+ Conversation',
-    title: 'hand out tasks.',
+    title: 'Hand out tasks',
     text: 'Describe what you want. It starts on a new branch in its own worktree. Start another whenever you like.',
   },
   {
     ui: 'Create PR',
-    title: 'review and ship.',
+    title: 'Review and ship',
     text: 'Read the diff in the Changes tab, then open a pull request, or merge the branch your usual way.',
   },
 ];
@@ -120,8 +122,8 @@ export const FAQ = [
 ];
 
 export const FOOTER = [
-  { label: 'github', href: links.github, tone: 'blue' },
-  { label: 'help pages', href: DOCS, tone: 'amber' },
-  { label: 'contributing', href: links.contributing, tone: 'pink' },
-  { label: 'license', href: links.license, tone: 'lilac' },
+  { label: 'github', href: links.github },
+  { label: 'help pages', href: DOCS },
+  { label: 'contributing', href: links.contributing },
+  { label: 'license', href: links.license },
 ];

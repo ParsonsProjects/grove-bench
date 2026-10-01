@@ -10,7 +10,9 @@
   /**
    * A path down the left of the page. One agent walks down it as you scroll
    * (it only steps while the page moves), trees sprout as it nears them, and
-   * at each section it sits on a bench in that section's pose.
+   * at each section it sits on a bench in that section's pose. Side paths
+   * branch off it to each [data-spur] element (the features), the way each
+   * conversation branches off main.
    *
    * @type {{ page: HTMLElement | undefined, stops: { at: string, state: string }[], k: number }}
    */
@@ -22,6 +24,8 @@
   let pageTop = $state(0);
   let benches = $state([]);
   let trees = $state([]);
+  let spurs = $state([]);
+  let railEl = $state();
   // Trees stay grown once the walker has been near them.
   let reached = $state(0);
 
@@ -49,17 +53,30 @@
       const lowest = document.documentElement.scrollHeight - window.innerHeight * 0.5 - top;
       last.y = Math.min(height - 24, lowest - 8);
     }
-    // A tree every so often, alternating sides, skipping the benches.
+    // Side paths: from the middle of the path to the left edge of each
+    // element that asks for one, at its middle.
+    const rr = railEl?.getBoundingClientRect();
+    spurs = rr
+      ? [...page.querySelectorAll('[data-spur]')].map((el) => {
+          const r = el.getBoundingClientRect();
+          return { y: r.top + window.scrollY - top + r.height / 2, w: Math.max(0, r.left - (rr.left + rr.width / 2) - 8) };
+        })
+      : [];
+    // A tree every so often, alternating sides, skipping the benches and
+    // the side paths.
     const list = [];
     let side = 1;
     for (let y = 140; y < height - 60; y += 84 + ((y * 7) % 50)) {
       if (benches.some((b) => Math.abs(b.y - y) < 70)) continue;
+      if (spurs.some((sp) => Math.abs(sp.y - y) < 64)) continue;
       side = -side;
       const n = list.length;
       list.push({ y, side, s: n % 4 === 1 ? 3 : 2, tint: ['#3b82f6', '#6ec87a', '#f59e0b', '#a78bfa', null, null][n % 6] });
     }
     trees = list;
-    tufts = Array.from({ length: Math.floor(height / 46) }, (_, i) => ({ y: 60 + i * 46, side: i % 2 ? 1 : -1 }));
+    tufts = Array.from({ length: Math.floor(height / 46) }, (_, i) => ({ y: 60 + i * 46, side: i % 2 ? 1 : -1 })).filter(
+      (tf) => tf.side < 0 || !spurs.some((sp) => Math.abs(sp.y - tf.y) < 24),
+    );
   }
   let tufts = $state([]);
   const TUFT = ['g.g', '.g.'];
@@ -109,8 +126,11 @@
   const lampsFrom = $derived(height * 0.78);
 </script>
 
-<div class="rail" style="height: {height}px; --k: {k}px" aria-hidden="true">
+<div class="rail" bind:this={railEl} style="height: {height}px; --k: {k}px" aria-hidden="true">
   <div class="path"></div>
+  {#each spurs as sp, i (i)}
+    <span class="spur" style="top: {sp.y}px; width: {sp.w * growth(sp.y)}px"><i></i></span>
+  {/each}
   {#each tufts as tf, i (i)}
     <span class="tuft" style="top: {tf.y}px; --side: {tf.side}"><Pixels map={TUFT} palette={TUFT_COLORS} scale={k} /></span>
   {/each}
@@ -160,6 +180,26 @@
       inset calc(var(--k) * 0.7) 0 0 #8a6a4a,
       inset calc(var(--k) * -0.7) 0 0 #8a6a4a;
     opacity: 0.85;
+  }
+  .spur {
+    position: absolute;
+    left: 50%;
+    height: calc(var(--k) * 3);
+    transform: translateY(-50%);
+    background: #a8845e;
+    box-shadow:
+      inset 0 calc(var(--k) * 0.6) 0 #8a6a4a,
+      inset 0 calc(var(--k) * -0.6) 0 #8a6a4a;
+    opacity: 0.85;
+  }
+  /* A post where the side path ends. */
+  .spur i {
+    position: absolute;
+    right: 0;
+    bottom: calc(var(--k) * 1.5);
+    width: calc(var(--k) * 2);
+    height: calc(var(--k) * 7);
+    background: #6b4f36;
   }
   .tuft {
     position: absolute;

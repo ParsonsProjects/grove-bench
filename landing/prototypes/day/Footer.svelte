@@ -12,9 +12,9 @@
         grove bench
       </span>
       <p>run AI agents side by side, each on its own branch.</p>
-      <ul class="chips">
+      <ul class="links">
         {#each FOOTER as l}
-          <li><a class="chip {l.tone}" href={l.href} target="_blank" rel="noopener">{l.label}</a></li>
+          <li><a href={l.href} target="_blank" rel="noopener">{l.label}</a></li>
         {/each}
       </ul>
     </div>
@@ -47,16 +47,21 @@
     font-size: 12.5px;
     color: var(--soft);
   }
-  .chips {
+  .links {
     list-style: none;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px 20px;
     margin-top: 16px;
+    font-size: 13px;
   }
-  .chips a {
-    color: #1b140d;
+  .links a {
+    color: var(--soft);
     text-decoration: none;
+  }
+  .links a:hover {
+    color: var(--ink);
+    text-decoration: underline;
   }
   .right {
     display: flex;

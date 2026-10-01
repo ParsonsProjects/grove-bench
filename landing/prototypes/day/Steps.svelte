@@ -5,16 +5,21 @@
   import Sprite from '../shared/Sprite.svelte';
   import Pixels from '../shared/Pixels.svelte';
   import { LAMP, SCENERY_PALETTE } from '../shared/app-art.js';
+  import Branch from './Branch.svelte';
   import Clock from './Clock.svelte';
   import { arrive } from './scroll.svelte.js';
   import { STEPS } from './content.js';
+  import '../shared/app/app.css';
 
   const grow = (t, at, d = 1) => Math.min(1, Math.max(0, (t - at) / d));
 </script>
 
 <section class="band b-steps" id="how" aria-labelledby="how-h">
   <div class="inner">
-    <h2 class="h2 rise" id="how-h" use:arrive>three steps<br /><span class="tone-2">to your first grove.</span></h2>
+    <div class="rise" use:arrive>
+      <Branch name="docs/getting-started" />
+      <h2 class="h2" id="how-h">Three steps to your first grove.</h2>
+    </div>
     <Clock class="steps" max={7}>
       {#snippet children(t)}
         <ol class="list">
@@ -40,7 +45,10 @@
                 {/if}
               </div>
               <span class="n">{i + 1}</span>
-              <span class="ui">{s.ui}</span>
+              <!-- The button you press for it, cut from the app. -->
+              <span class="gb ui">
+                {#if i === 2}<span><span class="t-amber">↑1</span> <span class="t-primary">{s.ui}</span></span>{:else}<span class="gb-btn" class:primary={i === 1}>{s.ui}</span>{/if}
+              </span>
               <h3>{s.title}</h3>
               <p>{s.text}</p>
             </li>
@@ -123,17 +131,24 @@
   }
   .ui {
     align-self: flex-start;
-    margin-top: 6px;
-    padding: 1px 8px;
+    display: inline-flex;
+    margin-top: 8px;
+    padding: 6px;
     font-size: 12px;
-    font-weight: 700;
-    color: #fff;
-    background: var(--blue);
+    background: var(--side);
+    box-shadow: 0 0 0 1px rgb(58 42 28 / 0.2);
+  }
+  .ui .gb-btn {
+    font-size: 12px;
+  }
+  .ui > span:not(.gb-btn) {
+    padding: 4px 6px;
   }
   h3 {
+    margin-top: 6px;
     font-size: 20px;
-    font-weight: 800;
-    letter-spacing: -0.03em;
+    font-weight: 700;
+    letter-spacing: -0.025em;
   }
   p {
     color: var(--soft);
