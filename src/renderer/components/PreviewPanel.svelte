@@ -253,7 +253,7 @@
   {:else if agentToolsOn}
     <p class="text-xs mb-4">When the agent checks its work in the browser, its page shows here and updates as it clicks and types. It opens local pages only. Try asking: "start the dev server and check the page in the preview".</p>
   {:else}
-    <p class="text-xs mb-4">The agent's browser tools are turned off in Settings, so the agent can't open pages here.</p>
+    <p class="text-xs mb-4">The agent's browser tools are turned off in Settings → Agents, so the agent can't open pages here.</p>
   {/if}
   {#if detected.length > 0}
     <p class="text-[10px] uppercase tracking-wide mb-2">Open for the agent</p>

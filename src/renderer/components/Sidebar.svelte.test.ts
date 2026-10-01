@@ -29,6 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  settingsStore.panelOpen = false;
   vi.restoreAllMocks();
   mockGroveBench.getSessionPreviews.mockReset();
   mockGroveBench.getCollapsedRepos.mockReset();
@@ -404,9 +405,10 @@ describe('Sidebar settings', () => {
     render(Sidebar);
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    await fireEvent.click(screen.getByTitle('Settings'));
+    await fireEvent.click(screen.getByTitle('Settings (Ctrl+,)'));
 
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    // The panel's code loads on first open, which can be slow under test.
+    expect(await screen.findByRole('dialog', {}, { timeout: 5000 })).toBeInTheDocument();
   });
 });
 

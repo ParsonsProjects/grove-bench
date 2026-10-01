@@ -728,7 +728,7 @@
   <span class="w-px self-stretch bg-border"></span>
 
   <!-- Activity view toggle (cycles Summary → Focus → Detailed). Per session;
-       the default for new sessions is set in Settings → Default Thread View.
+       the default for new sessions is set in Settings → General → Default thread view.
        The rate-limit warning sits underneath. -->
   <div class="flex flex-col gap-px leading-snug">
   <button
@@ -1872,6 +1872,7 @@
         <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
         <div class="space-y-1.5 text-muted-foreground">
           <div class="flex justify-between"><span>Conversation finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
+          <div class="flex justify-between"><span>Settings</span><kbd class="text-foreground">Ctrl+,</kbd></div>
           <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
           <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
           <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>

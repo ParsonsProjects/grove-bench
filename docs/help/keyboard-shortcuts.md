@@ -39,6 +39,7 @@ Inside a Preview page, browser keys work as usual (`F5`, `F12`, `Alt+Left`). See
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl+,` | Open or close Settings |
 | `Enter` | Send message |
 | `Shift+Enter` | New line in prompt editor |
 | `Escape` | Close panel / Stop agent |

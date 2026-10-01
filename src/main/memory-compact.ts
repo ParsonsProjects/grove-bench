@@ -6,6 +6,7 @@ import * as memory from './memory.js';
 import * as settings from './settings.js';
 import { adapterRegistry } from './adapters/index.js';
 import { backgroundModelFor } from './background-tasks.js';
+import { MEMORY_COMPACT_MIN_TIMEOUT_SECONDS } from '../shared/types.js';
 
 // ─── Types ───
 
@@ -97,7 +98,7 @@ const COMPACT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
 const DEFAULT_COMPACT_TIMEOUT_SECONDS = 300;
 
 /** Floor for the configurable timeout — below this no pass could ever finish. */
-const MIN_COMPACT_TIMEOUT_SECONDS = 30;
+const MIN_COMPACT_TIMEOUT_SECONDS = MEMORY_COMPACT_MIN_TIMEOUT_SECONDS;
 
 /** The configured compaction timeout in seconds, clamped to the minimum. */
 function compactTimeoutSeconds(): number {

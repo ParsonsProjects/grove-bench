@@ -307,6 +307,12 @@ describe('schema versioning', () => {
 });
 
 describe('validateSettings', () => {
+  it('raises a compaction timeout below the floor to the floor compaction uses', () => {
+    expect(validateSettings({ memoryCompactTimeoutSeconds: 5 }).memoryCompactTimeoutSeconds).toBe(30);
+    expect(validateSettings({ memoryCompactTimeoutSeconds: 45 }).memoryCompactTimeoutSeconds).toBe(45);
+    expect(validateSettings({ memoryCompactTimeoutSeconds: -1 }).memoryCompactTimeoutSeconds).toBe(300);
+  });
+
   it('falls back per field on invalid values instead of discarding the file', () => {
     const s = validateSettings({
       theme: 'neon',

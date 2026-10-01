@@ -28,3 +28,9 @@ describe('tab shortcuts inside the Preview page', () => {
     }
   });
 });
+
+describe('Settings shortcut inside the Preview page', () => {
+  it('is handed back to Grove', () => {
+    expect(isGroveWindowShortcut({ key: ',', ctrl: true, shift: false, alt: false })).toBe(true);
+  });
+});

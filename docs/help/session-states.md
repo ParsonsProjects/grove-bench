@@ -34,5 +34,5 @@ If your system is set to reduce motion, the dots stay still.
 - **Green**: Open the conversation to see what the agent did.
 - **Red**: Something went wrong. Check the Thread tab for error details. You may need to restart the conversation.
 - **Light gray**: The agent is idle and ready for your next instruction.
-- **Hollow gray, sleeping**: The conversation is asleep. Open it or send it a message and its agent starts again where it left off, with the same mode and "always allow" choices. Its terminal and anything running there were left alone. The agent's page in the Preview tab was closed; your page stays. Set how long a conversation waits before sleeping in Settings > General.
+- **Hollow gray, sleeping**: The conversation is asleep. Open it or send it a message and its agent starts again where it left off, with the same mode and "always allow" choices. Its terminal and anything running there were left alone. The agent's page in the Preview tab was closed; your page stays. Set how long a conversation waits before sleeping in Settings → Background work.
 - **Hollow gray, stopped**: The conversation is stopped. Its agent, background commands and terminal have been shut down, including any dev servers they started. You can send a new message to restart it.

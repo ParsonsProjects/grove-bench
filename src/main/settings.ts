@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { z } from 'zod';
-import type { GroveBenchSettings } from '../shared/types.js';
+import { MEMORY_COMPACT_MIN_TIMEOUT_SECONDS, type GroveBenchSettings } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
 import { logger } from './logger.js';
@@ -216,7 +216,10 @@ const settingsSchema = z.object({
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),
-  memoryCompactTimeoutSeconds: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
+  // Raised to the floor, as compaction does, so Settings shows the value in use.
+  memoryCompactTimeoutSeconds: z.number().finite().nonnegative()
+    .transform((s) => (s > 0 && s < MEMORY_COMPACT_MIN_TIMEOUT_SECONDS ? MEMORY_COMPACT_MIN_TIMEOUT_SECONDS : s))
+    .catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),

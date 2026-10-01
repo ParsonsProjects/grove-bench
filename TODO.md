@@ -36,6 +36,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)
 - [x] Configurable UI layouts (full-featured to minimal)
+- [x] Settings redesign: auto-save (no Save/Cancel; text saves after a pause, numbers on blur and only when valid), a left-hand list of sections (General, Agents, Permissions, Git & worktrees, Notifications, Background work, MCP servers, Plugins, Privacy) with search (`settings-search.ts`), `Ctrl+,`, confirm before removing an MCP server or plugin, and `--muted-foreground` raised to 4.5:1 contrast
+- [ ] Light theme: `globals.css` only defines dark colours, so the Theme setting (`theme`, applied to `nativeTheme.themeSource`) had no visible effect and is hidden from Settings. Needs a light palette for every token (plus a light highlight.js and xterm theme), then the Theme picker back in Settings → General. A saved `theme` still reaches `nativeTheme` meanwhile
 
 ### Merge-Back Workflow
 - ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
