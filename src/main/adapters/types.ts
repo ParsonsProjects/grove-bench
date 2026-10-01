@@ -193,6 +193,16 @@ export type AdapterEvent =
   | Exclude<AgentEvent, { type: 'tool_result' }>
   | (Omit<Extract<AgentEvent, { type: 'tool_result' }>, 'images'> & { imageData?: ToolImageData[] });
 
+/** Thrown by a handle's `events` when the agent no longer has the conversation
+ *  it was asked to resume (e.g. its transcript was deleted). The session
+ *  manager then starts a new conversation instead. */
+export class ResumeNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ResumeNotFoundError';
+  }
+}
+
 /** Represents a running agent query. Returned by adapter.start(). */
 export interface AgentQueryHandle {
   /** Async iterable of events from the agent */

@@ -11,6 +11,7 @@ import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AgentAdapter, AgentQueryHandle } from './adapters/types.js';
+import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
 import { findRewindForkPoint, isAuthFailure } from './agent-utils.js';
 import { CheckpointManager } from './checkpoints.js';
@@ -479,6 +480,9 @@ class AgentSessionManager {
     // Show a connecting message in the thread while waiting for system_init
     emit({ type: 'status', message: `Connecting to ${session.adapter.displayName} — ${session.branch || 'project folder'} · ${session.permissionMode}` });
 
+    // Set when the agent no longer has the conversation this run resumed.
+    let conversationGone = false;
+
     // Process event stream from the adapter
     try {
       for await (const adapterEvent of handle.events) {
@@ -611,6 +615,15 @@ class AgentSessionManager {
       if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
+      } else if (err instanceof ResumeNotFoundError && resumingProviderSession) {
+        // Its transcript is gone (deleted or moved). Forget the id, or every
+        // restart would resume it and fail the same way; a new conversation
+        // starts below.
+        logger.warn(`[runQuery] session=${id} provider session ${session.providerSessionId} not found, starting a new conversation:`, err.message);
+        session.providerSessionId = null;
+        session.pendingResumeAt = null;
+        worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+        conversationGone = true;
       } else {
         const errMsg = err?.message || String(err);
         const stderr = err?.stderr || err?.cause?.stderr || '';
@@ -649,6 +662,28 @@ class AgentSessionManager {
     // stays open, so this is not the end of it. Nothing to report.
     if (session.queryHandle !== handle) {
       logger.debug(`[runQuery] session=${id} event loop ended for a retired query`);
+      return;
+    }
+
+    // The conversation it resumed is gone: start a new one in its place
+    // rather than report the agent stopped, which the renderer answers by
+    // resuming the same missing conversation again. The relaunch can't
+    // loop: providerSessionId is cleared above.
+    if (conversationGone) {
+      emit({
+        type: 'status',
+        level: 'warning',
+        message: `${session.adapter.displayName} couldn't find this conversation any more, so it starts a new one. The thread above stays, but the agent won't remember it.`,
+      });
+      session.queryHandle = null;
+      try { handle.close(); } catch { /* may already be closed */ }
+      // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
+      if (!session.resolveQueryReady) {
+        session.queryReady = new Promise<void>((resolve) => {
+          session.resolveQueryReady = resolve;
+        });
+      }
+      this.relaunchQuery(session);
       return;
     }
 

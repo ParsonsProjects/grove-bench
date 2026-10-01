@@ -107,3 +107,52 @@ describe('App unread flag', () => {
     expect(store.needsAttention.w).toBeUndefined();
   });
 });
+
+describe('App auto-resume', () => {
+  /** Render the app and open stopped conversation 's', whose resume then
+   *  succeeds. Returns the handler for statuses main sends. */
+  async function openStoppedConversation() {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    mockGroveBench.notifyRestoreComplete.mockClear();
+    render(App);
+    await vi.waitFor(() => expect(mockGroveBench.notifyRestoreComplete).toHaveBeenCalled(), { timeout: 5000 });
+    const [onStatus] = mockGroveBench.onSessionStatus.mock.calls.at(-1) as unknown as [(id: string, status: string) => void];
+    mockGroveBench.resumeSession.mockClear();
+    mockGroveBench.resumeSession.mockResolvedValue({ id: 's' });
+
+    store.sessions = [{ id: 's', branch: 'feat-s', repoPath: '/repo', status: 'stopped' }] as any;
+    store.activeSessionId = 's';
+    flushSync();
+    expect(mockGroveBench.resumeSession).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(store.sessions[0].status).toBe('running'));
+    return onStatus;
+  }
+
+  it('does not resume again in a loop when the resumed agent stops before connecting', async () => {
+    const onStatus = await openStoppedConversation();
+
+    // Its agent exits before it connects (e.g. it can't find the conversation).
+    onStatus('s', 'stopped');
+    flushSync();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGroveBench.resumeSession).toHaveBeenCalledTimes(1);
+
+    // Opening it again is a deliberate retry.
+    store.activeSessionId = null;
+    flushSync();
+    store.activeSessionId = 's';
+    flushSync();
+    expect(mockGroveBench.resumeSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('still resumes an agent that stops after it connected', async () => {
+    const onStatus = await openStoppedConversation();
+
+    onStatus('s', 'running');
+    onStatus('s', 'stopped');
+    flushSync();
+    expect(mockGroveBench.resumeSession).toHaveBeenCalledTimes(2);
+  });
+});

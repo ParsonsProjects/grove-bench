@@ -283,6 +283,7 @@ const settingsMock = await import('./settings.js') as unknown as { getSettings: 
 const { getGitIdentity, isGitRepo } = await import('./git.js');
 const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
 const { logger } = await import('./logger.js');
+const { ResumeNotFoundError } = await import('./adapters/types.js');
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -3072,6 +3073,72 @@ describe('AgentSessionManager wake-from-sleep', () => {
 
     await sessionManager.destroySession('test-sleep-A');
     await sessionManager.destroySession('test-sleep-B');
+  });
+});
+
+describe('AgentSessionManager resume of a missing conversation', () => {
+  /** Resume `providerSessionId` and fail the run the way Claude Code does
+   *  when that conversation's transcript is gone. */
+  async function resumeMissing(id: string, providerSessionId?: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+      resumeSessionId: providerSessionId,
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 10));
+    mockAdapter.control!.error(new ResumeNotFoundError(`No conversation found with session ID: ${providerSessionId}`));
+    return win;
+  }
+
+  const eventsOf = (win: ReturnType<typeof makeMockWindow>) =>
+    win._send.mock.calls.map(([, event]: [string, AgentEvent | string]) => event).filter((e: unknown) => typeof e === 'object') as AgentEvent[];
+
+  it('forgets the missing conversation and starts a new one', async () => {
+    const win = await resumeMissing('test-gone', 'gone-id');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+    const { worktreeManager } = await import('./worktree-manager.js');
+    expect(worktreeManager.saveProviderSessionId).toHaveBeenCalledWith('test-gone', '');
+
+    const events = eventsOf(win);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'status', level: 'warning', message: expect.stringContaining("couldn't find this conversation"),
+    }));
+    // Not reported as stopped: the renderer would resume the same id again.
+    expect(events.some((e) => e.type === 'process_exit' || e.type === 'error')).toBe(false);
+    expect(win._send).not.toHaveBeenCalledWith(expect.any(String), 'test-gone', 'stopped');
+
+    // The new conversation takes messages as usual.
+    await vi.waitFor(() => expect(sessionManager.getSession('test-gone')?.queryHandle).toBe(mockAdapter.lastHandle));
+    expect(await sessionManager.sendMessage('test-gone', 'hello')).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }));
+
+    await sessionManager.destroySession('test-gone');
+  });
+
+  it('holds a message sent during the restart for the new conversation', async () => {
+    const win = await resumeMissing('test-gone-send', 'gone-id');
+    const sending = sessionManager.sendMessage('test-gone-send', 'held');
+
+    expect(await sending).toBe(true);
+    expect(mockAdapter.startCallCount).toBe(2);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'held' }));
+    expect(eventsOf(win).some((e) => e.type === 'error')).toBe(false);
+
+    await sessionManager.destroySession('test-gone-send');
+  });
+
+  it('reports the error when the run was not a resume', async () => {
+    const win = await resumeMissing('test-gone-fresh');
+
+    await vi.waitFor(() => expect(sessionManager.getSession('test-gone-fresh')?.status).toBe('stopped'));
+    expect(mockAdapter.startCallCount).toBe(1);
+    expect(eventsOf(win)).toContainEqual(expect.objectContaining({ type: 'error' }));
+
+    await sessionManager.destroySession('test-gone-fresh');
   });
 });
 

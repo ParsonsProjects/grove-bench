@@ -17,6 +17,7 @@ import type {
   ToolImageData,
   UserMessage,
 } from './types.js';
+import { ResumeNotFoundError } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
@@ -201,6 +202,16 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
     }
   }
   return images;
+}
+
+/** How the CLI answers a resume of a conversation it no longer has (its
+ *  transcript was deleted or moved): an error result, before any init. */
+const MISSING_CONVERSATION_RE = /^No conversation found with session ID\b/;
+
+/** The CLI's "No conversation found" error, when `message` is that result. */
+export function missingConversationError(message: SDKMessage): string | null {
+  if (message.type !== 'result' || !message.is_error || !('errors' in message)) return null;
+  return message.errors.find((e) => MISSING_CONVERSATION_RE.test(e.trim())) ?? null;
 }
 
 /**
@@ -1713,6 +1724,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (message.type === 'system' && message.subtype === 'init') {
           sessionId = message.session_id;
         }
+
+        // The conversation to resume is gone. Say so instead of passing on
+        // the error result, so the session manager can start a new one.
+        const missing = config.resumeSessionId ? missingConversationError(message) : null;
+        if (missing) throw new ResumeNotFoundError(missing);
 
         const agentEvents = transformMessage(message, ctx);
         for (const event of agentEvents) {
