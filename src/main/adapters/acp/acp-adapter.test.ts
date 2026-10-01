@@ -203,8 +203,11 @@ describe('AcpAdapter', () => {
 
     handle.sendMessage({ text: 'mcp' });
     const told = await until(handle, 'result');
+    const env = ['ELECTRON_RUN_AS_NODE', 'GROVE_MCP_URL', 'GROVE_MCP_AUTHORIZATION'];
+    // On Windows the bridge also gets SystemRoot (see launch.ts).
+    if (process.platform === 'win32' && process.env.SystemRoot) env.push('SystemRoot');
     expect(JSON.parse((told.find((e) => e.type === 'assistant_text') as { text: string }).text)).toEqual([
-      { type: 'stdio', name: 'grove-memory', env: ['ELECTRON_RUN_AS_NODE', 'GROVE_MCP_URL', 'GROVE_MCP_AUTHORIZATION'] },
+      { type: 'stdio', name: 'grove-memory', env },
     ]);
 
     // The fake agent starts the bridge as a real process and calls memory_read.
