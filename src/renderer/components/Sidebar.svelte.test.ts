@@ -140,6 +140,20 @@ describe('Sidebar session rows', () => {
     }
   });
 
+  it('fades sleeping rows a little, including tabs restored at startup', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Awake' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep' },
+      { id: 's3', branch: 'feat-z', repoPath: '/repo-a', status: 'stopped', displayName: 'Restored' },
+    ] as any;
+    store.deferResume('s3');
+    render(Sidebar);
+    const row = (name: string) => screen.getAllByText(name)[0].closest('button')!;
+    expect(row('Awake')).not.toHaveClass('opacity-70');
+    expect(row('Asleep')).toHaveClass('opacity-70');
+    expect(row('Restored')).toHaveClass('opacity-70');
+  });
+
   it('gives the name the first line and puts the project on the second', async () => {
     store.repos = ['/repo-a', '/repo-b'];
     messageStore.setIsRunning('s1', true);
@@ -1080,5 +1094,16 @@ describe('Sidebar rail', () => {
     await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));
     expect(container.querySelector('[data-rail-session]')).toBeNull();
     expect(aside.style.width).toBe('300px');
+  });
+
+  it('fades a sleeping conversation on the rail too', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'sleeping', displayName: 'Fix login' },
+    ] as any;
+    const { container } = render(Sidebar);
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    expect(container.querySelector('[data-rail-session="s1"]')).not.toHaveClass('opacity-70');
+    expect(container.querySelector('[data-rail-session="s2"]')).toHaveClass('opacity-70');
   });
 });
