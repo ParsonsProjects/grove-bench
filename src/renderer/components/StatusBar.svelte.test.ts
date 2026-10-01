@@ -8,6 +8,7 @@ import { agentsStore } from '../stores/agents.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
+import { usageStore } from '../stores/usage.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import type { PrInfo } from '../../shared/types.js';
 
@@ -482,5 +483,38 @@ describe('StatusBar popovers close on Escape', () => {
 
     expect(screen.queryByText('Summarise to free space')).toBeNull();
     expect(later).not.toHaveBeenCalled();
+  });
+});
+
+describe('StatusBar last turn', () => {
+  afterEach(() => {
+    delete messageStore.messagesBySession[ACTIVE];
+    usageStore.byProvider = {};
+  });
+
+  function finishTurn(totalCostUsd: number) {
+    messageStore.messagesBySession[ACTIVE] = [{ kind: 'result', id: 'r1', totalCostUsd, durationMs: 4200 } as any];
+  }
+
+  it('shows the cost for an API key sign-in, rounded to cents', () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.0423);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('$0.04 last turn 4.2s');
+    expect(getByTestId('last-turn').title).toContain('$0.0423 at list price');
+  });
+
+  it('leaves the cost out on a plan, which it is not billed against', () => {
+    usageStore.byProvider = { 'claude-code': { available: true, plan: 'max', windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.0423);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('last turn 4.2s');
+  });
+
+  it('says when a turn cost under a cent', () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0.003);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent).toContain('<$0.01');
   });
 });

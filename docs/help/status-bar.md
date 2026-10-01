@@ -34,6 +34,10 @@ The Mode, Effort, Thinking and Speed columns are declared by the agent provider 
 
 Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details.
 
+## Last turn
+
+When the bar is wide enough, it shows how long the last turn took. With an API key sign-in it also shows what the turn cost, estimated at list price (hover for the exact figure). On a plan such as Pro or Max the cost is left out, because turns count toward the plan's limits rather than a bill; **Usage** in Agent settings shows how much of the plan you've used.
+
 ## Project and Branch
 
 The branch area shows the conversation's project and branch, for example `grove-bench / feat/login`. The branch has a dashed underline while you can click it. Under it are the sync state (commits to push or pull) and the pull request.
