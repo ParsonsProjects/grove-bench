@@ -335,7 +335,7 @@ const api: Record<string, unknown> = {
   getCollapsedPanels: async () => ({}),
   // One piece of work across both projects: the API fix and the sign-in UI that uses it.
   getConversationGroups: async () => [
-    { id: 'g-oauth', name: 'OAuth refresh', createdAt: now - 3 * 60 * min, sessionIds: ['s-oauth', 's-oauth-ui'] },
+    { id: 'g-oauth', name: 'OAuth refresh', sessionIds: ['s-oauth', 's-oauth-ui'] },
   ],
   getUnreadSessions: async () => [],
   setUnreadSessions: () => {},

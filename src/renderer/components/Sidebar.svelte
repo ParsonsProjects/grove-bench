@@ -12,6 +12,7 @@
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
+  import AttentionCounts from './AttentionCounts.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
@@ -183,6 +184,8 @@
   /** Group actions for a conversation: leave its group, join another, or
    *  start a new one with it. */
   function groupMenuItems(sessionId: string): MenuItem[] {
+    // Until the saved groups are read, changing them could write over them.
+    if (!groupStore.ready) return [];
     const current = groupStore.groupOf(sessionId);
     const items: MenuItem[] = [];
     if (current) {
@@ -710,9 +713,14 @@
 
   let stoppedCount = $derived(visibleSessions.filter((s) => !store.isOpenTab(s)).length);
 
-  /** Attention counts for one repo's header (all of its sessions, any status). */
+  /** Attention counts for a header (a project's or a group's conversations,
+   *  any status, completed ones only when shown). */
+  function headerCounts(sessions: typeof store.sessions) {
+    return triageCounts(sessions.filter(notHiddenCompleted).map(triageOf));
+  }
+
   function repoCounts(repo: string) {
-    return triageCounts(store.sessionsForRepo(repo).filter(notHiddenCompleted).map(triageOf));
+    return headerCounts(store.sessionsForRepo(repo));
   }
 
   /** All sessions for a repo that pass the filter, grouped by branch (for the
@@ -1009,7 +1017,7 @@
 
     {#if draftStore.draft}
       {@const draft = draftStore.draft}
-      {@const draftGroup = draft.groupId ? groupStore.get(draft.groupId) : null}
+      {@const draftGroup = draftStore.groupName}
       <!-- The draft conversation: not started, so nothing exists yet. -->
       <button
         type="button"
@@ -1023,7 +1031,7 @@
           <span class="text-[10px] text-muted-foreground/50 shrink-0">draft</span>
         </span>
         {#if store.repos.length > 1 || draftGroup}
-          <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup.name}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
+          <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
         {/if}
       </button>
     {/if}
@@ -1039,7 +1047,7 @@
     <SidebarGroups
       row={sessionRow}
       {rowVisible}
-      countsFor={(sessions) => triageCounts(sessions.map(triageOf))}
+      countsFor={headerCounts}
       filterLabel={triageFilter === 'all' ? null : TRIAGE_FILTER_LABELS[triageFilter]}
     />
 
@@ -1071,7 +1079,6 @@
       {@const repoColor = getRepoColor(store.repos, repo, settingsStore.current.repoColors)}
       {@const branchGroups = getBranchGroups(repo)}
       {@const rowCount = branchGroups.reduce((n, [, s]) => n + s.length, 0)}
-      {@const rc = repoCounts(repo)}
       {@const repoCollapsed = isRepoCollapsed(collapsedRepos, repo)}
       <div class="mb-3">
         <!-- Repo header (click to collapse/expand the repo's conversation tree) -->
@@ -1094,15 +1101,7 @@
               <span class="text-xs text-muted-foreground/40 shrink-0">{rowCount}</span>
             {/if}
             <!-- Per-repo attention counts, same dots as the filter chips -->
-            {#if rc['needs-you']}
-              <span class="flex items-center gap-0.5 text-[10px] text-amber-500 shrink-0" title="{rc['needs-you']} need{rc['needs-you'] === 1 ? 's' : ''} you"><span class="w-1.5 h-1.5 bg-amber-500"></span>{rc['needs-you']}</span>
-            {/if}
-            {#if rc.working}
-              <span class="flex items-center gap-0.5 text-[10px] text-primary shrink-0" title="{rc.working} working"><span class="w-1.5 h-1.5 bg-primary"></span>{rc.working}</span>
-            {/if}
-            {#if rc.unread}
-              <span class="flex items-center gap-0.5 text-[10px] text-green-400 shrink-0" title="{rc.unread} unread"><span class="w-1.5 h-1.5 bg-green-400"></span>{rc.unread}</span>
-            {/if}
+            <AttentionCounts counts={repoCounts(repo)} />
           </button>
           <div class="flex items-center gap-0.5">
             <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first).

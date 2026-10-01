@@ -57,6 +57,10 @@ export interface CreateSessionOpts {
   branchName: string;
   baseBranch?: string;
   useExisting?: boolean;
+  /** A new branch named after the group the conversation joins: when the
+   *  project has that branch already, continue on it instead of refusing the
+   *  name. Refused when another checkout has it. */
+  continueBranch?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
   /** Which adapter to use for this session (defaults to registry default). */
@@ -878,9 +882,8 @@ export interface SessionSortState {
 export interface ConversationGroup {
   id: string;
   name: string;
-  createdAt: number;
-  /** Conversation ids, in the order they joined. A conversation is in at
-   *  most one group. */
+  /** Conversation ids, in the order they joined. Never empty, and a
+   *  conversation is in at most one group. */
   sessionIds: string[];
 }
 
@@ -1218,7 +1221,9 @@ export interface GroveBenchAPI {
   setSidebarWidth(width: number): void;
   getCollapsedPanels(): Promise<CollapsedPanels>;
   setCollapsedPanels(panels: CollapsedPanels): void;
-  getConversationGroups(): Promise<ConversationGroup[]>;
+  /** The saved groups, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getConversationGroups(): Promise<ConversationGroup[] | null>;
   setConversationGroups(groups: ConversationGroup[]): void;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran, so the flag survives a restart. */

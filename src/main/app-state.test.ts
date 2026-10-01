@@ -252,13 +252,17 @@ describe('projects', () => {
 
 
 describe('conversation groups', () => {
-  const billing = { id: 'g1', name: 'Billing', createdAt: 1, sessionIds: ['a', 'b'] };
+  const billing = { id: 'g1', name: 'Billing', sessionIds: ['a', 'b'] };
 
-  it('saves straight away and reads back', () => {
+  it('saves debounced and reads back, flushing first', () => {
     const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, openTabIds: ['keep'] });
+    saveConversationGroups([{ ...billing, name: 'old' }]);
     saveConversationGroups([billing]);
-    expect(disk.get()).toMatchObject({ groups: [billing], openTabIds: ['keep'] });
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    // A read writes what is pending first, so it never returns stale groups.
     expect(loadConversationGroups()).toEqual([billing]);
+    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+    expect(disk.get()).toMatchObject({ groups: [billing], openTabIds: ['keep'] });
   });
 
   it('has none until the first is saved', () => {
@@ -266,15 +270,35 @@ describe('conversation groups', () => {
     expect(loadConversationGroups()).toEqual([]);
   });
 
+  it('says it can\'t tell while the file can\'t be read, rather than "none"', () => {
+    useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, groups: [billing] });
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); });
+    expect(loadConversationGroups()).toBeNull();
+  });
+
   it('drops a malformed group and keeps the rest', () => {
-    const state = validateAppState({ groups: [billing, { id: '', name: 'x', createdAt: 1, sessionIds: [] }, { name: 'no id' }, 'junk'] });
+    const state = validateAppState({ groups: [billing, { id: '', name: 'x', sessionIds: ['c'] }, { name: 'no id' }, 'junk'] });
     expect(state.groups).toEqual([billing]);
     expect(validateAppState({ groups: 'nope' }).groups).toBeUndefined();
+  });
+
+  it('lists a conversation once, in its first group, and drops a group left with none', () => {
+    const state = validateAppState({ groups: [
+      { id: 'g1', name: 'A', sessionIds: ['a', 'a', 'b'] },
+      { id: 'g2', name: 'B', sessionIds: ['b', 'c'] },
+      { id: 'g3', name: 'C', sessionIds: ['a'] },
+      { id: 'g4', name: 'D', sessionIds: [] },
+    ] });
+    expect(state.groups).toEqual([
+      { id: 'g1', name: 'A', sessionIds: ['a', 'b'] },
+      { id: 'g2', name: 'B', sessionIds: ['c'] },
+    ]);
   });
 
   it('ignores junk from the renderer instead of saving it', () => {
     useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, groups: [billing] });
     saveConversationGroups('everything');
+    flushPendingSaves();
     expect(mockWriteFileSync).not.toHaveBeenCalled();
     expect(loadConversationGroups()).toEqual([billing]);
   });

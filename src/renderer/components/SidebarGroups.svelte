@@ -8,11 +8,12 @@
    */
   import { untrack, type Snippet } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
-  import { groupStore, type GroupNameRequest } from '../stores/groups.svelte.js';
+  import { groupStore, groupName, type GroupNameRequest } from '../stores/groups.svelte.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import ContextMenu from './ContextMenu.svelte';
+  import AttentionCounts from './AttentionCounts.svelte';
   import type { TriageCounts } from '../lib/session-triage.js';
 
   type Session = (typeof store.sessions)[number];
@@ -28,13 +29,15 @@
     row: Snippet<[Session, boolean, string | null, boolean]>;
     /** Whether a conversation passes the sidebar's filter and completed setting. */
     rowVisible: (s: Session) => boolean;
+    /** A header's attention counts, as the project headers count them. */
     countsFor: (sessions: Session[]) => TriageCounts;
     /** The active triage filter's label, or null when showing all. */
     filterLabel: string | null;
   } = $props();
 
-  // Shown once there is a group, or once there are two projects to work across.
-  let visible = $derived(groupStore.groups.length > 0 || store.repos.length > 1);
+  // Shown once there is a group, or once there are two projects to work
+  // across, and never before the saved groups are read.
+  let visible = $derived(groupStore.ready && (groupStore.groups.length > 0 || store.repos.length > 1));
 
   /** Folded groups. Kept for this run only, like the Projects tree's branches. */
   let collapsed = $state<Record<string, boolean>>({});
@@ -45,7 +48,7 @@
 
   /** Open a draft that joins the group, in the project it most likely needs. */
   function newConversationIn(groupId: string) {
-    draftStore.open(groupStore.nextProject(groupId), { groupId });
+    draftStore.open(groupStore.nextProject(groupId), { group: { groupId } });
   }
 
   let menu = $state<{ x: number; y: number; groupId: string } | null>(null);
@@ -92,9 +95,13 @@
       groupStore.rename(req.groupId, nameValue);
       return;
     }
-    const group = groupStore.create(nameValue, req.sessionId ? [req.sessionId] : []);
-    // A group made from the header starts with its first conversation.
-    if (!req.sessionId) newConversationIn(group.id);
+    if (req.sessionId) {
+      groupStore.create(nameValue, [req.sessionId]);
+    } else {
+      // From the header: the group is made when its first conversation
+      // starts, so a draft that is discarded leaves no empty group.
+      draftStore.open('', { group: { newGroupName: groupName(nameValue) } });
+    }
   }
 
   function handleNameKeydown(e: KeyboardEvent) {
@@ -123,7 +130,6 @@
   {#each groupStore.groups as group (group.id)}
     {@const members = groupStore.members(group.id)}
     {@const shown = members.filter(rowVisible)}
-    {@const gc = countsFor(members.filter((s) => store.showCompleted || !s.completedAt))}
     {@const isCollapsed = !!collapsed[group.id]}
     <div class="mb-3" data-group={group.id}>
       <div
@@ -140,18 +146,11 @@
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={isCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           <span class="text-xs font-medium text-muted-foreground truncate" title={group.name}>{group.name}</span>
-          {#if members.length}
-            <span class="text-xs text-muted-foreground/40 shrink-0">{members.length}</span>
+          <!-- The rows shown, like a project header's count. -->
+          {#if shown.length}
+            <span class="text-xs text-muted-foreground/40 shrink-0">{shown.length}</span>
           {/if}
-          {#if gc['needs-you']}
-            <span class="flex items-center gap-0.5 text-[10px] text-amber-500 shrink-0" title="{gc['needs-you']} need{gc['needs-you'] === 1 ? 's' : ''} you"><span class="w-1.5 h-1.5 bg-amber-500"></span>{gc['needs-you']}</span>
-          {/if}
-          {#if gc.working}
-            <span class="flex items-center gap-0.5 text-[10px] text-primary shrink-0" title="{gc.working} working"><span class="w-1.5 h-1.5 bg-primary"></span>{gc.working}</span>
-          {/if}
-          {#if gc.unread}
-            <span class="flex items-center gap-0.5 text-[10px] text-green-400 shrink-0" title="{gc.unread} unread"><span class="w-1.5 h-1.5 bg-green-400"></span>{gc.unread}</span>
-          {/if}
+          <AttentionCounts counts={countsFor(members)} />
         </button>
         <div class="flex items-center gap-0.5">
           <!-- Ungroup keeps the conversations, so it's an ✕ (remove the grouping), not a bin. -->
@@ -184,7 +183,7 @@
         {#if shown.length === 0}
           <p class="text-xs text-muted-foreground/40 pl-4 py-1">
             {#if members.length === 0}
-              No conversations yet
+              Its conversations are in projects that didn't load
             {:else if filterLabel}
               No conversations match "{filterLabel}"
             {:else}

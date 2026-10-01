@@ -368,7 +368,7 @@ const api: GroveBenchAPI = {
   setCollapsedPanels: (panels: import('../shared/types.js').CollapsedPanels) =>
     ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_PANELS, panels),
   getConversationGroups: () =>
-    ipcRenderer.invoke(IPC.APP_STATE_GET_GROUPS) as Promise<import('../shared/types.js').ConversationGroup[]>,
+    ipcRenderer.invoke(IPC.APP_STATE_GET_GROUPS) as Promise<import('../shared/types.js').ConversationGroup[] | null>,
   setConversationGroups: (groups: import('../shared/types.js').ConversationGroup[]) =>
     ipcRenderer.send(IPC.APP_STATE_SET_GROUPS, groups),
   // App lifecycle

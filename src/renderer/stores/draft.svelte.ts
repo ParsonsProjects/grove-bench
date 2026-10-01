@@ -38,9 +38,16 @@ export interface Draft {
   start: DraftStart;
   /** The first message, as typed so far. */
   text: string;
-  /** Conversation group the conversation joins once it starts. */
+  /** Group the conversation joins once it starts. */
   groupId?: string;
+  /** A group made with this conversation once it starts (from New group).
+   *  Not made before, so a discarded draft leaves no empty group. Never set
+   *  together with groupId. */
+  newGroupName?: string;
 }
+
+/** The group a draft joins, or the one it starts. */
+export type DraftGroup = { groupId: string } | { newGroupName: string };
 
 export interface DraftModelOption {
   value: string;
@@ -48,6 +55,14 @@ export interface DraftModelOption {
 }
 
 const newBranchStart = (branchName = ''): DraftStart => ({ kind: 'new', branchName, baseBranch: '' });
+
+/** The draft starts a new branch named after its group's branch. Main then
+ *  continues that branch if the project has it already (continueBranch). */
+function onGroupBranch(d: Draft): boolean {
+  if (!d.groupId || d.start.kind !== 'new') return false;
+  const groupBranch = groupStore.sharedBranch(d.groupId, d.repoPath);
+  return !!groupBranch && d.start.branchName.trim() === groupBranch;
+}
 
 /** Where a new draft in `repo` starts: a new branch, or the folder itself
  *  for a project that isn't a git repository (the only place it can run).
@@ -82,34 +97,33 @@ class DraftStore {
    * Open the draft in `repoPath` (default: the open conversation's project,
    * then the first project) and show it. An existing draft keeps its message
    * and moves to that project. A new one takes its agent and model from the
-   * open conversation, or `agentId` when given. With `groupId`, the
-   * conversation joins that group when it starts.
+   * open conversation, or `agentId` when given. With `group`, the
+   * conversation joins that group (or starts it) when it starts. Opened for
+   * a project without one (a project's +, a conversation's controls), an
+   * existing draft leaves its group: it is no longer that group's work.
    */
-  open(repoPath = '', opts: { agentId?: string; groupId?: string } = {}): void {
+  open(repoPath = '', opts: { agentId?: string; group?: DraftGroup } = {}): void {
     const active = sessionStore.activeSession;
     const repo = repoPath || active?.repoPath || this.draft?.repoPath || sessionStore.repos[0] || '';
     if (!repo) return;
 
     if (this.draft) {
-      if (opts.groupId && opts.groupId !== this.draft.groupId) {
-        this.draft.groupId = opts.groupId;
-        // Joining a group can change the branch a new conversation starts on.
-        if (repo === this.draft.repoPath) this.resetToNewBranch();
-      }
+      if (opts.group) this.setGroup(opts.group);
+      else if (repoPath) this.setGroup(null);
       if (repo !== this.draft.repoPath) this.setRepo(repo);
       if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
     } else {
       const agentId = opts.agentId || active?.agentType || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
+      const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
       this.draft = {
-        repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, opts.groupId), text: '',
-        ...(opts.groupId ? { groupId: opts.groupId } : {}),
+        repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, groupId), text: '',
+        ...opts.group,
       };
       this.modeTouched = false;
       this.error = '';
       void this.prefillBaseBranch(repo);
-      void this.useExistingGroupBranch(repo);
       void this.loadAgentInfo();
       void this.refreshKind(repo);
     }
@@ -163,32 +177,41 @@ class DraftStore {
     if (!this.draft) return;
     this.setStart(defaultStart(this.draft.repoPath, this.draft.groupId));
     void this.prefillBaseBranch(this.draft.repoPath);
-    void this.useExistingGroupBranch(this.draft.repoPath);
   }
 
-  /** The group's branch may already be in this project (started by hand, or
-   *  pushed from elsewhere). Then the conversation continues on it rather
-   *  than failing to create a branch that exists. */
-  private async useExistingGroupBranch(repo: string): Promise<void> {
+  /** Whether the draft starts on its group's branch name, which it continues
+   *  if the project has that branch already. */
+  get onGroupBranch(): boolean {
+    return !!this.draft && onGroupBranch(this.draft);
+  }
+
+  /** The name of the group the draft joins or starts, or null. */
+  get groupName(): string | null {
     const d = this.draft;
-    if (!d?.groupId || d.start.kind !== 'new' || !d.start.branchName) return;
-    const branch = d.start.branchName;
-    let branches: string[];
-    try {
-      branches = await window.groveBench.listBranches(repo, { fetch: false });
-    } catch {
-      return;
-    }
-    // Leave it alone if the user changed anything meanwhile.
-    const now = this.draft;
-    if (!now || now.repoPath !== repo || now.start.kind !== 'new' || now.start.branchName !== branch) return;
-    if (branches.includes(branch)) this.setStart({ kind: 'existing', branch });
+    if (d?.groupId) return groupStore.get(d.groupId)?.name ?? null;
+    return d?.newGroupName ?? null;
   }
 
-  /** Leave the group the draft would join. The branch name it suggested
-   *  stays; the user can change it. */
+  /** Start outside the group. */
   leaveGroup(): void {
-    if (this.draft) delete this.draft.groupId;
+    this.setGroup(null);
+  }
+
+  /** Join a group, start a new one, or (null) leave it. The branch follows:
+   *  joining an existing group starts on its branch name, and leaving drops
+   *  that name. A branch the user picked otherwise stays. */
+  private setGroup(group: DraftGroup | null): void {
+    const d = this.draft;
+    if (!d) return;
+    const same = group
+      ? ('groupId' in group ? d.groupId === group.groupId : d.newGroupName === group.newGroupName)
+      : !d.groupId && !d.newGroupName;
+    if (same) return;
+    const hadGroupBranch = onGroupBranch(d);
+    delete d.groupId;
+    delete d.newGroupName;
+    if (group) Object.assign(d, group);
+    if ((group && 'groupId' in group) || hadGroupBranch) this.resetToNewBranch();
   }
 
   setAgent(agentId: string): void {
@@ -311,7 +334,10 @@ class DraftStore {
       case 'existing':
         return { ...base, branchName: d.start.branch, useExisting: true };
       case 'new':
-        return { ...base, branchName: d.start.branchName.trim(), baseBranch: baseBranch || undefined };
+        return {
+          ...base, branchName: d.start.branchName.trim(), baseBranch: baseBranch || undefined,
+          ...(onGroupBranch(d) ? { continueBranch: true } : {}),
+        };
     }
   }
 
@@ -364,8 +390,9 @@ class DraftStore {
         ...(result.noGit ? { noGit: true } : {}),
         ...(placeholderName ? { displayName: placeholderName } : {}),
       });
-      // Gone if it was ungrouped while this ran; then there is nothing to join.
-      if (d.groupId && groupStore.get(d.groupId)) groupStore.add(d.groupId, result.id);
+      // A group ungrouped while this ran is gone, and add() does nothing.
+      if (d.groupId) groupStore.add(d.groupId, result.id);
+      else if (d.newGroupName) groupStore.create(d.newGroupName, [result.id]);
       // Main holds a prompt sent during setup until the agent is ready.
       if (text) {
         // The chat shows the agent walking to its bench until the first reply.

@@ -441,6 +441,7 @@ describe('Sidebar groups', () => {
       { id: 'web1', branch: 'feat/billing', repoPath: '/web', status: 'running', displayName: 'Billing page' },
     ] as any;
     groupStore.groups = [];
+    groupStore.ready = true;
   });
 
   afterEach(() => {
@@ -450,11 +451,20 @@ describe('Sidebar groups', () => {
   });
 
   const groupEl = (id: string) => document.querySelector(`[data-group="${id}"]`) as HTMLElement;
+  const make = (name: string, ids: string[]) => groupStore.create(name, ids)!;
 
   it('has no Groups section with one project and no groups', () => {
     store.repos = ['/api'];
     render(Sidebar);
     expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+  });
+
+  it('hides groups until the saved ones are read', async () => {
+    groupStore.ready = false;
+    render(Sidebar);
+    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+    await fireEvent.contextMenu(screen.getByText('Billing endpoint'));
+    expect(screen.queryByText('New Group…')).not.toBeInTheDocument();
   });
 
   it('starts a group from a conversation\'s menu, named after it', async () => {
@@ -472,7 +482,7 @@ describe('Sidebar groups', () => {
   });
 
   it('adds a conversation to a group from its menu, and lists each with its project', async () => {
-    const group = groupStore.create('Billing', ['api1']);
+    const group = make('Billing', ['api1']);
     render(Sidebar);
     await fireEvent.contextMenu(screen.getByText('Billing page'));
     await fireEvent.click(screen.getByText('Add to Billing'));
@@ -485,7 +495,7 @@ describe('Sidebar groups', () => {
   });
 
   it('tags grouped conversations in the Conversations list', async () => {
-    groupStore.create('Billing', ['api1']);
+    make('Billing', ['api1']);
     render(Sidebar);
     // Projects start folded, and rows in the Groups section leave the tag
     // out, so the one tag is on the Conversations list's row.
@@ -495,25 +505,37 @@ describe('Sidebar groups', () => {
   });
 
   it('opens a draft in the group, in a project it has nothing in yet', async () => {
-    const group = groupStore.create('Billing', ['api1', 'web1']);
+    const group = make('Billing', ['api1', 'web1']);
     render(Sidebar);
     await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
     expect(draftStore.draft).toMatchObject({ repoPath: '/infra', groupId: group.id, start: { kind: 'new', branchName: 'feat/billing' } });
   });
 
-  it('a new group from the header opens its first conversation', async () => {
+  it('a new group from the heading opens a draft and is made only when it starts', async () => {
     render(Sidebar);
     await fireEvent.click(screen.getByRole('button', { name: 'New group' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Group name' }), { target: { value: 'Billing' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
-    const [group] = groupStore.groups;
-    expect(group).toMatchObject({ name: 'Billing', sessionIds: [] });
-    expect(draftStore.draft).toMatchObject({ repoPath: '/api', groupId: group.id });
+    expect(groupStore.groups).toEqual([]);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/api', newGroupName: 'Billing' });
+    // The draft row says which group it starts.
+    expect(screen.getByText('Billing')).toBeInTheDocument();
+  });
+
+  it('opening the draft from a project\'s + takes it out of the group', async () => {
+    const group = make('Billing', ['api1']);
+    store.repos = ['/api', '/web'];
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    expect(draftStore.draft?.groupId).toBe(group.id);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in web' }));
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ branchName: '' });
   });
 
   it('ungroups, keeping the conversations', async () => {
-    const group = groupStore.create('Billing', ['api1', 'web1']);
+    const group = make('Billing', ['api1', 'web1']);
     render(Sidebar);
     await fireEvent.click(screen.getByRole('button', { name: 'Ungroup Billing' }));
     expect(groupStore.groups).toEqual([]);
@@ -521,14 +543,18 @@ describe('Sidebar groups', () => {
     expect(screen.getByText('Billing page')).toBeInTheDocument();
   });
 
-  it('marks every conversation in the group completed from its menu', async () => {
-    const group = groupStore.create('Billing', ['api1', 'web1']);
+  it('marks every conversation in the group completed, and counts only what it shows', async () => {
+    const group = make('Billing', ['api1', 'web1']);
     render(Sidebar);
+    const header = () => groupEl(group.id).querySelector('button[aria-expanded]') as HTMLElement;
+    expect(header().textContent).toContain('2');
+
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
     await fireEvent.click(screen.getByText('Mark all completed'));
     expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('api1', true);
     expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('web1', true);
     expect(within(groupEl(group.id)).getByText('All completed')).toBeInTheDocument();
+    expect(header().textContent?.trim()).toBe('Billing');
   });
 });
 

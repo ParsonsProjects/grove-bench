@@ -227,25 +227,32 @@ CLAUDE.md, skills and MCP config, so nothing keyed by repo path changes.
 
 What the prototype does:
 
-- **Data.** `ConversationGroup` (`src/shared/types.ts`): id, name, creation
-  time and conversation ids. Stored as `groups` in `app-state.json`
-  (`saveConversationGroups()` in `src/main/app-state.ts`), written through, with
-  malformed entries dropped on load. Main knows nothing else about groups.
+- **Data.** `ConversationGroup` (`src/shared/types.ts`): id, name and
+  conversation ids. Stored as `groups` in `app-state.json`
+  (`saveConversationGroups()` in `src/main/app-state.ts`, debounced and flushed
+  on quit). Loading drops malformed entries and repeated ids. While the file
+  can't be read, loading says so (null) rather than "no groups", and the
+  renderer saves nothing and hides groups until a load works, so a passing lock
+  can't wipe them.
 - **Rules.** `groupStore` (`src/renderer/stores/groups.svelte.ts`). A
-  conversation is in at most one group. A group goes when its last conversation
-  leaves it or is deleted (`forgetConversation()`); a new empty one stays until
-  then.
+  conversation is in at most one group, and a group always has one: it is made
+  with its first conversation (from the heading, when that conversation's first
+  message is sent) and goes when its last leaves or is deleted
+  (`forgetConversation()`).
 - **Sidebar.** A Groups section between Conversations and Projects
   (`SidebarGroups.svelte`), shown once there are two projects or any group. The
   conversation menu adds New Group, Add to, Move to and Remove from. A grouped
   row shows its group's name. The group header has attention counts, a + for a
   new conversation, Ungroup, and a menu with Rename and Mark all completed.
 - **New conversation in a group.** The draft opens in the first project the
-  group has nothing in yet, and starts a new branch with the group's branch
-  name (the first member's real branch: not a placeholder, not direct). If the
-  branch already exists in that project it starts on it instead; in a project
-  the group already has a conversation in, it gets an automatic name. The draft
-  bar shows the group and can leave it.
+  group has nothing in yet, with the group's branch name (the first member's
+  real branch: not a placeholder, not direct); in a project the group already
+  has a conversation in, it gets an automatic name. Whether that branch is new
+  or continued is decided at create time: the draft sends `continueBranch`, and
+  `SESSION_CREATE` continues the branch when the project has it, or refuses
+  when another checkout (a conversation, or the project folder) holds it. The
+  draft bar shows the group and can leave it; opening the draft from a
+  project's + also leaves it.
 
 Not done:
 
