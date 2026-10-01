@@ -33,6 +33,16 @@ function fakeDeps(over: Partial<TraceDeps> = {}, bytes = 2048) {
 }
 
 describe('recordTrace', () => {
+  it('keeps the trace it just saved even when the clock went back', async () => {
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(dir, `trace-2026-11-0${i + 1}T00-00-00-000Z.json`), '{}');
+    const { deps } = fakeDeps(); // saves trace-2026-10-01...
+    const result = await recordTrace(10, deps);
+
+    expect(fs.existsSync(path.join(dir, result.name))).toBe(true);
+    expect(fs.readdirSync(dir)).toHaveLength(5);
+    expect(fs.existsSync(path.join(dir, 'trace-2026-11-01T00-00-00-000Z.json'))).toBe(false);
+  });
+
   it('records for the given time, then saves the trace in the traces folder', async () => {
     const { deps, tracing, lines } = fakeDeps({}, 3 * 1024 * 1024);
     const result = await recordTrace(10, deps);

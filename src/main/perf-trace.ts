@@ -59,10 +59,13 @@ export function lastTracePath(): string | null {
   return lastTrace;
 }
 
-/** Delete all but the newest `keep` traces (their names sort by time). */
-async function prune(dir: string, keep: number): Promise<void> {
-  const names = (await fs.readdir(dir)).filter((n) => /^trace-.*\.json$/.test(n)).sort();
-  await Promise.all(names.slice(0, Math.max(0, names.length - keep)).map((n) => fs.rm(path.join(dir, n), { force: true })));
+/** Keep `saved` and the newest `keep - 1` other traces, deleting the rest.
+ *  Names sort by the time they were saved at; `saved` is kept whatever its
+ *  name, in case the clock was moved back since the others. */
+async function prune(dir: string, keep: number, saved: string): Promise<void> {
+  const others = (await fs.readdir(dir)).filter((n) => /^trace-.*\.json$/.test(n) && n !== saved).sort();
+  const old = others.slice(0, Math.max(0, others.length - (keep - 1)));
+  await Promise.all(old.map((n) => fs.rm(path.join(dir, n), { force: true })));
 }
 
 /**
@@ -85,7 +88,7 @@ export function recordTrace(seconds = TRACE_SECONDS, deps: TraceDeps = defaultDe
     const { size } = await fs.stat(file);
     lastTrace = file;
     deps.write(`saved ${path.basename(file)} (${(size / 1024 / 1024).toFixed(1)} MB)`);
-    await prune(dir, KEEP_TRACES).catch(() => { /* an old file in use: next time */ });
+    await prune(dir, KEEP_TRACES, path.basename(file)).catch(() => { /* an old file in use: next time */ });
     return { name: path.basename(file), sizeBytes: size, seconds };
   })().finally(() => {
     recording = null;

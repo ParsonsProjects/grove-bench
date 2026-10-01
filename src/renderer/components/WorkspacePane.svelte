@@ -127,6 +127,7 @@
     // How long loading the history took, for the performance log.
     const timing = timeSteps('conversation view', sessionId);
     let eventCount = 0;
+    let historyFailed = false;
     // Before any await, so App covers the empty chat with the walk until the
     // history is in, rather than showing "Waiting for input...".
     messageStore.setHistoryLoaded(sessionId, false);
@@ -198,6 +199,7 @@
         messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
+      historyFailed = true;
       console.error(`[WorkspacePane] history replay failed for ${sessionId}:`, e);
       messageStore.ingestEvent(sessionId, {
         type: 'error',
@@ -211,9 +213,15 @@
     // Single git status refresh after replay (none without git)
     if (!noGit) gitStatusStore.refresh(sessionId);
 
-    await afterNextPaint();
-    timing.step('first draw');
-    timing.done(`${eventCount} events, ${store.activeSessionId === sessionId ? 'shown' : 'hidden'}`);
+    // A minimized window draws nothing until it's restored: that wait isn't
+    // drawing time, so there is no first draw to time then.
+    const minimized = document.hidden;
+    if (!minimized) {
+      await afterNextPaint();
+      timing.step('first draw');
+    }
+    const where = minimized ? 'window minimized' : store.activeSessionId === sessionId ? 'shown' : 'behind another conversation';
+    timing.done(`${historyFailed ? 'history failed' : `${eventCount} events`}, ${where}`);
   });
 
   onDestroy(() => {

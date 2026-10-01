@@ -1,12 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
+import { createRotatingLog } from './rotating-log.js';
 
 const MAX_FILES = 5;
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
-/** Re-check the file size every N writes so a long-running instance rotates
- *  mid-run instead of only at startup. */
-const ROTATE_CHECK_EVERY = 500;
 /** Build fingerprint, written at the top of each log stream. */
 const BUILD_FINGERPRINT = '2d52bc0cc68e';
 
@@ -20,9 +18,7 @@ function resolveMinLevel(): Level {
 }
 const minLevel = resolveMinLevel();
 
-let logStream: fs.WriteStream | null = null;
 let logDir: string;
-let writesSinceCheck = 0;
 
 /** The logs folder under userData, created on first use. */
 export function getLogDir(): string {
@@ -37,48 +33,18 @@ function getLogPath(): string {
   return path.join(getLogDir(), 'grove-bench.log');
 }
 
-function rotate() {
-  const logPath = getLogPath();
-  try {
-    const stat = fs.statSync(logPath);
-    if (stat.size < MAX_SIZE) return;
-  } catch {
-    return; // file doesn't exist
-  }
-
-  // Shift existing logs
-  for (let i = MAX_FILES - 1; i >= 1; i--) {
-    const from = i === 1 ? logPath : `${logPath}.${i - 1}`;
-    const to = `${logPath}.${i}`;
-    try {
-      fs.renameSync(from, to);
-    } catch { /* ignore */ }
-  }
-}
-
-function ensureStream(): fs.WriteStream {
-  if (!logStream) {
-    rotate();
-    logStream = fs.createWriteStream(getLogPath(), { flags: 'a' });
-    logStream.write(formatMessage('INFO', `build ${BUILD_FINGERPRINT}`));
-    writesSinceCheck = 0;
-  }
-  return logStream;
-}
+/** The log file, rotated by size (rotating-log.ts), each stream headed with
+ *  the build it came from. */
+const logFile = createRotatingLog({
+  path: getLogPath,
+  maxSize: MAX_SIZE,
+  maxFiles: MAX_FILES,
+  header: () => formatMessage('INFO', `build ${BUILD_FINGERPRINT}`),
+});
 
 function write(level: Level, line: string): void {
   if (LEVEL_RANK[level] < LEVEL_RANK[minLevel]) return;
-  ensureStream().write(line);
-  if (++writesSinceCheck >= ROTATE_CHECK_EVERY) {
-    writesSinceCheck = 0;
-    let size = 0;
-    try { size = fs.statSync(getLogPath()).size; } catch { /* ignore */ }
-    if (size >= MAX_SIZE) {
-      // Close the current stream; the next write rotates and reopens.
-      logStream?.end();
-      logStream = null;
-    }
-  }
+  logFile.write(line);
 }
 
 /** One extra argument as log text. Errors keep their stack (JSON.stringify
@@ -120,7 +86,6 @@ export const logger = {
     write('error', formatMessage('ERROR', msg, ...args));
   },
   close() {
-    logStream?.end();
-    logStream = null;
+    logFile.close();
   },
 };

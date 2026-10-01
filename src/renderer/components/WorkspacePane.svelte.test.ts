@@ -155,4 +155,24 @@ describe('WorkspacePane load timing', () => {
     expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay', 'first draw']);
     expect(report.detail).toMatch(/^\d+ events, shown$/);
   });
+
+  it('says when loading the history failed', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    mockGroveBench.getEventHistoryPage.mockRejectedValueOnce(new Error('gone'));
+    render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ detail: string }];
+    expect(report.detail).toBe('history failed, shown');
+  });
+
+  it('times no first draw while the window is minimized', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ steps: { name: string }[]; detail: string }];
+    expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay']);
+    expect(report.detail).toMatch(/, window minimized$/);
+    hidden.mockRestore();
+  });
 });

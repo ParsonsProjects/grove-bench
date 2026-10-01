@@ -264,20 +264,25 @@ export function registerHandlers() {
       perfSteps.begin(entry.id, 'new conversation', startedAt);
       perfSteps.step(entry.id, 'checks');
 
-      const session = await sessionManager.createSession({
-        id: entry.id,
-        branch: entry.branch,
-        cwd: opts.repoPath,
-        repoPath: opts.repoPath,
-        window: win,
-        adapterType: opts.adapterType,
-        permissionMode,
-        model,
-        controls,
-        noGit,
-      });
+      let session: SessionInfo;
+      try {
+        session = await sessionManager.createSession({
+          id: entry.id,
+          branch: entry.branch,
+          cwd: opts.repoPath,
+          repoPath: opts.repoPath,
+          window: win,
+          adapterType: opts.adapterType,
+          permissionMode,
+          model,
+          controls,
+          noGit,
+        });
+      } catch (err) {
+        perfSteps.fail(entry.id, 'setup failed');
+        throw err;
+      }
 
-      perfSteps.step(session.id, 'session');
       logger.info(`Direct session created: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType, ...(noGit ? { noGit: true } : {}) };
     }
@@ -389,6 +394,7 @@ export function registerHandlers() {
           } catch (e) {
             if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+              perfSteps.step(id, 'install dependencies (failed)');
               const stderr = (e as any).stderr || (e as any).message || String(e);
               logger.warn(`npm install failed for worktree ${worktree.id}:`, e);
               emitPrelaunch({ type: 'error', message: `npm install failed:\n${stderr}` });
@@ -411,7 +417,6 @@ export function registerHandlers() {
           controls,
         });
 
-        perfSteps.step(id, 'session');
         logger.info(`Session created: id=${worktree.id}`);
       } catch (err: any) {
         if (signal.aborted) {
@@ -463,6 +468,7 @@ export function registerHandlers() {
     // register the resume as a pending setup: prompts sent meanwhile are held
     // by sendMessage() until the session exists.
     perfSteps.begin(id, 'resume', startedAt);
+    if (existing) perfSteps.step(id, 'close old agent');
     const resumePromise = (async () => {
       const worktree = await worktreeManager.getWorktreeOrManifest(id);
       if (!worktree) {
@@ -490,7 +496,6 @@ export function registerHandlers() {
         noGit: !!worktree.noGit,
       });
 
-      perfSteps.step(id, 'session');
       logger.info(`Session resumed: id=${session.id}`);
       return { id: session.id, branch: session.branch, agentType: session.agentType };
     })();

@@ -18,11 +18,11 @@ describe('step timer', () => {
     steps.begin('1a2b3c4d', 'new conversation');
     advance(95); steps.step('1a2b3c4d', 'checks');
     advance(1830); steps.step('1a2b3c4d', 'worktree');
-    advance(2285); steps.finish('1a2b3c4d', 'agent ready');
+    advance(2285); steps.finish('1a2b3c4d', 'agent start');
 
     expect(lines).toEqual([
       'new conversation 1a2b3c4d: started',
-      'new conversation 1a2b3c4d ready after 4210 ms: checks 95 ms, worktree 1830 ms, agent ready 2285 ms',
+      'new conversation 1a2b3c4d ready after 4210 ms: checks 95 ms, worktree 1830 ms, agent start 2285 ms',
     ]);
   });
 
@@ -30,14 +30,14 @@ describe('step timer', () => {
     const { steps, lines, advance } = setup();
     advance(500);
     steps.begin('x', 'new conversation', 100);
-    steps.finish('x', 'agent ready');
-    expect(lines[1]).toBe('new conversation x ready after 400 ms: agent ready 400 ms');
+    steps.finish('x', 'agent start');
+    expect(lines[1]).toBe('new conversation x ready after 400 ms: agent start 400 ms');
   });
 
   it('ignores steps for a conversation with no run going', () => {
     const { steps, lines } = setup();
     steps.step('x', 'agent setup');
-    steps.finish('x', 'agent ready');
+    steps.finish('x', 'agent start');
     steps.fail('x', 'oops');
     expect(lines).toEqual([]);
   });
@@ -56,19 +56,24 @@ describe('step timer', () => {
     steps.begin('x', 'wake');
     vi.advanceTimersByTime(1000);
     expect(lines[1]).toBe('wake x gave up waiting for the agent after 0 ms');
-    steps.finish('x', 'agent ready');
+    steps.finish('x', 'agent start');
     expect(lines).toHaveLength(2);
   });
 
-  it('starts over when a run begins again for the same conversation', () => {
+  it('writes up a run that another for the same conversation replaces', () => {
     vi.useFakeTimers();
     const { steps, lines, advance } = setup(1000);
-    steps.begin('x', 'wake');
-    advance(30); steps.step('x', 'finish sleeping');
+    steps.begin('x', 'resume');
+    advance(30); steps.step('x', 'lookup');
     steps.begin('x', 'wake');
     vi.advanceTimersByTime(999);
-    steps.finish('x', 'agent ready');
-    expect(lines.at(-1)).toBe('wake x ready after 0 ms: agent ready 0 ms');
+    steps.finish('x', 'agent start');
+    expect(lines).toEqual([
+      'resume x: started',
+      'resume x stopped (wake started) after 30 ms: lookup 30 ms',
+      'wake x: started',
+      'wake x ready after 0 ms: agent start 0 ms',
+    ]);
   });
 });
 

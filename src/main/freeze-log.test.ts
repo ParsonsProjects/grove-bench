@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { IpcMain } from 'electron';
 import { ChildProcess, execFile } from 'node:child_process';
 import { createFreezeLog, launchLabel, sanitizeReport, startStallWatch, freezeLog, STALL_GAP_MS, TICK_MS } from './freeze-log.js';
+import { logger } from './logger.js';
 
 /** A freeze log on a clock the test moves by hand. */
 function setup() {
@@ -32,6 +33,15 @@ describe('main-process stalls', () => {
     for (let i = 0; i < 10; i++) { advance(TICK_MS); log.tick(); }
     advance(STALL_GAP_MS - 1); log.tick();
     expect(lines).toEqual([]);
+  });
+
+  it('also writes freezes to the app log, beside what the app was doing', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    let t = 0;
+    const log = createFreezeLog({ now: () => t });
+    t += 300; log.tick();
+    expect(warn).toHaveBeenCalledWith("[freeze] main process didn't run for 300 ms");
+    warn.mockRestore();
   });
 
   it('logs a gap of at least the stall threshold', () => {
@@ -197,19 +207,28 @@ describe('process launches', () => {
 });
 
 describe('launchLabel', () => {
-  it('names a program and its first argument', () => {
+  it('names a program and its subcommand or script', () => {
     expect(launchLabel('git', ['git', 'worktree', 'add', '/some/path'])).toBe('git worktree');
     expect(launchLabel('/usr/bin/node', ['node', '/app/cli.js', '--resume'])).toBe('node cli.js');
+    expect(launchLabel('C:\\Users\\Jo Smith\\.local\\bin\\claude.exe', ['claude.exe', 'auth'])).toBe('claude.exe auth');
   });
 
-  it('names the command a shell runs', () => {
-    expect(launchLabel('/bin/sh', ['/bin/sh', '-c', 'git --version'])).toBe('sh: git --version');
+  it('names the program and subcommand a shell runs', () => {
+    expect(launchLabel('/bin/sh', ['/bin/sh', '-c', 'git --version'])).toBe('sh: git');
     expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"claude mcp list"'])).toBe('cmd.exe: claude mcp');
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"where.exe claude"'])).toBe('cmd.exe: where.exe claude');
   });
 
-  it('leaves out arguments that could carry text', () => {
+  it('leaves out anything that could be a name, a folder or text', () => {
+    // A path with a space in a shell command.
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"C:\\Users\\John Smith\\AppData\\Roaming\\npm\\claude.cmd auth status --json"']))
+      .toBe('cmd.exe: claude.cmd auth');
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"C:\\Program Files\\Git\\bin\\git status"'])).toBe('cmd.exe');
+    // A flag's value, which may be a project folder.
+    expect(launchLabel('git', ['git', '-C', 'C:\\Users\\sam\\secret-project', 'status'])).toBe('git');
+    expect(launchLabel('gh', ['gh', '--repo', 'owner/name', 'pr'])).toBe('gh');
+    // Text.
     expect(launchLabel('git', ['git', 'commit message with spaces'])).toBe('git');
-    expect(launchLabel('gh', ['gh', '--repo', 'x'])).toBe('gh x');
     expect(launchLabel(undefined, undefined)).toBe('process');
   });
 });

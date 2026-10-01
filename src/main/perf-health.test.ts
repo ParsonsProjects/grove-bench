@@ -15,7 +15,6 @@ describe('formatHealth', () => {
   it('sums up the period in one line', () => {
     const line = formatHealth({
       minutes: 10,
-      busy: 0.043,
       freeze: {
         stalls: 3, stallMs: 640, slowFrames: 1,
         launches: 42, launchMs: 1900, slowestLaunch: { name: 'git worktree', ms: 120.4 },
@@ -33,13 +32,13 @@ describe('formatHealth', () => {
       asleep: 2,
       terminals: 2,
     });
-    expect(line).toBe('last 10 min: main busy 4%, event loop delay p50 1 ms, p99 38 ms, max 310 ms; '
+    expect(line).toBe('last 10 min: event loop delay p50 1 ms, p99 38 ms, max 310 ms; '
       + 'freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking, slowest git worktree 120 ms); '
       + 'CPU main 2%, pages 4%, gpu 1%, other 0%; memory main 205 MB, pages 480 MB, gpu 120 MB, other 90 MB; conversations 5 (2 asleep), terminals 2');
   });
 
   it('uses the working set where private bytes are not reported', () => {
-    const line = formatHealth({ minutes: 1, busy: null, freeze: quiet, metrics: [metric('Browser', 0, 102_400)], conversations: 1, asleep: 0, terminals: 0 });
+    const line = formatHealth({ minutes: 1, freeze: quiet, metrics: [metric('Browser', 0, 102_400)], conversations: 1, asleep: 0, terminals: 0 });
     expect(line).toBe('last 1 min: freezes: main 0, window 0; process launches 0; CPU main 0%; memory main 100 MB; conversations 1, terminals 0');
   });
 });
@@ -54,8 +53,9 @@ describe('startHealthLog', () => {
       { takeFreezeStats, getAppMetrics, counts: () => ({ conversations: 1, asleep: 0, terminals: 0 }) },
       { write: (l) => lines.push(l), firstMs: 60_000, everyMs: 600_000 },
     );
-    // Called once at the start, so the first line's CPU covers its period.
+    // Called once at the start, so the first line covers only its period.
     expect(getAppMetrics).toHaveBeenCalledOnce();
+    expect(takeFreezeStats).toHaveBeenCalledOnce();
 
     vi.advanceTimersByTime(59_999);
     expect(lines).toHaveLength(0);
@@ -65,7 +65,7 @@ describe('startHealthLog', () => {
 
     vi.advanceTimersByTime(600_000);
     expect(lines).toHaveLength(2);
-    expect(takeFreezeStats).toHaveBeenCalledTimes(2);
+    expect(takeFreezeStats).toHaveBeenCalledTimes(3);
 
     stop();
     vi.advanceTimersByTime(600_000);

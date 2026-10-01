@@ -2,10 +2,14 @@
  * Step timings: how long a new conversation, a resume or a wake took, step
  * by step, written to the performance log (perf-log.ts). A run starts when
  * the user asks, each step records the time since the one before, and the
- * line is written when the agent reports ready:
+ * line is written once the agent's process is up:
  *
  *   new conversation 1a2b3c4d: started
  *   new conversation 1a2b3c4d ready after 4210 ms: checks 95 ms, worktree 1830 ms, ...
+ *
+ * The agent's first message isn't waited for: it only comes with the first
+ * prompt, so it would time the user. A run that is closed, deleted, put to
+ * sleep or replaced by another before then is written up as stopped.
  *
  * Steps for a conversation with no run going (a restart after Stop, say)
  * are ignored, so the agent code can mark its steps unconditionally.
@@ -13,7 +17,7 @@
 import type { TimingReport } from '../shared/types.js';
 import { perfLine } from './perf-log.js';
 
-/** A run that never reports ready is written up and dropped after this. */
+/** A run whose agent never comes up is written up and dropped after this. */
 const GIVE_UP_MS = 10 * 60_000;
 
 interface Run {
@@ -59,8 +63,9 @@ export function createStepTimer({
     /** Start timing `label` for conversation `id`, from `startedAt` (a time
      *  from the same clock) when the work began before the id was known. */
     begin(id: string, label: string, startedAt = now()): void {
-      const prev = runs.get(id);
-      if (prev) clearTimeout(prev.timer);
+      // One run per conversation: a wake while a resume is still starting
+      // writes the resume up rather than dropping it.
+      close(id, `stopped (${label} started)`);
       const timer = setTimeout(() => close(id, 'gave up waiting for the agent'), giveUpMs);
       (timer as { unref?: () => void }).unref?.();
       runs.set(id, { label, start: startedAt, last: startedAt, steps: [], timer });

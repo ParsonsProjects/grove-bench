@@ -1,6 +1,6 @@
 /**
- * Freeze log: notes in the performance log (perf-log.ts) when the app
- * stopped responding, so a freeze someone reports can be traced to its
+ * Freeze log: notes in the performance log (perf-log.ts), and the app log,
+ * when the app stopped responding, so a freeze someone reports can be traced to its
  * cause afterwards.
  *
  * Two places can freeze the whole window. The main process passes input to
@@ -15,6 +15,7 @@
  */
 import type { IpcMain, PowerMonitor } from 'electron';
 import type { FreezeReport } from '../shared/types.js';
+import { logger } from './logger.js';
 import { perfLine } from './perf-log.js';
 
 /** How often the main-process timer runs. */
@@ -69,31 +70,50 @@ export interface FreezeLogOptions {
  *  they run says more than the shell's name. */
 const SHELLS = new Set(['cmd.exe', 'cmd', 'sh', 'bash', 'powershell.exe', 'pwsh.exe']);
 
-/** A short, safe word from an argument: a path's last part, and nothing
- *  that could carry a message, a token or other text. */
-function launchWord(arg: string): string | null {
-  const word = arg.replace(/["']/g, '').split(/[\\/]/).pop() ?? '';
-  return /^[\w.@+:-]{1,40}$/.test(word) ? word : null;
-}
+/** A subcommand or a script's file name: one plain word, nothing that
+ *  could be a path, a flag, a message or a token. */
+const PLAIN_WORD = /^[a-z][\w.-]{0,30}$/i;
+/** A shell command's program when it ends in an extension, which may be a
+ *  path with spaces in it ("C:\Users\Jo Smith\...\claude.cmd auth"). */
+const PROGRAM_WITH_EXTENSION = /^(.*?\.(?:exe|cmd|bat|com|ps1))(?=\s|$)/i;
 
-/** How a launch is named in the log: the program and its first argument
- *  (a git subcommand, a script), or for a shell the command it runs. */
+const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
+const hasPath = (p: string) => /[\\/]/.test(p);
+
+/**
+ * How a launch is named in the log: the program, and its first argument when
+ * that is a plain word (a git or gh subcommand) or a script's file name; for
+ * a shell, the program and subcommand of the command it runs. Paths are cut
+ * to their last part and anything else is left out, so a label can't carry
+ * a user's name, a project folder or text.
+ */
 export function launchLabel(file: unknown, args: unknown): string {
-  const name = typeof file === 'string' ? (file.split(/[\\/]/).pop() || file) : 'process';
+  const name = typeof file === 'string' ? baseName(file) : 'process';
   const rest = Array.isArray(args) ? args.slice(1).filter((a): a is string => typeof a === 'string') : [];
   if (SHELLS.has(name.toLowerCase())) {
     const flag = rest.findIndex((a) => /^([/-]c|-command)$/i.test(a));
-    const words = (flag >= 0 ? rest.slice(flag + 1).join(' ') : '')
-      .replace(/["']/g, '').trim().split(/\s+/)
-      .map(launchWord).filter((w): w is string => !!w).slice(0, 2);
-    return words.length > 0 ? `${name}: ${words.join(' ')}` : name;
+    const command = (flag >= 0 ? rest.slice(flag + 1).join(' ') : '').replace(/["']/g, '').trim();
+    const withExtension = PROGRAM_WITH_EXTENSION.exec(command)?.[1];
+    const program = withExtension ?? command.split(/\s+/)[0] ?? '';
+    // A path without an extension may have been cut at a space: say nothing.
+    if (!program || (!withExtension && hasPath(program))) return name;
+    const next = command.slice(program.length).trim().split(/\s+/)[0] ?? '';
+    return `${name}: ${baseName(program)}${PLAIN_WORD.test(next) ? ` ${next}` : ''}`;
   }
-  const first = rest.find((a) => !a.startsWith('-'));
-  const word = first ? launchWord(first) : null;
-  return word ? `${name} ${word}` : name;
+  const first = rest[0];
+  if (!first || first.startsWith('-')) return name;
+  const word = hasPath(first) ? baseName(first) : first;
+  return PLAIN_WORD.test(word) ? `${name} ${word}` : name;
 }
 
-export function createFreezeLog({ now = () => performance.now(), write = (line) => perfLine('freeze', line) }: FreezeLogOptions = {}) {
+/** Freeze lines go to the performance log and the app log, where they sit
+ *  beside what the app was doing at the time. */
+function writeFreeze(line: string): void {
+  perfLine('freeze', line);
+  logger.warn(`[freeze] ${line}`);
+}
+
+export function createFreezeLog({ now = () => performance.now(), write = writeFreeze }: FreezeLogOptions = {}) {
   let lastTick = now();
   let suspended = false;
   const ipcCalls: Activity[] = [];

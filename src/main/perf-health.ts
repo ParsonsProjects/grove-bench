@@ -3,18 +3,18 @@
  * (perf-log.ts) summing up the period, so slow build-up over a long day
  * (memory, process launches, freezes) shows:
  *
- *   last 10 min: main busy 4%, event loop delay p50 1 ms, p99 38 ms, max 310 ms;
+ *   last 10 min: event loop delay p50 1 ms, p99 38 ms, max 310 ms;
  *   freezes: main 3 (640 ms), window 1; process launches 42 (1.9 s blocking,
  *   slowest git worktree 120 ms); CPU main 2%, pages 4%, gpu 1%, other 0%;
  *   memory main 210 MB, pages 480 MB, gpu 120 MB, other 90 MB;
  *   conversations 5 (2 asleep), terminals 2
  *
  * It uses the stall timer's numbers (freeze-log.ts) rather than a timer of
- * its own. Agents' own processes aren't Electron's, so their CPU and memory
+ * its own. (Node's event-loop utilization isn't used: Electron runs Node's
+ * loop inside Chromium's, so it doesn't measure the main thread.) Agents' own processes aren't Electron's, so their CPU and memory
  * aren't in it; how many conversations are open (agents running or asleep)
  * is.
  */
-import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 import type { ProcessMetric } from 'electron';
 import type { FreezeStats } from './freeze-log.js';
 import { perfLine } from './perf-log.js';
@@ -30,8 +30,6 @@ const GROUP_ORDER = ['main', 'pages', 'gpu', 'other'];
 
 export interface HealthInput {
   minutes: number;
-  /** Share of the period the main process's event loop was busy, 0 to 1. */
-  busy: number | null;
   freeze: FreezeStats;
   metrics: Pick<ProcessMetric, 'type' | 'cpu' | 'memory'>[];
   /** Open conversations, and of those, how many are asleep (no agent
@@ -46,13 +44,10 @@ const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.ro
 export function formatHealth(h: HealthInput): string {
   const parts: string[] = [];
 
-  const loop: string[] = [];
-  if (h.busy !== null) loop.push(`main busy ${Math.round(h.busy * 100)}%`);
   if (h.freeze.loopDelay) {
     const d = h.freeze.loopDelay;
-    loop.push(`event loop delay p50 ${Math.round(d.p50)} ms, p99 ${Math.round(d.p99)} ms, max ${Math.round(d.max)} ms`);
+    parts.push(`event loop delay p50 ${Math.round(d.p50)} ms, p99 ${Math.round(d.p99)} ms, max ${Math.round(d.max)} ms`);
   }
-  if (loop.length > 0) parts.push(loop.join(', '));
 
   const f = h.freeze;
   parts.push(`freezes: main ${f.stalls}${f.stalls > 0 ? ` (${ms(f.stallMs)})` : ''}, window ${f.slowFrames}`);
@@ -90,20 +85,19 @@ export function startHealthLog(
   sources: HealthSources,
   { write = (line: string) => perfLine('health', line), everyMs = HEALTH_MS, firstMs = FIRST_HEALTH_MS } = {},
 ): () => void {
-  let lastElu: EventLoopUtilization = performance.eventLoopUtilization();
   let lastAt = performance.now();
-  // CPU use is measured since the previous call: start the clock now.
+  // Every period starts now. CPU use is measured since the previous call, and
+  // the freeze totals so far cover the launch before the app was ready,
+  // which the freeze lines already show one by one.
   sources.getAppMetrics();
+  sources.takeFreezeStats();
 
   const report = () => {
-    const elu = performance.eventLoopUtilization(lastElu);
-    lastElu = performance.eventLoopUtilization();
     const now = performance.now();
     const minutes = Math.max(1, Math.round((now - lastAt) / 60_000));
     lastAt = now;
     write(formatHealth({
       minutes,
-      busy: Number.isFinite(elu.utilization) ? elu.utilization : null,
       freeze: sources.takeFreezeStats(),
       metrics: sources.getAppMetrics(),
       ...sources.counts(),
