@@ -26,6 +26,9 @@
   import BranchPicker from './BranchPicker.svelte';
   import ContextGrove from './ContextGrove.svelte';
   import { formatResetTime } from '../lib/reset-time.js';
+  import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
+  import { SHORTCUT_GROUPS, formatShortcut } from '../lib/shortcut-list.js';
+  import { helpStore } from '../stores/help.svelte.js';
   import { filterVisibleMessages, NEXT_VIEW_MODE, VIEW_MODE_HINTS, VIEW_MODE_LABELS } from '../lib/message-view.js';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -209,50 +212,12 @@
   let usedPercent = $derived(Math.min((usedTokens / contextWindow) * 100, 100));
   let showContext = $derived(usedTokens > 0);
 
-  // Cache proportion for segmented bar
-  let cachedTokens = $derived(usage.cacheReadTokens + usage.cacheCreationTokens);
-  let cachePercent = $derived(Math.min((cachedTokens / contextWindow) * 100, usedPercent));
-  let freshPercent = $derived(Math.max(0, usedPercent - cachePercent));
-
-  // Interpolated color for smooth transitions
-  function usageColorSmooth(pct: number): string {
-    const stops = [
-      { at: 0,   r: 34,  g: 197, b: 94  }, // green
-      { at: 40,  r: 34,  g: 197, b: 94  }, // green
-      { at: 55,  r: 234, g: 179, b: 8   }, // yellow
-      { at: 70,  r: 249, g: 115, b: 22  }, // orange
-      { at: 85,  r: 239, g: 68,  b: 68  }, // red
-      { at: 100, r: 239, g: 68,  b: 68  }, // red
-    ];
-
-    // Find surrounding stops
-    let lo = stops[0], hi = stops[stops.length - 1];
-    for (let i = 0; i < stops.length - 1; i++) {
-      if (pct >= stops[i].at && pct <= stops[i + 1].at) {
-        lo = stops[i];
-        hi = stops[i + 1];
-        break;
-      }
-    }
-
-    const range = hi.at - lo.at || 1;
-    const t = (pct - lo.at) / range;
-    const r = Math.round(lo.r + (hi.r - lo.r) * t);
-    const g = Math.round(lo.g + (hi.g - lo.g) * t);
-    const b = Math.round(lo.b + (hi.b - lo.b) * t);
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-
-  let barBg = $derived(usageColorSmooth(usedPercent));
-  let textColor = $derived(usageColorSmooth(usedPercent));
-
-  // Tailwind class for remaining text — green when plenty, fades as it shrinks
-  let remainingColor = $derived(
-    usedPercent > 80 ? 'text-red-400' :
-    usedPercent > 60 ? 'text-orange-400' :
-    usedPercent > 40 ? 'text-yellow-400' :
-    'text-green-400'
-  );
+  // The whole used length takes the fill colour. Cached tokens take up room
+  // like any others (with prompt caching they are nearly all of it), so the
+  // cache split is listed in the popover, not drawn in the bar where it would
+  // hide the warning colour.
+  let usedTextClass = $derived(usageTextClass(usedPercent));
+  let usedBarClass = $derived(usageBarClass(usedPercent));
 
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -1649,15 +1614,12 @@
         title="Context: {formatTokens(usedTokens)} of {formatTokens(contextWindow)} tokens used. Click for details."
         aria-label="Context {usedPercent.toFixed(0)}% used. Click for details."
       >
-        <span style:color={textColor} class="font-medium transition-colors">
+        <span class="font-medium transition-colors {usedTextClass}">
           Context {usedPercent.toFixed(0)}%
         </span>
-        <!-- Mini bar with color-coded fill -->
-        <div class="w-24 h-1.5 bg-muted overflow-hidden flex">
-          {#if cachePercent > 0}
-            <div class="h-full bg-blue-500/70 transition-all" style:width="{cachePercent}%"></div>
-          {/if}
-          <div class="h-full transition-all" style:width="{freshPercent}%" style:background-color={barBg}></div>
+        <!-- Mini bar, coloured by how full it is -->
+        <div class="w-24 h-1.5 bg-muted overflow-hidden" data-testid="context-bar">
+          <div class="h-full transition-all {usedBarClass}" style:width="{usedPercent}%"></div>
         </div>
       </button>
 
@@ -1665,7 +1627,7 @@
         <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-4 text-xs w-72 z-50">
           <div class="flex items-center justify-between mb-1">
             <span class="font-medium text-foreground text-sm">Context</span>
-            <span class="font-medium" style:color={textColor}>{usedPercent.toFixed(1)}%</span>
+            <span class="font-medium {usedTextClass}">{usedPercent.toFixed(1)}%</span>
           </div>
           <!-- What it is, for someone new to agents. Claude Code's own
                behaviour near the limit: https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up -->
@@ -1675,12 +1637,8 @@
             can be lost.
           </p>
 
-          <!-- Large segmented bar -->
-          <div class="w-full h-3 bg-muted overflow-hidden flex mb-1">
-            {#if cachePercent > 0}
-              <div class="h-full bg-blue-500/70 transition-all" style:width="{cachePercent}%" title="Cached"></div>
-            {/if}
-            <div class="h-full transition-all" style:width="{freshPercent}%" style:background-color={barBg} title="Used"></div>
+          <div class="w-full h-3 bg-muted overflow-hidden mb-1">
+            <div class="h-full transition-all {usedBarClass}" style:width="{usedPercent}%"></div>
           </div>
 
           <!-- Percentage labels under bar -->
@@ -1695,15 +1653,9 @@
           <!-- Legend -->
           <div class="flex gap-3 mb-3 text-muted-foreground">
             <span class="flex items-center gap-1">
-              <span class="w-2 h-2 inline-block" style:background-color={barBg}></span>
+              <span class="w-2 h-2 inline-block {usedBarClass}"></span>
               Used
             </span>
-            {#if cachePercent > 0}
-              <span class="flex items-center gap-1">
-                <span class="w-2 h-2 bg-blue-500/70 inline-block"></span>
-                Cached
-              </span>
-            {/if}
             <span class="flex items-center gap-1">
               <span class="w-2 h-2 bg-muted inline-block"></span>
               Free
@@ -1718,7 +1670,7 @@
             </div>
             <div class="flex justify-between">
               <span>Used (total input)</span>
-              <span class="font-medium" style:color={textColor}>{formatTokens(usedTokens)}</span>
+              <span class="font-medium {usedTextClass}">{formatTokens(usedTokens)}</span>
             </div>
             <div class="flex justify-between text-[10px] pl-2">
               <span>Non-cached</span>
@@ -1742,7 +1694,7 @@
             </div>
             <div class="flex justify-between border-t border-border pt-1.5 mt-1.5">
               <span>Remaining</span>
-              <span class="{remainingColor} font-medium">{formatTokens(freeTokens)}</span>
+              <span class="{usedTextClass} font-medium">{formatTokens(freeTokens)}</span>
             </div>
           </div>
 
@@ -1868,18 +1820,22 @@
     </button>
 
     {#if shortcutsOpen}
-      <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-56 z-50">
-        <div class="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
-        <div class="space-y-1.5 text-muted-foreground">
-          <div class="flex justify-between"><span>Conversation finder</span><kbd class="text-foreground">Ctrl+R</kbd></div>
-          <div class="flex justify-between"><span>Search messages</span><kbd class="text-foreground">Ctrl+F</kbd></div>
-          <div class="flex justify-between"><span>Cycle mode</span><kbd class="text-foreground">Alt+M</kbd></div>
-          <div class="flex justify-between"><span>Toggle thinking</span><kbd class="text-foreground">Alt+T</kbd></div>
-          <div class="flex justify-between"><span>Cycle effort level</span><kbd class="text-foreground">Alt+E</kbd></div>
-          <div class="flex justify-between"><span>Thread tab</span><kbd class="text-foreground">Alt+1</kbd></div>
-          <div class="flex justify-between"><span>Changes tab</span><kbd class="text-foreground">Alt+2</kbd></div>
-          <div class="flex justify-between"><span>Terminal tab</span><kbd class="text-foreground">Alt+3</kbd></div>
-        </div>
+      <div class="absolute bottom-full right-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-60 z-50" data-testid="shortcuts">
+        <div class="font-medium text-foreground mb-2">Keyboard shortcuts</div>
+        {#each SHORTCUT_GROUPS as group, i (group.title)}
+          <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1 {i > 0 ? 'mt-2.5' : ''}">{group.title}</div>
+          <div class="space-y-1 text-muted-foreground">
+            {#each group.rows as row (row.label)}
+              <div class="flex justify-between gap-3"><span>{row.label}</span><kbd class="text-foreground">{formatShortcut(row.key)}</kbd></div>
+            {/each}
+          </div>
+        {/each}
+        <button
+          onclick={() => { shortcutsOpen = false; helpStore.show('keyboard-shortcuts'); }}
+          class="mt-3 pt-2 w-full text-left border-t border-border text-blue-400 hover:text-blue-300 hover:underline"
+        >
+          All shortcuts in Help
+        </button>
       </div>
     {/if}
   </div>

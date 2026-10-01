@@ -211,6 +211,33 @@ describe('StatusBar context actions', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Summarise to free space' }));
     expect(send).toHaveBeenCalledWith(ACTIVE, '/compact');
   });
+
+  it('colours the whole used length, cached tokens included', () => {
+    // Nearly all of it cached, as it is with prompt caching: the bar still
+    // reads as 90% full, in the full colour.
+    messageStore.contextWindowBySession[ACTIVE] = 200_000;
+    messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, outputTokens: 0, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+
+    const fill = getByTestId('context-bar').children;
+    expect(fill).toHaveLength(1);
+    expect(fill[0].className).toContain('bg-red-400');
+    expect((fill[0] as HTMLElement).style.width).toBe('90%');
+    expect(screen.getByText('Context 90%').className).toContain('text-red-400');
+  });
+});
+
+describe('StatusBar Keys', () => {
+  it('lists the tab shortcuts as they are bound', async () => {
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+
+    const rows = [...getByTestId('shortcuts').querySelectorAll('div.flex')]
+      .map((r) => `${r.querySelector('span')?.textContent} ${r.querySelector('kbd')?.textContent}`);
+    expect(rows).toContain('Checkpoints Alt+3');
+    expect(rows).toContain('Terminal Alt+4');
+    expect(rows).toContain('Preview Alt+5');
+  });
 });
 
 describe('StatusBar PR', () => {
