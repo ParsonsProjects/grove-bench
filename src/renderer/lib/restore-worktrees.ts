@@ -49,7 +49,6 @@ export async function restoreWorktrees() {
           displayName: runningSession?.displayName ?? wt.displayName ?? null,
           createdAt: wt.createdAt,
           lastActiveAt: wt.lastActiveAt,
-          completedAt: wt.completedAt ?? null,
         }, false);
 
         if (isRunning) {

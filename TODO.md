@@ -53,7 +53,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Attention Triage
 - [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
 - [x] Per-repo attention counts on each Projects header
-- [x] Mark Completed / Reopen in the session context menu — persisted as `completedAt` in the worktree manifest, hidden behind a "Show completed" toggle, reopened automatically by the next user message
+- [x] Mark Completed in the conversation context menu and the row's hover tick: stops the conversation (it was called Stop), which takes it off the Conversations list, and its state shows as Completed. A separate `completedAt` hide flag was dropped as it overlapped with Stop
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
 - [x] Persist the unread flag across restarts — `unreadSessionIds` in app-state.json, restored after worktree restore
 

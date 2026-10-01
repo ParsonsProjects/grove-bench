@@ -149,7 +149,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'stop' | 'destroy' | 'check';
+    icon: 'rename' | 'folder' | 'destroy' | 'check';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -161,17 +161,12 @@
     const items: MenuItem[] = [
       { label: 'Rename', icon: 'rename', action: () => startRename(sessionId, sessionLabel(session)) },
       { label: 'Open Folder', icon: 'folder', action: () => window.groveBench.openSessionFolder(sessionId) },
-      // Completed sessions leave the working set (hidden unless "Show completed")
-      // and come back on their own when the user sends another message.
-      session.completedAt
-        ? { label: 'Reopen', icon: 'check', action: () => store.setCompleted(sessionId, false) }
-        : { label: 'Mark Completed', icon: 'check', action: () => store.setCompleted(sessionId, true) },
     ];
-    // Stop disconnects a live session (keeps it resumable); not shown for
-    // already-stopped ones. For an open tab still waiting to reconnect it
-    // just closes the tab.
+    // Mark Completed stops a live session (it was called Stop) but keeps it
+    // resumable from Ctrl+R; not shown for already-stopped ones. For an open
+    // tab still waiting to reconnect it just closes the tab.
     if (store.isOpenTab(session)) {
-      items.push({ label: 'Stop', icon: 'stop', action: () => stopSession(sessionId) });
+      items.push({ label: 'Mark Completed', icon: 'check', action: () => stopSession(sessionId) });
     }
     items.push({ label: 'Delete Conversation', icon: 'destroy', action: () => requestDestroy(sessionId), variant: 'destructive', separator: true });
     return items;
@@ -388,11 +383,13 @@
     store.clearNeedsAttention(id);
   }
 
-  /** Stop a session non-destructively: shuts down its agent, background tasks
-   *  and terminal (freeing any ports they held) but keeps the worktree so it
-   *  can be resumed by clicking it (auto-resume in App.svelte). */
+  /** Mark Completed: stop a session non-destructively. Shuts down its agent,
+   *  background tasks and terminal (freeing any ports they held) but keeps the
+   *  worktree so it can be resumed by clicking it (auto-resume in App.svelte).
+   *  Done means dealt with, so it no longer counts as unread. */
   async function stopSession(id: string) {
     store.pushRecentlyClosed(id);
+    store.clearNeedsAttention(id);
     // Back to the landing screen rather than jumping into another conversation.
     if (store.activeSessionId === id) store.activeSessionId = null;
     store.updateStatus(id, 'stopped');
@@ -635,7 +632,7 @@
     if (e.key === 'Enter') { e.preventDefault(); confirmRename(); }
   }
 
-  // ── Attention triage: filter chips, per-repo counts, completed sessions ──
+  // ── Attention triage: filter chips, per-repo counts ──
 
   let triageFilter = $state<TriageFilter>('all');
 
@@ -668,31 +665,25 @@
     return triageForSprite(sessionSpriteState(session, destroying.has(session.id)));
   }
 
-  function notHiddenCompleted(session: { completedAt?: number | null }): boolean {
-    return store.showCompleted || !session.completedAt;
-  }
-
-  /** Every session the sidebar considers (completed ones only when asked). */
-  let visibleSessions = $derived(store.sessions.filter(notHiddenCompleted));
-
   /** Counts for the filter chips, over active and stopped sessions alike. */
-  let counts = $derived(triageCounts(visibleSessions.map(triageOf)));
+  let counts = $derived(triageCounts(store.sessions.map(triageOf)));
 
-  function rowVisible(session: { id: string; status: string; completedAt?: number | null }): boolean {
-    return notHiddenCompleted(session) && matchesTriageFilter(triageFilter, triageOf(session));
+  function rowVisible(session: { id: string; status: string }): boolean {
+    return matchesTriageFilter(triageFilter, triageOf(session));
   }
 
   /** Open tabs (live sessions, plus restored tabs waiting to reconnect) that pass the filter, ordered by the
    *  active sort. This is the always-visible "working set"; the landing's picker shows the same list. */
   let activeSessions = $derived(
-    store.openConversations.filter((s) => matchesTriageFilter(triageFilter, triageOf(s))),
+    store.openConversations.filter(rowVisible),
   );
 
-  let stoppedCount = $derived(visibleSessions.filter((s) => !store.isOpenTab(s)).length);
+  /** Conversations marked completed: stopped and not an open tab. */
+  let completedCount = $derived(store.sessions.filter((s) => !store.isOpenTab(s)).length);
 
   /** Attention counts for one repo's header (all of its sessions, any status). */
   function repoCounts(repo: string) {
-    return triageCounts(store.sessionsForRepo(repo).filter(notHiddenCompleted).map(triageOf));
+    return triageCounts(store.sessionsForRepo(repo).map(triageOf));
   }
 
   /** All sessions for a repo that pass the filter, grouped by branch (for the
@@ -799,10 +790,7 @@
           {:else}
             <svg class="w-3.5 h-3.5 shrink-0 {health.textClass}" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label={branchIconLabel} title={branchIconLabel} data-pr-health={health.kind}><path d="M4 2h4v2H4zm0 6h4v2H4zM2 4h2v4H2zm6 0h2v4H8zm8 0h4v2h-4zm0 6h4v2h-4zm-2-4h2v4h-2zm6 0h2v4h-2zm-8 13h5v2h-5zm5-5h2v5h-2zM5 12h2v10H5z"/></svg>
           {/if}
-          {#if session.completedAt}
-            <svg class="w-3 h-3 shrink-0 text-green-500/70" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-label="Completed" title="Completed"><path d="M20 6 9 17l-5-5"/></svg>
-          {/if}
-          <span class="text-sm truncate min-w-0 flex-1 {session.completedAt ? 'text-muted-foreground' : ''}">{label}</span>
+          <span class="text-sm truncate min-w-0 flex-1">{label}</span>
           {#if ts}
             <!-- Invisible, not hidden, while the quick action sits over it, so the name doesn't reflow. -->
             <span
@@ -828,8 +816,8 @@
         {/if}
       </button>
       {#if !isDestroying}
-        {#if isStopped}
-          <!-- Stopped session: delete (removes the worktree, after asking). -->
+        {#if !store.isOpenTab(session)}
+          <!-- Completed session: delete (removes the worktree, after asking). -->
           <button
             type="button"
             title="Delete conversation"
@@ -842,16 +830,17 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
           </button>
         {:else}
-          <!-- Live session: stop (disconnect but keep it resumable). -->
+          <!-- Open session (live, or restored and waiting to reconnect, like the
+               context menu): mark completed (stops the agent but keeps it resumable). -->
           <button
             type="button"
-            title="Stop agent"
-            aria-label="Stop agent in {label}"
+            title="Mark completed"
+            aria-label="Mark {label} completed"
             onclick={() => stopSession(session.id)}
             class="absolute top-1.5 right-2 w-5 h-5 flex items-center justify-center text-muted-foreground transition-colors
               hover:text-foreground hover:bg-sidebar-accent opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
           </button>
         {/if}
       {/if}
@@ -1016,22 +1005,8 @@
     <div class="flex items-center justify-between mt-5 mb-2 px-1">
       <span class="text-xs text-muted-foreground uppercase tracking-wide">Projects</span>
       <div class="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-        {#if stoppedCount}
-          <span>{stoppedCount} stopped</span>
-        {/if}
-        {#if store.completedCount > 0}
-          <button
-            type="button"
-            onclick={() => store.toggleShowCompleted()}
-            aria-pressed={store.showCompleted}
-            class="flex items-center gap-1 hover:text-foreground transition-colors"
-            title="{store.showCompleted ? 'Hide' : 'Show'} conversations you marked completed"
-          >
-            <span class="w-2.5 h-2.5 border border-current flex items-center justify-center">
-              {#if store.showCompleted}<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{/if}
-            </span>
-            Show completed ({store.completedCount})
-          </button>
+        {#if completedCount}
+          <span>{completedCount} completed</span>
         {/if}
       </div>
     </div>
@@ -1225,7 +1200,7 @@
       <Dialog.Header>
         <Dialog.Title>Clean Up Old Conversations</Dialog.Title>
         <Dialog.Description>
-          Remove stopped conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
+          Remove completed conversations you no longer need. Removing a conversation kills its shell and deletes its worktree. Conversations with uncommitted changes are flagged and left unselected — tick them only if you're sure. Each conversation's pull request state is shown when the GitHub CLI is available; merged ones are the safest to remove. Branches are kept unless you choose otherwise. Running conversations are never listed.
         </Dialog.Description>
       </Dialog.Header>
 
@@ -1252,7 +1227,7 @@
       </div>
 
       {#if cleanupCandidates.length === 0}
-        <p class="text-sm text-muted-foreground/50 py-2">No stopped conversations inactive for {cleanupDaysNum} days.</p>
+        <p class="text-sm text-muted-foreground/50 py-2">No completed conversations inactive for {cleanupDaysNum} days.</p>
       {:else}
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>{cleanupSelectedIds.length} of {cleanupCandidates.length} selected</span>

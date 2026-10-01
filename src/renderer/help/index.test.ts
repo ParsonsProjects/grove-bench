@@ -39,7 +39,7 @@ describe('help topics', () => {
     expect(sessionStates!.content).toContain('Ready');
     expect(sessionStates!.content).toContain('Working');
     expect(sessionStates!.content).toContain('Error');
-    expect(sessionStates!.content).toContain('Stopped');
+    expect(sessionStates!.content).toContain('Completed');
   });
 
   it('contains the keyboard shortcuts topic', () => {

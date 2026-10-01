@@ -2,17 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { attentionCount, badgeText, renderBadgeDataUrl } from './attention-badge.js';
 
 describe('attentionCount', () => {
-  const sessions = [
-    { id: 'a' },
-    { id: 'b' },
-    { id: 'c', completedAt: 1 },
-    { id: 'd', completedAt: null },
-  ];
+  const sessions = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
 
   it('counts sessions that need input or are unread, once each', () => {
-    const needsInput = (id: string) => id === 'a' || id === 'c';
-    const unread = (id: string) => id === 'a' || id === 'd';
-    expect(attentionCount(sessions, needsInput, unread)).toBe(2); // a (both), d (unread); c is completed
+    const needsInput = (id: string) => id === 'a';
+    const unread = (id: string) => id === 'a' || id === 'c';
+    expect(attentionCount(sessions, needsInput, unread)).toBe(2); // a (both), c (unread)
   });
 
   it('is zero when nothing is pending', () => {

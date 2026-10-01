@@ -50,8 +50,6 @@ interface ManifestEntry {
   /** Who set displayName. Auto-naming never replaces a 'user' name. Absent
    *  on entries saved before this was tracked (see decideAutoName). */
   displayNameSource?: DisplayNameSource;
-  /** Epoch ms when the user marked the session completed; absent while open. */
-  completedAt?: number;
   /** The session was destroyed but its directory could not be deleted (Windows
    *  file locks). The entry is hidden from listings and the background sweep
    *  retries the deletion as a known item instead of finding an orphan dir. */
@@ -436,19 +434,6 @@ export class WorktreeManager {
     });
   }
 
-  /** Persist whether the user marked a session completed. Reopening clears
-   *  the timestamp rather than keeping a stale one. */
-  async saveCompleted(worktreeId: string, completed: boolean, now = Date.now()): Promise<void> {
-    await this.withManifest((manifest) => {
-      if (manifest[worktreeId]) {
-        manifest[worktreeId].completedAt = completed ? now : undefined;
-      }
-    });
-    const info = this.worktrees.get(worktreeId);
-    if (info) info.completedAt = completed ? now : null;
-  }
-
-
   /**
    * Throw when removing `id` would take its worktree from other conversations
    * (ones started on it with New Conversation, which run in it without owning
@@ -676,7 +661,6 @@ export class WorktreeManager {
             direct: true,
             ...(entry.noGit ? { noGit: true } : {}),
             displayName: entry.displayName ?? null,
-            completedAt: entry.completedAt ?? null,
             agentType: agentTypeOf(entry),
           });
           continue;
@@ -701,7 +685,6 @@ export class WorktreeManager {
           createdAt: entry.createdAt,
           lastActiveAt: entry.lastActiveAt,
           displayName: entry.displayName ?? null,
-          completedAt: entry.completedAt ?? null,
           agentType: agentTypeOf(entry),
         });
       }
@@ -955,7 +938,6 @@ export class WorktreeManager {
       direct: entry.direct,
       ...(entry.noGit ? { noGit: true } : {}),
       displayName: entry.displayName ?? null,
-      completedAt: entry.completedAt ?? null,
       agentType: agentTypeOf(entry),
     };
 

@@ -14,7 +14,7 @@
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
   import { sessionSpriteState } from './lib/session-sprite-state.js';
-  import { TurnEndWatcher } from './lib/turn-end.js';
+  import { TurnEndWatcher, flagsUnread } from './lib/turn-end.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
@@ -123,8 +123,9 @@
   // (its sidebar character would wave mid-turn). The flag lives in the store
   // so the sidebar can read it.
   const turnEnds = new TurnEndWatcher((sessionId) => {
-    if (!store.sessions.some((s) => s.id === sessionId)) return;
-    if (store.activeSessionId !== sessionId) {
+    const session = store.sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    if (flagsUnread(session, store.activeSessionId)) {
       store.markNeedsAttention(sessionId);
     }
     void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));

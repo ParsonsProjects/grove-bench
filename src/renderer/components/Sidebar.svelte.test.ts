@@ -39,7 +39,7 @@ afterEach(() => {
   store.repos = [];
   store.activeSessionId = null;
   store.finderOpen = false;
-  store.showCompleted = false;
+  store.deferredResume = {};
   store.sessionSort = { key: 'name', dir: 'asc' };
   messageStore.messagesBySession = {};
   messageStore.isRunning = {};
@@ -156,17 +156,25 @@ describe('Sidebar session rows', () => {
 
   it('keeps the quick action outside the row button', async () => {
     render(Sidebar);
-    const stop = screen.getByTitle('Stop agent');
-    expect(stop.tagName).toBe('BUTTON');
-    expect(stop.parentElement!.closest('button')).toBeNull();
-    expect(stop).toHaveAccessibleName('Stop agent in Sidebar revamp');
+    const done = screen.getByTitle('Mark completed');
+    expect(done.tagName).toBe('BUTTON');
+    expect(done.parentElement!.closest('button')).toBeNull();
+    expect(done).toHaveAccessibleName('Mark Sidebar revamp completed');
+  });
+
+  it('offers Mark completed, not delete, on a tab restored at startup', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'stopped', displayName: 'Sidebar revamp' }] as any;
+    store.deferResume('s1');
+    render(Sidebar);
+    expect(screen.getByTitle('Mark completed')).toBeInTheDocument();
+    expect(screen.queryByTitle('Delete conversation')).toBeNull();
   });
 
   it('swaps the age for the quick action on keyboard focus anywhere in the row', async () => {
     store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp', createdAt: Date.now() }] as any;
     render(Sidebar);
     const focusRule = 'group-has-[:focus-visible]/session';
-    expect(screen.getByTitle('Stop agent')).toHaveClass(`${focusRule}:opacity-100`);
+    expect(screen.getByTitle('Mark completed')).toHaveClass(`${focusRule}:opacity-100`);
     expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
   });
 
@@ -199,7 +207,7 @@ describe('Sidebar session rows', () => {
     }
   });
 
-  it('goes back to the landing screen when the open conversation is stopped', async () => {
+  it('goes back to the landing screen when the open conversation is marked completed', async () => {
     store.sessions = [
       { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
       { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Other one' },
@@ -208,8 +216,8 @@ describe('Sidebar session rows', () => {
     render(Sidebar);
     const row = (await screen.findAllByText('Sidebar revamp'))
       .map((el) => el.closest('.group\\/session'))
-      .find((el) => el?.querySelector('[title="Stop agent"]'))!;
-    await fireEvent.click(row.querySelector('[title="Stop agent"]')!);
+      .find((el) => el?.querySelector('[title="Mark completed"]'))!;
+    await fireEvent.click(row.querySelector('[title="Mark completed"]')!);
 
     expect(closeSession).toHaveBeenCalledWith('s1');
     // Not the other running conversation.
@@ -271,13 +279,10 @@ describe('Sidebar attention triage', () => {
     messageStore.messagesBySession['blocked'] = [
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
-    localStorage.removeItem('grove-bench:sidebar-show-completed');
   });
 
   afterEach(() => {
     store.needsAttention = {};
-    mockGroveBench.setSessionCompleted.mockReset();
-    mockGroveBench.setSessionCompleted.mockResolvedValue(undefined);
   });
 
   it('shows filter chips with mutually exclusive counts', async () => {
@@ -348,30 +353,28 @@ describe('Sidebar attention triage', () => {
     expect(screen.getByTitle('1 unread')).toBeInTheDocument();
   });
 
-  it('hides completed sessions until "Show completed" is on, and reopens them from the context menu', async () => {
-    store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, completedAt: 123 } : s));
+  it('marks a conversation completed from the context menu: stops it and clears its unread flag', async () => {
     render(Sidebar);
 
-    expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByText('Show completed (1)'));
-    expect(screen.getByText('Quiet one')).toBeInTheDocument();
-
-    await fireEvent.contextMenu(screen.getByText('Quiet one'));
-    await fireEvent.click(screen.getByText('Reopen'));
-
-    expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('quiet', false);
-    expect(store.sessions.find((s) => s.id === 'quiet')?.completedAt).toBeNull();
-  });
-
-  it('marks a session completed from the context menu', async () => {
-    render(Sidebar);
-
-    await fireEvent.contextMenu(screen.getByText('Working one'));
+    await fireEvent.contextMenu(screen.getByText('Finished one'));
     await fireEvent.click(screen.getByText('Mark Completed'));
 
-    expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('working', true);
-    expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('finished');
+    expect(store.sessions.find((s) => s.id === 'finished')?.status).toBe('stopped');
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
+  });
+
+  it('offers no Mark Completed for a conversation that is already stopped', async () => {
+    store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, status: 'stopped' } : s));
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
+    render(Sidebar);
+
+    expect(screen.getByText('1 completed')).toBeInTheDocument();
+    await fireEvent.contextMenu(await screen.findByText('Quiet one'));
+
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Mark Completed')).toBeNull();
   });
 });
 
