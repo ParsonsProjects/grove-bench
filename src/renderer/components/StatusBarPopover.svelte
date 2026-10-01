@@ -4,13 +4,17 @@
    * owner keeps `open` and decides what opening does; this closes it on a
    * click outside and on Escape, and keeps the panel inside the window.
    *
-   * Escape is handled in the capture phase and only while the popover is on
-   * screen: every conversation's pane stays mounted, and one left open in a
-   * hidden pane must not swallow Escape meant for what is on screen. It
-   * stops there, so it doesn't reach the prompt (where it stops the agent),
-   * and gives focus back to the trigger if focus was inside.
+   * Escape is handled in the capture phase, so it closes this before anything
+   * under it reacts, and gives focus back to the trigger. It is left alone
+   * while the popover is off screen (every conversation's pane stays mounted,
+   * and one left open in a hidden pane must not swallow Escape meant for what
+   * is on screen) and while focus is somewhere else, such as a dialog or the
+   * conversation finder opened over it.
+   *
+   * Closes when it unmounts too: a chip that goes away and comes back (the
+   * pending tools count, say) must not reopen its popover by itself.
    */
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
   import { fly } from 'svelte/transition';
   import { keepInViewport } from '../lib/keep-in-viewport.js';
 
@@ -56,11 +60,12 @@
     };
     const onKeydown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !(root?.checkVisibility?.() ?? true)) return;
+      const focused = document.activeElement;
+      const focusInside = !!focused && !!root?.contains(focused);
+      if (!focusInside && focused && focused !== document.body) return;
       e.stopPropagation();
-      // Escape pressed while typing elsewhere shouldn't move the caret.
-      const focusWasInside = !!root?.contains(document.activeElement);
       open = false;
-      if (focusWasInside) {
+      if (focusInside) {
         (root?.querySelector<HTMLElement>('[data-popover-trigger]') ?? root?.querySelector<HTMLElement>('button'))?.focus();
       }
     };
@@ -73,20 +78,22 @@
   });
 
   // whitespace-normal: a panel inside a no-wrap row must still wrap its text.
+  onDestroy(() => { open = false; });
+
   let placement = $derived(`absolute bottom-full mb-2 z-50 whitespace-normal ${align === 'right' ? 'right-0' : 'left-0'}`);
 </script>
 
 <div bind:this={root} class="{anchored ? 'relative' : ''} {className}">
   {@render trigger()}
-  {#if open}
-    {#if animate}
-      <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class="{placement} {panelClass}" data-testid={testid}>
-        {@render children()}
-      </div>
-    {:else}
-      <div use:keepInViewport class="{placement} {panelClass}" data-testid={testid}>
-        {@render children()}
-      </div>
-    {/if}
+  <!-- One block, not an {#if animate} inside {#if open}: a transition is
+       local, so it only plays when its own block opens or closes. -->
+  {#if open && animate}
+    <div transition:fly={{ y: 6, duration: 140 }} use:keepInViewport class="{placement} {panelClass}" data-testid={testid}>
+      {@render children()}
+    </div>
+  {:else if open}
+    <div use:keepInViewport class="{placement} {panelClass}" data-testid={testid}>
+      {@render children()}
+    </div>
   {/if}
 </div>

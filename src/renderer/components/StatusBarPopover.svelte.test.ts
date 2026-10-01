@@ -54,4 +54,32 @@ describe('StatusBarPopover', () => {
     expect(screen.queryByTestId('panel')).not.toBeNull();
     expect(onScreen).toHaveBeenCalled();
   });
+
+  it('leaves Escape to what has focus elsewhere, such as a dialog opened over it', async () => {
+    renderOpen();
+    const finder = document.createElement('input');
+    document.body.appendChild(finder);
+    finder.focus();
+    const finderGotIt = vi.fn();
+    finder.addEventListener('keydown', finderGotIt);
+
+    await fireEvent.keyDown(finder, { key: 'Escape' });
+    finder.remove();
+
+    expect(finderGotIt).toHaveBeenCalled();
+    expect(screen.queryByTestId('panel')).not.toBeNull();
+  });
+
+  it('slides in when asked to', async () => {
+    const realAnimate = Element.prototype.animate;
+    const animate = vi.fn(() => ({ onfinish: null, cancel() {}, currentTime: 0 }) as unknown as Animation);
+    Element.prototype.animate = animate as never;
+    try {
+      const { rerender } = render(StatusBarPopover, { open: false, animate: true, trigger, children });
+      await rerender({ open: true, animate: true, trigger, children });
+      expect(animate).toHaveBeenCalled();
+    } finally {
+      Element.prototype.animate = realAnimate;
+    }
+  });
 });

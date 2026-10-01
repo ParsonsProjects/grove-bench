@@ -462,6 +462,22 @@ describe('StatusBar activity', () => {
     expect(getByTestId('activity').textContent?.trim()).toBe('waiting for you');
   });
 
+  it('does not reopen the pending tools popover when the next tool comes along', async () => {
+    const tool = { kind: 'tool_call', id: 't', toolName: 'Bash', toolUseId: 'tu1', toolInput: { command: 'ls' }, pending: true } as any;
+    messageStore.messagesBySession[ACTIVE] = [tool];
+    render(StatusBar, { props: { sessionId: ACTIVE } });
+    await fireEvent.click(screen.getByRole('button', { name: /^1 tool/ }));
+    expect(screen.queryByText('Pending Tools')).not.toBeNull();
+
+    // The tool finishes with the popover still open, then the next one starts.
+    messageStore.messagesBySession[ACTIVE] = [];
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).toBeNull());
+    messageStore.messagesBySession[ACTIVE] = [{ ...tool, toolUseId: 'tu2' }];
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).not.toBeNull());
+    expect(screen.queryByText('Pending Tools')).toBeNull();
+  });
+
   it('goes back to the agent\'s state once answered', () => {
     messageStore.messagesBySession[ACTIVE] = [{ kind: 'permission', id: 'p1', resolved: true } as any];
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
@@ -529,6 +545,42 @@ describe('StatusBar last turn', () => {
     finishTurn(0.0423);
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
     expect(getByTestId('last-turn').textContent?.replace(/\s+/g, ' ').trim()).toBe('last turn 4.2s');
+  });
+
+  it('waits to show a cost until it knows the sign-in, and asks', () => {
+    // Claude reports plan usage; nothing has fetched it yet.
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: { usage: true }, isDefault: true }];
+    agentsStore.loaded = true;
+    const refresh = vi.spyOn(usageStore, 'refresh').mockResolvedValue();
+    try {
+      finishTurn(0.0423);
+      const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(getByTestId('last-turn').textContent).not.toContain('$');
+      expect(refresh).toHaveBeenCalledWith(ACTIVE);
+    } finally {
+      agentsStore.list = [];
+      agentsStore.loaded = false;
+    }
+  });
+
+  it('shows the cost for an agent that cannot report plan usage', () => {
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, isDefault: true }];
+    agentsStore.loaded = true;
+    try {
+      finishTurn(0.0423);
+      const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+      expect(getByTestId('last-turn').textContent).toContain('$0.04');
+    } finally {
+      agentsStore.list = [];
+      agentsStore.loaded = false;
+    }
+  });
+
+  it('shows a free turn as $0.00, not under a cent', () => {
+    usageStore.byProvider = { 'claude-code': { available: false, windows: [], fetchedAt: Date.now() } };
+    finishTurn(0);
+    const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
+    expect(getByTestId('last-turn').textContent).toContain('$0.00');
   });
 
   it('says when a turn cost under a cent', () => {

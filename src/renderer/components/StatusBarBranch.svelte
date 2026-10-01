@@ -164,6 +164,8 @@
             </button>
           {/snippet}
 
+          <!-- The popover takes Escape first and hands focus back to the
+               branch; BranchPicker's own Escape is for it on its own. -->
           <BranchPicker
             {sessionId}
             repoPath={sessionRepoPath}
@@ -232,7 +234,16 @@
         {/if}
 
         {#if prInfo}
-          <StatusBarPr {sessionId} {prInfo} {preparingPrTurn} oncreatepr={createPr} />
+          <StatusBarPr
+            {sessionId}
+            {prInfo}
+            {sessionBranch}
+            {ghAvailable}
+            {isRunning}
+            {canAgentCreatePr}
+            {preparingPrTurn}
+            oncreatepr={createPr}
+          />
         {:else if showCreatePr}
           <StatusBarPopover bind:open={createPrMenuOpen} anchored={false} panelClass="bg-popover border border-border shadow-xl py-1 text-xs w-48">
             {#snippet trigger()}

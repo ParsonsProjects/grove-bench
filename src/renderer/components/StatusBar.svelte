@@ -87,7 +87,7 @@
 {/if}
 <!-- The window can be 800px wide with the sidebar open, which leaves this
      bar about 480px. Narrow, the extras drop out so the agent, activity,
-     branch and context keep their room: Keys (F1 has the list) and MCP /
+     branch and context keep their room: Keys (Help has the list) and MCP /
      Skills below 672px (MCP stays while a server is down), the project name
      below 768px, and the last turn's cost below 1024px. -->
 <div class="@container flex items-center gap-3 px-3 @3xl:gap-4 @3xl:px-4 py-1 bg-card border-t border-b border-border text-xs text-muted-foreground shrink-0">

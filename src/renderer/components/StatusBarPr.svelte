@@ -7,22 +7,31 @@
   import { untrack } from 'svelte';
   import { prStore } from '../stores/pr.svelte.js';
   import type { PrAlert } from '../stores/pr.svelte.js';
-  import { messageStore } from '../stores/messages.svelte.js';
-  import { store } from '../stores/sessions.svelte.js';
   import { Checkbox } from '$lib/components/ui/checkbox/index.js';
   import { prHealth } from '../lib/pr-state.js';
   import type { PrInfo } from '../../shared/types.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
 
+  // Session state comes from StatusBarBranch, so the "agent is idle" rule
+  // here and on its Create PR link can't drift apart.
   let {
     sessionId,
     prInfo,
+    sessionBranch,
+    ghAvailable,
+    isRunning,
+    canAgentCreatePr,
     preparingPrTurn,
     oncreatepr,
   }: {
     sessionId: string;
     /** The primary PR: what the pill, alerts, and automation follow. */
     prInfo: PrInfo;
+    sessionBranch: string;
+    ghAvailable: boolean;
+    isRunning: boolean;
+    /** Agent turns need a live, idle session. */
+    canAgentCreatePr: boolean;
     /** A "create PR" turn is being prepared, so it can't be sent twice. */
     preparingPrTurn: boolean;
     /** Start a new PR, by a turn for the agent or by the dialog. */
@@ -31,12 +40,6 @@
 
   /** The session's other PRs (replaced, stacked, or from another branch). */
   let otherPrs = $derived(prStore.getPrs(sessionId).filter((p) => p.number !== prInfo.number));
-  let ghAvailable = $derived(store.prerequisites?.gh?.available === true);
-  let sessionBranch = $derived(store.sessions.find((s) => s.id === sessionId)?.branch ?? '');
-  let sessionStatus = $derived(store.sessions.find((s) => s.id === sessionId)?.status);
-  let isRunning = $derived(messageStore.getIsRunning(sessionId));
-  /** Agent turns need a live, idle session. */
-  let canAgentCreatePr = $derived(sessionStatus === 'running' && !isRunning);
 
   // ── PR watching: alerts + auto mode (all shown in one popover) ──
   let prAlerts = $derived(prStore.getAlerts(sessionId));

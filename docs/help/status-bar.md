@@ -2,7 +2,7 @@
 
 The status bar sits at the bottom of the workspace, just above the prompt, and shows live information about the open conversation.
 
-In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost, the project name (the branch's tooltip still names it), then **Keys** (`F1` opens the same list) and the **MCP** and **Skills** badges. The MCP badge stays while a server is down.
+In a narrow window the bar drops its extras so the agent settings, the activity, the branch and the context meter keep their room. As it narrows it drops, in order: the last turn's cost and duration, the project name (the branch's tooltip still names it), then **Keys** (the same list is under Keyboard Shortcuts in Help, `F1`) and the **MCP** and **Skills** badges. The MCP badge stays while a server is down.
 
 ## Agent Settings
 
