@@ -1,10 +1,11 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, BranchSyncResult, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
+import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
 import { worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
@@ -88,6 +89,25 @@ const branchAutoNameAttempts = new Map<string, number>();
  *  next try instead of asking the agent again. */
 const branchAutoNamePending = new Map<string, string>();
 const MAX_BRANCH_AUTO_NAME_ATTEMPTS = 2;
+
+/** Conversations whose goal is being generated, and how many automatic
+ *  tries each has had this run. Bounded like branch names, so a failing
+ *  agent isn't asked again after every turn. */
+const goalInFlight = new Set<string>();
+const goalAutoAttempts = new Map<string, number>();
+const MAX_GOAL_AUTO_ATTEMPTS = 2;
+
+/** Generate a goal from a conversation's messages on its own agent and save
+ *  it, unless the goal changed from `current` meanwhile. Resolves to the
+ *  saved goal, or null when it wasn't saved. */
+async function generateAndSaveGoal(sessionId: string, current: ConversationGoal, input: GoalInput): Promise<ConversationGoal | null> {
+  const live = sessionManager.getSession(sessionId);
+  const adapter = live?.adapter ?? await recordedAgent(sessionId);
+  const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
+  if (!cwd) throw new Error('The conversation\'s folder could not be found');
+  const text = await generateGoal(input, adapter, cwd);
+  return worktreeManager.saveGoal(sessionId, text, 'auto', current);
+}
 
 /** Search a session in prelaunchPrefixedEvents' index space, using the cached
  *  search index for the history instead of scanning the combined array. */
@@ -529,6 +549,7 @@ export function registerHandlers() {
     // bookmarks file that can't be read right now doesn't fail the delete.
     try { bookmarks.removeBookmarksForSession(id); } catch (err) { logger.warn(`Could not remove bookmarks for ${id}:`, err); }
     void removeImages(id); // images shown in its Activity thread
+    goalAutoAttempts.delete(id);
     logger.info(`Session destroyed: id=${id}`);
   });
 
@@ -569,6 +590,62 @@ export function registerHandlers() {
     if (next.source !== 'auto') return null;
     sessionManager.renameSession(sessionId, next.displayName);
     return next.displayName;
+  });
+
+  // ─── Conversation goal ───
+
+  ipcMain.handle(IPC.SESSION_GOAL_GET, async (_event, sessionId: string): Promise<ConversationGoal | null> => {
+    return (await worktreeManager.getGoal(sessionId)) ?? null;
+  });
+
+  ipcMain.handle(IPC.SESSION_GOAL_SET, async (_event, sessionId: string, text: string): Promise<ConversationGoal | null> => {
+    return worktreeManager.saveGoal(sessionId, cleanUserGoal(typeof text === 'string' ? text : ''), 'user');
+  });
+
+  ipcMain.handle(IPC.SESSION_GOAL_HIDE, async (_event, sessionId: string, hidden: boolean): Promise<ConversationGoal | null> => {
+    return worktreeManager.setGoalHidden(sessionId, hidden === true);
+  });
+
+  ipcMain.handle(IPC.SESSION_GOAL_AUTO, async (_event, sessionId: string): Promise<ConversationGoal | null> => {
+    if (!settings.getSettings().showConversationGoal || goalInFlight.has(sessionId)) return null;
+    const attempts = goalAutoAttempts.get(sessionId) ?? 0;
+    if (attempts >= MAX_GOAL_AUTO_ATTEMPTS) return null;
+    // Marked before the first await, so a second call can't pass the checks.
+    goalInFlight.add(sessionId);
+    try {
+      const current = await worktreeManager.getGoal(sessionId);
+      // Only ever once: a goal generated or typed before, even one the user
+      // cleared, stays as it is. Refresh makes a new one on request. None for
+      // a conversation whose bar was closed: nobody would see it.
+      if (!current || current.source || current.hidden) return null;
+      const input = goalInputFromEvents(prelaunchPrefixedEvents(sessionId));
+      if (input.prompts.length === 0 || !input.reply) return null; // no reply to summarise yet
+      goalAutoAttempts.set(sessionId, attempts + 1);
+      return await generateAndSaveGoal(sessionId, current, input);
+    } catch (e) {
+      logger.warn(`Automatic goal failed for ${sessionId}:`, e);
+      if (/does not support text generation/.test(String((e as Error)?.message ?? e))) {
+        goalAutoAttempts.set(sessionId, MAX_GOAL_AUTO_ATTEMPTS);
+      }
+      return null;
+    } finally {
+      goalInFlight.delete(sessionId);
+    }
+  });
+
+  ipcMain.handle(IPC.SESSION_GOAL_REFRESH, async (_event, sessionId: string): Promise<ConversationGoal | null> => {
+    // One is already being written: its result is on the way.
+    if (goalInFlight.has(sessionId)) return (await worktreeManager.getGoal(sessionId)) ?? null;
+    goalInFlight.add(sessionId);
+    try {
+      const current = await worktreeManager.getGoal(sessionId);
+      if (!current) return null;
+      const input = goalInputFromEvents(prelaunchPrefixedEvents(sessionId));
+      // Not saved when the goal was edited meanwhile: the edit stands.
+      return (await generateAndSaveGoal(sessionId, current, input)) ?? (await worktreeManager.getGoal(sessionId)) ?? null;
+    } finally {
+      goalInFlight.delete(sessionId);
+    }
   });
 
   // ─── Branches ───

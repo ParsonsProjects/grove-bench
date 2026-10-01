@@ -33,6 +33,7 @@
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
+  import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
@@ -133,6 +134,9 @@
       store.markNeedsAttention(sessionId);
     }
     void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+    // Alongside, as it needs neither name: the goal, written once after the
+    // first reply (main skips the rest).
+    void goalStore.autoGenerate(sessionId);
   });
   $effect(() => {
     for (const session of store.sessions) {

@@ -29,6 +29,7 @@ const m = vi.hoisted(() => {
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
+      'getGoal', 'saveGoal', 'setGoalHidden',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
@@ -93,6 +94,10 @@ vi.mock('./branch-name.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./branch-name.js')>()),
   generateBranchName: vi.fn(),
 }));
+vi.mock('./session-goal.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./session-goal.js')>()),
+  generateGoal: vi.fn(),
+}));
 
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
@@ -101,6 +106,7 @@ import type { AgentEvent } from '../shared/types.js';
 import * as git from './git.js';
 import * as gh from './gh.js';
 import { generateBranchName } from './branch-name.js';
+import { generateGoal } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
 import { logRendererError } from './crash-handling.js';
@@ -557,6 +563,132 @@ describe('BRANCH_AUTO_NAME', () => {
     await invoke(IPC.BRANCH_AUTO_NAME, 'a0000006');
     expect(await invoke(IPC.BRANCH_AUTO_NAME, 'a0000006')).toBeNull();
     expect(generateBranchName).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('conversation goal', () => {
+  const NO_GOAL = { text: null, source: null, hidden: false };
+
+  /** A live conversation that has had one reply. Each test uses its own id:
+   *  attempt counts are kept per conversation for the app's life. */
+  function liveWithReply(id: string) {
+    const live = { id, worktreePath: wt, adapter: { id: 'claude' } };
+    m.sessionManager.getSession.mockReturnValue(live);
+    m.sessionManager.getEventHistory.mockReturnValue([
+      { type: 'user_message', text: 'Add a dark mode toggle' },
+      { type: 'assistant_text', text: 'Added it to settings.', uuid: 'a1' },
+    ]);
+    m.settings.getSettings.mockReturnValue({ showConversationGoal: true });
+    m.worktreeManager.getGoal.mockResolvedValue(NO_GOAL);
+    m.worktreeManager.saveGoal.mockImplementation(async (_id: string, text: string, source: string) => ({ text, source, hidden: false }));
+    return live;
+  }
+
+  it('writes the first goal from the messages and the reply', async () => {
+    const live = liveWithReply('g0000001');
+    vi.mocked(generateGoal).mockResolvedValue('Add a dark mode toggle');
+
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000001')).toEqual({ text: 'Add a dark mode toggle', source: 'auto', hidden: false });
+    expect(generateGoal).toHaveBeenCalledWith(
+      { prompts: ['Add a dark mode toggle'], skipped: 0, reply: 'Added it to settings.' }, live.adapter, wt,
+    );
+    // Saved only if nothing changed while it was generated.
+    expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000001', 'Add a dark mode toggle', 'auto', NO_GOAL);
+  });
+
+  it('writes a goal only once, never over one already made or typed', async () => {
+    liveWithReply('g0000002');
+    m.worktreeManager.getGoal.mockResolvedValue({ text: null, source: 'user', hidden: false });
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000002')).toBeNull();
+    // Nor for a conversation whose bar was closed.
+    m.worktreeManager.getGoal.mockResolvedValue({ text: null, source: null, hidden: true });
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000002')).toBeNull();
+    expect(generateGoal).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when goals are off or there is no reply yet', async () => {
+    liveWithReply('g0000003');
+    m.settings.getSettings.mockReturnValue({ showConversationGoal: false });
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000003')).toBeNull();
+
+    liveWithReply('g0000004');
+    m.sessionManager.getEventHistory.mockReturnValue([{ type: 'user_message', text: 'Add a dark mode toggle' }]);
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000004')).toBeNull();
+    expect(generateGoal).not.toHaveBeenCalled();
+  });
+
+  it('gives up after two failed attempts, and at once for an agent that cannot write text', async () => {
+    liveWithReply('g0000005');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000005');
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000005');
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000005')).toBeNull();
+    expect(generateGoal).toHaveBeenCalledTimes(2);
+
+    vi.mocked(generateGoal).mockClear();
+    liveWithReply('g0000006');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('The Test agent does not support text generation'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000006');
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000006')).toBeNull();
+    expect(generateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes one call when two arrive together', async () => {
+    liveWithReply('g0000009');
+    let finish!: (goal: string) => void;
+    vi.mocked(generateGoal).mockReturnValue(new Promise((r) => { finish = r; }));
+
+    const first = invoke(IPC.SESSION_GOAL_AUTO, 'g0000009');
+    const second = invoke(IPC.SESSION_GOAL_AUTO, 'g0000009');
+    expect(await second).toBeNull();
+    await flush();
+    finish('Add a dark mode toggle');
+    expect(await first).toMatchObject({ text: 'Add a dark mode toggle' });
+    expect(generateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets the attempts of a deleted conversation', async () => {
+    liveWithReply('g0000010');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    expect(generateGoal).toHaveBeenCalledTimes(2);
+
+    await invoke(IPC.SESSION_DESTROY, 'g0000010', false);
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    expect(generateGoal).toHaveBeenCalledTimes(3);
+  });
+
+  it('refreshes over a typed goal, and reports a failure', async () => {
+    liveWithReply('g0000007');
+    const typed = { text: 'Mine', source: 'user', hidden: false };
+    m.worktreeManager.getGoal.mockResolvedValue(typed);
+    vi.mocked(generateGoal).mockResolvedValue('Ship dark mode');
+
+    expect(await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000007')).toEqual({ text: 'Ship dark mode', source: 'auto', hidden: false });
+    expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000007', 'Ship dark mode', 'auto', typed);
+
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await expect(invoke(IPC.SESSION_GOAL_REFRESH, 'g0000007')).rejects.toThrow('model busy');
+  });
+
+  it('keeps an edit made during a refresh', async () => {
+    liveWithReply('g0000008');
+    vi.mocked(generateGoal).mockResolvedValue('Generated');
+    m.worktreeManager.saveGoal.mockResolvedValue(null);
+    const edited = { text: 'Edited meanwhile', source: 'user', hidden: false };
+    m.worktreeManager.getGoal.mockResolvedValueOnce(NO_GOAL).mockResolvedValueOnce(edited);
+
+    expect(await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000008')).toEqual(edited);
+  });
+
+  it('saves a typed goal on one line, and hides the bar', async () => {
+    m.worktreeManager.saveGoal.mockResolvedValue({ text: 'Ship it', source: 'user', hidden: false });
+    await invoke(IPC.SESSION_GOAL_SET, 's1', '  Ship\n it ');
+    expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('s1', 'Ship it', 'user');
+
+    await invoke(IPC.SESSION_GOAL_HIDE, 's1', true);
+    expect(m.worktreeManager.setGoalHidden).toHaveBeenCalledWith('s1', true);
   });
 });
 
