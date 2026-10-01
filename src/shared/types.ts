@@ -1300,6 +1300,16 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
+/** An agent the user added that speaks the Agent Client Protocol over stdio. */
+export interface AcpAgentSetting {
+  /** Stable id (the adapter id is `acp-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** Program to run, on PATH or a full path. */
+  command: string;
+  args: string[];
+}
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1330,6 +1340,8 @@ export interface GroveBenchSettings {
   cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
+  /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
+  acpAgents: AcpAgentSetting[];
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */

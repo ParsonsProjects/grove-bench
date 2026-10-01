@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  acpAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
@@ -187,6 +188,14 @@ class SettingsStore {
 
   removeWorkingDirectory(index: number) {
     this.draft.workingDirectories = this.draft.workingDirectories.filter((_, i) => i !== index);
+  }
+
+  addAcpAgent(agent: { name: string; command: string; args: string[] }) {
+    this.draft.acpAgents = [...this.draft.acpAgents, { id: '', ...agent }];
+  }
+
+  removeAcpAgent(index: number) {
+    this.draft.acpAgents = this.draft.acpAgents.filter((_, i) => i !== index);
   }
 
 }

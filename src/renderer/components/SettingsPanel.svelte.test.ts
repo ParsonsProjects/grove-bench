@@ -26,7 +26,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false,
-    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '',
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [],
     memoryAutoSave: true, memoryAutoCompact: false, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -163,7 +163,7 @@ describe('SettingsPanel loading', () => {
     render(SettingsPanel, { open: true, onclose: vi.fn() });
     await waitFor(() => expect(settingsStore.loading).toBe(false));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'MCP' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Trails (MCP)' }));
     await waitFor(() => expect(mcpConfigStore.error).toMatch(/command not found/));
     for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
 
