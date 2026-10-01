@@ -1074,6 +1074,16 @@
             {/if}
           </button>
           <div class="flex items-center gap-0.5">
+            <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first).
+                 Before the +: it only shows on hover, and on the outside it left a gap at the row's edge. -->
+            <button
+              onclick={() => requestRemoveRepo(repo)}
+              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              title="Remove project"
+              aria-label="Remove project {store.repoDisplayName(repo)}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+            </button>
             <!-- Always shown: this is the main way to start a conversation in a project. -->
             <button
               onclick={() => openNewAgent(repo)}
@@ -1082,15 +1092,6 @@
               aria-label="New conversation in {store.repoDisplayName(repo)}"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-            </button>
-            <!-- A bin, like a conversation's delete: removing a project deletes its conversations too (it asks first). -->
-            <button
-              onclick={() => requestRemoveRepo(repo)}
-              class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-              title="Remove project"
-              aria-label="Remove project {store.repoDisplayName(repo)}"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
             </button>
           </div>
         </div>

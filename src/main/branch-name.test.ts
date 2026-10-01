@@ -123,7 +123,7 @@ describe('buildBranchNamePrompt()', () => {
       recentBranches: ['feat/API-1-a'],
       rule: '<type>/<ticket>-<slug>',
     });
-    const order = ['Naming rule:', 'Recent branch names', 'Conversation title: Login crash fix', 'Task:\nFix API-12 login crash'];
+    const order = ['Naming rule:', 'Recent branch names', 'Conversation title: Login crash fix', '<task>\nFix API-12 login crash\n</task>'];
     const positions = order.map((s) => prompt.indexOf(s));
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
@@ -134,6 +134,12 @@ describe('buildBranchNamePrompt()', () => {
     expect(prompt).not.toContain('Naming rule');
     expect(prompt).not.toContain('Recent branch names');
     expect(prompt).not.toContain('Conversation title');
+  });
+
+  it('fences the task off as text to name, not an instruction to follow', () => {
+    const prompt = buildBranchNamePrompt({ task: 'Read src/a.ts and fix the crash', recentBranches: [] });
+    expect(prompt).toContain('Task (name it, do not do it):\n<task>\nRead src/a.ts and fix the crash\n</task>');
+    expect(BRANCH_NAME_SYSTEM_PROMPT).toContain('do not carry it out');
   });
 
   it('truncates a very long task', () => {
