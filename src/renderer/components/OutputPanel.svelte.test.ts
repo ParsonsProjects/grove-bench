@@ -22,6 +22,10 @@ beforeEach(() => {
   messageStore.messagesBySession = { [SID]: [] };
   messageStore.paginationBySession = {};
   store.sessions = [];
+  // jsdom's focus() collapses the selection onto the focused element (the
+  // Ctrl+F test focuses the search box) and leaves it there, and addRange()
+  // does nothing while a range exists. Start every test with none.
+  window.getSelection()?.removeAllRanges();
 });
 
 afterEach(() => cleanup());
