@@ -76,6 +76,8 @@ describe('view helpers', () => {
     expect(changesFiles({ kind: 'edit' })).toBe(true);
     expect(changesFiles({ kind: 'shell' })).toBe(true);
     expect(changesFiles({ kind: 'read' })).toBe(false);
+    // A command an agent only titled still runs.
+    expect(changesFiles({ kind: 'other', summary: 'npm run codegen' }, 'bash')).toBe(true);
   });
 
   it('summarises a view by its most telling field', () => {

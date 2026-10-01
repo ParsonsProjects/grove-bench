@@ -16,10 +16,13 @@ describe('tool calls', () => {
     expect(merged).toEqual({ toolCallId: 't', title: 'Read', kind: 'read', status: 'completed' });
   });
 
-  it('names a call by its programmatic name, else its kind', () => {
+  it('names a call by its programmatic name, else its kind or, for other tools, its title', () => {
     expect(toolNameFor({ toolCallId: 't', name: 'read_file', kind: 'read' })).toBe('read_file');
-    expect(toolNameFor({ toolCallId: 't', kind: 'execute' })).toBe('execute');
-    expect(toolNameFor({ toolCallId: 't' })).toBe('tool');
+    expect(toolNameFor({ toolCallId: 't', kind: 'execute', title: 'npm test' })).toBe('execute');
+    // Allowing one MCP tool always mustn't allow every 'other' tool.
+    expect(toolNameFor({ toolCallId: 't', kind: 'other', title: 'preview_screenshot (grove-preview MCP Server)' }))
+      .toBe('preview_screenshot (grove-preview MCP Server)');
+    expect(toolNameFor({ toolCallId: 't' })).toBe('other');
   });
 
   it('maps kinds to rule categories', () => {
@@ -35,6 +38,17 @@ describe('tool calls', () => {
       .toMatchObject({ kind: 'edit', path: path.join('src', 'a.ts'), edits: [{ oldText: 'a', newText: 'b' }] });
     expect(toolViewFor({ toolCallId: 't', kind: 'edit', content: [{ type: 'diff', path: file, oldText: null, newText: 'new' }] }, CWD))
       .toMatchObject({ kind: 'edit', write: 'new' });
+  });
+
+  it('keeps every path an edit names, not just its diff\'s', () => {
+    const outside = path.resolve('/home/me/.ssh/config');
+    const view = toolViewFor({
+      toolCallId: 't', kind: 'move',
+      locations: [{ path: outside }],
+      content: [{ type: 'diff', path: path.join(CWD, 'src', 'a.ts'), oldText: 'a', newText: 'b' }],
+    }, CWD);
+    expect(view.path).toBe(path.join('src', 'a.ts'));
+    expect(view.morePaths).toEqual([outside]);
   });
 
   it('keeps paths outside the worktree absolute', () => {
@@ -53,9 +67,10 @@ describe('tool calls', () => {
     expect(toolViewFor({ toolCallId: 't', kind: 'fetch', rawInput: { query: 'acp' } }, CWD)).toMatchObject({ kind: 'web_search', query: 'acp' });
   });
 
-  it('matches rules on the command, path or URL', () => {
+  it('matches rules on the command, path or URL, never the agent\'s title', () => {
     expect(specifierFor({ kind: 'shell', command: 'npm test' })).toBe('npm test');
     expect(specifierFor({ kind: 'edit', path: 'a.ts' })).toBe('a.ts');
+    expect(specifierFor({ kind: 'other', summary: 'npm test' })).toBe('');
   });
 });
 
@@ -112,6 +127,13 @@ describe('customAcpAgents', () => {
       { id: 'empty', name: 'No command', command: '  ', args: [] },
     ]);
     expect(defs).toEqual([{ id: 'acp-codex-acp', displayName: 'Codex (ACP)', command: 'codex-acp', args: [] }]);
+  });
+
+  it('falls back to the command when the name gives no usable id', () => {
+    expect(customAcpAgents([{ id: '', name: '\u4ee3\u7406', command: 'codex-acp', args: [] }]))
+      .toEqual([{ id: 'acp-codex-acp', displayName: '\u4ee3\u7406', command: 'codex-acp', args: [] }]);
+    const [hashed] = customAcpAgents([{ id: '', name: '\u{1F916}', command: '\u4ee3\u7406', args: [] }]);
+    expect(hashed.id).toMatch(/^acp-agent-[0-9a-f]{8}$/);
   });
 });
 

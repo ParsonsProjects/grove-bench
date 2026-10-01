@@ -40,7 +40,7 @@ const GROVE_MCP_SERVERS = new Set(['grove-preview', 'grove-memory']);
  *  commands, and MCP tools other than Grove's own, since they can act outside
  *  the project, such as creating a ticket or sending a message. */
 function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
-  if (changesFiles(toolViewOf(call))) return true;
+  if (changesFiles(toolViewOf(call), call.toolCategory)) return true;
   const mcp = parseMcpToolName(call.toolName);
   return !!mcp && !GROVE_MCP_SERVERS.has(mcp.server);
 }

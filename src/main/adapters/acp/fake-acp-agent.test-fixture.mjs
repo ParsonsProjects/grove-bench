@@ -13,6 +13,7 @@ const waiting = new Map();
 let cancelRequested = null;
 let model = 'm1';
 let lastMcpServers = [];
+let busy = false;
 
 function send(msg) {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
@@ -67,7 +68,18 @@ async function prompt(params) {
     await new Promise((resolve) => { cancelRequested = resolve; });
     return { stopReason: 'cancelled' };
   }
+  if (text === 'titled-exec') {
+    // Like Gemini CLI: a title, no rawInput.
+    update(sid, { sessionUpdate: 'tool_call', toolCallId: 'e1', kind: 'execute', title: 'npm test', status: 'pending' });
+    const answer = await request('session/request_permission', {
+      sessionId: sid, toolCall: { toolCallId: 'e1' },
+      options: [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
+    });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'e1', status: answer.outcome.optionId === 'ok' ? 'completed' : 'failed' });
+    return { stopReason: 'end_turn' };
+  }
   if (params.prompt.at(-1)?.text === 'echo') {
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const texts = params.prompt.filter((b) => b.type === 'text').map((b) => b.text).join('|');
     update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: texts } });
     return { stopReason: 'end_turn' };
@@ -144,8 +156,16 @@ async function handle(msg) {
       return reply({ configOptions: configOptions() });
     case 'session/set_mode':
       return reply({});
-    case 'session/prompt':
-      return reply(await prompt(params));
+    case 'session/prompt': {
+      // ACP allows one prompt at a time per session.
+      if (busy) return fail(-32603, 'A prompt is already running');
+      busy = true;
+      try {
+        return reply(await prompt(params));
+      } finally {
+        busy = false;
+      }
+    }
     default:
       return fail(-32601, `Unknown method ${method}`);
   }

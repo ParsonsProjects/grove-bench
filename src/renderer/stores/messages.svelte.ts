@@ -1749,7 +1749,7 @@ class MessageStore {
       this.toolProgressBySession[sessionId] = { ...prog };
     }
     // Refresh git status after file-modifying tool calls
-    if (this.sideEffects && matchedCall && changesFiles(toolViewOf(matchedCall))) {
+    if (this.sideEffects && matchedCall && changesFiles(toolViewOf(matchedCall), matchedCall.toolCategory)) {
       gitStatusStore.scheduleRefresh(sessionId, 300);
     }
   }

@@ -7,6 +7,7 @@
  * Agents that need a separate ACP wrapper (Codex through codex-acp, for
  * example) are added as custom agents.
  */
+import crypto from 'node:crypto';
 import type { AcpAgentSetting } from '../../../shared/types.js';
 import type { AcpAgentDefinition } from './acp-adapter.js';
 
@@ -43,15 +44,22 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
  *  take a built-in id. */
 export const CUSTOM_ACP_PREFIX = 'acp-';
 
+function slugify(text: string | undefined): string {
+  return (text ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 /** Definitions for the user's own agents. Entries without a command, or that
- *  repeat an id, are skipped. */
+ *  repeat an id, are skipped. The id comes from the first of id, name and
+ *  command that gives a usable slug, else a hash of the command, so a name
+ *  in any script still works and stays the same across launches. */
 export function customAcpAgents(settings: readonly AcpAgentSetting[] | undefined): AcpAgentDefinition[] {
   const out: AcpAgentDefinition[] = [];
   const seen = new Set<string>();
   for (const s of settings ?? []) {
     const command = s.command?.trim();
-    const slug = (s.id || s.name || command || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-    if (!command || !slug) continue;
+    if (!command) continue;
+    const slug = slugify(s.id) || slugify(s.name) || slugify(command)
+      || `agent-${crypto.createHash('sha1').update(command).digest('hex').slice(0, 8)}`;
     const id = `${CUSTOM_ACP_PREFIX}${slug}`;
     if (seen.has(id)) continue;
     seen.add(id);

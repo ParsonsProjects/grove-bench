@@ -230,6 +230,11 @@ describe('isReadOnlyToolCall with an adapter view', () => {
     expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell' })).toBe(false);
   });
 
+  it('refuses control characters another shell reads as a line break', () => {
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'git status\rRemove-Item -Recurse -Force src' })).toBe(false);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'git status\tls' })).toBe(false);
+  });
+
   it('refuses commands another shell could run code from', () => {
     // PowerShell runs a parenthesised command, cmd.exe expands %VAR%.
     expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: 'echo (Remove-Item src)' })).toBe(false);

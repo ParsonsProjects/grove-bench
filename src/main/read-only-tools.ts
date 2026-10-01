@@ -246,8 +246,10 @@ export function isReadOnlyBashCommand(command: string, cwd?: string): boolean {
 
 /** Characters that let a command run another in some shell even though bash
  *  would not: PowerShell runs `(cmd)`, `@(cmd)`, `{ }` blocks and `$var`
- *  method calls, cmd.exe expands `%var%` and escapes with `^`. */
-const NON_BASH_EXEC_CHARS = /[(){}@$%^]/;
+ *  method calls, cmd.exe expands `%var%` and escapes with `^`, and control
+ *  characters such as a lone carriage return, which PowerShell reads as a
+ *  line break the bash split doesn't make. */
+const NON_BASH_EXEC_CHARS = /[(){}@$%^\x00-\x1f\x7f]/;
 
 /**
  * Read-safe classification of a call an adapter described with a ToolView

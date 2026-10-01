@@ -85,6 +85,19 @@ describe('runBridge', () => {
     expect(unreachable[0]).toMatchObject({ id: 2, error: { code: -32603, message: expect.stringContaining('not reachable (ECONNREFUSED)') } });
   });
 
+  it('answers with an error when a reply is cut off, and keeps running', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.id === 2) {
+        return { status: 200, ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: () => Promise.reject(new Error('socket hang up')) } as unknown as Response;
+      }
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: {} }), { headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const replies = await exchange({ url: 'http://127.0.0.1:1/mcp/x', authorization: 'Bearer t', fetchImpl }, [LIST, READ]);
+    expect(replies.find((r) => r.id === 2)).toMatchObject({ error: { code: -32603, message: expect.stringContaining('cut off (socket hang up)') } });
+    expect(replies.find((r) => r.id === 3)).toMatchObject({ result: {} });
+  });
+
   it('reads replies sent as server-sent events', () => {
     const body = 'event: message\ndata: {"jsonrpc":"2.0","id":1,\ndata: "result":{}}\n\nevent: ping\ndata: not json\n\n';
     expect(sseMessages(body)).toEqual([{ jsonrpc: '2.0', id: 1, result: {} }]);

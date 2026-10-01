@@ -159,9 +159,10 @@ export function categoryForView(view: ToolView): ToolCategory {
 }
 
 /** Whether a call changes files or runs commands, so the git status may
- *  have moved and Summary view keeps it in sight. */
-export function changesFiles(view: ToolView): boolean {
-  return view.kind === 'edit' || view.kind === 'shell';
+ *  have moved and Summary view keeps it in sight. `category` covers calls
+ *  whose view lacks the detail, such as a command an agent only titled. */
+export function changesFiles(view: ToolView, category?: ToolCategory): boolean {
+  return view.kind === 'edit' || view.kind === 'shell' || category === 'edit' || category === 'bash';
 }
 
 /** One line saying what a call works on: the command, file, pattern (before

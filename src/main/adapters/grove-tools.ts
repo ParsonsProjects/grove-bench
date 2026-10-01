@@ -42,8 +42,6 @@ export interface GroveServer {
   /** Load the tools up front rather than behind the agent's tool search. */
   alwaysLoad?: boolean;
   tools: GroveTool[];
-  /** Tools that run without a permission prompt: they only look. */
-  readOnlyTools: string[];
 }
 
 function text(value: string): GroveToolResult {
@@ -72,7 +70,6 @@ function pickOne(fields: Record<string, string | undefined>): string | null {
 export function memoryServer(ops: MemoryOperations): GroveServer {
   return {
     name: 'grove-memory',
-    readOnlyTools: ['memory_list', 'memory_read'],
     tools: [
       {
         name: 'memory_list',
@@ -180,7 +177,6 @@ export function previewServer(ops: PreviewOperations): GroveServer {
     // sees them next to any other browser tools the user has set up (a
     // Playwright MCP server, say) and doesn't reach for those first.
     alwaysLoad: true,
-    readOnlyTools: ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs'],
     tools: [
       {
         name: 'preview_open',

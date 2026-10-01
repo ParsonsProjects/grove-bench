@@ -13,6 +13,17 @@ afterEach(() => {
   settingsStore.current = { ...settingsStore.current, groveCharacters: true };
 });
 
+describe('PermissionBlock commands', () => {
+  it('shows the agent\'s description of a command it sent no text for', () => {
+    render(PermissionBlock, {
+      sessionId: 's1', requestId: 'r1', toolName: 'execute', toolInput: {}, resolved: false,
+      toolCategory: 'bash', toolView: { kind: 'other', summary: 'rm -rf build' },
+    });
+    expect(screen.getByText('rm -rf build')).toBeInTheDocument();
+    expect(screen.getByText(/As the agent describes it/)).toBeInTheDocument();
+  });
+});
+
 describe('PermissionBlock grove character', () => {
   it('waits with a question mark until answered', () => {
     render(PermissionBlock, { ...props, resolved: false });

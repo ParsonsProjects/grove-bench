@@ -18,6 +18,7 @@
  * Auto Edit, YOLO, Plan, ...) are a separate control.
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execa, type ResultPromise } from 'execa';
@@ -66,9 +67,13 @@ const STARTUP_TIMEOUT_MS = 60_000;
 /** How long to wait for the agent's slash commands, which agents send just
  *  after the session starts, before telling Grove the session is ready. */
 const COMMANDS_WAIT_MS = 300;
+/** How long a background request (generateText) may take to answer. */
+const GENERATE_TIMEOUT_MS = 180_000;
 /** How much of the agent's stderr is kept for error messages. */
 const STDERR_TAIL_CHARS = 4_000;
 const IMAGE_MEDIA: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+/** The tool call fields a Grove tool event is built from (describe()). */
+const SHOWN_FIELDS = ['name', 'kind', 'title', 'rawInput', 'locations', 'content'] as const;
 
 const MODE_OPTIONS: ControlOption[] = [
   { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you whenever the agent asks to run something' },
@@ -138,6 +143,61 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   ]).finally(() => clearTimeout(timer));
 }
 
+/** Start the agent program with Grove's usual options. Shared by
+ *  conversations and generateText so a start-up fix lands in both. */
+function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): ResultPromise {
+  return execa(def.command, def.args, {
+    cwd,
+    env: { ...cleanEnv(process.env), ...(def.env ?? {}), ...(extraEnv ?? {}) } as Record<string, string>,
+    extendEnv: false,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    buffer: false,
+    reject: false,
+    windowsHide: true,
+    cleanup: true,
+  });
+}
+
+/** Keep the last STDERR_TAIL_CHARS of the agent's stderr for error messages. */
+function collectStderr(proc: ResultPromise, onTail: (tail: string) => void): void {
+  let tail = '';
+  proc.stderr?.setEncoding('utf8');
+  proc.stderr?.on('data', (chunk: string) => {
+    tail = (tail + chunk).slice(-STDERR_TAIL_CHARS);
+    onTail(tail);
+  });
+}
+
+/** `initialize`, with no fs or terminal capability: the agent reads, writes
+ *  and runs commands in the worktree itself, so its own tools and
+ *  permission requests apply. */
+async function initializeAgent(rpc: JsonRpcConnection, displayName: string): Promise<AcpInitializeResponse> {
+  const init = await withTimeout(rpc.request<AcpInitializeResponse>('initialize', {
+    protocolVersion: ACP_PROTOCOL_VERSION,
+    clientCapabilities: {},
+    clientInfo: { name: 'grove-bench', title: 'Grove Bench' },
+  }), STARTUP_TIMEOUT_MS, `${displayName} start-up`);
+  if (init?.protocolVersion !== ACP_PROTOCOL_VERSION) {
+    throw new Error(`${displayName} speaks ACP version ${init?.protocolVersion}; Grove Bench speaks version ${ACP_PROTOCOL_VERSION}.`);
+  }
+  return init;
+}
+
+/** Ask the agent to switch a session's model the way it lists them. Returns
+ *  the full config options when it answers with them. */
+async function requestModel(rpc: JsonRpcConnection, sessionId: string, models: AcpModelList, model: string): Promise<AcpConfigOption[] | undefined> {
+  if (models.via === 'set_model') {
+    await rpc.request('session/set_model', { sessionId, modelId: model });
+    return undefined;
+  }
+  const res = await rpc.request<{ configOptions?: AcpConfigOption[] }>('session/set_config_option', {
+    sessionId, configId: models.via.configId, value: model,
+  });
+  return res?.configOptions;
+}
+
 export class AcpAdapter implements AgentAdapter {
   readonly id: string;
   readonly displayName: string;
@@ -189,11 +249,23 @@ export class AcpAdapter implements AgentAdapter {
     return this.learned;
   }
 
-  /** Record what a session reported. Listeners hear only real changes. */
-  private learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined): void {
+  /** Record what a session reported. Listeners hear only real changes.
+   *  A control's default is the value a new session starts with, and only a
+   *  new session (`fresh`) shows it: later reports carry what someone chose
+   *  since (a mode switched to YOLO), which must not become the start of
+   *  every new conversation. */
+  private learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined, fresh: boolean): void {
+    const prev = this.learnedAgent();
+    let controls = agentControls(configOptions, modes);
+    if (!fresh && prev) {
+      controls = controls.map((c) => {
+        const before = prev.controls.find((p) => p.id === c.id)?.default;
+        return before !== undefined && c.options.some((o) => o.value === before) ? { ...c, default: before } : c;
+      });
+    }
     const next: LearnedAgent = {
-      models: modelList(configOptions, models)?.models ?? this.learnedAgent()?.models ?? [],
-      controls: agentControls(configOptions, modes),
+      models: modelList(configOptions, models)?.models ?? prev?.models ?? [],
+      controls,
     };
     if (JSON.stringify(next) === JSON.stringify(this.learnedAgent())) return;
     this.learned = next;
@@ -228,6 +300,17 @@ export class AcpAdapter implements AgentAdapter {
   // ─── Install check ───
 
   async checkPrerequisites(): Promise<AdapterPrerequisiteStatus> {
+    // A full path is checked directly: where.exe takes a name or
+    // path:pattern, not a path.
+    if (path.isAbsolute(this.def.command)) {
+      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, authenticated: true };
+      return {
+        available: false,
+        authenticated: false,
+        errorMessage: `${this.displayName} not found at ${this.def.command}`,
+        ...(this.def.installInstructions ? { installInstructions: this.def.installInstructions } : {}),
+      };
+    }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
     try {
       const { stdout, exitCode } = await execa(lookup, [this.def.command], { reject: false, timeout: 10_000, windowsHide: true });
@@ -253,18 +336,10 @@ export class AcpAdapter implements AgentAdapter {
   /** Ask the agent once, in a session of its own, with every tool request
    *  turned down. ACP has no system prompt, so it leads the message. */
   async generateText(systemPrompt: string, userMessage: string, options?: { cwd?: string; abortSignal?: AbortSignal; model?: string }): Promise<string> {
-    const proc = execa(this.def.command, this.def.args, {
-      cwd: options?.cwd ?? os.tmpdir(),
-      env: { ...cleanEnv(process.env), ...(this.def.env ?? {}) } as Record<string, string>,
-      extendEnv: false,
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'ignore',
-      buffer: false,
-      reject: false,
-      windowsHide: true,
-      cleanup: true,
-    });
+    const cwd = options?.cwd ?? os.tmpdir();
+    const proc = spawnAgent(this.def, cwd);
+    let stderr = '';
+    collectStderr(proc, (tail) => { stderr = tail; });
     let sessionId: string | null = null;
     let text = '';
     const rpc = new JsonRpcConnection(proc.stdout!, proc.stdin!, {
@@ -286,22 +361,23 @@ export class AcpAdapter implements AgentAdapter {
     };
     options?.abortSignal?.addEventListener('abort', abort, { once: true });
     try {
-      const init = await withTimeout(rpc.request<AcpInitializeResponse>('initialize', {
-        protocolVersion: ACP_PROTOCOL_VERSION, clientCapabilities: {}, clientInfo: { name: 'grove-bench', title: 'Grove Bench' },
-      }), STARTUP_TIMEOUT_MS, `${this.displayName} start-up`);
-      if (init?.protocolVersion !== ACP_PROTOCOL_VERSION) throw new Error(`${this.displayName} speaks ACP version ${init?.protocolVersion}`);
-      const setup = await withTimeout(rpc.request<AcpSessionSetup>('session/new', { cwd: options?.cwd ?? os.tmpdir(), mcpServers: [] }), STARTUP_TIMEOUT_MS, `${this.displayName} session start`);
+      await initializeAgent(rpc, this.displayName);
+      const setup = await withTimeout(rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers: [] }), STARTUP_TIMEOUT_MS, `${this.displayName} session start`);
       if (!setup?.sessionId) throw new Error(`${this.displayName} did not start a session`);
       sessionId = setup.sessionId;
       const models = modelList(setup.configOptions, setup.models);
       if (options?.model && models && models.current !== options.model && models.models.some((m) => m.id === options.model)) {
-        await (models.via === 'set_model'
-          ? rpc.request('session/set_model', { sessionId, modelId: options.model })
-          : rpc.request('session/set_config_option', { sessionId, configId: models.via.configId, value: options.model })
-        ).catch((e) => logger.warn(`[${this.id}] background model not set:`, e));
+        await requestModel(rpc, sessionId, models, options.model).catch((e) => logger.warn(`[${this.id}] background model not set:`, e));
       }
-      await rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: `${systemPrompt}\n\n${userMessage}` }] });
+      await withTimeout(
+        rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: `${systemPrompt}\n\n${userMessage}` }] }),
+        GENERATE_TIMEOUT_MS,
+        `${this.displayName} background request`,
+      );
       return text.trim();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(stderr.trim() ? `${message}\n${stderr.trim().slice(-800)}` : message);
     } finally {
       options?.abortSignal?.removeEventListener('abort', abort);
       rpc.close();
@@ -313,7 +389,7 @@ export class AcpAdapter implements AgentAdapter {
 
   async start(config: AdapterConfig): Promise<AgentQueryHandle> {
     return new AcpQuery(this, this.def, config, {
-      learn: (c, m, models) => this.learn(c, m, models),
+      learn: (c, m, models, fresh) => this.learn(c, m, models, fresh),
       setTitle: (sessionId, title) => { this.titles.set(sessionId, title); },
       currentModels: () => this.learnedAgent()?.models ?? [],
     }).handle();
@@ -321,7 +397,7 @@ export class AcpAdapter implements AgentAdapter {
 }
 
 interface AdapterHooks {
-  learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined): void;
+  learn(configOptions: AcpConfigOption[] | null | undefined, modes: AcpModeState | null | undefined, models: AcpModelState | null | undefined, fresh: boolean): void;
   setTitle(sessionId: string, title: string): void;
   currentModels(): AcpModelList['models'];
 }
@@ -407,28 +483,9 @@ class AcpQuery {
 
   private async setUp(): Promise<void> {
     const { config, def } = this;
-    const env = {
-      ...cleanEnv(process.env),
-      ...(def.env ?? {}),
-      ...(config.extraEnv ?? {}),
-    } as Record<string, string>;
-    const proc = execa(def.command, def.args, {
-      cwd: config.cwd,
-      env,
-      extendEnv: false,
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      buffer: false,
-      reject: false,
-      windowsHide: true,
-      cleanup: true,
-    });
+    const proc = spawnAgent(def, config.cwd, config.extraEnv);
     this.proc = proc;
-    proc.stderr?.setEncoding('utf8');
-    proc.stderr?.on('data', (chunk: string) => {
-      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_TAIL_CHARS);
-    });
+    collectStderr(proc, (tail) => { this.stderrTail = tail; });
     void proc.then((result) => this.onExit(result.exitCode, result.failed ? result.message : undefined));
 
     if (!proc.stdout || !proc.stdin) throw new Error(`Could not start ${def.displayName}`);
@@ -438,17 +495,7 @@ class AcpQuery {
       onBadLine: (line) => logger.debug(`[${def.id}] non-protocol output: ${line.slice(0, 200)}`),
     });
 
-    // No fs or terminal capability: the agent reads, writes and runs commands
-    // in the worktree itself, so its own tools and permission requests apply.
-    const init = await withTimeout(this.rpc.request<AcpInitializeResponse>('initialize', {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: {},
-      clientInfo: { name: 'grove-bench', title: 'Grove Bench' },
-    }), STARTUP_TIMEOUT_MS, `${def.displayName} start-up`);
-    if (init?.protocolVersion !== ACP_PROTOCOL_VERSION) {
-      throw new Error(`${def.displayName} speaks ACP version ${init?.protocolVersion}; Grove Bench speaks version ${ACP_PROTOCOL_VERSION}.`);
-    }
-    this.init = init;
+    this.init = await initializeAgent(this.rpc, def.displayName);
 
     const mcpServers = await this.groveMcpServers();
     await withTimeout(this.openSession(mcpServers), STARTUP_TIMEOUT_MS, `${def.displayName} session start`);
@@ -496,14 +543,14 @@ class AcpQuery {
     if (resumeSessionId) {
       try {
         if (caps?.sessionCapabilities?.resume) {
-          this.takeSetup(await rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers }));
+          this.takeSetup(await rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers }), false);
           this.sessionId = resumeSessionId;
           return;
         }
         if (caps?.loadSession) {
           this.replaying = true;
           try {
-            this.takeSetup(await rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers }));
+            this.takeSetup(await rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers }), false);
           } finally {
             this.replaying = false;
           }
@@ -520,7 +567,7 @@ class AcpQuery {
     const setup = await rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers });
     if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
     this.sessionId = setup.sessionId;
-    this.takeSetup(setup);
+    this.takeSetup(setup, true);
     this.pendingInstructions = this.instructions();
   }
 
@@ -529,12 +576,13 @@ class AcpQuery {
     return text?.trim() ? `Instructions from Grove Bench, the app running this conversation:\n\n${text.trim()}` : null;
   }
 
-  private takeSetup(setup: AcpSessionSetup | null | undefined): void {
+  /** `fresh`: a new session, so its values are the agent's defaults. */
+  private takeSetup(setup: AcpSessionSetup | null | undefined, fresh: boolean): void {
     if (!setup) return;
     if (Array.isArray(setup.configOptions)) this.configOptions = setup.configOptions;
     if (setup.modes) this.modes = setup.modes;
     this.models = modelList(this.configOptions, setup.models);
-    this.hooks.learn(this.configOptions, this.modes, setup.models);
+    this.hooks.learn(this.configOptions, this.modes, setup.models, fresh);
   }
 
   /** Apply the conversation's model and control values where they differ
@@ -588,7 +636,9 @@ class AcpQuery {
   }
 
   private async drain(): Promise<void> {
-    if (this.promptInFlight || !(await this.ready)) return;
+    // Checked after the wait: messages queued during start-up each run a
+    // drain, and only one may start a turn (ACP takes one prompt at a time).
+    if (!(await this.ready) || this.promptInFlight) return;
     const next = this.queue.shift();
     if (!next) return;
     this.promptInFlight = this.runTurn(next).finally(() => {
@@ -663,7 +713,7 @@ class AcpQuery {
       });
       if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
       this.sessionId = setup.sessionId;
-      this.takeSetup(setup);
+      this.takeSetup(setup, true);
       this.pendingInstructions = this.instructions();
       this.turns = 0;
       this.emit({ type: 'system_init', sessionId: this.sessionId, model: this.models?.current ?? this.config.model ?? '', tools: [], slashCommands: this.commands });
@@ -687,17 +737,10 @@ class AcpQuery {
 
   private async setModel(model: string): Promise<void> {
     if (!this.rpc || !this.sessionId) return;
-    const via = this.models?.via;
-    if (!via) throw new Error(`${this.def.displayName} has no models to choose from`);
-    if (via === 'set_model') {
-      await this.rpc.request('session/set_model', { sessionId: this.sessionId, modelId: model });
-      if (this.models) this.models = { ...this.models, current: model };
-      return;
-    }
-    const res = await this.rpc.request<{ configOptions?: AcpConfigOption[] }>('session/set_config_option', {
-      sessionId: this.sessionId, configId: via.configId, value: model,
-    });
-    this.takeConfigOptions(res?.configOptions);
+    if (!this.models) throw new Error(`${this.def.displayName} has no models to choose from`);
+    const options = await requestModel(this.rpc, this.sessionId, this.models, model);
+    if (options) this.takeConfigOptions(options);
+    else this.models = { ...this.models, current: model };
   }
 
   private async setControl(controlId: string, value: string): Promise<void> {
@@ -723,7 +766,7 @@ class AcpQuery {
     if (!Array.isArray(options)) return;
     this.configOptions = options;
     this.models = modelList(options, null) ?? this.models;
-    this.hooks.learn(options, this.modes, null);
+    this.hooks.learn(options, this.modes, null, false);
   }
 
   // ─── Agent → Grove ───
@@ -828,9 +871,9 @@ class AcpQuery {
     if (!prev) {
       this.reportToolStart(call);
     } else {
-      const before = this.describe(prev);
-      const after = this.describe(call);
-      if (JSON.stringify(before) !== JSON.stringify(after)) this.emit({ type: 'tool_update', toolUseId: id, ...after });
+      // mergeToolCall keeps unchanged fields by reference, so a status-only
+      // update changes nothing shown and needs no event.
+      if (SHOWN_FIELDS.some((k) => prev[k] !== call[k])) this.emit({ type: 'tool_update', toolUseId: id, ...this.describe(call) });
     }
     if (call.status === 'completed' || call.status === 'failed') this.reportToolEnd(call);
   }
@@ -912,7 +955,7 @@ class AcpQuery {
 
     if (config.allowedTools && !config.allowedTools.has(toolName)) return answer('deny');
 
-    const verdict = this.checkRules(toolName, toolCategory, specifierFor(toolView));
+    const verdict = this.checkRules(toolName, toolCategory, toolView);
     if (verdict === 'deny') return answer('deny');
     if (verdict === 'allow') return answer('allow');
     if (config.alwaysAllowedTools.has(toolName)) return answer('allow');
@@ -948,8 +991,11 @@ class AcpQuery {
   /** Grove's allow/deny rules. Shell commands are matched as both bash and
    *  PowerShell, since Grove can't tell which shell the agent uses: a deny
    *  in either denies, an allow needs both. */
-  private checkRules(toolName: string, category: ReturnType<typeof categoryForKind>, specifier: string): 'allow' | 'deny' | null {
+  private checkRules(toolName: string, category: ReturnType<typeof categoryForKind>, view: ReturnType<typeof toolViewFor>): 'allow' | 'deny' | null {
     const { toolAllowRules, toolDenyRules } = this.config;
+    // Without a command (an agent that sends only a title) the specifier is
+    // empty: rules with a glob can't match it, tool-wide ones still apply.
+    const specifier = specifierFor(view);
     if (category !== 'bash') {
       return checkToolRules(toolAllowRules, toolDenyRules, toolName, specifier, category)?.behavior ?? null;
     }

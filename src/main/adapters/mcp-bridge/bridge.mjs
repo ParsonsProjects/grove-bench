@@ -66,8 +66,19 @@ export async function runBridge({ input, output, url, authorization, fetchImpl =
     }
   };
 
-  /** @param {any} msg */
+  /** Forward one message; anything that goes wrong becomes an error reply,
+   *  never an exception that would end the bridge.
+   * @param {any} msg */
   async function forward(msg) {
+    try {
+      await send(msg);
+    } catch (e) {
+      fail(msg, `Grove Bench's reply was cut off (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+
+  /** @param {any} msg */
+  async function send(msg) {
     /** @type {Record<string, string>} */
     const headers = {
       'content-type': 'application/json',

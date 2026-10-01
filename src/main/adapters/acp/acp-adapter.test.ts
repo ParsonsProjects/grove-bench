@@ -231,6 +231,56 @@ describe('AcpAdapter', () => {
     expect((await adapter.checkPrerequisites()).available).toBe(false);
   });
 
+  it('keeps the agent\'s own defaults when a conversation changes a control', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+    await handle.setControl!('acp:mode', 'yolo');
+    await handle.setControl!('acp:effort', 'high');
+    const defaults = Object.fromEntries(adapter.getControls().map((c) => [c.id, c.default]));
+    expect(defaults).toMatchObject({ 'acp:mode': 'default', 'acp:effort': 'low' });
+    handle.close();
+  });
+
+  it('runs messages queued during start-up one at a time', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    // Both arrive before the session is ready; the fake agent refuses overlap.
+    handle.sendMessage({ text: 'echo' });
+    handle.sendMessage({ text: 'echo' });
+    const first = await until(handle, 'result');
+    const second = await until(handle, 'result');
+    expect(first.at(-1)).toMatchObject({ isError: false });
+    expect(second.at(-1)).toMatchObject({ isError: false });
+    handle.close();
+  });
+
+  it('asks about a command the agent only titled, whatever the shell rules say', async () => {
+    const adapter = new AcpAdapter(def());
+    const asked: PermissionRequest[] = [];
+    const handle = await adapter.start(config({
+      toolAllowRules: [{ pattern: 'shell(npm test*)' }],
+      onPermissionRequest: async (req) => {
+        asked.push(req);
+        return { behavior: 'deny', message: 'no' };
+      },
+    }));
+    await until(handle, 'system_init');
+    handle.sendMessage({ text: 'titled-exec' });
+    const turn = await until(handle, 'result');
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ toolName: 'execute', toolCategory: 'bash', toolView: { kind: 'other', summary: 'npm test' } });
+    expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 'e1')).toMatchObject({ isError: true });
+    handle.close();
+  });
+
+  it('finds an agent given by full path', async () => {
+    const adapter = new AcpAdapter({ ...def(), command: process.execPath });
+    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, path: process.execPath });
+    const missing = new AcpAdapter({ ...def(), command: path.join(cwd, 'no-such-agent.exe') });
+    expect((await missing.checkPrerequisites()).available).toBe(false);
+  });
+
   it('generates one-off text with tool requests turned down', async () => {
     const adapter = new AcpAdapter(def());
     const text = await adapter.generateText('You write commit messages.', 'diff here', { cwd, model: 'm2' });

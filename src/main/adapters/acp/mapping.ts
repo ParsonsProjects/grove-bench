@@ -37,12 +37,22 @@ export function categoryForKind(kind: AcpToolKind | null | undefined): ToolCateg
   }
 }
 
+/** Kinds Grove treats as one tool when the agent sends no name, as it does
+ *  Claude Code's: "always allow" on one command allows every command. */
+const KIND_WIDE: ReadonlySet<string> = new Set(['execute', 'edit', 'delete', 'move', 'read', 'search', 'fetch', 'think', 'switch_mode']);
+
 /** The name Grove keys the call by (always-allow, rules, display): the
- *  agent's programmatic name, or else its kind. Titles change per call
- *  ("Reading a.ts"), so they are never the name. */
+ *  agent's programmatic name when it sends one. Without one (Gemini CLI
+ *  sends none) the kinds above use the kind, and anything else, MCP tools
+ *  among them, its title: otherwise allowing one MCP tool would allow them
+ *  all. */
 export function toolNameFor(call: AcpToolCall): string {
   const name = typeof call.name === 'string' ? call.name.trim() : '';
-  return name || call.kind || 'tool';
+  if (name) return name;
+  const kind = call.kind || 'other';
+  if (KIND_WIDE.has(kind)) return kind;
+  const title = typeof call.title === 'string' ? call.title.trim() : '';
+  return title || kind;
 }
 
 function rec(value: unknown): Record<string, unknown> {
@@ -140,10 +150,17 @@ export function toolViewFor(call: AcpToolCall, cwd: string): ToolView {
     case 'edit':
     case 'delete':
     case 'move': {
-      const view = withPaths({ kind: 'edit' });
       const diffs = (call.content ?? []).filter((c): c is Extract<typeof c, { type: 'diff' }> => c?.type === 'diff');
-      // One file's diffs: a new file is a whole-file write, else replacements.
       const first = diffs[0];
+      // The file shown: the first diff's, else the first path named. Every
+      // other path stays in morePaths, where Edit mode checks it too.
+      const primary = first?.path ?? paths[0];
+      const view: ToolView = { kind: 'edit' };
+      if (primary) view.path = rel(primary);
+      const others = paths.filter((p) => p !== primary);
+      if (others.length > 0) view.morePaths = others.map(rel);
+      if (title) view.summary = title;
+      // That file's diffs: a new file is a whole-file write, else replacements.
       if (first) {
         const same = diffs.filter((d) => d.path === first.path);
         if (same.length === 1 && first.oldText == null) {
@@ -151,7 +168,6 @@ export function toolViewFor(call: AcpToolCall, cwd: string): ToolView {
         } else {
           view.edits = same.map((d): ToolTextEdit => ({ oldText: d.oldText ?? '', newText: d.newText }));
         }
-        view.path = rel(first.path);
       }
       return view;
     }
@@ -181,7 +197,9 @@ export function toolViewFor(call: AcpToolCall, cwd: string): ToolView {
 
 /** The string Grove's allow/deny rules match for a call (see toolCallSpecifier). */
 export function specifierFor(view: ToolView): string {
-  return view.command ?? view.path ?? view.url ?? view.pattern ?? view.summary ?? '';
+  // Never the agent's title: it is free text, and a rule matched against it
+  // would approve a command Grove never saw.
+  return view.command ?? view.path ?? view.url ?? view.pattern ?? '';
 }
 
 // ─── Plans ───
