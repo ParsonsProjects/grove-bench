@@ -43,6 +43,8 @@ beforeEach(() => {
   mockAdapters = [makeAdapter()];
   vi.mocked(hasApiKey).mockReturnValue(false);
   vi.mocked(canStoreApiKey).mockReturnValue(true);
+  vi.mocked(isApiKeyRejected).mockReturnValue(false);
+  vi.mocked(isApiKeyUnverified).mockReturnValue(false);
 });
 
 describe('checkGit()', () => {
