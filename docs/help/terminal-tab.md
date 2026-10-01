@@ -6,7 +6,7 @@ The Terminal tab (`Alt+4`) provides a full terminal emulator connected to your c
 
 Each conversation has its own dedicated terminal (PTY). The terminal opens in the worktree directory for that conversation, so you can run commands directly in the same environment the agent is working in.
 
-Marking a conversation completed or deleting it closes its terminal and ends everything started from it, such as a dev server, so the ports it was using are freed. Background commands the agent started are ended too. When you open the conversation again, it gets a fresh terminal.
+Closing a conversation or deleting it closes its terminal and ends everything started from it, such as a dev server, so the ports it was using are freed. Background commands the agent started are ended too. When you open the conversation again, it gets a fresh terminal.
 
 ## Features
 

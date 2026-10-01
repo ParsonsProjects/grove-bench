@@ -282,6 +282,10 @@
   // tab's auto-resume permanently; instead we clear it when the user navigates
   // (back) to the tab, so a transient failure retries on explicit re-selection.
   let failedResumeIds = new Set<string>();
+  // Resumed sessions whose agent hasn't connected yet (no status from main
+  // since). One that stops first failed to start, so it counts as a failed
+  // resume: resuming it again at once would fail the same way, in a loop.
+  let connectingIds = new Set<string>();
   // Sleeping sessions with a wake in flight, so the effect below wakes each
   // once while its status catches up.
   let wakingIds = new Set<string>();
@@ -300,6 +304,7 @@
     window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       store.clearDeferredResume(sessionId);
+      connectingIds.add(sessionId);
       // Don't subscribe here — WorkspacePane handles history replay + subscription
       // on mount. Subscribing here would race with mount and cause isReady to be
       // set before history replay, resulting in an empty chat.
@@ -380,6 +385,8 @@
       store.sessions.filter((s) => store.isOpenTab(s)).map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
+      // Before the status update, which re-runs the auto-resume effect.
+      if (connectingIds.delete(sessionId) && status === 'stopped') failedResumeIds.add(sessionId);
       const wasSleeping = store.sessions.find((s) => s.id === sessionId)?.status === 'sleeping';
       store.updateStatus(sessionId, status);
       // Waking keeps the conversation's turn state: the message that woke it

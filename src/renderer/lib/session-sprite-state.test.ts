@@ -16,7 +16,7 @@ describe('sessionSpriteState', () => {
     expect(sessionSpriteState({ id: 's1', status: 'sleeping' })).toBe('sleeping');
   });
 
-  it('shows a tab restored at startup as sleeping, not completed', () => {
+  it('shows a tab restored at startup as sleeping, not closed', () => {
     store.deferResume('s1');
     expect(sessionSpriteState({ id: 's1', status: 'stopped' })).toBe('sleeping');
   });

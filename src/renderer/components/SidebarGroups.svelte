@@ -22,18 +22,19 @@
     row,
     rowVisible,
     countsFor,
-    markCompleted,
+    stopSessions,
     filterLabel,
   }: {
     /** The sidebar's conversation row: session, show project, label
      *  override, show group. */
     row: Snippet<[Session, boolean, string | null, boolean]>;
-    /** Whether a conversation passes the sidebar's filter and completed setting. */
+    /** Whether a conversation passes the sidebar's filter. */
     rowVisible: (s: Session) => boolean;
     /** A header's attention counts, as the project headers count them. */
     countsFor: (sessions: Session[]) => TriageCounts;
-    /** The sidebar's Mark Completed: stops a conversation and keeps it. */
-    markCompleted: (id: string) => void;
+    /** The sidebar's Close Conversation: stops conversations and keeps them,
+     *  asking first if any is mid-turn. */
+    stopSessions: (ids: string[]) => void;
     /** The active triage filter's label, or null when showing all. */
     filterLabel: string | null;
   } = $props();
@@ -69,9 +70,9 @@
       { label: 'Rename group', icon: 'rename', action: () => { groupStore.nameRequest = { kind: 'rename', groupId }; } },
       // Done with the piece of work: every conversation leaves the working set.
       ...(open.length > 0
-        ? [{ label: 'Mark all completed', icon: 'check', action: () => { for (const s of open) markCompleted(s.id); } }]
+        ? [{ label: 'Close all conversations', icon: 'close', action: () => stopSessions(open.map((s) => s.id)) }]
         : []),
-      { label: 'Ungroup', icon: 'close', action: () => groupStore.ungroup(groupId), separator: true },
+      { label: 'Ungroup', icon: 'ungroup', action: () => groupStore.ungroup(groupId), separator: true },
     ];
   }
 
@@ -157,7 +158,8 @@
           <AttentionCounts counts={countsFor(members)} />
         </button>
         <div class="flex items-center gap-0.5">
-          <!-- Ungroup keeps the conversations, so it's an ✕ (remove the grouping), not a bin. -->
+          <!-- Ungroup keeps the conversations, so it's not a bin, and not an ✕ either:
+               a row's ✕ just below closes its conversation. -->
           <button
             type="button"
             onclick={() => groupStore.ungroup(group.id)}
@@ -165,7 +167,7 @@
             title="Ungroup (the conversations stay)"
             aria-label="Ungroup {group.name}"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="6" x="5" y="4" rx="1"/><rect width="8" height="6" x="11" y="14" rx="1"/></svg>
           </button>
           <button
             type="button"

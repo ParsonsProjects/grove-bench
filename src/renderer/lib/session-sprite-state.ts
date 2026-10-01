@@ -9,7 +9,7 @@ import { sessionRepoColor } from './session-repo-color.js';
  * `destroying` is tracked by the sidebar, which runs the removal.
  *
  * A tab restored at startup is 'stopped' until it reconnects, but it is
- * still open, not completed, so it shows as sleeping: agent off until opened.
+ * still open, not closed, so it shows as sleeping: agent off until opened.
  */
 export function sessionSpriteState(session: { id: string; status: string }, destroying = false): AgentSpriteState {
   const restoredTab = session.status === 'stopped' && !!store.deferredResume[session.id];
