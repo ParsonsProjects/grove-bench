@@ -36,6 +36,9 @@
   let newAllowRule = $state('');
   let newDenyRule = $state('');
   let newWorkingDir = $state('');
+  let newAcpName = $state('');
+  let newAcpCommand = $state('');
+  let newAcpArgs = $state('');
 
   // Plugin search
   let pluginSearch = $state('');
@@ -254,12 +257,26 @@
     newWorkingDir = '';
   }
 
+  function addAcpAgent() {
+    const command = newAcpCommand.trim();
+    if (!command) return;
+    settingsStore.addAcpAgent({
+      name: newAcpName.trim() || command,
+      command,
+      args: newAcpArgs.trim() ? newAcpArgs.trim().split(/\s+/) : [],
+    });
+    newAcpName = '';
+    newAcpCommand = '';
+    newAcpArgs = '';
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'permissions', label: 'Permissions' },
     { id: 'agent', label: 'Agent' },
     { id: 'general', label: 'General' },
-    { id: 'mcp', label: 'MCP' },
-    { id: 'plugins', label: 'Plugins' },
+    // Grove's names, with the standard term beside them (CLAUDE.md, Terminology).
+    { id: 'mcp', label: 'Trails (MCP)' },
+    { id: 'plugins', label: 'Saplings (Plugins)' },
   ];
 
   // The Plugins tab configures the default agent (its IPC calls don't name
@@ -683,6 +700,54 @@
               <Button variant="secondary" class="h-[34px] px-3 text-sm" onclick={addWorkingDir}>Add</Button>
             </div>
           </div>
+
+          <Separator />
+
+          <!-- The user's own ACP agents -->
+          <div>
+            <Label class="mb-1 block">Other Agents (ACP)</Label>
+            <p class="text-xs text-muted-foreground mb-2">
+              Add any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp.
+              Gemini CLI and GitHub Copilot CLI are built in. Restart Grove Bench after a change.
+            </p>
+            {#if settingsStore.draft.acpAgents.length > 0}
+              <div class="flex flex-col gap-1 mb-2">
+                {#each settingsStore.draft.acpAgents as agent, i (i)}
+                  <div class="flex items-center justify-between bg-muted px-2 py-1 text-xs">
+                    <span class="truncate"><span class="text-foreground">{agent.name}</span> <code class="text-muted-foreground">{[agent.command, ...agent.args].join(' ')}</code></span>
+                    <button onclick={() => settingsStore.removeAcpAgent(i)} class="text-muted-foreground hover:text-destructive ml-2 shrink-0" aria-label="Remove agent">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            <div class="flex items-center gap-2">
+              <input
+                type="text"
+                bind:value={newAcpName}
+                placeholder="Name"
+                aria-label="Agent name"
+                class="w-32 bg-background border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <input
+                type="text"
+                bind:value={newAcpCommand}
+                placeholder="Command"
+                aria-label="Agent command"
+                class="w-32 bg-background border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <input
+                type="text"
+                bind:value={newAcpArgs}
+                placeholder="Arguments"
+                aria-label="Agent arguments"
+                onkeydown={(e) => { if (e.key === 'Enter') addAcpAgent(); }}
+                class="flex-1 bg-background border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <Button variant="secondary" class="h-[34px] px-3 text-sm" onclick={addAcpAgent}>Add</Button>
+            </div>
+          </div>
         </div>
 
       {:else if tab === 'general'}
@@ -924,7 +989,7 @@
           <!-- Skill Suggestions -->
           <label class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <Checkbox bind:checked={settingsStore.draft.autoSkillSuggestions} />
-            Automatically suggest skills from conversation patterns
+            Automatically suggest field guides (skills) from conversation patterns
           </label>
           <p class="text-xs text-muted-foreground -mt-2 ml-6">After each finished turn, mine conversation history for recurring requests and commands and refresh skill suggestions — a background model call per run. Off by default; the "Suggest" button in the status bar's Skills popover runs the same analysis on demand.</p>
 
@@ -984,7 +1049,7 @@
         <!-- Configured servers -->
         <div class="flex items-start justify-between mb-3">
           <div>
-            <div class="text-sm font-medium text-foreground">MCP Servers</div>
+            <div class="text-sm font-medium text-foreground">Trails · MCP servers</div>
             <p class="text-xs text-muted-foreground mt-0.5">
               Servers from {mcpAgent ? `${mcpAgent.displayName}'s` : "the agent's"} configuration. New and restarted conversations pick them up automatically.
             </p>
@@ -1017,7 +1082,7 @@
         {#if mcpConfigStore.loading}
           <div class="flex items-center justify-center py-8 text-muted-foreground">
             <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
-            <span class="text-sm">Checking MCP server health — this can take a few seconds...</span>
+            <span class="text-sm">Checking each trail's MCP server — this can take a few seconds...</span>
           </div>
         {:else if mcpConfigStore.servers.length === 0}
           <p class="text-sm text-muted-foreground/60 text-center py-6">
@@ -1084,7 +1149,7 @@
         <!-- Add a new server -->
         <div class="mt-3 space-y-3">
           <div class="flex items-center justify-between">
-            <div class="text-sm font-medium text-foreground">Add MCP Server</div>
+            <div class="text-sm font-medium text-foreground">Add a trail (MCP server)</div>
             <div class="flex items-center gap-1 text-xs">
               <button
                 onclick={() => (mcpAddMode = 'form')}
@@ -1288,7 +1353,7 @@
             class="px-3 py-1.5 text-xs transition-colors border-b-2 -mb-px
               {pluginTab === 'discover' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}"
           >
-            Discover
+            Nursery
           </button>
           <div class="flex-1"></div>
           <Button variant="ghost" size="sm" onclick={() => pluginStore.refresh()} disabled={pluginStore.loading} class="text-xs">

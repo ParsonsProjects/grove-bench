@@ -14,7 +14,7 @@ Control how the agent handles actions that need approval. The mode new conversat
 
 ## Agent
 
-Configure agent behavior. There is one group per installed agent, each with:
+Configure agent behavior. There is one group per agent, each with:
 
 - **Credentials** — Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
 - **Default Model** — Pick the model new conversations with this agent start on. The list comes from the agent itself and updates after a conversation starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
@@ -26,6 +26,7 @@ Configure agent behavior. There is one group per installed agent, each with:
   - **Auto**: Claude's classifier approves or blocks each action instead of asking
   - **Read-safe**: Grove Bench's own mode, under the "Grove Bench" divider. Accepts edits and read-only commands; everything else asks
 - **Default Effort**, **Default Thinking**, **Default Speed** — The conversation controls the agent declares for its default model (for Claude Agent, each one shows only when the default model offers it). Pick the value new conversations start with; each conversation can still change it from the status bar
+- **Agents that speak ACP** (Gemini CLI, GitHub Copilot CLI and any you add): Grove Bench applies the modes itself, on the requests the agent sends before it runs a tool. **Ask** puts every request to you, **Edit** approves file edits inside the worktree, and **Read-safe** also approves read-only commands inside the worktree. The agent's own modes and options (for example Gemini CLI's YOLO or Plan) show as separate controls once a conversation has started
 - **Show thinking summaries** (Claude Agent) — Show a short summary of the model's thinking in the conversation. Newer Claude models send no thinking text unless asked, so with this off their thinking doesn't show. Some older models, such as Haiku 4.5, may still show theirs. It doesn't change how much the model thinks or what it costs. Applies to agents started after the change (on by default)
 
 If a conversation starts on a model that doesn't offer the saved mode, it starts in Code instead.
@@ -49,16 +50,26 @@ These apply to every agent:
 - **Sleep idle conversations**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a conversation's agent is shut down to save memory and CPU. The conversation stays in the Conversations list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running; the agent's page in the Preview tab closes. 0 turns it off. Default 30 minutes
 - **Let the agent use the Preview browser** — Give the agent its own page in the [Preview tab](preview-tab.md#the-agents-browser) to open local pages, take screenshots, read, click and type in. Applies to agents started after the change (on by default)
 
-## MCP
+### Other Agents (ACP)
 
-View the MCP servers configured for an agent and add new ones without leaving the app:
+Grove Bench can run any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio. Gemini CLI (`gemini --acp`) and GitHub Copilot CLI (`copilot --acp`) are built in: install one, sign in with it in a terminal, and pick it as the agent for a new conversation. Add others, such as Codex through `codex-acp`, with a name, the command and its arguments. Restart Grove Bench after adding or removing one.
+
+With ACP agents:
+
+- Grove Bench's memory and Preview browser tools are offered to agents that can connect to MCP servers over HTTP. They are served on this computer only, with a key for each conversation
+- Rewinding a conversation starts the agent on a new conversation from that point, since ACP agents can't forget part of one
+- Field guides (skills), saplings (plugins) and plan usage are not managed for them
+
+## Trails (MCP)
+
+Trails are Grove Bench's name for MCP servers: the [Model Context Protocol](https://modelcontextprotocol.io) servers that connect an agent to other tools and data, such as an issue tracker. View the ones configured for an agent and add new ones without leaving the app:
 
 - **Agent** picks whose servers to list, when more than one agent can manage MCP servers. It starts with the open conversation's agent
 - **Project** picks which project's servers to list. Project and local servers belong to one project, so the list starts with the open conversation's project. Pick **None** to see only your user servers
 - The list shows each configured server with its live health status (the check can take a few seconds)
-- Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off in the Plugins tab, and claude.ai connectors on claude.ai
+- Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off in the Saplings (Plugins) tab, and claude.ai connectors on claude.ai
 - With agents that approve project servers before connecting them (Claude Agent does, for `.mcp.json`), an unapproved server shows **needs approval**. Conversations don't connect it until you click **Approve**, which approves it for the project and its conversations. Only approve servers you trust: they run on your machine
-- **Add MCP Server** — Register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
+- **Add a trail (MCP server)** — Register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
   - **User** — available in all projects on this machine
   - **Project** — shared with your team via `.mcp.json` in the chosen project's repository
   - **Local** — only this machine, only the chosen project
@@ -66,6 +77,6 @@ View the MCP servers configured for an agent and add new ones without leaving th
 - **Paste JSON** adds servers from a config you copied, such as a server's README or Claude Desktop's `mcpServers` block. It shows what it found before you add it
 - New and restarted conversations pick up added servers automatically; running conversations must be restarted
 
-## Plugins
+## Saplings (Plugins)
 
-Browse and manage MCP server plugins that extend the agent's capabilities. Plugins can provide additional tools like web search, database access, or integration with external services.
+Saplings are Grove Bench's name for plugins: packages that add several things to the agent at once, such as field guides (skills), sub-agents, hooks and trails (MCP servers). Browse and manage them here. **Installed** lists the ones you have; **Nursery** lists the ones the agent's plugin marketplaces offer.

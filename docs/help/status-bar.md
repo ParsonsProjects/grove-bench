@@ -68,9 +68,9 @@ On most models a **Thinking** control switches extended thinking **On** (the mod
 
 When thinking is active, a purple pulsing dot appears while the agent reasons.
 
-## MCP Servers
+## Trails (MCP Servers)
 
-When the agent has MCP servers configured, an **MCP** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the conversation. The popover only offers the controls the conversation's agent supports:
+Trails are Grove Bench's name for MCP servers. When the agent has MCP servers configured, a **Trails** badge shows how many are configured. The dot is green when every connection is healthy, orange when some are down but others are still connected, and red when none are connected. It refreshes when each turn ends. Click it to manage the servers without restarting the conversation. The popover only offers the controls the conversation's agent supports:
 
 - Each server shows where it comes from (for example user, project, plugin or claude.ai), its status and its tool count
 - Click the tool count to list the server's tools. Tools the server marks as destructive or read-only are tagged
@@ -79,7 +79,7 @@ When the agent has MCP servers configured, an **MCP** badge shows how many are c
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
 - **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this conversation, so new conversations in the project also start without it
 
-New servers are added from Settings → MCP.
+New servers are added from Settings → Trails (MCP).
 
 Each server in the popover shows a status dot:
 

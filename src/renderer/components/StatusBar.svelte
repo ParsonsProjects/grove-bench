@@ -945,19 +945,19 @@
           {mcpHealth === 'down' ? 'text-red-400 hover:text-red-300'
             : mcpHealth === 'partial' ? 'text-orange-400 hover:text-orange-300'
             : 'text-muted-foreground hover:text-foreground'}"
-        title="MCP servers — click to manage connections{mcpDownCount > 0 ? ` (${mcpDownCount} down)` : ''}"
+        title="Trails (MCP servers) — click to manage connections{mcpDownCount > 0 ? ` (${mcpDownCount} down)` : ''}"
       >
         <span class="w-1.5 h-1.5
           {mcpHealth === 'down' ? 'bg-red-500'
             : mcpHealth === 'partial' ? 'bg-orange-400'
             : 'bg-green-500'}"></span>
-        MCP {mcpRows.length}
+        Trails {mcpRows.length}
       </button>
 
       {#if mcpExpanded}
         <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
           <div class="flex items-center justify-between mb-2">
-            <span class="font-medium text-foreground">MCP Servers</span>
+            <span class="font-medium text-foreground">Trails · MCP servers</span>
             {#if mcpControls.list}
               <button
                 onclick={refreshMcpServers}
@@ -1107,22 +1107,22 @@
           {enabledSkillCount === 0 ? 'text-red-400 hover:text-red-300'
             : disabledSkillCount > 0 ? 'text-orange-400 hover:text-orange-300'
             : 'text-muted-foreground hover:text-foreground'}"
-        title="Skills — click to manage{disabledSkillCount > 0 ? ` (${disabledSkillCount} disabled)` : ''}"
+        title="Field guides (skills) — click to manage{disabledSkillCount > 0 ? ` (${disabledSkillCount} disabled)` : ''}"
       >
         <span class="w-1.5 h-1.5
           {enabledSkillCount === 0 ? 'bg-red-500'
             : disabledSkillCount > 0 ? 'bg-orange-400'
             : 'bg-green-500'}"></span>
-        Skills {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
+        Field guides {disabledSkillCount > 0 ? `${enabledSkillCount}/${allSkills.length}` : allSkills.length}
         {#if suggestions.length > 0}
-          <span class="text-blue-400" title="{suggestions.length} suggested skill{suggestions.length === 1 ? '' : 's'} from your conversations">+{suggestions.length}</span>
+          <span class="text-blue-400" title="{suggestions.length} suggested field guide{suggestions.length === 1 ? '' : 's'} from your conversations">+{suggestions.length}</span>
         {/if}
       </button>
 
       {#if skillsExpanded}
         <div class="absolute bottom-full left-0 mb-2 bg-popover border border-border shadow-xl p-3 text-xs w-96 z-50">
           <div class="flex items-center justify-between mb-2">
-            <span class="font-medium text-foreground">Skills</span>
+            <span class="font-medium text-foreground">Field guides · Skills</span>
             <div class="flex items-center gap-2.5">
               <button
                 onclick={analyzeSuggestions}
@@ -1162,7 +1162,7 @@
                       <button
                         onclick={() => createFromSuggestion(suggestion)}
                         class="px-1.5 py-0.5 border border-border text-green-400 hover:bg-green-400/10 transition-colors shrink-0"
-                        title="Open the Add Skill dialog prefilled with this suggestion"
+                        title="Open Add a field guide, prefilled with this suggestion"
                       >
                         Create
                       </button>
@@ -1765,7 +1765,7 @@
                 {/if}
                 {#if systemInfo.skills.length > 0}
                   <div class="flex justify-between">
-                    <span>Skills</span>
+                    <span>Field guides</span>
                     <span class="text-foreground">{systemInfo.skills.length}</span>
                   </div>
                 {/if}
@@ -1777,7 +1777,7 @@
                 {/if}
                 {#if systemInfo.mcpServers.length > 0}
                   <div class="flex justify-between">
-                    <span>MCP servers</span>
+                    <span>Trails</span>
                     <span class="text-foreground">{systemInfo.mcpServers.length}</span>
                   </div>
                 {/if}

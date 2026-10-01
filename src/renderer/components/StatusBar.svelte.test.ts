@@ -81,7 +81,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Trails 1/ }));
 
     expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
@@ -93,7 +93,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
     render(StatusBar, { props: { sessionId: ID } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Trails 1/ }));
 
     expect(screen.getByRole('button', { name: 'Disconnect' }).getAttribute('title')).toBe('Off until this conversation restarts');
     expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
@@ -104,7 +104,7 @@ describe('StatusBar MCP controls follow the agent', () => {
     vi.mocked(window.groveBench.listMcpServers).mockResolvedValueOnce([{ name: 'docs', status: 'connected' }]);
     render(StatusBar, { props: { sessionId: ID } });
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: /Trails 1/ })).toBeTruthy());
   });
 });
 

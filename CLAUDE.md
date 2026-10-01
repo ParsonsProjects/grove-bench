@@ -41,6 +41,9 @@ src/
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, custom agents)
+      grove-tools.ts   # Grove's memory and Preview tools, defined once
+      grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
       preview-mcp-server.ts # Agent browser tools (grove-preview)
   renderer/            # Electron renderer (Svelte UI)
     App.svelte         # Root component
@@ -86,6 +89,7 @@ User-facing names and internal names differ on purpose:
 - **Conversation** (UI, help, docs) = `AgentSession` / `session:*` IPC / `sessions` store in code. Keep "session" internally: it also names the provider's own resumable session (`providerSessionId`).
 - **Thread tab** (UI, help, docs) = the `'activity'` workspace tab in code (`WorkspaceTab`, `setActiveTab`), and its view modes are `ActivityViewMode` / `defaultActivityView`. It was called Activity before; the code names stay so saved settings keep working.
 - **Project** (UI, help, docs) = `repoPath` in code. Keep "repo" internally: `'project'` is already a Claude Code config scope (`'project' | 'user' | 'local'`) for MCP servers, skills and plugins.
+- **Trail** (UI, help, docs) = an MCP server (`mcp*` in code, the `'mcp'` Settings tab). **Field guide** = a skill (`SkillInfo`, `skills.ts`). **Sapling** = a plugin, and **Nursery** = what the agent's plugin marketplaces offer (the `'discover'` plugin list). MCP and skills are standards across agents, and people meet the standard words in CLI errors and server READMEs, so headings, badges' tooltips and help pages show the standard term beside Grove's: "Trails · MCP servers", "Add a field guide (skill)".
 
 Use the user-facing words in any new UI text, help page or doc. See `docs/projects-plan.md` for where projects are heading.
 
@@ -97,6 +101,9 @@ Use the user-facing words in any new UI text, help page or doc. See `docs/projec
 - Multiple concurrent agent sessions per repository
 - Worktrees stored in a managed directory with short IDs (PATH_MAX safety)
 - Windows-only (no cross-platform support in v1)
+- Adapters describe tool calls with a provider-neutral `ToolView`
+  (`src/shared/tool-view.ts`); the UI and Read-safe mode read that, never a
+  provider's tool names. Events without one are read as Claude Code tools
 - Panels, dialogs and tabs that open on demand load on first use via
   `lazyComponent` (`src/renderer/lib/lazy-component.ts`), keeping their code
   (and libraries only they use, such as xterm) out of the startup bundle
@@ -110,6 +117,7 @@ Everything else goes in `devDependencies`, or it ships in the installer
 unused. `scripts/smoke-deps.mjs` checks the packaged app (Package workflow).
 
 - `@anthropic-ai/claude-agent-sdk` — Claude Code agent integration
+- `@modelcontextprotocol/sdk` — serves Grove's tools over MCP HTTP (bundled)
 - `@xterm/xterm` — Terminal emulation in renderer
 - `node-pty` — PTY spawning in main process
 - `bits-ui` — UI component library
