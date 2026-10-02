@@ -36,6 +36,12 @@ Click a conversation to switch to it. The workspace will show that conversation'
 
 Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open conversation, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. The rail also keeps search, **New conversation**, **Add a project**, bookmarks, memory, clean-up and settings. Projects and the filters are only in the full sidebar, so the rail always lists every open conversation. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
 
+## Folding Groups and Projects
+
+Click the **Groups** or **Projects** heading to fold that section down to just its heading, and click it again to open it. A folded section at the end of the list moves to the bottom of the sidebar. While folded, its heading shows the same counts as a project header, so you can still see what needs you. Grove Bench remembers which sections are folded.
+
+When a section is further down than you have scrolled, its heading stays pinned to the bottom of the sidebar, so you can always see it's there. If you open a folded section from there, the sidebar scrolls up to it.
+
 ## Filters
 
 Above the conversation lists, three chips let you narrow the sidebar to what matters right now. Each shows a count, and a conversation is in at most one:
