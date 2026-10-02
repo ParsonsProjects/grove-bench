@@ -346,6 +346,12 @@ class DraftStore {
       this.error = 'This project was removed. Pick another project in the bar below.';
       return false;
     }
+    // An alpha agent turned off in Settings while this draft was open.
+    if (d.agentId && !this.offeredAgent(d.agentId)) {
+      const name = agentsStore.get(d.agentId)?.displayName ?? d.agentId;
+      this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.`;
+      return false;
+    }
     this.starting = true;
     this.error = '';
     const text = d.text.trim();

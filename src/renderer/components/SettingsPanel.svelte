@@ -98,6 +98,7 @@
   const SHOWN_WHEN: Record<string, () => boolean> = {
     credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey),
     'thinking-summaries': () => agentsStore.list.some((a) => a.capabilities.thinkingSummaries),
+    'alpha-agents': () => agentsStore.list.some((a) => a.stage === 'alpha'),
     'project-colors': () => store.repos.length > 0,
   };
   const results = $derived(

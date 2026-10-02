@@ -390,6 +390,37 @@ describe('SettingsPanel alpha agents', () => {
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Enable OpenCode' }));
     await waitFor(() => expect(lastSaved().enabledAlphaAgents).toEqual([]));
   });
+
+  it('is found by searching, but only when an agent is in alpha', async () => {
+    agentsStore.list = [claude];
+    await renderPanel();
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+    await fireEvent.input(search, { target: { value: 'alpha' } });
+    expect(screen.queryByRole('button', { name: /Enable an alpha agent/ })).not.toBeInTheDocument();
+    cleanup();
+
+    agentsStore.list = [claude, opencode];
+    await renderPanel();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'alpha' } });
+    expect(screen.getByRole('button', { name: /Enable an alpha agent/ })).toBeInTheDocument();
+  });
+
+  it('doesn\'t claim a sign-in it couldn\'t check', async () => {
+    agentsStore.list = [claude, opencode];
+    mockGroveBench.getSettings.mockResolvedValue({ ...settings(), enabledAlphaAgents: ['opencode'] });
+    store.prerequisites = {
+      git: { available: true },
+      agents: { opencode: { available: true, authenticated: true, authUnchecked: true, apiKey: { label: 'OpenRouter API key', helpUrl: 'https://example.com', saved: false, canStore: true } } },
+    };
+    try {
+      await openAgentSection();
+      const group = (await screen.findByRole('checkbox', { name: 'Enable OpenCode' })).closest('section')!;
+      await waitFor(() => expect(group).toHaveTextContent('No key saved. OpenCode uses its own sign-in if you set one up in a terminal'));
+      expect(group).not.toHaveTextContent('Signed in');
+    } finally {
+      store.prerequisites = null;
+    }
+  });
 });
 
 describe('SettingsPanel thinking summaries', () => {

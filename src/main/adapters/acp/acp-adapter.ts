@@ -335,7 +335,7 @@ export class AcpAdapter implements AgentAdapter {
     // A full path is checked directly: where.exe takes a name or
     // path:pattern, not a path.
     if (path.isAbsolute(this.def.command)) {
-      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, authenticated: true };
+      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, authenticated: true, authUnchecked: true };
       return {
         available: false,
         authenticated: false,
@@ -350,7 +350,7 @@ export class AcpAdapter implements AgentAdapter {
       if (found) {
         // Signing in happens in the agent's own CLI and is only reported when
         // a session starts (an auth_required error), so it can't be checked here.
-        return { available: true, path: found, authenticated: true };
+        return { available: true, path: found, authenticated: true, authUnchecked: true };
       }
     } catch {
       // fall through

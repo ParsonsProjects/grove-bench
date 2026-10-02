@@ -265,6 +265,9 @@ export interface AdapterPrerequisiteStatus {
   available: boolean;
   path?: string;
   authenticated?: boolean;
+  /** Signing in can't be checked before a session starts, so `authenticated`
+   *  only means nothing says it is missing. */
+  authUnchecked?: boolean;
   authMethod?: string;
   email?: string;
   errorMessage?: string;

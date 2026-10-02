@@ -109,12 +109,12 @@ export interface ConversationGoal {
 
 // ─── Prerequisites ───
 
-/** A registered agent as the renderer sees it. */
 /** How finished an agent's support in Grove Bench is. An alpha agent stays
  *  out of the agent picker until the user turns it on in Settings
  *  (`enabledAlphaAgents`), and is labelled Alpha where it shows. */
 export type AgentStage = 'alpha';
 
+/** A registered agent as the renderer sees it. */
 export interface AgentSummary {
   id: string;
   displayName: string;
@@ -135,6 +135,9 @@ export interface AgentPrerequisiteStatus {
   available: boolean;
   path?: string;
   authenticated?: boolean;
+  /** Signing in can't be checked before a conversation starts, so
+   *  `authenticated` only means nothing says it is missing. */
+  authUnchecked?: boolean;
   authMethod?: string;
   email?: string;
   /** Adapter-provided error message when not available (e.g. install instructions). */

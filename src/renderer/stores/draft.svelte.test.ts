@@ -115,6 +115,17 @@ describe('draftStore.open', () => {
       draftStore.setAgent('opencode');
       expect(draftStore.draft?.agentId).toBe('opencode');
     });
+
+    it('doesn\'t start a conversation if it was turned off after being picked', async () => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      draftStore.open('/repo/one');
+      draftStore.setAgent('opencode');
+      draftStore.setText('hi');
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+      expect(await draftStore.start()).toBe(false);
+      expect(createSessionMock()).not.toHaveBeenCalled();
+      expect(draftStore.error).toBe('OpenCode is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.');
+    });
   });
 
   it('switches agent when opened for another agent', async () => {

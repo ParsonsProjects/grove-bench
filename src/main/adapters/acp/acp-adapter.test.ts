@@ -282,7 +282,8 @@ describe('AcpAdapter', () => {
 
   it('finds an agent given by full path', async () => {
     const adapter = new AcpAdapter({ ...def(), command: process.execPath });
-    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, path: process.execPath });
+    // Signing in only shows when a session starts.
+    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, path: process.execPath, authenticated: true, authUnchecked: true });
     const missing = new AcpAdapter({ ...def(), command: path.join(cwd, 'no-such-agent.exe') });
     expect((await missing.checkPrerequisites()).available).toBe(false);
   });

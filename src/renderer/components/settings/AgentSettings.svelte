@@ -163,7 +163,7 @@
     {/snippet}
     {#if agent.stage === 'alpha'}
       <CheckboxSetting
-        setting="enable-{agent.id}"
+        setting="alpha-agents"
         label="Enable {agent.displayName}"
         description="Offer {agent.displayName} as an agent for new conversations. Conversations already on it keep working either way."
         bind:checked={() => settingsStore.isAlphaEnabled(agent.id), (on) => settingsStore.setAlphaEnabled(agent.id, on)}
@@ -179,6 +179,8 @@
               The saved API key was refused.
             {:else if status.apiKey.saved}
               Using the saved API key.
+            {:else if status.authUnchecked}
+              No key saved. {agent.displayName} uses its own sign-in if you set one up in a terminal; Grove Bench can only check that when a conversation starts.
             {:else if status.authenticated}
               Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
             {:else}
