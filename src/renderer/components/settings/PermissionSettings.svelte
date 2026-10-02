@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settingsStore } from '../../stores/settings.svelte.js';
   import type { SettingsSectionId } from '$lib/settings-search.js';
+  import { checkToolRulePattern } from '../../../shared/tool-rules.js';
   import ListSetting from './ListSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
 
@@ -25,14 +26,15 @@
     items={settingsStore.draft.toolAllowRules.map((r) => r.pattern)}
     placeholder="e.g. shell(npm run *)"
     removeLabel="Remove allow rule"
+    examples={['shell(npm run *)', 'shell(git status)', 'web(*github.com*)', 'mcp(github__*)', 'question']}
+    check={checkToolRulePattern}
     onadd={(v) => settingsStore.addToolAllowRule(v)}
     onremove={(i) => settingsStore.removeToolAllowRule(i)}
   >
     {#snippet help()}
-      Matching actions run without asking. Rules work for any agent:
-      <code>shell(npm run *)</code>, <code>edit(src/**)</code>, <code>read(**/.env*)</code>,
-      <code>web(*github.com*)</code>, <code>mcp(github__*)</code>, <code>agent</code>, <code>question</code>.
-      A provider's own tool name also works, e.g. <code>Bash(git push *)</code>.
+      Matching actions run without asking. Write a keyword that works for any agent
+      (<code>shell</code>, <code>edit</code>, <code>read</code>, <code>web</code>, <code>mcp</code>, <code>agent</code>, <code>question</code>),
+      or a provider's own tool name such as <code>Bash</code>, with an optional pattern in brackets.
       <button type="button" class="text-primary hover:underline" onclick={onhelp}>How rules match</button>
     {/snippet}
   </ListSetting>
@@ -44,6 +46,8 @@
     items={settingsStore.draft.toolDenyRules.map((r) => r.pattern)}
     placeholder="e.g. shell(git push *)"
     removeLabel="Remove deny rule"
+    examples={['shell(git push *)', 'shell(rm *)', 'shell(Remove-Item *)', 'web(*)']}
+    check={checkToolRulePattern}
     onadd={(v) => settingsStore.addToolDenyRule(v)}
     onremove={(i) => settingsStore.removeToolDenyRule(i)}
   >

@@ -7,7 +7,7 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 ## The grove (General)
 
 - **Default thread view**: The view new conversations start in (Summary, Focus or Detailed). Each conversation can switch from its status bar
-- **Default diff view**: Unified or side-by-side diffs
+- **Default diff view**: How the Changes and Checkpoints tabs first show a file's changes, with a small example of each: **Unified** (removed and added lines in one column) or **Side-by-side** (the old and new file next to each other). Each file can switch there with its unified / side-by-side button, or `V`
 - **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, on the Changes, Checkpoints and Preview tabs while they have nothing to show (each with its own touch: a watering can, a flag, an easel), and while a conversation starts up again, where its agent walks through the grove. A pixel grove also grows along the top of the status bar as the conversation fills its context window, and its leaves turn from summer green to autumn as it nears the limit. When you open a sleeping or closed conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. When you start a new conversation, its agent walks up to that bench below your first message, sits down and starts typing, and stays there until the first reply shows. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when closed or sleeping (grey). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
 - **Project colors**: The accent color for each project in the sidebar. **Use default** puts a project back on its default color
 - **Always on top**: Keep the Grove Bench window above other windows
@@ -15,6 +15,8 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 - **Updates**: Shows the version you're running, with a link to all releases. **Check for updates** checks now and says what it found. With **Download updates automatically** on (the default), a new version downloads in the background and installs the next time you quit. When it's ready, **Restart to update** appears in the title bar to install it straight away: it stops every conversation the way quitting does (asking first if any are still working), installs, and reopens Grove Bench, where your conversations reopen. **What's new** next to it opens that version's release notes. With the option off, the title bar shows **Update available** and waits for you to click it to download. Updates are only checked in the installed app
 
 ## Grovekeepers (Agents)
+
+Each group in this section folds: click its heading to fold it away or open it again. The default agent's group and **All agents** start open, the rest start folded, and each stays as you left it until Grove Bench restarts. Searching for a setting opens the group it is in.
 
 There is one group per agent, each with:
 
@@ -61,6 +63,8 @@ Control how the agent handles actions that need approval. The mode new conversat
   - **Chained commands**: a shell command joined with `&&`, `||`, `;`, `|`, `|&`, `&` or a line break (in PowerShell: `;`, `|`, `&&`, `||` or a line break) is checked one part at a time. Allow rules must match every part, so `shell(npm run *)` approves `npm run lint && npm run test` but not `npm run build && rm -rf ~`. A deny rule applies if it matches any part
   - **Commands that can't be split safely**, such as ones using `$(...)`, backticks, `${...}`, `(...)` outside quotes, here-docs or `#` comments, are only approved by a rule for every shell command (`shell` or `shell(*)`), and only when you have no deny rule for shell commands. Otherwise the agent asks you
   - **PowerShell** commands also can't be split safely when they use `{...}` script blocks, `@(...)`, here-strings, the `&` call operator, typographic quotes, or a quote inside a word with a dash, such as `--format="%h %s"`. A backslash is a plain character in PowerShell, so `echo a\; b` is two commands
+  - **Checking a rule**: when you add a rule, a rule that can never match, such as one with an unclosed bracket (`shell(rm *`), is refused with a note on how to fix it. A rule that looks like a slip but could be meant, such as a command with no brackets (`shell npm test`) or a word that isn't a keyword (`shel(npm *)`), shows a hint first; press **Add anyway** to keep it. Saved rules that can never match are marked with `!`
+  - **Examples** under each list put a rule in the field for you to edit before adding it
   - **PowerShell aliases and case**: for PowerShell, deny rules ignore case and also catch a command's built-in aliases, so `shell(Remove-Item *)` denies `rm ~`, `del ~`, `ri ~`, `rd ~`, `erase ~`, `rmdir ~` and `remove-item ~`. Only the command name is expanded, not its parameters, so `shell(Remove-Item -Recurse *)` misses `rm -r ~`: write deny rules for the command name. Allow rules stay exact, so `shell(Get-ChildItem *)` doesn't approve `ls` or `get-childitem`. Add a rule for each spelling you want approved. Bash rules are always exact
 
 ## Branches & roots (Git & worktrees)
@@ -74,6 +78,7 @@ Control how the agent handles actions that need approval. The mode new conversat
 - **Desktop notifications**: Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation
 - **Flash the taskbar button**: The taskbar button also flashes; it stops as soon as the window regains focus
 - **Badge the taskbar icon**: Show how many conversations need you on the taskbar icon
+- **Send a test notification**: Shows one straight away, even with the Grove Bench window in front. If it doesn't appear, Windows is holding it back: check **Settings > System > Notifications** in Windows, where Grove Bench needs to be allowed and **Do not disturb** (Focus assist on Windows 10) turned off
 
 ## Tending (Background work)
 
@@ -95,13 +100,13 @@ View the MCP servers configured for an agent and add new ones without leaving th
 - **Remove** asks you to confirm before it removes a server. Removing a project server changes the project's `.mcp.json`, which your team may share
 - Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off under Plugins (Seed packets), and claude.ai connectors on claude.ai
 - With agents that approve project servers before connecting them (Claude Agent does, for `.mcp.json`), an unapproved server shows **needs approval**. Conversations don't connect it until you click **Approve**, which approves it for the project and its conversations. Only approve servers you trust: they run on your machine
-- **Add MCP server**: Register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
+- **Add server** (top right of the section) opens a dialog to register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
   - **User**: available in all projects on this machine
   - **Project**: shared with your team via `.mcp.json` in the chosen project's repository
   - **Local**: only this machine, only the chosen project
 - stdio servers accept arguments and environment variables (one `KEY=value` per line); HTTP/SSE servers accept request headers (one per line)
 - **Paste JSON** adds servers from a config you copied, such as a server's README or Claude Desktop's `mcpServers` block. It shows what it found before you add it
-- If adding fails, the error shows under the form
+- If adding fails, the error shows in the dialog and what you typed stays, so you can fix it and try again. Once a server is added the dialog closes and the section says what was added
 - New and restarted conversations pick up added servers automatically; running conversations must be restarted
 
 ## Seed packets (Plugins)

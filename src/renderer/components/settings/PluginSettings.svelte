@@ -60,7 +60,7 @@
       </Button>
     </div>
 
-    <Input type="search" bind:value={search} placeholder="Search plugins" aria-label="Search plugins" />
+    <Input type="search" bind:value={search} placeholder="Search plugins" aria-label="Search plugins" class="max-w-xl" />
 
     {#if pluginStore.loading}
       <div class="flex items-center justify-center py-8 text-muted-foreground">

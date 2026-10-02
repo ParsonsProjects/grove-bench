@@ -5,7 +5,10 @@
 import path from 'node:path';
 import { TOOL_RULE_KEYWORDS, subagentParent } from '../shared/types.js';
 import type { ToolCategory, ToolRule } from '../shared/types.js';
+import { parseToolRule } from '../shared/tool-rules.js';
 import { POWERSHELL_ALIASES } from './powershell-aliases.js';
+
+export { parseToolRule };
 
 /**
  * True if `child` resolves to a location inside (or equal to) `parent`.
@@ -40,16 +43,6 @@ export function cleanEnv(env: Record<string, string | undefined> = process.env):
       ([key]) => !ENV_NOISE_PREFIXES.some(p => key.startsWith(p))
     )
   );
-}
-
-/** Split `Tool(spec)` / `Tool` into its parts; null when malformed. */
-export function parseToolRule(pattern: string): { tool: string; specifier: string | null } | null {
-  const trimmed = pattern.trim();
-  if (!trimmed) return null;
-  if (!trimmed.includes('(')) return { tool: trimmed, specifier: null };
-  const match = trimmed.match(/^([^(]+)\((.*)\)$/s);
-  if (!match) return null;
-  return { tool: match[1].trim(), specifier: match[2] };
 }
 
 function globToRegExp(glob: string, ignoreCase = false): RegExp | null {

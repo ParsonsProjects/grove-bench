@@ -118,7 +118,9 @@
     // models), so look for the row for a little while.
     for (let i = 0; i < 40; i++) {
       await tick();
-      const row = content?.querySelector<HTMLElement>(`[data-setting="${entry.id}"]`);
+      // A setting can show once per agent: prefer one that isn't folded away.
+      const rows = [...content?.querySelectorAll<HTMLElement>(`[data-setting="${entry.id}"]`) ?? []];
+      const row = rows.find((r) => !r.closest('details:not([open])')) ?? rows[0];
       if (row) {
         reveal(row);
         return;
@@ -128,6 +130,10 @@
   }
 
   function reveal(row: HTMLElement) {
+    // Unfold any folded group it sits in, or there is nothing to show.
+    for (let fold = row.closest('details'); fold; fold = fold.parentElement?.closest('details') ?? null) {
+      fold.open = true;
+    }
     row.scrollIntoView?.({ block: 'center' });
     row.querySelector<HTMLElement>('input, textarea, button')?.focus({ preventScroll: true });
     row.animate?.(
@@ -226,7 +232,7 @@
         {#each visibleSections as s (s.id)}
           <Tabs.Content value={s.id} class="px-6 py-5 outline-none">
             {#if section === s.id}
-              <div class="max-w-2xl flex flex-col gap-8">
+              <div class="flex flex-col gap-8">
                 <div>
                   <h3 class="text-base font-semibold text-foreground">{s.grove}</h3>
                   <p class="text-xs text-muted-foreground mt-1">{s.label}: {s.description}</p>

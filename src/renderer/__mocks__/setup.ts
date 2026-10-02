@@ -105,6 +105,7 @@ const mockGroveBench = {
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
   notify: vi.fn(),
+  testNotification: vi.fn().mockResolvedValue('sent'),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
   listSessions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SessionInfo[])),

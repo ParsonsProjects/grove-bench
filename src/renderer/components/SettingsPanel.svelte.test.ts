@@ -86,6 +86,7 @@ async function openAgentSection() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  settingsStore.folds.clear();
   agentsStore.list = [claude];
   agentsStore.loaded = true;
   settingsStore.loaded = false;
@@ -205,6 +206,107 @@ describe('SettingsPanel auto-save', () => {
 
     expect(mockGroveBench.getSettings).toHaveBeenCalledTimes(1);
     expect(settingsStore.draft.alwaysOnTop).toBe(true);
+  });
+});
+
+describe('SettingsPanel permission rules', () => {
+  async function openRules() {
+    await renderPanel();
+    await openSection('Permissions');
+    return screen.getByRole('textbox', { name: 'Tool deny rules' });
+  }
+
+  it('refuses a rule that can never match, and says how to fix it', async () => {
+    const field = await openRules();
+    await fireEvent.input(field, { target: { value: 'shell(rm -rf *' } });
+    await fireEvent.keyDown(field, { key: 'Enter' });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Did you mean shell(rm -rf *)?');
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+
+    await fireEvent.input(field, { target: { value: 'shell(rm -rf *)' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(lastSaved().toolDenyRules).toEqual([{ pattern: 'shell(rm -rf *)' }]));
+  });
+
+  it('shows a hint first, then adds the rule on a second Add', async () => {
+    const field = await openRules();
+    await fireEvent.input(field, { target: { value: 'shel(npm *)' } });
+    const group = field.closest<HTMLElement>('[data-setting]')!;
+    await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
+
+    expect(within(group).getByRole('status')).toHaveTextContent('"shel" isn\'t a rule keyword');
+    await fireEvent.click(within(group).getByRole('button', { name: 'Add anyway' }));
+    await waitFor(() => expect(lastSaved().toolDenyRules).toEqual([{ pattern: 'shel(npm *)' }]));
+  });
+
+  it('puts a clicked example in the field to edit', async () => {
+    const field = await openRules();
+    await fireEvent.click(screen.getByRole('button', { name: 'shell(git push *)' }));
+
+    expect(field).toHaveValue('shell(git push *)');
+    expect(field).toHaveFocus();
+    expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it('marks a saved rule that never matches', async () => {
+    mockGroveBench.getSettings.mockResolvedValue({ ...settings(), toolDenyRules: [{ pattern: 'shell(rm *' }, { pattern: 'shell(git push *)' }] });
+    await openRules();
+
+    const list = screen.getByRole('list', { name: 'Tool deny rules' });
+    expect(within(list).getByText('shell(rm *').closest('li')).toHaveTextContent('(never matches)');
+    expect(within(list).getByText('shell(git push *)').closest('li')).not.toHaveTextContent('(never matches)');
+  });
+});
+
+describe('SettingsPanel test notification', () => {
+  it('sends one and says what to check if it did not show', async () => {
+    await renderPanel();
+    await openSection('Notifications');
+    await fireEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+
+    expect(mockGroveBench.testNotification).toHaveBeenCalled();
+    expect(await screen.findByText(/^Sent\. If it didn't appear/)).toBeInTheDocument();
+  });
+
+  it('says when Windows refused it', async () => {
+    mockGroveBench.testNotification.mockResolvedValueOnce('failed');
+    await renderPanel();
+    await openSection('Notifications');
+    await fireEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+
+    expect(await screen.findByText(/Windows couldn't show it/)).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPanel diff view', () => {
+  it('shows both views with an example, and saves the one picked', async () => {
+    await renderPanel();
+    const group = screen.getByRole('radiogroup', { name: 'Default diff view' });
+    const unified = within(group).getByRole('radio', { name: /Unified/ });
+    const sideBySide = within(group).getByRole('radio', { name: /Side-by-side/ });
+    expect(unified).toBeChecked();
+
+    await fireEvent.click(sideBySide);
+    await waitFor(() => expect(lastSaved().diffViewMode).toBe('side-by-side'));
+    expect(sideBySide).toBeChecked();
+  });
+});
+
+describe('SettingsPanel background work', () => {
+  it('groups the one-off settings under Conversations', async () => {
+    await renderPanel();
+    await openSection('Background work');
+    const group = screen.getByRole('heading', { name: 'Conversations' }).closest('section')!;
+
+    for (const name of ['Suggest skills automatically', 'Show the conversation goal']) {
+      expect(within(group).getByRole('checkbox', { name })).toBeInTheDocument();
+    }
+    expect(within(group).getByLabelText('Sleep idle conversations after')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Skill suggestions' })).not.toBeInTheDocument();
   });
 });
 
@@ -423,6 +525,64 @@ describe('SettingsPanel alpha agents', () => {
   });
 });
 
+describe('SettingsPanel agent groups', () => {
+  const gemini: AgentSummary = { id: 'gemini', displayName: 'Gemini CLI', capabilities: {} };
+
+  /** The fold an agent's settings sit in. */
+  function fold(name: string) {
+    return screen.getByText(name, { selector: 'h4' }).closest('details')!;
+  }
+
+  it('fold, with only the default agent open', async () => {
+    agentsStore.list = [claude, gemini];
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Gemini CLI default model' });
+
+    expect(fold('Claude Agent')).toHaveAttribute('open');
+    expect(fold('Gemini CLI')).not.toHaveAttribute('open');
+    expect(fold('All agents')).toHaveAttribute('open');
+  });
+
+  it('stay as left when you come back to the section', async () => {
+    agentsStore.list = [claude, gemini];
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Gemini CLI default model' });
+
+    await fireEvent.click(fold('Gemini CLI').querySelector('summary')!);
+    await waitFor(() => expect(fold('Gemini CLI')).toHaveAttribute('open'));
+    await new Promise((r) => setTimeout(r, 20));
+    await openSection('General');
+    await openSection('Agents');
+
+    await screen.findByRole('button', { name: 'Gemini CLI default model' });
+    expect(fold('Gemini CLI')).toHaveAttribute('open');
+  });
+
+  it('unfold when search goes to a setting in one', async () => {
+    agentsStore.list = [gemini, claude];
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Gemini CLI default model' });
+    fold('Claude Agent').open = false;
+
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'default model' } });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Default model/ }));
+
+    await waitFor(() => expect(fold('Gemini CLI')).toHaveAttribute('open'));
+  });
+
+  it('go to the open agent when search finds the same setting in each', async () => {
+    agentsStore.list = [gemini, claude];
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Gemini CLI default model' });
+
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'default model' } });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Default model/ }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Claude Agent default model' })).toHaveFocus());
+    expect(fold('Gemini CLI')).not.toHaveAttribute('open');
+  });
+});
+
 describe('SettingsPanel thinking summaries', () => {
   it('is offered only when an agent can show thinking summaries', async () => {
     await openAgentSection();
@@ -496,18 +656,48 @@ describe('SettingsPanel MCP servers', () => {
     expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
   });
 
-  it('shows a failed add next to the add form', async () => {
-    mockGroveBench.mcpConfigAdd.mockRejectedValue(new Error('name already exists'));
+  /** Open the Add server dialog from the section's top right. */
+  async function openAddDialog() {
     await renderPanel();
     await openSection('MCP servers');
     await waitFor(() => expect(mcpConfigStore.attempted).toBe(true));
-
-    await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'github' } });
-    await fireEvent.input(screen.getByLabelText('Command'), { target: { value: 'npx' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    return screen.findByRole('dialog', { name: 'Add MCP server' });
+  }
 
-    const form = document.querySelector<HTMLElement>('[data-setting="mcp-add"]')!;
-    expect(await within(form).findByText('name already exists')).toBeInTheDocument();
+  it('adds a server from a dialog, then closes it and says so', async () => {
+    const dialog = await openAddDialog();
+
+    await fireEvent.input(within(dialog).getByLabelText('Name'), { target: { value: 'github' } });
+    await fireEvent.input(within(dialog).getByLabelText('Command'), { target: { value: 'npx' } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Add server' }));
+
+    await waitFor(() => expect(mockGroveBench.mcpConfigAdd).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add MCP server' })).not.toBeInTheDocument());
+    expect(screen.getByRole('status')).toHaveTextContent('Added github.');
+  });
+
+  it('shows a failed add in the dialog, and keeps it open', async () => {
+    mockGroveBench.mcpConfigAdd.mockRejectedValue(new Error('name already exists'));
+    const dialog = await openAddDialog();
+
+    await fireEvent.input(within(dialog).getByLabelText('Name'), { target: { value: 'github' } });
+    await fireEvent.input(within(dialog).getByLabelText('Command'), { target: { value: 'npx' } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Add server' }));
+
+    expect(await within(dialog).findByText('name already exists')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('github');
+  });
+
+  it('starts the dialog empty again after Cancel', async () => {
+    let dialog = await openAddDialog();
+    await fireEvent.input(within(dialog).getByLabelText('Name'), { target: { value: 'github' } });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add MCP server' })).not.toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    dialog = await screen.findByRole('dialog', { name: 'Add MCP server' });
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('');
   });
 });
 
