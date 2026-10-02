@@ -20,6 +20,16 @@ describe('agentsStore', () => {
     expect(agentsStore.list.map((a) => a.id)).toEqual(['claude-code', 'codex']);
   });
 
+  it('offers an alpha agent for new conversations only once it is turned on', () => {
+    const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' as const };
+    agentsStore.list = [claude, opencode];
+    expect(agentsStore.offered([]).map((a) => a.id)).toEqual(['claude-code']);
+    expect(agentsStore.isOffered('opencode', [])).toBe(false);
+    expect(agentsStore.offered(['opencode']).map((a) => a.id)).toEqual(['claude-code', 'opencode']);
+    // An agent it doesn't know (the list still loading) isn't held back.
+    expect(agentsStore.isOffered('later', [])).toBe(true);
+  });
+
   it('uses the agent marked default, else the first', async () => {
     mockGroveBench.listAdapters.mockResolvedValue([claude, codex]);
     await agentsStore.load();

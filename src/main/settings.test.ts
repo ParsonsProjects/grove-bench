@@ -66,6 +66,15 @@ describe('loadSettings', () => {
     expect(s.adapterDefaults).toEqual({});
   });
 
+  it('starts with no alpha agents turned on, and drops a malformed list', () => {
+    mockReadFileSync.mockImplementation(() => { throw enoent(); });
+    expect(loadSettings().enabledAlphaAgents).toEqual([]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabledAlphaAgents: ['opencode'] }));
+    expect(loadSettings().enabledAlphaAgents).toEqual(['opencode']);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabledAlphaAgents: 'opencode' }));
+    expect(loadSettings().enabledAlphaAgents).toEqual([]);
+  });
+
   it('handles corrupt JSON gracefully', () => {
     mockReadFileSync.mockReturnValue('not valid json {{{');
     const s = loadSettings();

@@ -1,9 +1,10 @@
 # Open models through OpenCode
 
-> **Status: built, waiting on a Windows run with a real key.** OpenCode is a
+> **Status: alpha, waiting on a Windows run with a real key.** OpenCode is a
 > built-in agent on top of main's ACP adapter (`docs/acp-adapter-plan.md`),
 > with an optional OpenRouter key that starts conversations on DeepSeek V4.1
-> Flash. What it does and why is in [What this branch changed](#what-this-branch-changed);
+> Flash. It is an alternative to Claude Code, which stays the default, and is
+> off until turned on in Settings. What it does and why is in [What this branch changed](#what-this-branch-changed);
 > what is still open is in [Left to do](#left-to-do). Facts about outside
 > projects were checked between 28 September and 2 October 2026 and are
 > linked in [Sources](#sources).
@@ -23,6 +24,7 @@
 | Integration route | Main's generic **Agent Client Protocol (ACP)** adapter (`src/main/adapters/acp/`). Grove is the ACP client, the harness is the ACP agent. |
 | Harness | **OpenCode** (`opencode acp`), as a built-in preset next to Gemini CLI and Copilot CLI. |
 | Model provider | **OpenRouter**, with the user's own key saved in Grove. Optional: OpenCode also uses whatever providers the user signed in to with `opencode auth login`. |
+| Release | **Alpha.** Claude Code stays the default agent; OpenCode is an alternative picked per conversation. It is hidden from the agent picker until the user ticks **Enable OpenCode** (Settings > Agents, `enabledAlphaAgents`), and marked Alpha in Settings and the picker. Turning it off hides it for new conversations only, so existing ones still resume. Any agent can be made alpha with `stage: 'alpha'` on its definition. |
 | Getting the harness | **Found on PATH**, with install steps when missing, as for the other ACP agents. No bundling. npm's `.cmd` shim for `opencode` starts fine on Windows [15]. |
 | The user's own OpenCode setup | **Kept.** Grove merges its settings over the user's (`OPENCODE_CONFIG_CONTENT`) rather than giving OpenCode a separate home, so the user's sign-ins, plugins and MCP servers still apply. |
 

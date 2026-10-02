@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
@@ -198,6 +199,17 @@ class SettingsStore {
   }
 
   /** Set (or with an empty value, clear) an adapter's default model in the draft. */
+  /** Whether an alpha agent is turned on, in the panel's copy. */
+  isAlphaEnabled(adapterId: string): boolean {
+    return this.draft.enabledAlphaAgents.includes(adapterId);
+  }
+
+  /** Turn an alpha agent on or off for new conversations. */
+  setAlphaEnabled(adapterId: string, enabled: boolean) {
+    const rest = this.draft.enabledAlphaAgents.filter((id) => id !== adapterId);
+    this.draft.enabledAlphaAgents = enabled ? [...rest, adapterId] : rest;
+  }
+
   setDefaultModel(adapterId: string, model: string) {
     const next = { ...(this.draft.defaultModels ?? {}) };
     if (model) next[adapterId] = model;

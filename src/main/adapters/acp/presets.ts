@@ -46,6 +46,8 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     displayName: 'OpenCode',
     command: 'opencode',
     args: ['acp'],
+    // Not yet run on Windows with a real key (docs/open-model-harnesses-plan.md).
+    stage: 'alpha',
     // Optional: OpenCode also uses the providers the user signed in to with
     // `opencode auth login`. A key saved here makes OpenRouter the provider
     // and DeepSeek V4.1 Flash the starting model.

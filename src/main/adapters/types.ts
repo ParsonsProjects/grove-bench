@@ -5,7 +5,7 @@
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
 import type { ToolView } from '../../shared/tool-view.js';
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
+import type { AgentStage, AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -356,6 +356,10 @@ export interface AgentAdapter {
    *  compaction, commit messages, skill suggestions. Used unless the user
    *  picks another in Settings > Agents. Omit to use the agent's own default. */
   readonly backgroundModel?: string;
+
+  /** 'alpha' while Grove Bench's support for the agent is still being
+   *  tested: it is offered only once the user turns it on (AgentStage). */
+  readonly stage?: AgentStage;
 
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */

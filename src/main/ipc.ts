@@ -1632,6 +1632,7 @@ export function registerHandlers() {
       // capability flag of their own.
       capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
       isDefault: a.id === defaultId,
+      ...(a.stage ? { stage: a.stage } : {}),
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
       ...(a.mcp ? { mcp: a.mcp } : {}),
       ...(a.generatedFiles?.length ? { generatedFiles: [...a.generatedFiles] } : {}),

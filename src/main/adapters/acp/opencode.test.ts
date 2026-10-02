@@ -1,9 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { openCodeEnv, verifyOpenRouterKey, OPENCODE_DEFAULT_MODEL } from './opencode.js';
+import { ACP_PRESETS } from './presets.js';
+import { AcpAdapter } from './acp-adapter.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 
 const config = (env: Record<string, string>) => JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+
+describe('the OpenCode preset', () => {
+  it('is built in as an alpha agent, unlike Gemini CLI and Copilot CLI', () => {
+    const stages = Object.fromEntries(ACP_PRESETS.map((p) => [p.id, p.stage ?? null]));
+    expect(stages).toEqual({ 'gemini-cli': null, 'copilot-cli': null, opencode: 'alpha' });
+    expect(new AcpAdapter(ACP_PRESETS.find((p) => p.id === 'opencode')!).stage).toBe('alpha');
+  });
+});
 
 describe('openCodeEnv', () => {
   it('makes edits, commands and fetches ask, and takes edits away from plan mode', () => {

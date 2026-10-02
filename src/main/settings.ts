@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  enabledAlphaAgents: [],
 
   // Memory
   memoryAutoSave: true,
@@ -226,6 +227,7 @@ const settingsSchema = z.object({
     command: z.string(),
     args: z.array(z.string()).catch([]),
   })).catch(DEFAULT_SETTINGS.acpAgents),
+  enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),

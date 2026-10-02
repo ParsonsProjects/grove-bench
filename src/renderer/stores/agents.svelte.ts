@@ -51,6 +51,20 @@ class AgentsStore {
     return new Set(this.list.flatMap((a) => a.generatedFiles ?? []));
   }
 
+  /** Whether new conversations may use an agent: any agent that isn't in
+   *  alpha, and alpha agents the user turned on (enabledAlphaAgents). True
+   *  for an agent it doesn't know, like supports(). Existing conversations
+   *  keep their agent either way. */
+  isOffered(id: string | null | undefined, enabledAlpha: readonly string[]): boolean {
+    const agent = this.get(id);
+    return !agent || agent.stage !== 'alpha' || enabledAlpha.includes(agent.id);
+  }
+
+  /** The agents a new conversation can be started with. */
+  offered(enabledAlpha: readonly string[]): AgentSummary[] {
+    return this.list.filter((a) => this.isOffered(a.id, enabledAlpha));
+  }
+
   /** Agents that support a capability, e.g. 'plugins' or 'mcpConfig'. */
   supporting(capability: string): AgentSummary[] {
     return this.list.filter((a) => a.capabilities[capability]);

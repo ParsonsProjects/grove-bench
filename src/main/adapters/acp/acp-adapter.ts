@@ -27,7 +27,7 @@ import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
   ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, UserMessage,
 } from '../types.js';
-import type { ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
+import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
 import { getApiKey } from '../../credentials.js';
@@ -71,6 +71,8 @@ export interface AcpAgentDefinition {
   cliSignIn?: CliSignInDescriptor;
   /** Shown when the program isn't found. */
   installInstructions?: string;
+  /** 'alpha' to keep it out of the agent picker until the user turns it on. */
+  stage?: AgentStage;
 }
 
 /** How long the agent gets to answer `initialize` and set up a session. */
@@ -228,6 +230,7 @@ export class AcpAdapter implements AgentAdapter {
   readonly cliSignIn?: CliSignInDescriptor;
   readonly apiKey?: ApiKeyDescriptor;
   readonly verifyApiKey?: (key: string) => Promise<boolean | null>;
+  readonly stage?: AgentStage;
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -256,6 +259,7 @@ export class AcpAdapter implements AgentAdapter {
     this.displayName = def.displayName;
     this.cliSignIn = def.cliSignIn;
     this.apiKey = def.apiKey;
+    this.stage = def.stage;
     if (def.verifyApiKey) this.verifyApiKey = (key) => def.verifyApiKey!(key);
     this.authErrorMessage = def.cliSignIn
       ? `${def.displayName} needs you to sign in. Run "${def.cliSignIn.command}" in a terminal, sign in, then try again.`

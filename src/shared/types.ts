@@ -110,9 +110,16 @@ export interface ConversationGoal {
 // ─── Prerequisites ───
 
 /** A registered agent as the renderer sees it. */
+/** How finished an agent's support in Grove Bench is. An alpha agent stays
+ *  out of the agent picker until the user turns it on in Settings
+ *  (`enabledAlphaAgents`), and is labelled Alpha where it shows. */
+export type AgentStage = 'alpha';
+
 export interface AgentSummary {
   id: string;
   displayName: string;
+  /** Set for an agent that is still being tested (see AgentStage). */
+  stage?: AgentStage;
   capabilities: Record<string, boolean>;
   isDefault?: boolean;
   /** The adapter's own model for background tasks, if it declares one. */
@@ -1420,6 +1427,9 @@ export interface GroveBenchSettings {
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
+  /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
+   *  stay out of the agent picker; their existing conversations still work. */
+  enabledAlphaAgents: string[];
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
