@@ -20,7 +20,7 @@
   // ── Per-agent defaults ──
   // One group per registered agent: its credentials, its default model and
   // the session controls it declares for that model (permission mode,
-  // thinking, speed, ...).
+  // thinking, speed, ...). Each folds; only the default agent's starts open.
   // Everything comes from the adapter's own descriptors, so a new agent needs
   // no Settings changes. Models are picked from a list rather than typed, so
   // a typo can't break every new conversation.
@@ -157,6 +157,7 @@
     title={agent.displayName}
     description={agent.stage === 'alpha' ? `Grove Bench's support for ${agent.displayName} is still being tested, so expect rough edges.` : undefined}
     card
+    collapse={{ key: `agent:${agent.id}`, open: agent.id === agentsStore.defaultId }}
   >
     {#snippet titleAside()}
       {#if agent.stage === 'alpha'}<AlphaBadge />{/if}
@@ -277,7 +278,7 @@
   </SettingsGroup>
 {/each}
 
-<SettingsGroup title="All agents" description="These apply to every agent's conversations." card>
+<SettingsGroup title="All agents" description="These apply to every agent's conversations." card collapse={{ key: 'all-agents', open: true }}>
   <SettingRow
     setting="system-prompt"
     label="System prompt append"
@@ -343,6 +344,7 @@
   title="Other agents (ACP)"
   description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
   card
+  collapse={{ key: 'acp-agents', open: false }}
 >
   <div data-setting="acp-agents" class="flex flex-col gap-2">
     {#if settingsStore.draft.acpAgents.length > 0}

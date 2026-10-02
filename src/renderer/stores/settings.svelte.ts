@@ -66,6 +66,9 @@ class SettingsStore {
   panelOpen = $state(false);
   /** The section Settings should show when it next opens (see openAt). */
   requestedSection = $state<SettingsSectionId | null>(null);
+  /** Settings groups folded or opened, by their collapse key, for this run
+   *  of the app, so they show as left after switching section or reopening. */
+  readonly folds = new Map<string, boolean>();
 
   /** Open Settings at one section, for links such as "fix your sign-in". */
   openAt(section: SettingsSectionId) {

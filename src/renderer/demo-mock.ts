@@ -44,6 +44,8 @@ const SETTINGS = {
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  acpAgents: [],
+  enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,

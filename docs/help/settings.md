@@ -16,6 +16,8 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 
 ## Grovekeepers (Agents)
 
+Each group in this section folds: click its heading to fold it away or open it again. The default agent's group and **All agents** start open, the rest start folded, and each stays as you left it until Grove Bench restarts. Searching for a setting opens the group it is in.
+
 There is one group per agent, each with:
 
 - **Credentials**: Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
@@ -95,13 +97,13 @@ View the MCP servers configured for an agent and add new ones without leaving th
 - **Remove** asks you to confirm before it removes a server. Removing a project server changes the project's `.mcp.json`, which your team may share
 - Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off under Plugins (Seed packets), and claude.ai connectors on claude.ai
 - With agents that approve project servers before connecting them (Claude Agent does, for `.mcp.json`), an unapproved server shows **needs approval**. Conversations don't connect it until you click **Approve**, which approves it for the project and its conversations. Only approve servers you trust: they run on your machine
-- **Add MCP server**: Register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
+- **Add server** (top right of the section) opens a dialog to register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
   - **User**: available in all projects on this machine
   - **Project**: shared with your team via `.mcp.json` in the chosen project's repository
   - **Local**: only this machine, only the chosen project
 - stdio servers accept arguments and environment variables (one `KEY=value` per line); HTTP/SSE servers accept request headers (one per line)
 - **Paste JSON** adds servers from a config you copied, such as a server's README or Claude Desktop's `mcpServers` block. It shows what it found before you add it
-- If adding fails, the error shows under the form
+- If adding fails, the error shows in the dialog and what you typed stays, so you can fix it and try again. Once a server is added the dialog closes and the section says what was added
 - New and restarted conversations pick up added servers automatically; running conversations must be restarted
 
 ## Seed packets (Plugins)
