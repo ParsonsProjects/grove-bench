@@ -18,6 +18,7 @@
   import { CONTROL_SHORTCUTS, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
+  import PixelMeter from './PixelMeter.svelte';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
 
@@ -172,9 +173,14 @@
                     <span class="text-muted-foreground">{w.label}</span>
                     <span class="font-medium {usageTextClass(w.utilization * 100)}">{Math.round(w.utilization * 100)}%</span>
                   </div>
-                  <div class="h-1 mt-1 bg-muted-foreground/20">
-                    <div class="h-full transition-all {usageBarClass(w.utilization * 100)}" style:width="{Math.min(100, w.utilization * 100)}%"></div>
-                  </div>
+                  <!-- Pixel blocks of 5%, like the context meter in the status bar. -->
+                  <PixelMeter
+                    percent={Math.min(100, w.utilization * 100)}
+                    cells={20}
+                    fillClass={usageBarClass(w.utilization * 100)}
+                    class="h-1.5 mt-1"
+                    data-testid="usage-bar-{w.id}"
+                  />
                   {#if w.resetsAt}
                     <div class="text-[10px] text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
                   {/if}

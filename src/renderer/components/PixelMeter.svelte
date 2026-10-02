@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
    * A percentage as a row of pixel blocks, to sit with the context grove's
-   * pixel art. Blocks light one after another as it rises; the one the
-   * percent is inside shows dimmed. Decorative: callers give the number in text.
+   * pixel art: the context meter and the plan usage bars. Blocks light one
+   * after another as it rises; the one the percent is inside shows dimmed.
+   * Decorative: callers give the number in text.
    */
   import type { HTMLAttributes } from 'svelte/elements';
   import { meterCells } from '../lib/pixel-meter.js';
