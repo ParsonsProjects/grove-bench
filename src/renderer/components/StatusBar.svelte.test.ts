@@ -281,15 +281,14 @@ describe('StatusBar context actions', () => {
 
   it('colours the whole used length, cached tokens included', () => {
     // Nearly all of it cached, as it is with prompt caching: the bar still
-    // reads as 90% full, in the full colour.
+    // reads as 90% full (nine of ten blocks), in the full colour.
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
     messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, outputTokens: 0, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
 
-    const fill = getByTestId('context-bar').children;
-    expect(fill).toHaveLength(1);
-    expect(fill[0].className).toContain('bg-red-400');
-    expect((fill[0] as HTMLElement).style.width).toBe('90%');
+    const blocks = [...getByTestId('context-bar').children] as HTMLElement[];
+    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(9).fill('full'), 'empty']);
+    for (const b of blocks.slice(0, 9)) expect(b.className).toContain('bg-red-400');
     expect(screen.getByText('Context 90%').className).toContain('text-red-400');
   });
 });

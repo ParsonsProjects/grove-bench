@@ -103,7 +103,7 @@ Each server in the popover shows a status dot:
 
 ## Context
 
-**Context N%** and a colored bar show how much of the agent's context window has been used. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
+**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
@@ -112,7 +112,7 @@ Each server in the popover shows a status dot:
 | 70–85% | Orange | Running low |
 | 85–100% | Red | Nearly full: the agent may start summarising older context |
 
-The whole bar takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
+Every filled block takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
 
 Click the bar for details and two actions:
 
