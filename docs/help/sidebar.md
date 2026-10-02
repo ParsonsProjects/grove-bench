@@ -34,7 +34,7 @@ Click a conversation to switch to it. The workspace will show that conversation'
 
 ## Collapsing the sidebar
 
-Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open conversation, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. The rail also keeps search, **New conversation**, **Add a project**, bookmarks, memory, clean-up and settings. Projects and the filters are only in the full sidebar, so the rail always lists every open conversation. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
+Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open conversation, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. Above them, a **+** starts a new conversation (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, memory, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open conversation. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
 
 ## Filters
 
@@ -68,11 +68,15 @@ Closing or deleting the conversation you have open takes you back to the landing
 
 Grove Bench also starts on the landing screen. The conversations you had open are listed there and under **Conversations**, and none of them starts its agent until you open it.
 
+## Starting conversations and adding projects
+
+- **New conversation**: always the first row under **Conversations**. Click it to start a draft in the open conversation's project (or press `Ctrl+N`). The draft then takes its place until you send its first message or discard it. Each project row also has its own **+**, which starts a conversation in that project
+- **+** next to the **Projects** heading: add a project
+
 ## Bottom Controls
 
 At the bottom of the sidebar you'll find:
 
-- **+ Project** and **+ Conversation** — Add a project / start a new conversation in the open conversation's project (side by side). Each project row also has its own **+**, which starts a conversation in that project
 - **Project Memory** (brain icon) — Open the project memory panel
 - **Clean up old conversations** (broom icon) — Review and remove closed conversations inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Conversations with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. **Select all** says how many it leaves out for that reason. When the GitHub CLI is available, each row also shows the state of the pull request on its branch (open, draft, merged, closed or none), and **Select merged** ticks only the conversations whose PR has been merged. Running conversations are never listed.
 - **Settings** (gear icon, or `Ctrl+,`) — Open application settings
