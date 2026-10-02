@@ -209,6 +209,107 @@ describe('SettingsPanel auto-save', () => {
   });
 });
 
+describe('SettingsPanel permission rules', () => {
+  async function openRules() {
+    await renderPanel();
+    await openSection('Permissions');
+    return screen.getByRole('textbox', { name: 'Tool deny rules' });
+  }
+
+  it('refuses a rule that can never match, and says how to fix it', async () => {
+    const field = await openRules();
+    await fireEvent.input(field, { target: { value: 'shell(rm -rf *' } });
+    await fireEvent.keyDown(field, { key: 'Enter' });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Did you mean shell(rm -rf *)?');
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+
+    await fireEvent.input(field, { target: { value: 'shell(rm -rf *)' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await fireEvent.keyDown(field, { key: 'Enter' });
+    await waitFor(() => expect(lastSaved().toolDenyRules).toEqual([{ pattern: 'shell(rm -rf *)' }]));
+  });
+
+  it('shows a hint first, then adds the rule on a second Add', async () => {
+    const field = await openRules();
+    await fireEvent.input(field, { target: { value: 'shel(npm *)' } });
+    const group = field.closest<HTMLElement>('[data-setting]')!;
+    await fireEvent.click(within(group).getByRole('button', { name: 'Add' }));
+
+    expect(within(group).getByRole('status')).toHaveTextContent('"shel" isn\'t a rule keyword');
+    await fireEvent.click(within(group).getByRole('button', { name: 'Add anyway' }));
+    await waitFor(() => expect(lastSaved().toolDenyRules).toEqual([{ pattern: 'shel(npm *)' }]));
+  });
+
+  it('puts a clicked example in the field to edit', async () => {
+    const field = await openRules();
+    await fireEvent.click(screen.getByRole('button', { name: 'shell(git push *)' }));
+
+    expect(field).toHaveValue('shell(git push *)');
+    expect(field).toHaveFocus();
+    expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it('marks a saved rule that never matches', async () => {
+    mockGroveBench.getSettings.mockResolvedValue({ ...settings(), toolDenyRules: [{ pattern: 'shell(rm *' }, { pattern: 'shell(git push *)' }] });
+    await openRules();
+
+    const list = screen.getByRole('list', { name: 'Tool deny rules' });
+    expect(within(list).getByText('shell(rm *').closest('li')).toHaveTextContent('(never matches)');
+    expect(within(list).getByText('shell(git push *)').closest('li')).not.toHaveTextContent('(never matches)');
+  });
+});
+
+describe('SettingsPanel test notification', () => {
+  it('sends one and says what to check if it did not show', async () => {
+    await renderPanel();
+    await openSection('Notifications');
+    await fireEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+
+    expect(mockGroveBench.testNotification).toHaveBeenCalled();
+    expect(await screen.findByText(/^Sent\. If it didn't appear/)).toBeInTheDocument();
+  });
+
+  it('says when Windows refused it', async () => {
+    mockGroveBench.testNotification.mockResolvedValueOnce('failed');
+    await renderPanel();
+    await openSection('Notifications');
+    await fireEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+
+    expect(await screen.findByText(/Windows couldn't show it/)).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPanel diff view', () => {
+  it('shows both views with an example, and saves the one picked', async () => {
+    await renderPanel();
+    const group = screen.getByRole('radiogroup', { name: 'Default diff view' });
+    const unified = within(group).getByRole('radio', { name: /Unified/ });
+    const sideBySide = within(group).getByRole('radio', { name: /Side-by-side/ });
+    expect(unified).toBeChecked();
+
+    await fireEvent.click(sideBySide);
+    await waitFor(() => expect(lastSaved().diffViewMode).toBe('side-by-side'));
+    expect(sideBySide).toBeChecked();
+  });
+});
+
+describe('SettingsPanel background work', () => {
+  it('groups the one-off settings under Conversations', async () => {
+    await renderPanel();
+    await openSection('Background work');
+    const group = screen.getByRole('heading', { name: 'Conversations' }).closest('section')!;
+
+    for (const name of ['Suggest skills automatically', 'Show the conversation goal']) {
+      expect(within(group).getByRole('checkbox', { name })).toBeInTheDocument();
+    }
+    expect(within(group).getByLabelText('Sleep idle conversations after')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Skill suggestions' })).not.toBeInTheDocument();
+  });
+});
+
 describe('SettingsPanel number settings', () => {
   it('refuses a compaction timeout out of range and saves a valid one', async () => {
     await renderPanel();

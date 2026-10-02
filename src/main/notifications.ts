@@ -1,6 +1,6 @@
 import { Notification, BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { GroveBenchSettings, OsNotificationRequest } from '../shared/types.js';
+import type { GroveBenchSettings, OsNotificationRequest, TestNotificationResult } from '../shared/types.js';
 import { logger } from './logger.js';
 
 /** References to notifications that may still be on screen — see the GC note
@@ -65,4 +65,46 @@ export function showOsNotification(
     win.flashFrame(true);
   }
   return true;
+}
+
+/** A sample notification for Settings, shown whatever the window focus and
+ *  notification settings, so the user can see whether Windows lets Grove
+ *  Bench's notifications through. Waits briefly for Windows to report a
+ *  failure ('failed' is Windows-only); with none, it was handed over. */
+export function showTestNotification(timeoutMs = 2000): Promise<TestNotificationResult> {
+  if (!Notification.isSupported()) return Promise.resolve('unsupported');
+  return new Promise((resolve) => {
+    let notification: Notification;
+    try {
+      notification = new Notification({
+        title: 'Grove Bench',
+        body: 'Test notification. Conversations that finish or need you will show like this.',
+      });
+    } catch (e) {
+      logger.warn('Failed to create test notification:', e);
+      resolve('failed');
+      return;
+    }
+    liveNotifications.add(notification);
+    const release = () => liveNotifications.delete(notification);
+    const timer = setTimeout(() => resolve('sent'), timeoutMs);
+    const settle = (result: TestNotificationResult) => {
+      clearTimeout(timer);
+      resolve(result);
+    };
+    notification.on('show', () => settle('sent'));
+    notification.on('failed', (_event, error) => {
+      release();
+      logger.warn('Test notification failed:', error);
+      settle('failed');
+    });
+    notification.on('close', release);
+    try {
+      notification.show();
+    } catch (e) {
+      release();
+      logger.warn('Failed to show test notification:', e);
+      settle('failed');
+    }
+  });
 }

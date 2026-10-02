@@ -58,6 +58,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'notify-turn-complete', section: 'notifications', label: 'Agent finishes a turn', keywords: 'done' },
   { id: 'notify-permission', section: 'notifications', label: 'Agent is waiting on a permission or question', keywords: 'needs you' },
   { id: 'notify-pr-alert', section: 'notifications', label: 'PR activity', keywords: 'pull request ci review comments' },
+  { id: 'notify-test', section: 'notifications', label: 'Send a test notification', keywords: 'check working focus assist do not disturb' },
   { id: 'taskbar-flash', section: 'notifications', label: 'Flash the taskbar button' },
   { id: 'taskbar-badge', section: 'notifications', label: 'Badge the taskbar icon', keywords: 'count' },
 

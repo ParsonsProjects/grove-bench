@@ -39,25 +39,19 @@
   />
 </SettingsGroup>
 
-<SettingsGroup title="Skill suggestions">
+<SettingsGroup title="Conversations">
   <CheckboxSetting
     setting="skill-suggestions"
     label="Suggest skills automatically"
     description="After each finished turn, look for requests and commands you repeat and suggest skills for them. Costs a model call each time. The Suggest button in the status bar's Skills popover does the same on demand."
     bind:checked={settingsStore.draft.autoSkillSuggestions}
   />
-</SettingsGroup>
-
-<SettingsGroup title="Conversation goal">
   <CheckboxSetting
     setting="conversation-goal"
     label="Show the conversation goal"
     description="Pin one line at the top of the Thread tab saying what the conversation is for, written after its first reply. Costs one model call per conversation, plus one each time you press Refresh. You can edit it or hide it per conversation."
     bind:checked={settingsStore.draft.showConversationGoal}
   />
-</SettingsGroup>
-
-<SettingsGroup title="Idle conversations">
   <NumberSetting
     setting="idle-sleep"
     label="Sleep idle conversations after"

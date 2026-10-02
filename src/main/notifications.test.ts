@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Notification, type BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { GroveBenchSettings, OsNotificationRequest } from '../shared/types.js';
-import { kindEnabled, shouldNotify, showOsNotification } from './notifications.js';
+import { kindEnabled, shouldNotify, showOsNotification, showTestNotification } from './notifications.js';
 
 const mockNotification = vi.mocked(Notification);
 
@@ -124,5 +124,36 @@ describe('showOsNotification()', () => {
     expect(win.show).toHaveBeenCalled();
     expect(win.focus).toHaveBeenCalled();
     expect(win.webContents.send).toHaveBeenCalledWith(IPC.NOTIFY_FOCUS_SESSION, 'abc123');
+  });
+});
+
+describe('showTestNotification()', () => {
+  type Instance = { show: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> };
+  const handler = (instance: Instance, event: string) =>
+    instance.on.mock.calls.find((c: unknown[]) => c[0] === event)?.[1] as (...args: unknown[]) => void;
+
+  it('shows a notification without a window or settings, and reports it shown', async () => {
+    const result = showTestNotification();
+    const instance = mockNotification.mock.instances[0] as unknown as Instance;
+    expect(instance.show).toHaveBeenCalled();
+    handler(instance, 'show')({});
+    await expect(result).resolves.toBe('sent');
+  });
+
+  it('reports a failure Windows sends back', async () => {
+    const result = showTestNotification();
+    const instance = mockNotification.mock.instances[0] as unknown as Instance;
+    handler(instance, 'failed')({}, 'toast blocked');
+    await expect(result).resolves.toBe('failed');
+  });
+
+  it('reports it sent when nothing comes back in time', async () => {
+    await expect(showTestNotification(5)).resolves.toBe('sent');
+  });
+
+  it('reports a system without notifications', async () => {
+    vi.mocked(Notification.isSupported).mockReturnValue(false);
+    await expect(showTestNotification()).resolves.toBe('unsupported');
+    expect(mockNotification).not.toHaveBeenCalled();
   });
 });

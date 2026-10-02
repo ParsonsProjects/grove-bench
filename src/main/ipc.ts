@@ -22,7 +22,7 @@ import { removeImages } from './attachments.js';
 import { generateCommitMessage } from './commit-message.js';
 import type { PreviewBounds, PreviewCommand, PreviewPageKind } from '../shared/types.js';
 import type { CheckpointDiffScope, FileDiffResult, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, PrCreateOpts } from '../shared/types.js';
-import { showOsNotification } from './notifications.js';
+import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
@@ -1839,6 +1839,8 @@ export function registerHandlers() {
     if (!win || win.isDestroyed()) return;
     showOsNotification(win, req, settings.getSettings());
   });
+
+  ipcMain.handle(IPC.NOTIFY_TEST, () => showTestNotification());
 
   // ─── Taskbar attention badge ───
 

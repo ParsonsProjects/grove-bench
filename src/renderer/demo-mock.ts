@@ -493,6 +493,7 @@ const api: Record<string, unknown> = {
   winIsMaximized: async () => false,
   // The MCP settings tab reads `.length` of this list.
   mcpConfigList: async () => [],
+  testNotification: async () => 'sent',
 };
 
 (window as unknown as { groveBench: unknown }).groveBench = new Proxy(api, {

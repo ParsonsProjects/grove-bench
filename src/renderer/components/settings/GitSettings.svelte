@@ -32,6 +32,7 @@
     <Input
       id="settings-branch-rule"
       type="text"
+      class="max-w-xl"
       spellcheck={false}
       placeholder="e.g. <type>/<ticket>-<short-description>"
       bind:value={settingsStore.draft.branchNamingRule}

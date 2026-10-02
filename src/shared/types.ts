@@ -851,6 +851,10 @@ export interface OsNotificationRequest {
   body: string;
 }
 
+/** How Settings' test notification went: handed to the OS, refused by it
+ *  (Windows reports this), or not possible on this system. */
+export type TestNotificationResult = 'sent' | 'failed' | 'unsupported';
+
 // ─── Spell check ───
 
 /** Main → renderer: the user right-clicked a misspelled word. The renderer
@@ -1307,6 +1311,8 @@ export interface GroveBenchAPI {
 
   // OS notifications
   notify(req: OsNotificationRequest): void;
+  /** Show a sample notification now, whatever the focus and settings. */
+  testNotification(): Promise<TestNotificationResult>;
   /** Fired when the user clicks an OS notification — jump to that session. */
   onFocusSession(callback: (sessionId: string) => void): () => void;
 
@@ -1735,6 +1741,7 @@ export const IPC = {
   APP_CLOSING: 'app:closing',
   POWER_RESUME: 'power:resume',
   NOTIFY_SHOW: 'notify:show',
+  NOTIFY_TEST: 'notify:test',
   NOTIFY_FOCUS_SESSION: 'notify:focusSession',
   FILE_LIST: 'file:list',
   FILE_READ: 'file:read',

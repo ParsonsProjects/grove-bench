@@ -405,6 +405,7 @@ const api: GroveBenchAPI = {
   // OS notifications
   notify: (req: import('../shared/types.js').OsNotificationRequest) =>
     ipcRenderer.send(IPC.NOTIFY_SHOW, req),
+  testNotification: () => ipcRenderer.invoke(IPC.NOTIFY_TEST),
   onFocusSession: (callback: (sessionId: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId);
     ipcRenderer.on(IPC.NOTIFY_FOCUS_SESSION, handler);

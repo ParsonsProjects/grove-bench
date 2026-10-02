@@ -118,7 +118,7 @@
 
     <!-- Each agent keeps its own MCP configuration. -->
     {#if mcpAgents.length > 1}
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 max-w-xl">
         <Label for="settings-mcp-agent" class="text-xs w-16 shrink-0">Agent</Label>
         <Select.Root type="single" value={mcpAgent?.id ?? ''} onValueChange={(v) => { if (v) mcpConfigStore.showAgent(v); }}>
           <Select.Trigger id="settings-mcp-agent" class="w-full" disabled={mcpConfigStore.loading}>
@@ -134,7 +134,7 @@
     {/if}
 
     <!-- Project and local servers belong to one project, so the list is for one project at a time. -->
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 max-w-xl">
       <Label for="settings-mcp-project" class="text-xs w-16 shrink-0">Project</Label>
       <Select.Root
         type="single"

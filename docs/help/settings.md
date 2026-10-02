@@ -7,7 +7,7 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 ## The grove (General)
 
 - **Default thread view**: The view new conversations start in (Summary, Focus or Detailed). Each conversation can switch from its status bar
-- **Default diff view**: Unified or side-by-side diffs
+- **Default diff view**: How the Changes and Checkpoints tabs first show a file's changes, with a small example of each: **Unified** (removed and added lines in one column) or **Side-by-side** (the old and new file next to each other). Each file can switch there with its unified / side-by-side button, or `V`
 - **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, on the Changes, Checkpoints and Preview tabs while they have nothing to show (each with its own touch: a watering can, a flag, an easel), and while a conversation starts up again, where its agent walks through the grove. A pixel grove also grows along the top of the status bar as the conversation fills its context window, and its leaves turn from summer green to autumn as it nears the limit. When you open a sleeping or closed conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. When you start a new conversation, its agent walks up to that bench below your first message, sits down and starts typing, and stays there until the first reply shows. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when closed or sleeping (grey). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
 - **Project colors**: The accent color for each project in the sidebar. **Use default** puts a project back on its default color
 - **Always on top**: Keep the Grove Bench window above other windows
@@ -63,6 +63,8 @@ Control how the agent handles actions that need approval. The mode new conversat
   - **Chained commands**: a shell command joined with `&&`, `||`, `;`, `|`, `|&`, `&` or a line break (in PowerShell: `;`, `|`, `&&`, `||` or a line break) is checked one part at a time. Allow rules must match every part, so `shell(npm run *)` approves `npm run lint && npm run test` but not `npm run build && rm -rf ~`. A deny rule applies if it matches any part
   - **Commands that can't be split safely**, such as ones using `$(...)`, backticks, `${...}`, `(...)` outside quotes, here-docs or `#` comments, are only approved by a rule for every shell command (`shell` or `shell(*)`), and only when you have no deny rule for shell commands. Otherwise the agent asks you
   - **PowerShell** commands also can't be split safely when they use `{...}` script blocks, `@(...)`, here-strings, the `&` call operator, typographic quotes, or a quote inside a word with a dash, such as `--format="%h %s"`. A backslash is a plain character in PowerShell, so `echo a\; b` is two commands
+  - **Checking a rule**: when you add a rule, a rule that can never match, such as one with an unclosed bracket (`shell(rm *`), is refused with a note on how to fix it. A rule that looks like a slip but could be meant, such as a command with no brackets (`shell npm test`) or a word that isn't a keyword (`shel(npm *)`), shows a hint first; press **Add anyway** to keep it. Saved rules that can never match are marked with `!`
+  - **Examples** under each list put a rule in the field for you to edit before adding it
   - **PowerShell aliases and case**: for PowerShell, deny rules ignore case and also catch a command's built-in aliases, so `shell(Remove-Item *)` denies `rm ~`, `del ~`, `ri ~`, `rd ~`, `erase ~`, `rmdir ~` and `remove-item ~`. Only the command name is expanded, not its parameters, so `shell(Remove-Item -Recurse *)` misses `rm -r ~`: write deny rules for the command name. Allow rules stay exact, so `shell(Get-ChildItem *)` doesn't approve `ls` or `get-childitem`. Add a rule for each spelling you want approved. Bash rules are always exact
 
 ## Branches & roots (Git & worktrees)
@@ -76,6 +78,7 @@ Control how the agent handles actions that need approval. The mode new conversat
 - **Desktop notifications**: Native OS notifications, shown only while the window is unfocused: when an agent finishes a turn, when it's waiting on a permission or question, and on PR activity (new CI failures, review comments). Clicking a notification jumps to the conversation
 - **Flash the taskbar button**: The taskbar button also flashes; it stops as soon as the window regains focus
 - **Badge the taskbar icon**: Show how many conversations need you on the taskbar icon
+- **Send a test notification**: Shows one straight away, even with the Grove Bench window in front. If it doesn't appear, Windows is holding it back: check **Settings > System > Notifications** in Windows, where Grove Bench needs to be allowed and **Do not disturb** (Focus assist on Windows 10) turned off
 
 ## Tending (Background work)
 

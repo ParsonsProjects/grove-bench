@@ -364,7 +364,7 @@
         {/each}
       </ul>
     {/if}
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 max-w-2xl">
       <Input type="text" bind:value={acpName} placeholder="Name" aria-label="Agent name" class="w-32" />
       <Input type="text" bind:value={acpCommand} placeholder="Command" aria-label="Agent command" class="w-40" />
       <Input

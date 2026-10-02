@@ -72,7 +72,7 @@
     </div>
 
     {#if apiKey.canStore}
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 max-w-xl">
         <Input
           id={inputId}
           type="password"
