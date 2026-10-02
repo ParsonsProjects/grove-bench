@@ -349,6 +349,8 @@ const api: Record<string, unknown> = {
   onAppError: () => () => {},
   reportError: () => {},
   reportFreeze: () => {},
+  reportTiming: () => {},
+  recordPerformanceTrace: () => new Promise((resolve) => setTimeout(() => resolve({ name: 'trace-2026-10-01T12-00-00-000Z.json', sizeBytes: 12_582_912, seconds: 10 }), 10_000)),
   setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
   getEventHistoryCount: async () => 0,

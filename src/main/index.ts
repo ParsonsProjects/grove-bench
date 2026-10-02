@@ -18,6 +18,13 @@ import { lockToAppPage } from './window-guard.js';
 import { runQuitCleanup } from './quit-cleanup.js';
 import { handleAttachmentProtocol, registerAttachmentScheme, removeDeletedFolders } from './attachments.js';
 import { freezeLog, startStallWatch } from './freeze-log.js';
+import { closePerfLog } from './perf-log.js';
+import { startHealthLog } from './perf-health.js';
+import { ChildProcess } from 'node:child_process';
+
+// Time every process launch from the start: on Windows each one blocks the
+// main process until the OS has created it (freeze-log.ts).
+freezeLog.timeProcessLaunches(ChildProcess.prototype);
 
 // Keep userData path consistent across dev and packaged builds.
 // In dev mode Electron defaults to "Electron"; electron-builder uses productName
@@ -140,8 +147,21 @@ app.whenReady().then(() => {
   const scheduleSweep = () => setTimeout(() => { runSweep(); scheduleSweep(); }, 15 * 60_000);
   scheduleSweep();
 
-  // Note in the log whenever the main process stops responding.
+  // Note in the performance log whenever the main process stops
+  // responding, and sum up how the app is doing every few minutes.
   startStallWatch(powerMonitor);
+  startHealthLog({
+    takeFreezeStats: freezeLog.takeStats,
+    getAppMetrics: () => app.getAppMetrics(),
+    counts: () => {
+      const sessions = sessionManager.listSessions();
+      return {
+        conversations: sessions.length,
+        asleep: sessions.filter((s) => s.status === 'sleeping').length,
+        terminals: terminalManager.count,
+      };
+    },
+  });
 
   // ─── Power monitor: flush state on suspend, health-check on resume ───
   powerMonitor.on('suspend', () => {
@@ -197,6 +217,7 @@ app.on('before-quit', (event) => {
   if (isQuitting) return;
   if (!shutdownDone && nothingRunning()) {
     logger.close();
+    closePerfLog();
     return;
   }
 
@@ -204,6 +225,7 @@ app.on('before-quit', (event) => {
   isQuitting = true;
   shutdown().finally(() => {
     logger.close();
+    closePerfLog();
     app.quit();
   });
 });

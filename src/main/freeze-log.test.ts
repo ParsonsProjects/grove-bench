@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { IpcMain } from 'electron';
-import { createFreezeLog, sanitizeReport, startStallWatch, STALL_GAP_MS, TICK_MS } from './freeze-log.js';
+import { ChildProcess, execFile } from 'node:child_process';
+import { createFreezeLog, launchLabel, sanitizeReport, startStallWatch, freezeLog, STALL_GAP_MS, TICK_MS } from './freeze-log.js';
+import { logger } from './logger.js';
 
 /** A freeze log on a clock the test moves by hand. */
 function setup() {
   let t = 1000;
   const lines: string[] = [];
-  const log = createFreezeLog({ now: () => t, warn: (line) => lines.push(line) });
+  const log = createFreezeLog({ now: () => t, write: (line) => lines.push(line) });
   return {
     log,
     lines,
@@ -33,10 +35,19 @@ describe('main-process stalls', () => {
     expect(lines).toEqual([]);
   });
 
+  it('also writes freezes to the app log, beside what the app was doing', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    let t = 0;
+    const log = createFreezeLog({ now: () => t });
+    t += 300; log.tick();
+    expect(warn).toHaveBeenCalledWith("[freeze] main process didn't run for 300 ms");
+    warn.mockRestore();
+  });
+
   it('logs a gap of at least the stall threshold', () => {
     const { log, lines, advance } = setup();
     advance(420); log.tick();
-    expect(lines).toEqual(["[freeze] main process didn't run for 420 ms"]);
+    expect(lines).toEqual(["main process didn't run for 420 ms"]);
   });
 
   it('names the IPC calls that ran during the stall, with their synchronous time', () => {
@@ -50,7 +61,7 @@ describe('main-process stalls', () => {
     expect(invoke('agent:historyPage')).toBe('page');
     advance(20); log.tick();
 
-    expect(lines).toEqual(["[freeze] main process didn't run for 400 ms; IPC calls during it: agent:historyPage (380 ms)"]);
+    expect(lines).toEqual(["main process didn't run for 400 ms; IPC calls during it: agent:historyPage (380 ms)"]);
   });
 
   it('times an async handler up to its first await, and passes its arguments through', async () => {
@@ -67,7 +78,7 @@ describe('main-process stalls', () => {
     const result = invoke('session:resume', 'abc');
     log.tick();
     await expect(result).resolves.toBe('resumed abc');
-    expect(lines).toEqual(["[freeze] main process didn't run for 200 ms; IPC calls during it: session:resume (200 ms)"]);
+    expect(lines).toEqual(["main process didn't run for 200 ms; IPC calls during it: session:resume (200 ms)"]);
   });
 
   it('ignores the gap a system sleep leaves', () => {
@@ -90,7 +101,7 @@ describe('window freezes', () => {
   it('logs a slow frame with its style and layout time and longest scripts', () => {
     const { log, lines } = setup();
     log.logWindowFreeze({ kind: 'frame', durationMs: 512.4, renderMs: 180.2, scripts: ['FrameRequestCallback (index.js:120) 210 ms'] });
-    expect(lines).toEqual(['[freeze] window took 512 ms over a frame (style and layout 180 ms); longest scripts: FrameRequestCallback (index.js:120) 210 ms']);
+    expect(lines).toEqual(['window took 512 ms over a frame (style and layout 180 ms); longest scripts: FrameRequestCallback (index.js:120) 210 ms']);
   });
 
   it('ignores a report that is not one', () => {
@@ -123,8 +134,8 @@ describe('rate limit', () => {
     log.resume(); // start the timer afresh after the long wait
     advance(300); log.tick();
     expect(lines.slice(30)).toEqual([
-      '[freeze] 5 more freezes in the last minute were not logged',
-      "[freeze] main process didn't run for 300 ms",
+      '5 more freezes in the last minute were not logged',
+      "main process didn't run for 300 ms",
     ]);
   });
 });
@@ -135,5 +146,118 @@ describe('startStallWatch', () => {
     const on = vi.fn();
     startStallWatch({ on } as never);
     expect(on.mock.calls.map(([event]) => event)).toEqual(['suspend', 'resume']);
+  });
+
+  it('measures from when the timer starts, not from when the file loaded', () => {
+    const start = vi.spyOn(freezeLog, 'start');
+    vi.useFakeTimers();
+    startStallWatch({ on: vi.fn() } as never);
+    expect(start).toHaveBeenCalledOnce();
+    start.mockRestore();
+  });
+});
+
+describe('process launches', () => {
+  /** A stand-in for ChildProcess.prototype whose launches take `ms`. */
+  function fakeProto(advance: (ms: number) => void, ms: number) {
+    return { spawn: vi.fn(function (this: unknown, _options: unknown) { advance(ms); return 0; }) };
+  }
+
+  it('names the processes started during a stall', () => {
+    const { log, lines, advance } = setup();
+    const proto = fakeProto(advance, 60);
+    log.timeProcessLaunches(proto);
+    advance(TICK_MS); log.tick();
+
+    proto.spawn({ file: 'git', args: ['git', 'rev-parse', '--git-dir'] });
+    proto.spawn({ file: 'C:\\Windows\\system32\\cmd.exe', args: ['cmd.exe', '/d', '/s', '/c', '"where.exe claude"'] });
+    proto.spawn({ file: 'git', args: ['git', '--version'] });
+    log.tick();
+
+    expect(lines).toEqual(["main process didn't run for 180 ms; processes started: git rev-parse (60 ms), cmd.exe: where.exe claude (60 ms), git (60 ms)"]);
+  });
+
+  it('passes the launch through and records it even when it throws', () => {
+    const { log, advance } = setup();
+    const proto = { spawn: vi.fn(() => { advance(5); throw new Error('ENOENT'); }) };
+    log.timeProcessLaunches(proto);
+    expect(() => (proto.spawn as (o: unknown) => unknown)({ file: 'nope', args: ['nope'] })).toThrow('ENOENT');
+    expect(log.takeStats()).toMatchObject({ launches: 1, launchMs: 5, slowestLaunch: { name: 'nope', ms: 5 } });
+  });
+
+  it('leaves a prototype without spawn alone', () => {
+    const { log } = setup();
+    const proto = {};
+    log.timeProcessLaunches(proto);
+    expect(proto).toEqual({});
+  });
+
+  it('times real launches through the Node API', async () => {
+    const times: string[] = [];
+    const log = createFreezeLog({ write: (line) => times.push(line) });
+    const original = (ChildProcess.prototype as unknown as { spawn: unknown }).spawn;
+    log.timeProcessLaunches(ChildProcess.prototype);
+    try {
+      await new Promise((resolve) => execFile(process.execPath, ['--version'], resolve));
+    } finally {
+      (ChildProcess.prototype as unknown as { spawn: unknown }).spawn = original;
+    }
+    expect(log.takeStats().launches).toBe(1);
+  });
+});
+
+describe('launchLabel', () => {
+  it('names a program and its subcommand or script', () => {
+    expect(launchLabel('git', ['git', 'worktree', 'add', '/some/path'])).toBe('git worktree');
+    expect(launchLabel('/usr/bin/node', ['node', '/app/cli.js', '--resume'])).toBe('node cli.js');
+    expect(launchLabel('C:\\Users\\Jo Smith\\.local\\bin\\claude.exe', ['claude.exe', 'auth'])).toBe('claude.exe auth');
+  });
+
+  it('names the program and subcommand a shell runs', () => {
+    expect(launchLabel('/bin/sh', ['/bin/sh', '-c', 'git --version'])).toBe('sh: git');
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"claude mcp list"'])).toBe('cmd.exe: claude mcp');
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"where.exe claude"'])).toBe('cmd.exe: where.exe claude');
+  });
+
+  it('leaves out anything that could be a name, a folder or text', () => {
+    // A path with a space in a shell command.
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"C:\\Users\\John Smith\\AppData\\Roaming\\npm\\claude.cmd auth status --json"']))
+      .toBe('cmd.exe: claude.cmd auth');
+    expect(launchLabel('C:\\Windows\\System32\\cmd.exe', ['cmd.exe', '/d', '/s', '/c', '"C:\\Program Files\\Git\\bin\\git status"'])).toBe('cmd.exe');
+    // A flag's value, which may be a project folder.
+    expect(launchLabel('git', ['git', '-C', 'C:\\Users\\sam\\secret-project', 'status'])).toBe('git');
+    expect(launchLabel('gh', ['gh', '--repo', 'owner/name', 'pr'])).toBe('gh');
+    // Text.
+    expect(launchLabel('git', ['git', 'commit message with spaces'])).toBe('git');
+    expect(launchLabel(undefined, undefined)).toBe('process');
+  });
+});
+
+describe('takeStats', () => {
+  it('totals stalls, slow frames and launches, then starts again', () => {
+    const { log, advance } = setup();
+    advance(200); log.tick();
+    advance(300); log.tick();
+    log.logWindowFreeze({ kind: 'frame', durationMs: 150 });
+    expect(log.takeStats()).toEqual({ stalls: 2, stallMs: 500, slowFrames: 1, launches: 0, launchMs: 0, slowestLaunch: null, loopDelay: { p50: 150, p99: 250, max: 250 } });
+    expect(log.takeStats()).toEqual({ stalls: 0, stallMs: 0, slowFrames: 0, launches: 0, launchMs: 0, slowestLaunch: null, loopDelay: null });
+  });
+
+  it('measures the event-loop delay from how late each tick ran', () => {
+    const { log, advance } = setup();
+    for (let i = 0; i < 98; i++) { advance(TICK_MS + 1); log.tick(); }
+    advance(TICK_MS + 40); log.tick();
+    advance(TICK_MS + 400); log.tick();
+    expect(log.takeStats().loopDelay).toEqual({ p50: 1, p99: 40, max: 400 });
+  });
+
+  it('leaves sleep out of the delay', () => {
+    const { log, advance } = setup();
+    advance(TICK_MS); log.tick();
+    log.suspend();
+    advance(60_000); log.tick();
+    log.resume();
+    advance(45_000); log.tick();
+    expect(log.takeStats().loopDelay).toEqual({ p50: 0, p99: 0, max: 0 });
   });
 });

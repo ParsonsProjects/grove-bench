@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentAdapter, AgentQueryHandle, AdapterConfig, PermissionResponse } from './adapters/types.js';
 import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent } from '../shared/types.js';
 import * as fs from 'node:fs';
+import { perfSteps } from './perf-steps.js';
 
 // ─── Mock infrastructure ───
 
@@ -3691,5 +3692,41 @@ describe('MCP elicitation', () => {
     expect(sanitizeElicitationResponse(null)).toBeNull();
     expect(sanitizeElicitationResponse({ action: 'decline', content: { a: 'x' } })).toEqual({ action: 'decline' });
     expect(sanitizeElicitationResponse({ action: 'accept', content: { n: Infinity, l: ['a', 1], ok: ['a'] } })).toEqual({ action: 'accept', content: { ok: ['a'] } });
+  });
+});
+
+describe('AgentSessionManager step timings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function create(id: string) {
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+    });
+  }
+
+  it('marks session, agent setup and agent start in order, ending when the agent is up', async () => {
+    const step = vi.spyOn(perfSteps, 'step');
+    const finish = vi.spyOn(perfSteps, 'finish');
+    await create('t-steps');
+    await vi.waitFor(() => expect(sessionManager.getSession('t-steps')?.queryHandle).toBeTruthy());
+
+    expect(step.mock.calls.filter(([id]) => id === 't-steps').map(([, name]) => name)).toEqual(['session', 'agent setup']);
+    // Not at the agent's first message, which only comes with a prompt.
+    expect(finish).toHaveBeenCalledWith('t-steps', 'agent start');
+    expect(finish.mock.invocationCallOrder[0]).toBeGreaterThan(step.mock.invocationCallOrder.at(-1)!);
+    await sessionManager.destroySession('t-steps');
+  });
+
+  it('writes up a run when the conversation is closed or deleted', async () => {
+    const fail = vi.spyOn(perfSteps, 'fail');
+    await create('t-close');
+    await sessionManager.closeSession('t-close');
+    await create('t-delete');
+    await sessionManager.destroySession('t-delete');
+
+    expect(fail).toHaveBeenCalledWith('t-close', 'closed');
+    expect(fail).toHaveBeenCalledWith('t-delete', 'deleted');
   });
 });

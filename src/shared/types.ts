@@ -1298,6 +1298,12 @@ export interface GroveBenchAPI {
   reportError(report: AppErrorReport): void;
   /** Send a frame the window took long over to main for the file log. */
   reportFreeze(report: FreezeReport): void;
+  /** Send step timings from the window to main for the performance log. */
+  reportTiming(report: TimingReport): void;
+  /** Record a performance trace for a few seconds; resolves once it's saved. */
+  recordPerformanceTrace(): Promise<TraceResult>;
+  /** Show the performance log, or the last trace saved, in the file manager. */
+  showPerformanceFile(which: 'log' | 'trace'): Promise<void>;
 
   // Taskbar attention badge
   /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
@@ -1565,6 +1571,28 @@ export interface FreezeReport {
   scripts?: string[];
 }
 
+/** How long a performance trace records (Settings → Diagnostics). */
+export const PERFORMANCE_TRACE_SECONDS = 10;
+
+/** A performance trace that was saved (Settings → Diagnostics). */
+export interface TraceResult {
+  /** The file's name in the logs folder's traces folder. */
+  name: string;
+  sizeBytes: number;
+  seconds: number;
+}
+
+/** How long something in the window took, step by step, sent to main for
+ *  the performance log. */
+export interface TimingReport {
+  /** What was timed, such as "conversation view". */
+  label: string;
+  sessionId?: string;
+  steps: { name: string; ms: number }[];
+  /** A short note on the size of the work, such as "200 events". */
+  detail?: string;
+}
+
 // ─── Memory ───
 
 export interface MemoryEntry {
@@ -1810,6 +1838,12 @@ export const IPC = {
   APP_REPORT_ERROR: 'app:reportError',
   /** Renderer → main: a frame the window took long over, for the file log. */
   APP_REPORT_FREEZE: 'app:reportFreeze',
+  /** Renderer → main: step timings from the window, for the performance log. */
+  APP_REPORT_TIMING: 'app:reportTiming',
+  /** Record a performance trace for a few seconds and save it. */
+  PERF_RECORD_TRACE: 'perf:recordTrace',
+  /** Show the performance log, or the last trace, in the file manager. */
+  PERF_SHOW_FILE: 'perf:showFile',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
   /** Main → renderer: show the spell check menu for a misspelled word. */
   SPELLCHECK_MENU: 'spellcheck:menu',

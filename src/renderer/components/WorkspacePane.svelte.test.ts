@@ -144,6 +144,39 @@ describe('WorkspacePane tabs', () => {
   });
 });
 
+describe('WorkspacePane load timing', () => {
+  it('reports how long fetching, replaying and first drawing the history took', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ label: string; sessionId: string; steps: { name: string }[]; detail: string }];
+    expect(report.label).toBe('conversation view');
+    expect(report.sessionId).toBe('n1');
+    expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay', 'first draw']);
+    expect(report.detail).toMatch(/^\d+ events, shown$/);
+  });
+
+  it('says when loading the history failed', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    mockGroveBench.getEventHistoryPage.mockRejectedValueOnce(new Error('gone'));
+    render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ detail: string }];
+    expect(report.detail).toBe('history failed, shown');
+  });
+
+  it('times no first draw while the window is minimized', async () => {
+    store.prerequisites = { git: { available: true, meetsMinimum: true }, agents };
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    render(WorkspacePane, { sessionId: 'n1' });
+    await waitFor(() => expect(mockGroveBench.reportTiming).toHaveBeenCalled());
+    const [report] = mockGroveBench.reportTiming.mock.calls[0] as [{ steps: { name: string }[]; detail: string }];
+    expect(report.steps.map((s) => s.name)).toEqual(['history fetch', 'replay']);
+    expect(report.detail).toMatch(/, window minimized$/);
+    hidden.mockRestore();
+  });
+});
+
 describe('WorkspacePane loading a new conversation', () => {
   it("shows the first message once when it arrives live while the history loads (it's in the page too)", async () => {
     store.sessions = [{ id: SID, branch: 'grove/x', repoPath: '/repo', status: 'running' }] as never;

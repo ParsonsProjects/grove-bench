@@ -21,6 +21,7 @@
   import McpSettings from './settings/McpSettings.svelte';
   import PluginSettings from './settings/PluginSettings.svelte';
   import PrivacySettings from './settings/PrivacySettings.svelte';
+  import DiagnosticsSettings from './settings/DiagnosticsSettings.svelte';
 
   interface Props {
     open: boolean;
@@ -231,7 +232,7 @@
                   <p class="text-xs text-muted-foreground mt-1">{s.label}: {s.description}</p>
                 </div>
 
-                {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins'}
+                {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins' && s.id !== 'diagnostics'}
                   {#if settingsStore.loading}
                     <div class="flex items-center justify-center py-8 text-muted-foreground">
                       <span class="w-3 h-3 bg-primary animate-pulse mr-2"></span>
@@ -261,6 +262,8 @@
                   <PluginSettings />
                 {:else if s.id === 'privacy'}
                   <PrivacySettings />
+                {:else if s.id === 'diagnostics'}
+                  <DiagnosticsSettings />
                 {/if}
               </div>
             {/if}

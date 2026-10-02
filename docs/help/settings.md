@@ -112,3 +112,10 @@ Browse and manage MCP server plugins that extend the agent's capabilities. Plugi
 
 - **Send anonymous usage data**: Helps improve Grove Bench. No personal information or code is collected. Off unless you agree to it
 - **Send crash reports**: When something goes wrong, send the error message and stack trace with the usage data. Needs usage data on. Never includes prompts, code or project paths
+
+## Field notes (Diagnostics)
+
+For tracking down slowness. Nothing here leaves your computer.
+
+- **Performance log**: freezes (when the app stopped responding, and what it was doing), how long each new conversation, resume and wake took step by step, and a summary every 10 minutes are written to `performance.log` in the logs folder. **Show performance log** opens the folder with it selected. Send it along when reporting something slow
+- **Record a performance trace**: records what every part of the app does for 10 seconds and saves it as a file. Start it, then do the slow thing, such as starting a new conversation. Open the file at ui.perfetto.dev or in `chrome://tracing`. It holds timings, file paths and page addresses, not conversation text. The newest 5 are kept

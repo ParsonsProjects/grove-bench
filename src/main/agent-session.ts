@@ -5,6 +5,8 @@ import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.j
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
+import { perfSteps } from './perf-steps.js';
+import { perfLine } from './perf-log.js';
 import { worktreeManager } from './worktree-manager.js';
 import * as settings from './settings.js';
 import * as memory from './memory.js';
@@ -265,7 +267,11 @@ class AgentSessionManager {
       session.resolveQueryReady = resolve;
     });
 
+    // Setting up the session (memory, prompt, history) ends here; the agent's
+    // own steps follow in runQuery.
+    perfSteps.step(id, 'session');
     this.runQuery(session, emit).catch((err) => {
+        perfSteps.fail(id, 'agent failed to start');
         console.error(`[runQuery] session=${id} FAILED:`, err);
         emit(failureEvent(adapter, String(err.message || err)));
         session.status = 'error';
@@ -304,6 +310,7 @@ class AgentSessionManager {
     session.stoppedByUser = false;
     const emit = session.emit ?? this.createEmitter(session);
     this.runQuery(session, emit, resend).catch((err) => {
+      perfSteps.fail(session.id, 'agent failed to start');
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
       emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
@@ -383,8 +390,14 @@ class AgentSessionManager {
     // Resumed sessions rebuild their checkpoint state on system_init instead.
     const resumingProviderSession = !!session.providerSessionId;
     if (!resumingProviderSession && session.gitBacked) {
+      const baselineStart = performance.now();
       session.checkpoints.captureBaseline(id, session.worktreePath).then((written) => {
-        if (!written) logger.warn(`Checkpoint baseline not captured for ${id}`);
+        if (!written) {
+          logger.warn(`Checkpoint baseline not captured for ${id}`);
+          return;
+        }
+        // Runs beside the agent starting, so it has its own line.
+        perfLine('steps', `checkpoint baseline ${id}: ${Math.round(performance.now() - baselineStart)} ms`);
       });
     }
 
@@ -394,6 +407,8 @@ class AgentSessionManager {
       logger.warn(`[runQuery] ${id}: ${session.adapter.id} has no structured output; the output format is ignored`);
     }
 
+    // Git identity, skills and the baseline above.
+    perfSteps.step(id, 'agent setup');
     let handle: AgentQueryHandle;
     try {
     handle = await session.adapter.start({
@@ -487,6 +502,9 @@ class AgentSessionManager {
       return;
     }
 
+    // The agent's process is up: the app's part is done. (Its first message,
+    // system_init, only comes with the first prompt, so it isn't waited for.)
+    perfSteps.finish(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
     // Only a resumed conversation can turn out to be missing.
@@ -1329,6 +1347,7 @@ class AgentSessionManager {
     if (!handle || session.isStartingQuery || session.pendingPermissions.size > 0 || session.pendingElicitations.size > 0) return false;
     if (session.turnHandle === handle) return false;
 
+    perfSteps.fail(id, 'put to sleep');
     session.statusBeforeSleep = session.status;
     session.status = 'sleeping';
     // Detach the query first: runQuery treats a run whose handle is no longer
@@ -1377,12 +1396,15 @@ class AgentSessionManager {
     }
     const emit = session.emit ?? this.createEmitter(session);
     const asleep = session.sleepSettled;
+    perfSteps.begin(id, 'wake');
     (async () => {
       await asleep;
+      perfSteps.step(id, 'finish sleeping');
       // Closed or deleted while the sleep was still finishing.
-      if (session.destroying) return;
+      if (session.destroying) { perfSteps.fail(id, 'closed'); return; }
       await this.runQuery(session, emit);
     })().catch((err) => {
+      perfSteps.fail(id, 'agent failed to start');
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
       emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
@@ -1400,6 +1422,8 @@ class AgentSessionManager {
    * refs and the worktree are kept.
    */
   closeSession(id: string): Promise<void> {
+    // Closed before it was up: say so, rather than leave the run waiting.
+    perfSteps.fail(id, 'closed');
     const inFlight = this.closing.get(id);
     if (inFlight) return inFlight;
     const session = this.sessions.get(id);
@@ -1433,6 +1457,7 @@ class AgentSessionManager {
   }
 
   async destroySession(id: string): Promise<void> {
+    perfSteps.fail(id, 'deleted');
     // Setup still running (new worktree, dependency install, resume): stop
     // it where it can stop (a deleted conversation needs no install or agent)
     // and wait for it, so it can't start an agent afterwards.

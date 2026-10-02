@@ -22,6 +22,7 @@
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
+  import { timeSteps, afterNextPaint } from '$lib/perf-timing.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -127,6 +128,10 @@
 
   onMount(async () => {
     window.addEventListener('keydown', handleKeydown);
+    // How long loading the history took, for the performance log.
+    const timing = timeSteps('conversation view', sessionId);
+    let eventCount = 0;
+    let historyFailed = false;
     // Before any await, so App covers the empty chat with the walk until the
     // history is in, rather than showing "Waiting for input...".
     messageStore.setHistoryLoaded(sessionId, false);
@@ -171,6 +176,8 @@
       ]);
 
       const page = await window.groveBench.getEventHistoryPage(sessionId, INITIAL_PAGE_SIZE);
+      timing.step('history fetch');
+      eventCount = page.events.length;
       messageStore.setPagination(sessionId, page.totalCount, page.startIndex);
 
       // Batch-replay events. replayEvents accumulates messages in a plain
@@ -189,6 +196,7 @@
       messageStore.resolveStaleToolCalls(sessionId);
       backgroundTaskStore.resolveStale(sessionId, messageStore.getIsRunning(sessionId));
       messageStore.resolveReplayedPermissions(sessionId);
+      timing.step('replay');
 
       // If the session is already running but system_init was missed during
       // replay (e.g. agent just connected, or SESSION_STATUS arrived during
@@ -199,6 +207,7 @@
         messageStore.setIsRunning(sessionId, false);
       }
     } catch (e: any) {
+      historyFailed = true;
       console.error(`[WorkspacePane] history replay failed for ${sessionId}:`, e);
       messageStore.ingestEvent(sessionId, {
         type: 'error',
@@ -212,6 +221,16 @@
 
     // Single git status refresh after replay (none without git)
     if (!noGit) gitStatusStore.refresh(sessionId);
+
+    // A minimized window draws nothing until it's restored: that wait isn't
+    // drawing time, so there is no first draw to time then.
+    const minimized = document.hidden;
+    if (!minimized) {
+      await afterNextPaint();
+      timing.step('first draw');
+    }
+    const where = minimized ? 'window minimized' : store.activeSessionId === sessionId ? 'shown' : 'behind another conversation';
+    timing.done(`${historyFailed ? 'history failed' : `${eventCount} events`}, ${where}`);
   });
 
   onDestroy(() => {

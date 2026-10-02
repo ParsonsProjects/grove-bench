@@ -12,6 +12,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
   { id: 'privacy', grove: 'Hedges', label: 'Privacy', description: 'Usage data and crash reports.' },
+  { id: 'diagnostics', grove: 'Field notes', label: 'Diagnostics', description: 'The performance log and traces, for tracking down slowness.' },
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
@@ -75,6 +76,9 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
 
   { id: 'analytics', section: 'privacy', label: 'Send anonymous usage data', keywords: 'analytics telemetry' },
   { id: 'crash-reports', section: 'privacy', label: 'Send crash reports', keywords: 'errors' },
+
+  { id: 'performance-log', section: 'diagnostics', label: 'Performance log', keywords: 'slow lag freeze logs folder' },
+  { id: 'performance-trace', section: 'diagnostics', label: 'Record a performance trace', keywords: 'trace profile perfetto slow lag freeze' },
 ];
 
 // The section's names count too, so "notif" or "bells" finds every
