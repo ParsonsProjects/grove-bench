@@ -1,7 +1,9 @@
 /**
  * The context grove: a strip of pixel plants along the top of the status bar
  * that fills in as a conversation uses up its context window. Bare ground at
- * 0%, a full grove at 100%, thinning out again after a compact or clear.
+ * 0%, a full grove at 100%, thinning out again after a compact or clear. Its
+ * leaves turn with the context meter's colour: summer green while there is
+ * room, then late summer, autumn, and rust when it is nearly full.
  *
  * Where each plant stands, what it grows into and when it sprouts are random,
  * seeded by the conversation id. So each conversation keeps its own grove, and
@@ -11,6 +13,7 @@
  * plants sprout one after another and each rises out of the ground.
  */
 import { hashString } from './agent-sprite.js';
+import { usageTone, type UsageTone } from './usage-tone.js';
 
 /** Strip size in art pixels. Wide enough for a 4K screen; the bar clips it. */
 export const GROVE_W = 2048;
@@ -24,15 +27,26 @@ export const GROVE_STEP_MS = 80;
 /** Milliseconds a plant takes to rise out of the ground. */
 export const GROVE_GROW_MS = 480;
 
-// The logo tree's colours, lightest at the top.
-const PALETTE: Record<string, string> = {
-  a: '#6ec87a',
-  b: '#5ab868',
-  c: '#4aaa58',
-  d: '#3a9a48',
-  t: '#8a6a4a',
-  r: '#6a5040',
+/**
+ * Leaf colours (the a, b, c and d pixels, lightest at the top) for each step
+ * of the context meter's colour scale, so the grove turns when the bar does.
+ * Summer is the logo tree's green.
+ */
+export const GROVE_SEASONS: Record<UsageTone, readonly [string, string, string, string]> = {
+  ok: ['#6ec87a', '#5ab868', '#4aaa58', '#3a9a48'],
+  filling: ['#c8c860', '#b0b452', '#98a046', '#808a3a'],
+  low: ['#f0a848', '#dc903c', '#c47834', '#a8622c'],
+  full: ['#e8704c', '#d05840', '#b44436', '#94362e'],
 };
+// The logo tree's trunk and roots, the same in every season.
+const BARK: Record<string, string> = { t: '#8a6a4a', r: '#6a5040' };
+
+/** Pixel colours for the grove with this much context used. */
+function palette(percent: number): Record<string, string> {
+  const [a, b, c, d] = GROVE_SEASONS[usageTone(percent)];
+  return { a, b, c, d, ...BARK };
+}
+
 const BLOOMS = ['#e8c65a', '#e88aa6', '#e6e1d6'];
 
 const TUFT = ['d.d', '.d.'];
@@ -122,12 +136,13 @@ export function plantStage(plant: GrovePlant, percent: number): number {
 /**
  * The grove with this much context used, as one-pixel-high runs. Plants are
  * painted onto a pixel grid, far ones first, so nearer plants cover them and
- * each pixel ends up a single colour.
+ * each pixel ends up a single colour. The leaves take that percent's season.
  *
  * `growth` holds how far each growing plant (by index) has risen, from 0 to 1.
  * A growing plant comes up out of the ground in front of its stage before.
  */
 export function groveRuns(plants: GrovePlant[], percent: number, growth: ReadonlyMap<number, number> = new Map()): GroveRun[] {
+  const colours = palette(percent);
   const fills: (string | null)[] = new Array(GROVE_W * GROVE_H).fill(null);
   const far: boolean[] = new Array(GROVE_W * GROVE_H).fill(false);
 
@@ -143,7 +158,7 @@ export function groveRuns(plants: GrovePlant[], percent: number, growth: Readonl
       const row = map[dy];
       for (let dx = 0; dx < row.length; dx++) {
         const x = left + dx;
-        const fill = row[dx] === 'f' ? plant.bloom : PALETTE[row[dx]];
+        const fill = row[dx] === 'f' ? plant.bloom : colours[row[dx]];
         if (!fill || x < 0 || x >= GROVE_W) continue;
         const i = (top + dy) * GROVE_W + x;
         fills[i] = fill;

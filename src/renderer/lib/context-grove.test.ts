@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  GROVE_W, GROVE_H, GROVE_STAGE_GAP, GROVE_GROW_MS, GroveGrowth, groveLayout, groveRuns, grovePaths, groveSweepMs, plantStage,
+  GROVE_W, GROVE_H, GROVE_STAGE_GAP, GROVE_GROW_MS, GROVE_SEASONS, GroveGrowth, groveLayout, groveRuns, grovePaths, groveSweepMs, plantStage,
   type GrovePlant, type GroveRun,
 } from './context-grove.js';
 
@@ -79,6 +79,17 @@ describe('context grove drawing', () => {
     const paths = grovePaths(runs);
     expect(paths.length).toBe(new Set(runs.map((r) => `${r.far} ${r.fill}`)).size);
     expect(paths.length).toBeLessThan(20);
+  });
+
+  it('turns its leaves at the same steps as the context meter', () => {
+    const fills = (pct: number) => new Set(groveRuns(plants, pct).map((r) => r.fill));
+    // One percent either side of each step in usage-tone.ts.
+    for (const [pct, season] of [[40, 'ok'], [41, 'filling'], [70, 'filling'], [71, 'low'], [85, 'low'], [86, 'full']] as const) {
+      const shown = fills(pct);
+      for (const [other, leaves] of Object.entries(GROVE_SEASONS)) {
+        for (const leaf of leaves) expect(shown.has(leaf), `${leaf} at ${pct}%`).toBe(other === season);
+      }
+    }
   });
 });
 
