@@ -96,8 +96,8 @@ describe('validateAppState', () => {
   });
 
   it('keeps known collapsed-panel flags and drops the rest', () => {
-    const s = validateAppState({ collapsedPanels: { sidebar: true, changesFiles: 'yes', later: true } });
-    expect(s.collapsedPanels).toEqual({ sidebar: true });
+    const s = validateAppState({ collapsedPanels: { sidebar: true, changesFiles: 'yes', projectsSection: true, later: true } });
+    expect(s.collapsedPanels).toEqual({ sidebar: true, projectsSection: true });
     expect(validateAppState({ collapsedPanels: 'all' }).collapsedPanels).toBeUndefined();
   });
 

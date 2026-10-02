@@ -14,6 +14,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import ContextMenu from './ContextMenu.svelte';
   import AttentionCounts from './AttentionCounts.svelte';
+  import SidebarSection from './SidebarSection.svelte';
   import type { TriageCounts } from '../lib/session-triage.js';
 
   type Session = (typeof store.sessions)[number];
@@ -50,6 +51,9 @@
   function toggle(id: string) {
     collapsed = { ...collapsed, [id]: !collapsed[id] };
   }
+
+  /** Every grouped conversation, for the section heading's counts. */
+  let grouped = $derived(groupStore.groups.flatMap((g) => groupStore.members(g.id)));
 
   /** Open a draft that joins the group, in the project it most likely needs. */
   function newConversationIn(groupId: string) {
@@ -115,89 +119,92 @@
 </script>
 
 {#if visible}
-  <div class="flex items-center justify-between mt-5 mb-2 px-1">
-    <span class="text-xs text-muted-foreground uppercase tracking-wide">Groups</span>
-    <button
-      type="button"
-      onclick={() => { groupStore.nameRequest = { kind: 'new' }; }}
-      class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
-      title="New group: conversations in different projects that belong to one piece of work"
-      aria-label="New group"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-    </button>
-  </div>
-
-  {#if groupStore.groups.length === 0}
-    <p class="text-xs text-muted-foreground/50 pl-4 py-1">Right-click a conversation to start a group</p>
-  {/if}
-
-  {#each groupStore.groups as group (group.id)}
-    {@const members = groupStore.members(group.id)}
-    {@const shown = members.filter(rowVisible)}
-    {@const isCollapsed = !!collapsed[group.id]}
-    <div class="mb-3" data-group={group.id}>
-      <div
-        class="flex items-center justify-between group px-1 py-1"
-        oncontextmenu={(e) => openMenu(e, group.id)}
-        role="presentation"
+  <!-- The Projects heading comes next, so this one sticks just above it. -->
+  <SidebarSection panel="groupsSection" label="Groups" count={groupStore.groups.length} counts={countsFor(grouped)} below={1}>
+    {#snippet actions()}
+      <button
+        type="button"
+        onclick={() => { groupStore.nameRequest = { kind: 'new' }; }}
+        class="w-5 h-5 shrink-0 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+        title="New group: conversations in different projects that belong to one piece of work"
+        aria-label="New group"
       >
-        <button
-          type="button"
-          onclick={() => toggle(group.id)}
-          aria-expanded={!isCollapsed}
-          class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
-          title={isCollapsed ? 'Expand group' : 'Collapse group'}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={isCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          <span class="text-xs font-medium text-muted-foreground truncate" title={group.name}>{group.name}</span>
-          <!-- The rows shown, like a project header's count. -->
-          {#if shown.length}
-            <span class="text-xs text-muted-foreground/40 shrink-0">{shown.length}</span>
-          {/if}
-          <AttentionCounts counts={countsFor(members)} />
-        </button>
-        <div class="flex items-center gap-0.5">
-          <!-- Ungroup keeps the conversations, so it's not a bin, and not an ✕ either:
-               a row's ✕ just below closes its conversation. -->
-          <button
-            type="button"
-            onclick={() => groupStore.ungroup(group.id)}
-            class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-            title="Ungroup (the conversations stay)"
-            aria-label="Ungroup {group.name}"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="6" x="5" y="4" rx="1"/><rect width="8" height="6" x="11" y="14" rx="1"/></svg>
-          </button>
-          <button
-            type="button"
-            onclick={() => newConversationIn(group.id)}
-            class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
-            title="New conversation in {group.name}"
-            aria-label="New conversation in {group.name}"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-          </button>
-        </div>
-      </div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      </button>
+    {/snippet}
 
-      {#if !isCollapsed}
-        <!-- A group spans projects, so each row names its project. -->
-        {#each shown as session (session.id)}
-          {@render row(session, true, null, false)}
-        {/each}
-        {#if shown.length === 0}
-          <p class="text-xs text-muted-foreground/40 pl-4 py-1">
-            {#if members.length === 0}
-              Its conversations are in projects that didn't load
-            {:else}
-              No conversations match "{filterLabel}"
-            {/if}
-          </p>
-        {/if}
+    <div class="pt-1 pb-2">
+      {#if groupStore.groups.length === 0}
+        <p class="text-xs text-muted-foreground/50 pl-4 py-1">Right-click a conversation to start a group</p>
       {/if}
+      {#each groupStore.groups as group (group.id)}
+        {@const members = groupStore.members(group.id)}
+        {@const shown = members.filter(rowVisible)}
+        {@const isCollapsed = !!collapsed[group.id]}
+        <div class="mb-3" data-group={group.id}>
+          <div
+            class="flex items-center justify-between group px-1 py-1"
+            oncontextmenu={(e) => openMenu(e, group.id)}
+            role="presentation"
+          >
+            <button
+              type="button"
+              onclick={() => toggle(group.id)}
+              aria-expanded={!isCollapsed}
+              class="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:text-foreground transition-colors"
+              title={isCollapsed ? 'Expand group' : 'Collapse group'}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground/60 transition-transform" style={isCollapsed ? 'transform: rotate(-90deg)' : ''} aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              <span class="text-xs font-medium text-muted-foreground truncate" title={group.name}>{group.name}</span>
+              <!-- The rows shown, like a project header's count. -->
+              {#if shown.length}
+                <span class="text-xs text-muted-foreground/40 shrink-0">{shown.length}</span>
+              {/if}
+              <AttentionCounts counts={countsFor(members)} />
+            </button>
+            <div class="flex items-center gap-0.5">
+              <!-- Ungroup keeps the conversations, so it's not a bin, and not an ✕ either:
+                   a row's ✕ just below closes its conversation. -->
+              <button
+                type="button"
+                onclick={() => groupStore.ungroup(group.id)}
+                class="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                title="Ungroup (the conversations stay)"
+                aria-label="Ungroup {group.name}"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="6" x="5" y="4" rx="1"/><rect width="8" height="6" x="11" y="14" rx="1"/></svg>
+              </button>
+              <button
+                type="button"
+                onclick={() => newConversationIn(group.id)}
+                class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+                title="New conversation in {group.name}"
+                aria-label="New conversation in {group.name}"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              </button>
+            </div>
+          </div>
+
+          {#if !isCollapsed}
+            <!-- A group spans projects, so each row names its project. -->
+            {#each shown as session (session.id)}
+              {@render row(session, true, null, false)}
+            {/each}
+            {#if shown.length === 0}
+              <p class="text-xs text-muted-foreground/40 pl-4 py-1">
+                {#if members.length === 0}
+                  Its conversations are in projects that didn't load
+                {:else}
+                  No conversations match "{filterLabel}"
+                {/if}
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/each}
     </div>
-  {/each}
+  </SidebarSection>
 {/if}
 
 {#if menu}

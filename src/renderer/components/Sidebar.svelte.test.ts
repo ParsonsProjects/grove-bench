@@ -1184,3 +1184,106 @@ describe('Sidebar rail', () => {
     expect(container.querySelector('[data-rail-session="s2"]')).toHaveClass('opacity-70');
   });
 });
+
+describe('Sidebar sections', () => {
+  // jsdom has no Web Animations. A section's list slides in and out, so stand
+  // in an animation that finishes on the next tick, or a folded list never leaves.
+  const realAnimate = Element.prototype.animate;
+  function finishingAnimation(): Animation {
+    let onfinish: (() => void) | null = null;
+    return {
+      cancel() {},
+      currentTime: 0,
+      get onfinish() { return onfinish; },
+      set onfinish(fn) { onfinish = fn; setTimeout(() => onfinish?.(), 0); },
+    } as unknown as Animation;
+  }
+
+  beforeEach(() => {
+    Element.prototype.animate = finishingAnimation as never;
+    // Two projects with a conversation, so the Groups section shows.
+    store.repos = ['/api', '/web'];
+    store.sessions = [
+      { id: 'api1', branch: 'feat/billing', repoPath: '/api', status: 'running', displayName: 'Billing endpoint' },
+    ] as any;
+    groupStore.groups = [];
+    groupStore.ready = true;
+  });
+
+  afterEach(() => {
+    // Unmount first: that stops a slide still running, which would otherwise
+    // reach for animate after it's gone.
+    cleanup();
+    Element.prototype.animate = realAnimate;
+    panelStore.collapsed = {};
+    groupStore.groups = [];
+  });
+
+  const heading = (panel: string) => document.querySelector(`[data-section="${panel}"]`) as HTMLElement;
+  const toggle = (panel: string) => heading(panel).querySelector('button[aria-expanded]') as HTMLButtonElement;
+  /** The sections the free space docks at the bottom, by their spacer. */
+  const docked = () => [...document.querySelectorAll<HTMLElement>('[data-dock-spacer][data-active="true"]')].map((e) => e.dataset.dockSpacer);
+
+  it('folds Projects down to its heading, and saves it', async () => {
+    render(Sidebar);
+    expect(screen.getByRole('button', { name: 'New conversation in api' })).toBeInTheDocument();
+
+    await fireEvent.click(toggle('projectsSection'));
+    expect(toggle('projectsSection')).toHaveAttribute('aria-expanded', 'false');
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenLastCalledWith({ projectsSection: true });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'New conversation in api' })).toBeNull());
+
+    await fireEvent.click(toggle('projectsSection'));
+    expect(screen.getByRole('button', { name: 'New conversation in api' })).toBeInTheDocument();
+  });
+
+  it('starts folded when it was folded last time', () => {
+    groupStore.create('Billing', ['api1']);
+    panelStore.collapsed = { groupsSection: true };
+    render(Sidebar);
+    expect(toggle('groupsSection')).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('[data-group]')).toBeNull();
+    // The heading and its button stay.
+    expect(screen.getByRole('button', { name: 'New group' })).toBeInTheDocument();
+  });
+
+  it('shows a folded section\'s attention counts on its heading', async () => {
+    messageStore.setIsRunning('api1', true);
+    render(Sidebar);
+    expect(within(heading('projectsSection')).queryByTitle('1 working')).toBeNull();
+
+    await fireEvent.click(toggle('projectsSection'));
+    expect(within(heading('projectsSection')).getByTitle('1 working')).toBeInTheDocument();
+  });
+
+  it('docks folded sections at the end of the list at the bottom, and leaves one in the middle in place', async () => {
+    render(Sidebar);
+    expect(docked()).toEqual([]);
+
+    await fireEvent.click(toggle('groupsSection'));
+    expect(docked()).toEqual([]);
+
+    await fireEvent.click(toggle('projectsSection'));
+    expect(docked()).toEqual(['groups']);
+
+    await fireEvent.click(toggle('groupsSection'));
+    expect(docked()).toEqual(['projects']);
+  });
+
+  it('scrolls to a section opened from the bottom, where it was stuck', async () => {
+    panelStore.collapsed = { projectsSection: true };
+    render(Sidebar);
+    const head = heading('projectsSection');
+    const place = head.previousElementSibling as HTMLElement;
+    const list = head.parentElement as HTMLElement;
+    // Stuck at the bottom: drawn above its own place, which is further down.
+    head.getBoundingClientRect = () => ({ top: 500 }) as DOMRect;
+    place.getBoundingClientRect = () => ({ top: 900 }) as DOMRect;
+    list.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    list.scrollTo = vi.fn() as never;
+
+    await fireEvent.click(toggle('projectsSection'));
+    await waitFor(() => expect(list.scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' }));
+    expect(screen.getByRole('button', { name: 'New conversation in api' })).toBeInTheDocument();
+  });
+});
