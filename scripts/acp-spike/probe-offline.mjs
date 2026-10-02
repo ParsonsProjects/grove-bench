@@ -310,6 +310,20 @@ try {
     const midEnd = await attempt(() => withTimeout(midP, 15000, 'stop during backoff'));
     report.check('Stop during the retry backoff ends the turn', midEnd.ok, midEnd.ok ? `stopReason ${midEnd.value.stopReason}, ${Date.now() - tMid} ms` : midEnd.error?.message);
 
+    // The realistic case: a retry samples again, so its text differs. OpenCode
+    // streams it into the same message after the failed attempt's text, with
+    // no marker, so any ACP client shows both. An upstream bug; this check
+    // flips when OpenCode fixes it.
+    let tries = 0;
+    failWith = () => (tries++ === 0
+      ? { text: 'First attempt, partial', streamError: { code: 502, message: 'Provider disconnected' } }
+      : { text: 'Second attempt, full answer.' });
+    J.updates.length = 0;
+    await prompt(J, sid, 'retry with new text');
+    failWith = null;
+    const shown = J.updates.filter((u) => u.sessionUpdate === 'agent_message_chunk').map((u) => u.content.text).join('');
+    report.check('a retried reply is appended to the failed one (upstream OpenCode bug)', shown === 'First attempt, partialSecond attempt, full answer.', JSON.stringify(shown));
+
     // Stop aborts the HTTP request to the provider
     steps = [{ text: 'slow '.repeat(400), delayMs: 40 }];
     mark = fake.requests.length;
