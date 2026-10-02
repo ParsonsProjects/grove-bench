@@ -13,6 +13,10 @@ import {
   clearApiKey,
   getApiKey,
   hasApiKey,
+  isApiKeyRejected,
+  isApiKeyUnverified,
+  markApiKeyRejected,
+  parseApiKey,
   resetCredentialsCache,
   saveApiKey,
 } from './credentials.js';
@@ -153,5 +157,54 @@ describe('credentials', () => {
     saveApiKey('claude-code', 'sk-a');
     resetCredentialsCache();
     expect(getApiKey('claude-code')).toBe('sk-a');
+  });
+
+  it('parses a pasted key without saving it', () => {
+    expect(parseApiKey('  sk-a \n')).toBe('sk-a');
+    expect(() => parseApiKey('')).toThrow('Enter an API key.');
+    expect(() => parseApiKey('sk a')).toThrow('cannot contain spaces');
+    expect(fs.existsSync(credentialsFile())).toBe(false);
+  });
+
+  describe('a key the provider refused', () => {
+    it('is flagged until a new key is saved or the key is removed', () => {
+      saveApiKey('claude-code', 'sk-bad');
+      markApiKeyRejected('claude-code');
+      expect(isApiKeyRejected('claude-code')).toBe(true);
+
+      saveApiKey('claude-code', 'sk-good');
+      expect(isApiKeyRejected('claude-code')).toBe(false);
+
+      markApiKeyRejected('claude-code');
+      clearApiKey('claude-code');
+      expect(isApiKeyRejected('claude-code')).toBe(false);
+    });
+
+    it('is not flagged when no key is saved (another sign-in failed)', () => {
+      markApiKeyRejected('claude-code');
+      expect(isApiKeyRejected('claude-code')).toBe(false);
+    });
+
+    it('is only flagged for its own agent', () => {
+      saveApiKey('claude-code', 'sk-a');
+      saveApiKey('other', 'sk-b');
+      markApiKeyRejected('claude-code');
+      expect(isApiKeyRejected('other')).toBe(false);
+    });
+  });
+
+  it('remembers a key saved without a check until it is replaced, refused or removed', () => {
+    saveApiKey('claude-code', 'sk-a', { unverified: true });
+    expect(isApiKeyUnverified('claude-code')).toBe(true);
+    saveApiKey('claude-code', 'sk-b');
+    expect(isApiKeyUnverified('claude-code')).toBe(false);
+
+    saveApiKey('claude-code', 'sk-c', { unverified: true });
+    markApiKeyRejected('claude-code');
+    expect(isApiKeyUnverified('claude-code')).toBe(false);
+
+    saveApiKey('claude-code', 'sk-d', { unverified: true });
+    clearApiKey('claude-code');
+    expect(isApiKeyUnverified('claude-code')).toBe(false);
   });
 });

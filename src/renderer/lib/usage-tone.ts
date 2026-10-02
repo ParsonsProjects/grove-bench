@@ -1,7 +1,8 @@
 /**
  * One colour scale for "how full": the context meter in the status bar, its
- * Remaining figure, and the plan usage bars in Agent settings. The table in
- * docs/help/status-bar.md describes the same steps.
+ * Remaining figure, the context grove's seasons (context-grove.ts), and the
+ * plan usage bars in Agent settings. The table in docs/help/status-bar.md
+ * describes the same steps.
  */
 export type UsageTone = 'ok' | 'filling' | 'low' | 'full';
 

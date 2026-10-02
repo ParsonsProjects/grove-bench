@@ -4,7 +4,7 @@ export const TURN_SETTLE_MS = 1000;
 /**
  * Whether a finished turn marks its conversation unread: not while you're
  * looking at it, and not when the turn ended because the conversation was
- * stopped (marked completed, or its agent shut down), as there is nothing
+ * stopped (closed, or its agent shut down), as there is nothing
  * new to read.
  */
 export function flagsUnread(session: { id: string; status: string }, activeSessionId: string | null): boolean {

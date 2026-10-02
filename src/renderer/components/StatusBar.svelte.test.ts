@@ -10,6 +10,8 @@ import { settingsStore } from '../stores/settings.svelte.js';
 import { rateLimitStore } from '../stores/rateLimit.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
+import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import { TAB_BY_KEY, TAB_LABELS } from '../lib/keyboard-shortcuts.js';
 import type { PrInfo } from '../../shared/types.js';
@@ -206,18 +208,24 @@ describe('StatusBar context grove', () => {
     messageStore.usageBySession[ACTIVE] = { inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
 
-  it('is bare ground before any context is used', () => {
+  /** Every drawn run, as path data: more grove, more of it. */
+  const drawn = (el: HTMLElement) => [...el.querySelectorAll('path')].map((p) => p.getAttribute('d')).join('');
+
+  it('stands a few small plants before any context is used', () => {
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('context-grove').querySelectorAll('path')).toHaveLength(0);
+    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
   });
 
   it('grows as the context fills', async () => {
     vi.useFakeTimers();
+    const empty = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const before = drawn(empty.getByTestId('context-grove')).length;
+    empty.unmount();
     useContext(100_000);
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
     // The open conversation's grove grows in, so give it time to.
     await vi.advanceTimersByTimeAsync(5000);
-    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
+    expect(drawn(getByTestId('context-grove')).length).toBeGreaterThan(before);
   });
 
   it('shows a hidden conversation\'s grove at once', () => {
@@ -279,15 +287,14 @@ describe('StatusBar context actions', () => {
 
   it('colours the whole used length, cached tokens included', () => {
     // Nearly all of it cached, as it is with prompt caching: the bar still
-    // reads as 90% full, in the full colour.
+    // reads as 90% full (nine of ten blocks), in the full colour.
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
     messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, outputTokens: 0, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
 
-    const fill = getByTestId('context-bar').children;
-    expect(fill).toHaveLength(1);
-    expect(fill[0].className).toContain('bg-red-400');
-    expect((fill[0] as HTMLElement).style.width).toBe('90%');
+    const blocks = [...getByTestId('context-bar').children] as HTMLElement[];
+    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(9).fill('full'), 'empty']);
+    for (const b of blocks.slice(0, 9)) expect(b.className).toContain('bg-red-400');
     expect(screen.getByText('Context 90%').className).toContain('text-red-400');
   });
 });
@@ -512,6 +519,49 @@ describe('StatusBar activity', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: /^1 tool/ })).not.toBeNull());
     expect(screen.queryByText('Pending Tools')).toBeNull();
+  });
+
+  describe('subagents', () => {
+    const agentCall = {
+      kind: 'tool_call', id: 'a', toolName: 'Agent', toolUseId: 'tu-agent', pending: false,
+      toolInput: { description: 'Count failed runs', subagent_type: 'Explore' }, result: 'Async agent launched',
+    } as any;
+    const subagentBash = {
+      kind: 'tool_call', id: 'b', toolName: 'Bash', toolUseId: 'tu-bash', toolInput: { command: 'node runs.mjs' }, pending: true, parentToolUseId: 'tu-agent',
+    } as any;
+    afterEach(() => {
+      backgroundTaskStore.tasksBySession = {};
+      subagentPanelStore.close();
+    });
+
+    it('says a subagent\'s tool is one, and opens its thread from the list', async () => {
+      messageStore.messagesBySession[ACTIVE] = [agentCall, subagentBash];
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByRole('button', { name: /^1 subagent tool/ }));
+
+      const row = screen.getByRole('button', { name: /node runs\.mjs/ });
+      expect(row).toHaveTextContent('in Explore');
+      await fireEvent.click(row);
+      expect(subagentPanelStore.isShowing(ACTIVE, 'tu-agent')).toBe(true);
+      expect(screen.queryByText('Pending Tools')).toBeNull();
+    });
+
+    it('opens a background subagent\'s thread from its task, and leaves other tasks alone', async () => {
+      messageStore.messagesBySession[ACTIVE] = [agentCall];
+      const task = { description: '', status: 'running', totalTokens: 0, toolUses: 0, durationMs: 0 } as const;
+      backgroundTaskStore.tasksBySession = {
+        [ACTIVE]: {
+          bg1: { ...task, taskId: 'bg1', toolUseId: 'tu-agent', description: 'Count failed runs' },
+          bg2: { ...task, taskId: 'bg2', toolUseId: 'tu-shell', description: 'npm run dev' },
+        },
+      };
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await fireEvent.click(screen.getByRole('button', { name: /^2 bg tasks/ }));
+
+      expect(screen.queryByRole('button', { name: /npm run dev/ })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: /Count failed runs/ }));
+      expect(subagentPanelStore.isShowing(ACTIVE, 'tu-agent')).toBe(true);
+    });
   });
 
   it('goes back to the agent\'s state once answered', () => {

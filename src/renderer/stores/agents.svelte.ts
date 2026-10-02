@@ -1,6 +1,12 @@
 import type { AgentSummary } from '../../shared/types.js';
 import { DEFAULT_GROVE_WRITTEN } from '../lib/unsaved-files.js';
 
+/** Whether new conversations may use `agent`: any agent that isn't in
+ *  alpha, and alpha agents the user turned on (enabledAlphaAgents). */
+export function offeredForNew(agent: Pick<AgentSummary, 'id' | 'stage'>, enabledAlpha: readonly string[]): boolean {
+  return agent.stage !== 'alpha' || enabledAlpha.includes(agent.id);
+}
+
 /** The registered agents (adapters), loaded once per launch: the list only
  *  changes when the app is updated. */
 class AgentsStore {
@@ -49,6 +55,18 @@ class AgentsStore {
   generatedFiles(): ReadonlySet<string> {
     if (!this.loaded) return DEFAULT_GROVE_WRITTEN;
     return new Set(this.list.flatMap((a) => a.generatedFiles ?? []));
+  }
+
+  /** offeredForNew for an agent id. True for an agent it doesn't know, like
+   *  supports(). Existing conversations keep their agent either way. */
+  isOffered(id: string | null | undefined, enabledAlpha: readonly string[]): boolean {
+    const agent = this.get(id);
+    return !agent || offeredForNew(agent, enabledAlpha);
+  }
+
+  /** The agents a new conversation can be started with. */
+  offered(enabledAlpha: readonly string[]): AgentSummary[] {
+    return this.list.filter((a) => this.isOffered(a.id, enabledAlpha));
   }
 
   /** Agents that support a capability, e.g. 'plugins' or 'mcpConfig'. */

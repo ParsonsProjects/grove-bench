@@ -33,8 +33,10 @@
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
+  import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
+  import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
@@ -43,6 +45,7 @@
   let showAnalyticsConsent = $state(false);
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
+  const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -131,6 +134,9 @@
       store.markNeedsAttention(sessionId);
     }
     void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+    // Alongside, as it needs neither name: the goal, written once after the
+    // first reply (main skips the rest).
+    void goalStore.autoGenerate(sessionId);
   });
   $effect(() => {
     for (const session of store.sessions) {
@@ -276,6 +282,10 @@
   // tab's auto-resume permanently; instead we clear it when the user navigates
   // (back) to the tab, so a transient failure retries on explicit re-selection.
   let failedResumeIds = new Set<string>();
+  // Resumed sessions whose agent hasn't connected yet (no status from main
+  // since). One that stops first failed to start, so it counts as a failed
+  // resume: resuming it again at once would fail the same way, in a loop.
+  let connectingIds = new Set<string>();
   // Sleeping sessions with a wake in flight, so the effect below wakes each
   // once while its status catches up.
   let wakingIds = new Set<string>();
@@ -294,6 +304,7 @@
     window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       store.clearDeferredResume(sessionId);
+      connectingIds.add(sessionId);
       // Don't subscribe here — WorkspacePane handles history replay + subscription
       // on mount. Subscribing here would race with mount and cause isReady to be
       // set before history replay, resulting in an empty chat.
@@ -374,6 +385,8 @@
       store.sessions.filter((s) => store.isOpenTab(s)).map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
+      // Before the status update, which re-runs the auto-resume effect.
+      if (connectingIds.delete(sessionId) && status === 'stopped') failedResumeIds.add(sessionId);
       const wasSleeping = store.sessions.find((s) => s.id === sessionId)?.status === 'sleeping';
       store.updateStatus(sessionId, status);
       // Waking keeps the conversation's turn state: the message that woke it
@@ -567,6 +580,7 @@
     {/if}
   </main>
 </div>
+<AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
 
 {#if store.finderOpen}
@@ -579,8 +593,13 @@
 <MemoryToast />
 
 <BookmarksDrawer />
+<!-- Mounted from its first opening on, so closing plays its transition.
+     Before the Focus panel, which can open over it. -->
+{#if subagentPanelStore.opened}
+  {#await loadSubagentPanel() then SubagentPanel}
+    <SubagentPanel />
+  {/await}
+{/if}
 <MarkdownPreviewPanel />
-
-<AnalyticsConsent visible={showAnalyticsConsent} />
 
 <SpellcheckMenu />

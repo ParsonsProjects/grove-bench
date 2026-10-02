@@ -2,7 +2,8 @@
   /**
    * Where a draft conversation will run: a new branch (optionally named, from
    * a base), an existing branch or open PR, or the project folder itself.
-   * Opened from the branch area of the draft's status bar.
+   * Opened from the branch area of the draft's status bar. Choices apply as
+   * they're made; a click outside or Escape closes it (DraftStatusBar).
    */
   import { onMount } from 'svelte';
   import { store } from '../stores/sessions.svelte.js';
@@ -218,7 +219,6 @@
           {forkPrCount === 1 ? '1 pull request from a fork is' : `${forkPrCount} pull requests from forks are`} not listed yet.
         </p>
       {/if}
-      <p class="text-muted-foreground/70 mt-2">Picking a pull request starts in Plan mode, so a review doesn't edit the branch.</p>
     {:else if folderProject}
       <p class="text-muted-foreground">
         This project is used without git, so conversations run in the folder itself. The agent edits your files in place, and its edits can't be rewound.
@@ -231,11 +231,5 @@
         Runs in the project folder itself, on whatever branch it has checked out. No separate copy is made, so the agent's changes land in your checkout and your editor sees them straight away.
       </p>
     {/if}
-  </div>
-
-  <div class="flex justify-end px-3 pb-3">
-    <button type="button" onclick={onclose} class="px-3 py-1 border border-border text-foreground hover:bg-accent transition-colors">
-      Done
-    </button>
   </div>
 </div>

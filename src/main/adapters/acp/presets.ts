@@ -4,12 +4,15 @@
  * Launch commands come from each agent's documentation:
  * - Gemini CLI: `gemini --acp` (google-gemini/gemini-cli, docs/cli/acp-mode.md)
  * - GitHub Copilot CLI: `copilot --acp` (github/copilot-cli, changelog.md)
+ * - OpenCode: `opencode acp` (opencode.ai/docs/acp); its settings and the
+ *   OpenRouter key are in opencode.ts
  * Agents that need a separate ACP wrapper (Codex through codex-acp, for
  * example) are added as custom agents.
  */
 import crypto from 'node:crypto';
 import type { AcpAgentSetting } from '../../../shared/types.js';
 import type { AcpAgentDefinition } from './acp-adapter.js';
+import { openCodeEnv, verifyOpenRouterKey } from './opencode.js';
 
 export const ACP_PRESETS: AcpAgentDefinition[] = [
   {
@@ -37,6 +40,26 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
       setupUrl: 'https://github.com/github/copilot-cli',
     },
     installInstructions: 'Install GitHub Copilot CLI: https://github.com/github/copilot-cli',
+  },
+  {
+    id: 'opencode',
+    displayName: 'OpenCode',
+    command: 'opencode',
+    args: ['acp'],
+    // Not yet run on Windows with a real key (docs/open-model-harnesses-plan.md).
+    stage: 'alpha',
+    // Optional: OpenCode also uses the providers the user signed in to with
+    // `opencode auth login`. A key saved here makes OpenRouter the provider
+    // and DeepSeek V4.1 Flash the starting model.
+    apiKey: {
+      envVar: 'OPENROUTER_API_KEY',
+      label: 'OpenRouter API key',
+      helpUrl: 'https://openrouter.ai/keys',
+      billingNote: 'Billed by OpenRouter for each request, at the price of the model you pick.',
+    },
+    verifyApiKey: (key) => verifyOpenRouterKey(key),
+    spawnEnv: openCodeEnv,
+    installInstructions: 'Install OpenCode: npm install -g opencode-ai (https://opencode.ai/docs)',
   },
 ];
 

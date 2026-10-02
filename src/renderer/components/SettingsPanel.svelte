@@ -78,6 +78,16 @@
     if (!visibleSections.some((s) => s.id === section)) section = 'general';
   });
 
+  // Opened at a section (settingsStore.openAt): show that one.
+  $effect(() => {
+    const wanted = settingsStore.requestedSection;
+    if (!open || !wanted) return;
+    untrack(() => {
+      section = wanted;
+      settingsStore.requestedSection = null;
+    });
+  });
+
   // A new section starts at its top.
   $effect(() => {
     void section;
@@ -89,6 +99,7 @@
   const SHOWN_WHEN: Record<string, () => boolean> = {
     credentials: () => Object.values(store.prerequisites?.agents ?? {}).some((a) => a.apiKey),
     'thinking-summaries': () => agentsStore.list.some((a) => a.capabilities.thinkingSummaries),
+    'alpha-agents': () => agentsStore.list.some((a) => a.stage === 'alpha'),
     'project-colors': () => store.repos.length > 0,
   };
   const results = $derived(

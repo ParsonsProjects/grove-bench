@@ -1,5 +1,5 @@
 import type { AgentEvent, ControlDescriptor, ImageAttachment, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredImage } from '../../shared/types.js';
-import { CONTROL_IDS } from '../../shared/types.js';
+import { CONTROL_IDS, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -11,9 +11,12 @@ import { usageStore } from './usage.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
+import { prerequisitesStore } from './prerequisites.svelte.js';
 import type { AttachedFile } from '../lib/file-attachments.js';
 import { approvalRequest } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
+import { liveEventsMissingFrom } from '../../shared/live-events.js';
+import { agentCallInput, isAgentCall, subagentOf } from '../lib/message-view.js';
 
 // ─── Chat message types ───
 
@@ -22,6 +25,9 @@ export interface ChatTextMessage {
   id: string;
   text: string;
   uuid: string;
+  /** Set on a subagent's messages: the Agent call that started it. They show
+   *  in that subagent's panel, not the conversation's thread. */
+  parentToolUseId?: string;
 }
 
 export interface ChatToolCallMessage {
@@ -42,6 +48,21 @@ export interface ChatToolCallMessage {
   toolView?: ToolView;
   /** Images the tool returned (a screenshot, an image file it read). */
   images?: StoredImage[];
+  /** See ChatTextMessage.parentToolUseId. */
+  parentToolUseId?: string;
+}
+
+/** A tool call still running, as the status bar lists it. */
+export interface PendingTool {
+  toolName: string;
+  toolUseId: string;
+  summary: string;
+  elapsedSeconds?: number;
+  /** The Agent call whose subagent's thread shows this call: the subagent it
+   *  runs in, or the one it starts. */
+  subagentCall?: string;
+  /** The kind of subagent it runs in (Explore, ...), for a subagent's own call. */
+  inSubagent?: string;
 }
 
 /** An image shown in the thread: inline while the app still has its data
@@ -71,6 +92,8 @@ export interface ChatErrorMessage {
   kind: 'error';
   id: string;
   text: string;
+  /** A sign-in failure: the thread offers a way to fix the credentials. */
+  auth?: boolean;
 }
 
 /** Git has no name/email for this conversation's checkout. */
@@ -117,6 +140,8 @@ export interface ChatThinkingMessage {
   kind: 'thinking';
   id: string;
   thinking: string;
+  /** See ChatTextMessage.parentToolUseId. */
+  parentToolUseId?: string;
 }
 
 export interface QuestionOption {
@@ -564,8 +589,9 @@ class MessageStore {
 
   /** Called before a non-streaming event is processed. Deltas that the event
    *  itself supersedes (a finalized text/thinking block) are dropped instead
-   *  of rendered once more; everything else is applied first. */
-  private settleStreamBuffer(sessionId: string, eventType: AgentEvent['type']) {
+   *  of rendered once more; everything else is applied first. A subagent's
+   *  events (null) supersede nothing: the stream is the main agent's. */
+  private settleStreamBuffer(sessionId: string, eventType: AgentEvent['type'] | null) {
     const buf = this.streamBuf.get(sessionId);
     if (!buf) return;
     if (eventType === 'assistant_text') buf.text = '';
@@ -912,10 +938,10 @@ class MessageStore {
   }
 
   /** Get all currently pending tool calls with their progress info. */
-  getPendingTools(sessionId: string): { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] {
+  getPendingTools(sessionId: string): PendingTool[] {
     const msgs = this.messagesBySession[sessionId] ?? [];
     const progress = this.toolProgressBySession[sessionId] ?? {};
-    const pending: { toolName: string; toolUseId: string; summary: string; elapsedSeconds?: number }[] = [];
+    const pending: PendingTool[] = [];
     for (const m of msgs) {
       if (m.kind === 'tool_call' && m.pending) {
         const p = progress[m.toolUseId];
@@ -924,10 +950,22 @@ class MessageStore {
           toolUseId: m.toolUseId,
           summary: this.summarizeToolInput(m),
           elapsedSeconds: p?.elapsedSeconds,
+          ...this.subagentOfPendingTool(msgs, m),
         });
       }
     }
     return pending;
+  }
+
+  /** The subagent a pending call opens: the one it runs in, or the one it
+   *  starts (an Agent call). */
+  private subagentOfPendingTool(msgs: ChatMessage[], call: ChatToolCallMessage): Pick<PendingTool, 'subagentCall' | 'inSubagent'> {
+    const parent = call.parentToolUseId;
+    if (parent) {
+      const agentCall = msgs.find((m) => m.kind === 'tool_call' && m.toolUseId === parent) as ChatToolCallMessage | undefined;
+      return { subagentCall: parent, inSubagent: agentCallInput(agentCall?.toolInput).agentType ?? 'subagent' };
+    }
+    return isAgentCall(call) ? { subagentCall: call.toolUseId } : {};
   }
 
   private summarizeToolInput(call: { toolName: string; toolInput: unknown; toolView?: ToolView }): string {
@@ -1061,7 +1099,8 @@ class MessageStore {
 
   /** Find the message a search hit's event index maps to: the message with the
    *  largest stamped source index ≤ eventIndex (handles events that update an
-   *  existing message rather than creating one, e.g. tool_result → tool_call). */
+   *  existing message rather than creating one, e.g. tool_result → tool_call).
+   *  Only the conversation's own: a subagent's are not in its thread. */
   findMessageIdForEventIndex(sessionId: string, eventIndex: number): string | null {
     const idx = this.sourceIndexBySession.get(sessionId);
     if (!idx) return null;
@@ -1069,6 +1108,7 @@ class MessageStore {
     let bestId: string | null = null;
     let bestIdx = -1;
     for (const m of msgs) {
+      if (subagentOf(m)) continue;
       const ei = idx.get(m.id);
       if (ei != null && ei <= eventIndex && ei > bestIdx) {
         bestIdx = ei;
@@ -1299,8 +1339,14 @@ class MessageStore {
 
   /** Ingest a raw AgentEvent from the main process */
   ingestEvent(sessionId: string, event: AgentEvent) {
+    const parentToolUseId = subagentParent(event);
     if (event.type !== 'partial_text' && event.type !== 'partial_thinking') {
-      this.settleStreamBuffer(sessionId, event.type);
+      this.settleStreamBuffer(sessionId, parentToolUseId ? null : event.type);
+    }
+    // A subagent's result settles its call like any other (onToolResult).
+    if (parentToolUseId && event.type !== 'tool_result') {
+      this.onSubagentEvent(sessionId, parentToolUseId, event);
+      return;
     }
     switch (event.type) {
       case 'system_init':
@@ -1408,7 +1454,12 @@ class MessageStore {
           kind: 'error',
           id: nextId(),
           text: event.message,
+          ...(event.auth ? { auth: true } : {}),
         });
+        // Main has flagged a refused key: re-check so a new conversation asks
+        // for credentials instead of failing the same way. Live only, not when
+        // an old failure is replayed.
+        if (event.keyRejected && this.sideEffects && this._replayBuffer === null) void prerequisitesStore.refresh();
         // If the session never initialized (system_init never arrived),
         // unlock the input so the user can see the error and retry.
         if (!this.getIsReady(sessionId)) {
@@ -1706,6 +1757,38 @@ class MessageStore {
       return m;
     });
     if (changed) this.setMessagesForMutation(sessionId, updated);
+  }
+
+  /**
+   * A subagent's text, thinking or tool call, kept under the Agent call that
+   * started it for that subagent's panel. The conversation's own turn is left
+   * alone: no streaming flush, running state or activity, as a background
+   * subagent works on after the turn ends.
+   */
+  private onSubagentEvent(sessionId: string, parentToolUseId: string, event: AgentEvent) {
+    switch (event.type) {
+      case 'assistant_text':
+        this.pushMessage(sessionId, { kind: 'text', id: nextId(), text: event.text, uuid: event.uuid, parentToolUseId });
+        break;
+      case 'thinking':
+        if (!event.thinking.trim()) break;
+        this.pushMessage(sessionId, { kind: 'thinking', id: nextId(), thinking: event.thinking, parentToolUseId });
+        break;
+      case 'assistant_tool_use':
+        this.pushMessage(sessionId, {
+          kind: 'tool_call',
+          id: nextId(),
+          toolName: event.toolName,
+          toolInput: event.toolInput,
+          toolUseId: event.toolUseId,
+          uuid: event.uuid,
+          pending: true,
+          toolCategory: event.toolCategory,
+          ...(event.toolView ? { toolView: event.toolView } : {}),
+          parentToolUseId,
+        });
+        break;
+    }
   }
 
   private onToolResult(sessionId: string, event: Extract<AgentEvent, { type: 'tool_result' }>) {
@@ -2351,6 +2434,10 @@ class MessageStore {
     return [this.sourceIndexBySession, this.orphanReplayEvents, this.streamBuf];
   }
 
+  /** Live events that arrived while a pane was loading the history page,
+   *  by session (see holdLiveEvents). */
+  private heldLive = new Map<string, AgentEvent[]>();
+
   /** Subscribe to events from the main process for a session */
   subscribe(sessionId: string) {
     if (this.cleanups.has(sessionId)) {
@@ -2362,13 +2449,34 @@ class MessageStore {
       this.setIsReady(sessionId, false);
     }
     const cleanup = window.groveBench.onAgentEvent(sessionId, (event) => {
-      this.ingestEvent(sessionId, event);
+      const held = this.heldLive.get(sessionId);
+      if (held) held.push(event);
+      else this.ingestEvent(sessionId, event);
     });
     this.cleanups.set(sessionId, cleanup);
   }
 
+  /** Hold this session's live events instead of showing them, while its
+   *  history page loads. Shown straight away they would come first, and then
+   *  again when the page (which has them too) is replayed. */
+  holdLiveEvents(sessionId: string) {
+    this.heldLive.set(sessionId, []);
+  }
+
+  /** Stop holding and show the held events the replayed page doesn't have.
+   *  Without a page (it failed to load), show them all. */
+  releaseLiveEvents(sessionId: string, page: readonly AgentEvent[] | null) {
+    const held = this.heldLive.get(sessionId);
+    this.heldLive.delete(sessionId);
+    if (!held?.length) return;
+    for (const event of page ? liveEventsMissingFrom(page, held) : held) {
+      this.ingestEvent(sessionId, event);
+    }
+  }
+
   /** Unsubscribe from session events */
   unsubscribe(sessionId: string) {
+    this.heldLive.delete(sessionId);
     const cleanup = this.cleanups.get(sessionId);
     if (cleanup) {
       cleanup();

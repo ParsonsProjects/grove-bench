@@ -22,6 +22,7 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('./git.js', () => ({
   FETCH_TIMEOUT_MS: 30_000,
   git: vi.fn(),
+  excludeFromGit: vi.fn(),
   isGitRepo: vi.fn().mockResolvedValue(true),
   renameBranch: vi.fn(),
   branchHasRemote: vi.fn(),
@@ -56,10 +57,11 @@ const mockFsUtils = vi.hoisted(() => ({
 vi.mock('./fs-utils.js', () => mockFsUtils);
 
 import {
-  git, branchExists, branchHasRemote, getGitIdentity, getDefaultBranch, validateBranchName, currentBranch,
+  git, excludeFromGit, branchExists, branchHasRemote, getGitIdentity, getDefaultBranch, validateBranchName, currentBranch,
   localBranchExists, remoteTrackingRef, isWorkingTreeClean, worktreeBranches, checkoutBranch,
 } from './git.js';
 import { WorktreeManager } from './worktree-manager.js';
+import { adapterRegistry } from './adapters/index.js';
 
 const mockGit = vi.mocked(git);
 
@@ -103,6 +105,19 @@ describe('saveAdapterType / getAdapterType', () => {
     expect(await manager.getAdapterType('wt-new')).toBe('codex');
     expect(await manager.getAdapterType('wt-old')).toBe('claude-code');
     expect(await manager.getAdapterType('missing')).toBeUndefined();
+  });
+
+  it('reads the agent and model together, in one read of the manifest', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-new': { repoPath: '/repo', branch: 'a', createdAt: 1, adapterType: 'codex', model: 'o4' },
+      'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 2 },
+    }));
+    mockFs.readFile.mockClear();
+
+    expect(await manager.getAgentAndModel('wt-new')).toEqual({ adapterType: 'codex', model: 'o4' });
+    expect(mockFs.readFile).toHaveBeenCalledTimes(1);
+    expect(await manager.getAgentAndModel('wt-old')).toEqual({ adapterType: 'claude-code', model: undefined });
+    expect(await manager.getAgentAndModel('missing')).toEqual({});
   });
 
   it('includes the agent when a stopped session is rebuilt from the manifest', async () => {
@@ -268,6 +283,61 @@ describe('saveAutoDisplayName', () => {
     expect(saved).toBe(false);
     expect((savedManifest as any)['wt-123'].displayName).toBe('Mine');
     expect((savedManifest as any)['wt-123'].displayNameSource).toBe('user');
+  });
+});
+
+describe('conversation goal', () => {
+  it('reads an empty goal for entries without one, and undefined for unknown ids', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-set': { repoPath: '/repo', branch: 'a', createdAt: 1000, goal: 'Fix sort', goalSource: 'auto', goalHidden: true },
+      'wt-none': { repoPath: '/repo', branch: 'b', createdAt: 1000 },
+    }));
+
+    expect(await manager.getGoal('wt-set')).toEqual({ text: 'Fix sort', source: 'auto', hidden: true });
+    expect(await manager.getGoal('wt-none')).toEqual({ text: null, source: null, hidden: false });
+    expect(await manager.getGoal('wt-unknown')).toBeUndefined();
+  });
+
+  it('saves a typed goal, and an empty one clears the text but keeps the source', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Old', goalSource: 'auto' },
+    }));
+
+    expect(await manager.saveGoal('wt-123', 'Mine', 'user')).toEqual({ text: 'Mine', source: 'user', hidden: false });
+    expect((savedManifest as any)['wt-123'].goal).toBe('Mine');
+
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    expect(await manager.saveGoal('wt-123', '', 'user')).toEqual({ text: null, source: 'user', hidden: false });
+    expect((savedManifest as any)['wt-123'].goal).toBeUndefined();
+    expect((savedManifest as any)['wt-123'].goalSource).toBe('user');
+  });
+
+  it('does not overwrite an edit made while a goal was being generated', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Mine', goalSource: 'user' },
+    }));
+
+    const saved = await manager.saveGoal('wt-123', 'Generated', 'auto', { text: null, source: null, hidden: false });
+
+    expect(saved).toBeNull();
+    // Nothing changed, so the manifest isn't rewritten.
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('hides and shows the bar without touching the goal, and ignores unknown ids', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-123': { repoPath: '/repo', branch: 'feature', createdAt: 1000, goal: 'Fix sort', goalSource: 'auto' },
+    }));
+
+    expect(await manager.setGoalHidden('wt-123', true)).toEqual({ text: 'Fix sort', source: 'auto', hidden: true });
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    expect(await manager.setGoalHidden('wt-123', false)).toEqual({ text: 'Fix sort', source: 'auto', hidden: false });
+    expect((savedManifest as any)['wt-123'].goalHidden).toBeUndefined();
+    mockFs.readFile.mockResolvedValue(JSON.stringify(savedManifest));
+    mockFs.writeFile.mockClear();
+    expect(await manager.setGoalHidden('wt-123', false)).toEqual({ text: 'Fix sort', source: 'auto', hidden: false });
+    expect(await manager.setGoalHidden('wt-unknown', true)).toBeNull();
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 });
 
@@ -548,6 +618,33 @@ describe('registerDirect (direct sessions, and older attached ones)', () => {
     expect(info?.path).toBe(wtPath);
     expect(info?.branch).toBe('feature-x');
     expect(info?.direct).toBe(true);
+  });
+});
+
+describe("create: the agent's generated files", () => {
+  beforeEach(() => {
+    mockFsUtils.pathExists.mockResolvedValue(false);
+    vi.mocked(branchExists).mockResolvedValue(false);
+    vi.mocked(branchHasRemote).mockResolvedValue(false);
+    mockGit.mockResolvedValue('');
+  });
+
+  it("writes the agent's settings, then keeps them out of git", async () => {
+    const generateWorktreeSettings = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(adapterRegistry.getDefault).mockReturnValueOnce({
+      id: 'claude-code', generateWorktreeSettings, generatedFiles: ['.claude/settings.local.json'],
+    } as never);
+    const info = await manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' });
+    expect(generateWorktreeSettings).toHaveBeenCalledWith(info.path, '/repo');
+    expect(excludeFromGit).toHaveBeenCalledWith(info.path, ['.claude/settings.local.json']);
+  });
+
+  it('still creates the worktree when the exclude list cannot be written', async () => {
+    vi.mocked(adapterRegistry.getDefault).mockReturnValueOnce({
+      id: 'claude-code', generateWorktreeSettings: vi.fn(), generatedFiles: ['.claude/settings.local.json'],
+    } as never);
+    vi.mocked(excludeFromGit).mockRejectedValueOnce(new Error('read-only'));
+    await expect(manager.create({ repoPath: '/repo', branchName: 'feat', baseBranch: 'main', id: 'a1' })).resolves.toMatchObject({ id: 'a1' });
   });
 });
 

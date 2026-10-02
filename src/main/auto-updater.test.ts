@@ -77,6 +77,13 @@ afterEach(() => {
 });
 
 describe('auto-updater', () => {
+  it('leaves the updater alone in a dev build when settings change', async () => {
+    await init({ packaged: false, autoDownload: false });
+    const before = updater.autoDownload;
+    mod.applyUpdateSettings({ autoDownloadUpdates: !before });
+    expect(updater.autoDownload).toBe(before);
+  });
+
   it('follows the automatic download setting', async () => {
     await init({ autoDownload: false });
     expect(updater.autoDownload).toBe(false);

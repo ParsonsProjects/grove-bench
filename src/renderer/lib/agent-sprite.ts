@@ -226,7 +226,7 @@ function sprite(label: string, colorClass: string, maps: string[][], opts: Parti
  * means the same thing: amber needs you, blue is working (starting up
  * included), green finished a turn you haven't seen, red is an error. Every
  * quiet state is grey, told apart by pose: sitting (ready) or asleep (sleeping,
- * completed).
+ * closed).
  */
 export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   working: sprite('Working', 'text-primary', [TYPE_A, TYPE_B], { frameSeconds: 0.4 }),
@@ -234,10 +234,10 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   permission: sprite('Waiting for you', 'text-amber-500', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
   unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
   ready: sprite('Ready', 'text-foreground/60', [SIT]),
-  // Status 'stopped' and no longer an open tab: the user marked it completed.
-  stopped: sprite('Completed', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
+  // Status 'stopped' and no longer an open tab: the user closed it.
+  stopped: sprite('Closed', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
   // Still open, agent shut down until it is opened (idle sleep, or a tab
-  // restored at startup). Looks like Completed: both wake when opened.
+  // restored at startup). Looks like Closed: both wake when opened.
   sleeping: sprite('Sleeping', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
   error: sprite('Error', 'text-red-500', [withSymbol(SIT, BANG)]),
   starting: sprite('Starting', 'text-primary', [WALK_A, WALK_B], { frameSeconds: 0.35 }),

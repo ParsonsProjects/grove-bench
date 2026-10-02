@@ -29,6 +29,7 @@ const m = vi.hoisted(() => {
       'copyUntrackedFiles', 'getNpmCachePath', 'getProviderSessionId', 'getModel', 'getAdapterType', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'assertRemovable', 'checkoutSharers',
+      'getGoal', 'saveGoal', 'setGoalHidden',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates'),
@@ -40,7 +41,7 @@ const m = vi.hoisted(() => {
       'loadUnreadSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
     ),
     prerequisites: fns('apiKeyState', 'checkCorePrerequisites', 'checkGh'),
-    credentials: fns('clearApiKey', 'saveApiKey'),
+    credentials: fns('canStoreApiKey', 'clearApiKey', 'parseApiKey', 'saveApiKey'),
     bookmarks: fns('getBookmarks', 'addBookmark', 'removeBookmark', 'updateBookmark', 'removeBookmarksForSession'),
     memoryCompact: fns('compactMemory', 'cancelCompaction', 'onCompactionEvent', 'listBackups', 'restoreBackup', 'getCompactionInfo', 'previewBackup', 'readBackupFile'),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -93,6 +94,10 @@ vi.mock('./branch-name.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./branch-name.js')>()),
   generateBranchName: vi.fn(),
 }));
+vi.mock('./session-goal.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./session-goal.js')>()),
+  generateGoal: vi.fn(),
+}));
 
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
@@ -101,6 +106,7 @@ import type { AgentEvent } from '../shared/types.js';
 import * as git from './git.js';
 import * as gh from './gh.js';
 import { generateBranchName } from './branch-name.js';
+import { generateGoal } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
 import { installDependencies } from './deps-install.js';
 import { logRendererError } from './crash-handling.js';
@@ -167,6 +173,7 @@ beforeEach(() => {
   vi.mocked(shell.openExternal).mockResolvedValue(undefined);
 
   m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, branchNamingRule: '' });
+  m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude-code' });
   m.sessionManager.getEventHistory.mockReturnValue([]);
   m.sessionManager.getSession.mockReturnValue(undefined);
   m.sessionManager.isMidTurn.mockReturnValue(false);
@@ -219,6 +226,18 @@ describe('repos', () => {
 
 // ─── Creating a conversation ───
 
+describe('AGENT_LIST_ADAPTERS', () => {
+  it('marks an alpha agent, and only that one', async () => {
+    const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} };
+    const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' };
+    m.adapterRegistry.list.mockReturnValue([claude, opencode]);
+    m.adapterRegistry.getDefault.mockReturnValue(claude);
+    const list = await invoke(IPC.AGENT_LIST_ADAPTERS);
+    expect(list.map((a: { id: string; stage?: string; isDefault: boolean }) => [a.id, a.stage ?? null, a.isDefault]))
+      .toEqual([['claude-code', null, true], ['opencode', 'alpha', false]]);
+  });
+});
+
 describe('SESSION_CREATE', () => {
   const create = (opts: Record<string, unknown> = {}) =>
     invoke(IPC.SESSION_CREATE, { repoPath: '/repo', branchName: '', ...opts });
@@ -235,6 +254,13 @@ describe('SESSION_CREATE', () => {
 
     expect(m.worktreeManager.create).not.toHaveBeenCalled();
     expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+  });
+
+  it('names the picked agent for a worktree conversation before its setup finishes', async () => {
+    const result = await create({ adapterType: 'gemini-cli' });
+    expect(result.agentType).toBe('gemini-cli');
+    await lastSetup().promise;
+    expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'gemini-cli' }));
   });
 
   describe('joining a group on its branch (continueBranch)', () => {
@@ -277,7 +303,8 @@ describe('SESSION_CREATE', () => {
       permissionMode: 'not-a-mode', model: '', controls: { effort: 'high', permissionMode: 'x', count: 3 },
     });
     // No name given: a placeholder branch, renamed after the first turn.
-    expect(result).toEqual({ id: expect.stringMatching(/^[0-9a-f]{8}$/), branch: `grove/${result.id}` });
+    // No agent given: the default one, named so the renderer files it there.
+    expect(result).toEqual({ id: expect.stringMatching(/^[0-9a-f]{8}$/), branch: `grove/${result.id}`, agentType: 'claude-code' });
 
     const setup = lastSetup();
     expect(setup.id).toBe(result.id);
@@ -560,6 +587,132 @@ describe('BRANCH_AUTO_NAME', () => {
   });
 });
 
+describe('conversation goal', () => {
+  const NO_GOAL = { text: null, source: null, hidden: false };
+
+  /** A live conversation that has had one reply. Each test uses its own id:
+   *  attempt counts are kept per conversation for the app's life. */
+  function liveWithReply(id: string) {
+    const live = { id, worktreePath: wt, adapter: { id: 'claude' } };
+    m.sessionManager.getSession.mockReturnValue(live);
+    m.sessionManager.getEventHistory.mockReturnValue([
+      { type: 'user_message', text: 'Add a dark mode toggle' },
+      { type: 'assistant_text', text: 'Added it to settings.', uuid: 'a1' },
+    ]);
+    m.settings.getSettings.mockReturnValue({ showConversationGoal: true });
+    m.worktreeManager.getGoal.mockResolvedValue(NO_GOAL);
+    m.worktreeManager.saveGoal.mockImplementation(async (_id: string, text: string, source: string) => ({ text, source, hidden: false }));
+    return live;
+  }
+
+  it('writes the first goal from the messages and the reply', async () => {
+    const live = liveWithReply('g0000001');
+    vi.mocked(generateGoal).mockResolvedValue('Add a dark mode toggle');
+
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000001')).toEqual({ text: 'Add a dark mode toggle', source: 'auto', hidden: false });
+    expect(generateGoal).toHaveBeenCalledWith(
+      { prompts: ['Add a dark mode toggle'], skipped: 0, reply: 'Added it to settings.' }, live.adapter, wt,
+    );
+    // Saved only if nothing changed while it was generated.
+    expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000001', 'Add a dark mode toggle', 'auto', NO_GOAL);
+  });
+
+  it('writes a goal only once, never over one already made or typed', async () => {
+    liveWithReply('g0000002');
+    m.worktreeManager.getGoal.mockResolvedValue({ text: null, source: 'user', hidden: false });
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000002')).toBeNull();
+    // Nor for a conversation whose bar was closed.
+    m.worktreeManager.getGoal.mockResolvedValue({ text: null, source: null, hidden: true });
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000002')).toBeNull();
+    expect(generateGoal).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when goals are off or there is no reply yet', async () => {
+    liveWithReply('g0000003');
+    m.settings.getSettings.mockReturnValue({ showConversationGoal: false });
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000003')).toBeNull();
+
+    liveWithReply('g0000004');
+    m.sessionManager.getEventHistory.mockReturnValue([{ type: 'user_message', text: 'Add a dark mode toggle' }]);
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000004')).toBeNull();
+    expect(generateGoal).not.toHaveBeenCalled();
+  });
+
+  it('gives up after two failed attempts, and at once for an agent that cannot write text', async () => {
+    liveWithReply('g0000005');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000005');
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000005');
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000005')).toBeNull();
+    expect(generateGoal).toHaveBeenCalledTimes(2);
+
+    vi.mocked(generateGoal).mockClear();
+    liveWithReply('g0000006');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('The Test agent does not support text generation'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000006');
+    expect(await invoke(IPC.SESSION_GOAL_AUTO, 'g0000006')).toBeNull();
+    expect(generateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes one call when two arrive together', async () => {
+    liveWithReply('g0000009');
+    let finish!: (goal: string) => void;
+    vi.mocked(generateGoal).mockReturnValue(new Promise((r) => { finish = r; }));
+
+    const first = invoke(IPC.SESSION_GOAL_AUTO, 'g0000009');
+    const second = invoke(IPC.SESSION_GOAL_AUTO, 'g0000009');
+    expect(await second).toBeNull();
+    await flush();
+    finish('Add a dark mode toggle');
+    expect(await first).toMatchObject({ text: 'Add a dark mode toggle' });
+    expect(generateGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets the attempts of a deleted conversation', async () => {
+    liveWithReply('g0000010');
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    expect(generateGoal).toHaveBeenCalledTimes(2);
+
+    await invoke(IPC.SESSION_DESTROY, 'g0000010', false);
+    await invoke(IPC.SESSION_GOAL_AUTO, 'g0000010');
+    expect(generateGoal).toHaveBeenCalledTimes(3);
+  });
+
+  it('refreshes over a typed goal, and reports a failure', async () => {
+    liveWithReply('g0000007');
+    const typed = { text: 'Mine', source: 'user', hidden: false };
+    m.worktreeManager.getGoal.mockResolvedValue(typed);
+    vi.mocked(generateGoal).mockResolvedValue('Ship dark mode');
+
+    expect(await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000007')).toEqual({ text: 'Ship dark mode', source: 'auto', hidden: false });
+    expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('g0000007', 'Ship dark mode', 'auto', typed);
+
+    vi.mocked(generateGoal).mockRejectedValue(new Error('model busy'));
+    await expect(invoke(IPC.SESSION_GOAL_REFRESH, 'g0000007')).rejects.toThrow('model busy');
+  });
+
+  it('keeps an edit made during a refresh', async () => {
+    liveWithReply('g0000008');
+    vi.mocked(generateGoal).mockResolvedValue('Generated');
+    m.worktreeManager.saveGoal.mockResolvedValue(null);
+    const edited = { text: 'Edited meanwhile', source: 'user', hidden: false };
+    m.worktreeManager.getGoal.mockResolvedValueOnce(NO_GOAL).mockResolvedValueOnce(edited);
+
+    expect(await invoke(IPC.SESSION_GOAL_REFRESH, 'g0000008')).toEqual(edited);
+  });
+
+  it('saves a typed goal on one line, and hides the bar', async () => {
+    m.worktreeManager.saveGoal.mockResolvedValue({ text: 'Ship it', source: 'user', hidden: false });
+    await invoke(IPC.SESSION_GOAL_SET, 's1', '  Ship\n it ');
+    expect(m.worktreeManager.saveGoal).toHaveBeenCalledWith('s1', 'Ship it', 'user');
+
+    await invoke(IPC.SESSION_GOAL_HIDE, 's1', true);
+    expect(m.worktreeManager.setGoalHidden).toHaveBeenCalledWith('s1', true);
+  });
+});
+
 describe('branch switching', () => {
   it('moves every conversation sharing the checkout to the new branch', async () => {
     m.worktreeManager.switchBranch.mockResolvedValue({ success: true, branch: 'b', sessionIds: ['s1', 's2'] });
@@ -664,6 +817,22 @@ describe('history', () => {
     finishInstall();
     await lastSetup().promise;
     expect(texts({ events: invoke(IPC.AGENT_HISTORY, id) })).toEqual(['h0', 'h1', 'h2']);
+  });
+
+  it('hands the setup status to the new conversation, which keeps it in its history', async () => {
+    let adopted: AgentEvent[] = [];
+    let countDuringAdoption = -1;
+    m.sessionManager.getEventHistoryCount.mockReturnValue(0);
+    m.sessionManager.createSession.mockImplementation(async (opts: { id: string; adoptSetupEvents?: () => AgentEvent[] }) => {
+      adopted = opts.adoptSetupEvents?.() ?? [];
+      // Taken in the same tick: the prefixed index space no longer counts them.
+      countDuringAdoption = invoke(IPC.AGENT_HISTORY_COUNT, opts.id);
+    });
+    await invoke(IPC.SESSION_CREATE, { repoPath: '/repo', branchName: '' });
+    await lastSetup().promise;
+
+    expect(adopted.map((e) => (e as { message: string }).message)).toEqual(['Creating worktree…', 'Starting agent…']);
+    expect(countDuringAdoption).toBe(0);
   });
 
   it('cross-conversation search gives up once a newer search starts', async () => {
@@ -920,6 +1089,11 @@ describe('pull requests', () => {
 describe('prerequisites and API keys', () => {
   const claude = { id: 'claude', displayName: 'Claude Code', apiKey: { envVar: 'ANTHROPIC_API_KEY' } };
 
+  beforeEach(() => {
+    m.credentials.parseApiKey.mockImplementation((k: unknown) => String(k).trim());
+    m.credentials.canStoreApiKey.mockReturnValue(true);
+  });
+
   it('saving a key patches the last check instead of re-running every probe', async () => {
     m.adapterRegistry.get.mockReturnValue(claude);
     m.appState.loadPrerequisiteCache.mockReturnValue({
@@ -929,10 +1103,47 @@ describe('prerequisites and API keys', () => {
 
     const status = await invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'sk-test');
 
-    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test');
+    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test', { unverified: false });
     expect(status.agents.claude).toEqual({ installed: true, apiKey: 'set' });
     expect(m.prerequisites.checkCorePrerequisites).not.toHaveBeenCalled();
     expect(m.appState.savePrerequisiteCache).toHaveBeenCalledWith(status);
+  });
+
+  it('checks the key with the provider before saving it', async () => {
+    const verifyApiKey = vi.fn().mockResolvedValue(true);
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey });
+    m.appState.loadPrerequisiteCache.mockReturnValue({ status: { git: {}, agents: { claude: {} } } });
+
+    await invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', '  sk-test  ');
+
+    expect(verifyApiKey).toHaveBeenCalledWith('sk-test');
+    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test', { unverified: false });
+  });
+
+  it('turns away a key the provider refuses, without saving it', async () => {
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey: vi.fn().mockResolvedValue(false) });
+
+    await expect(invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'typo')).rejects.toThrow('That key was refused');
+    expect(m.credentials.saveApiKey).not.toHaveBeenCalled();
+  });
+
+  it('saves a key it could not check, marked unchecked', async () => {
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey: vi.fn().mockResolvedValue(null) });
+    m.appState.loadPrerequisiteCache.mockReturnValue({ status: { git: {}, agents: { claude: {} } } });
+
+    await invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'sk-test');
+
+    expect(m.credentials.saveApiKey).toHaveBeenCalledWith('claude', 'sk-test', { unverified: true });
+  });
+
+  it('says there is no secure storage before sending the key anywhere', async () => {
+    const verifyApiKey = vi.fn();
+    m.adapterRegistry.get.mockReturnValue({ ...claude, verifyApiKey });
+    m.credentials.canStoreApiKey.mockReturnValue(false);
+
+    await expect(invoke(IPC.CREDENTIALS_SET_API_KEY, 'claude', 'sk-test')).rejects.toThrow('no secure storage');
+    expect(verifyApiKey).not.toHaveBeenCalled();
+    expect(m.credentials.saveApiKey).not.toHaveBeenCalled();
   });
 
   it('refuses an unknown agent or one that takes no key', async () => {

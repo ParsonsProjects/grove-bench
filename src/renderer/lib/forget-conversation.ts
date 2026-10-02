@@ -14,6 +14,7 @@ import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
 import { reviewStore } from '../stores/review.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
+import { goalStore } from '../stores/goals.svelte.js';
 
 export function forgetConversation(id: string): void {
   store.removeSession(id);
@@ -27,4 +28,5 @@ export function forgetConversation(id: string): void {
   prStore.clear(id);
   reviewStore.clear(id); // also drops its localStorage entry
   groupStore.remove(id); // a group it leaves empty goes too
+  goalStore.forget(id);
 }

@@ -121,6 +121,47 @@ describe('DraftPane credentials', () => {
     await waitFor(() => expect(mockGroveBench.checkPrerequisites).toHaveBeenCalled());
   });
 
+  it('says why Enter does nothing while credentials are missing', async () => {
+    store.prerequisites = status(false);
+    render(DraftPane);
+    const box = screen.getByLabelText('First message');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveAttribute('title', 'Add credentials above to start.'));
+    expect(screen.queryByText('Add credentials above to start.')).toBeNull();
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    expect(screen.getByText('Add credentials above to start.')).toBeInTheDocument();
+    expect(createSessionMock()).not.toHaveBeenCalled();
+  });
+
+  it('confirms when credentials turn up after a Re-check', async () => {
+    const signedIn = status(true);
+    signedIn.agents['claude-code'].email = 'sam@example.com';
+    store.prerequisites = status(false);
+    mockGroveBench.checkPrerequisites.mockResolvedValueOnce(status(false)).mockResolvedValue(signedIn);
+    render(DraftPane);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Re-check' }));
+    expect(await screen.findByText(/Signed in as sam@example.com\. You're ready to start\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start' })).not.toBeDisabled();
+  });
+
+  it('asks for a new key when the saved one was refused', async () => {
+    const refused = status(true);
+    refused.agents['claude-code'].apiKey = { label: 'Anthropic API key', helpUrl: 'https://example.com/keys', saved: true, canStore: true, rejected: true };
+    store.prerequisites = refused;
+    mockGroveBench.checkPrerequisites.mockResolvedValue(refused);
+    render(DraftPane);
+    expect(await screen.findByText(/couldn't sign in with the saved API key/)).toBeInTheDocument();
+    expect(screen.getByText(/The saved key was refused/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
+  });
+
+  it('says git is missing in a new conversation, with a way to get it', async () => {
+    store.prerequisites = { ...status(true), git: { available: false } };
+    render(DraftPane);
+    expect(await screen.findByText(/Git isn't installed/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Download Git' }));
+    expect(mockGroveBench.openExternal).toHaveBeenCalledWith('https://git-scm.com/downloads');
+  });
+
   it('checks the picked agent\'s own credentials', async () => {
     agentsStore.list = [claude, codex];
     store.prerequisites = status(true, false);
@@ -157,6 +198,7 @@ describe('DraftPane sign-in choices', () => {
     store.prerequisites = withCli(true);
     mockGroveBench.checkPrerequisites.mockResolvedValue(withCli(true));
     render(DraftPane);
+    expect(await screen.findByText('Claude Agent runs on Claude Code, so it signs in the same way.')).toBeInTheDocument();
     const plan = await screen.findByRole('region', { name: 'Sign in with Claude Code' });
     expect(plan).toHaveTextContent('Use your Claude plan (Pro, Max, Team or Enterprise)');
     expect(plan).toHaveTextContent('Run claude in a terminal and sign in when it asks');

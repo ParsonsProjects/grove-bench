@@ -82,8 +82,6 @@ class DraftStore {
   models = $state<DraftModelOption[]>([]);
   descriptors = $state<ControlDescriptor[]>([]);
 
-  /** The user picked a mode; picking a PR no longer switches it to Plan. */
-  private modeTouched = false;
   /** Guards against an older agent-info load landing after a newer one. */
   private infoRequest = 0;
 
@@ -113,7 +111,9 @@ class DraftStore {
       if (repo !== this.draft.repoPath) this.setRepo(repo);
       if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
     } else {
-      const agentId = opts.agentId || active?.agentType || agentsStore.defaultId || '';
+      // An alpha agent the user hasn't turned on isn't offered, even when the
+      // open conversation runs on it.
+      const agentId = this.offeredAgent(opts.agentId) || this.offeredAgent(active?.agentType) || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
       const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
@@ -121,7 +121,6 @@ class DraftStore {
         repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, groupId), text: '',
         ...opts.group,
       };
-      this.modeTouched = false;
       this.error = '';
       void this.prefillBaseBranch(repo);
       void this.loadAgentInfo();
@@ -214,13 +213,17 @@ class DraftStore {
     if ((group && 'groupId' in group) || hadGroupBranch) this.resetToNewBranch();
   }
 
+  /** `id` when new conversations may use it (agentsStore.isOffered), else ''. */
+  private offeredAgent(id: string | null | undefined): string {
+    return id && agentsStore.isOffered(id, settingsStore.current.enabledAlphaAgents) ? id : '';
+  }
+
   setAgent(agentId: string): void {
-    if (!this.draft || agentId === this.draft.agentId) return;
+    if (!this.draft || agentId === this.draft.agentId || !this.offeredAgent(agentId)) return;
     this.draft.agentId = agentId;
     // Models and controls are the agent's own.
     this.draft.model = '';
     this.draft.controls = {};
-    this.modeTouched = false;
     void this.loadAgentInfo();
   }
 
@@ -233,24 +236,14 @@ class DraftStore {
   setControl(controlId: string, value: string): void {
     if (!this.draft) return;
     this.draft.controls = { ...this.draft.controls, [controlId]: value };
-    if (controlId === CONTROL_IDS.permissionMode) this.modeTouched = true;
   }
 
+  /** Where the draft runs. The mode stays as it is: a PR starts on the
+   *  saved default like any branch (it used to switch to Plan, but a branch
+   *  with an open PR is only listed as the PR, so your own branches did too). */
   setStart(start: DraftStart): void {
     if (!this.draft) return;
     this.draft.start = start;
-    this.applyAutoMode();
-  }
-
-  /** Opening a PR is usually a review: start it in Plan mode unless the user
-   *  chose a mode themselves. Anything else goes back to the default. Runs
-   *  again once the agent's modes load, and after the agent changes. */
-  private applyAutoMode(): void {
-    const d = this.draft;
-    if (!d || this.modeTouched) return;
-    const { [CONTROL_IDS.permissionMode]: _mode, ...rest } = d.controls;
-    const plan = d.start.kind === 'existing' && !!d.start.pr && this.offers(CONTROL_IDS.permissionMode, 'plan');
-    d.controls = plan ? { ...rest, [CONTROL_IDS.permissionMode]: 'plan' } : rest;
   }
 
   /** The model the draft would start on. */
@@ -310,7 +303,6 @@ class DraftStore {
       if (this.draft) {
         const kept = Object.entries(this.draft.controls).filter(([id, v]) => this.offers(id, v));
         this.draft.controls = Object.fromEntries(kept);
-        this.applyAutoMode();
       }
     } catch (e) {
       console.warn('[draft] could not load the agent\'s models and controls:', e);
@@ -352,6 +344,12 @@ class DraftStore {
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project in the bar below.';
+      return false;
+    }
+    // An alpha agent turned off in Settings while this draft was open.
+    if (d.agentId && !this.offeredAgent(d.agentId)) {
+      const name = agentsStore.get(d.agentId)?.displayName ?? d.agentId;
+      this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.`;
       return false;
     }
     this.starting = true;

@@ -140,6 +140,20 @@ describe('Sidebar session rows', () => {
     }
   });
 
+  it('fades sleeping rows a little, including tabs restored at startup', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Awake' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep' },
+      { id: 's3', branch: 'feat-z', repoPath: '/repo-a', status: 'stopped', displayName: 'Restored' },
+    ] as any;
+    store.deferResume('s3');
+    render(Sidebar);
+    const row = (name: string) => screen.getAllByText(name)[0].closest('button')!;
+    expect(row('Awake')).not.toHaveClass('opacity-70');
+    expect(row('Asleep')).toHaveClass('opacity-70');
+    expect(row('Restored')).toHaveClass('opacity-70');
+  });
+
   it('gives the name the first line and puts the project on the second', async () => {
     store.repos = ['/repo-a', '/repo-b'];
     messageStore.setIsRunning('s1', true);
@@ -158,17 +172,17 @@ describe('Sidebar session rows', () => {
 
   it('keeps the quick action outside the row button', async () => {
     render(Sidebar);
-    const done = screen.getByTitle('Mark completed');
-    expect(done.tagName).toBe('BUTTON');
-    expect(done.parentElement!.closest('button')).toBeNull();
-    expect(done).toHaveAccessibleName('Mark Sidebar revamp completed');
+    const close = screen.getByTitle(/^Close conversation/);
+    expect(close.tagName).toBe('BUTTON');
+    expect(close.parentElement!.closest('button')).toBeNull();
+    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
   });
 
-  it('offers Mark completed, not delete, on a tab restored at startup', async () => {
+  it('offers Close, not delete, on a tab restored at startup', async () => {
     store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'stopped', displayName: 'Sidebar revamp' }] as any;
     store.deferResume('s1');
     render(Sidebar);
-    expect(screen.getByTitle('Mark completed')).toBeInTheDocument();
+    expect(screen.getByTitle(/^Close conversation/)).toBeInTheDocument();
     expect(screen.queryByTitle('Delete conversation')).toBeNull();
   });
 
@@ -176,7 +190,7 @@ describe('Sidebar session rows', () => {
     store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp', createdAt: Date.now() }] as any;
     render(Sidebar);
     const focusRule = 'group-has-[:focus-visible]/session';
-    expect(screen.getByTitle('Mark completed')).toHaveClass(`${focusRule}:opacity-100`);
+    expect(screen.getByTitle(/^Close conversation/)).toHaveClass(`${focusRule}:opacity-100`);
     expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
   });
 
@@ -209,7 +223,7 @@ describe('Sidebar session rows', () => {
     }
   });
 
-  it('goes back to the landing screen when the open conversation is marked completed', async () => {
+  it('goes back to the landing screen when the open conversation is closed', async () => {
     store.sessions = [
       { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
       { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Other one' },
@@ -218,12 +232,45 @@ describe('Sidebar session rows', () => {
     render(Sidebar);
     const row = (await screen.findAllByText('Sidebar revamp'))
       .map((el) => el.closest('.group\\/session'))
-      .find((el) => el?.querySelector('[title="Mark completed"]'))!;
-    await fireEvent.click(row.querySelector('[title="Mark completed"]')!);
+      .find((el) => el?.querySelector('[title^="Close conversation"]'))!;
+    await fireEvent.click(row.querySelector('[title^="Close conversation"]')!);
 
     expect(closeSession).toHaveBeenCalledWith('s1');
     // Not the other running conversation.
     expect(store.activeSessionId).toBeNull();
+  });
+
+  it('describes the quick close for screen readers without repeating its name', async () => {
+    render(Sidebar);
+    const close = screen.getByTitle(/^Close conversation/);
+    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
+    expect(close).toHaveAccessibleDescription(/^Stops the agent and terminal and takes it off the Conversations list/);
+  });
+
+  it('closes an idle conversation straight away', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(screen.queryByText('Close conversation?')).toBeNull();
+  });
+
+  it('asks before closing a conversation in the middle of a turn', async () => {
+    messageStore.setIsRunning('s1', true);
+    render(Sidebar);
+
+    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    expect(await screen.findByText('Close conversation?')).toBeInTheDocument();
+    expect(screen.getByText(/is in the middle of a turn/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+    expect(store.sessions[0].status).toBe('running');
+
+    // The context menu asks too.
+    await fireEvent.contextMenu(screen.getAllByText('Sidebar revamp')[0]);
+    await fireEvent.click(screen.getByText('Close Conversation'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(store.sessions[0].status).toBe('stopped');
   });
 
   it('colours the branch icon by the PR health shown in the status bar', async () => {
@@ -355,11 +402,11 @@ describe('Sidebar attention triage', () => {
     expect(screen.getByTitle('1 unread')).toBeInTheDocument();
   });
 
-  it('marks a conversation completed from the context menu: stops it and clears its unread flag', async () => {
+  it('closes a conversation from the context menu: stops it and clears its unread flag', async () => {
     render(Sidebar);
 
     await fireEvent.contextMenu(screen.getByText('Finished one'));
-    await fireEvent.click(screen.getByText('Mark Completed'));
+    await fireEvent.click(screen.getByText('Close Conversation'));
 
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('finished');
     expect(store.sessions.find((s) => s.id === 'finished')?.status).toBe('stopped');
@@ -367,16 +414,28 @@ describe('Sidebar attention triage', () => {
     expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
   });
 
-  it('offers no Mark Completed for a conversation that is already stopped', async () => {
+  it('offers no Close Conversation for a conversation that is already stopped', async () => {
     store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, status: 'stopped' } : s));
     mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
     render(Sidebar);
 
-    expect(screen.getByText('1 completed')).toBeInTheDocument();
+    expect(screen.getByText('1 closed')).toBeInTheDocument();
     await fireEvent.contextMenu(await screen.findByText('Quiet one'));
 
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.queryByText('Mark Completed')).toBeNull();
+    expect(screen.queryByText('Close Conversation')).toBeNull();
+  });
+});
+
+describe('Sidebar for a new user', () => {
+  it('leaves out the filter chips, sort and Groups until there is a conversation', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [];
+    render(Sidebar);
+    expect(await screen.findByText('No conversations')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Filter conversations' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sort conversations' })).toBeNull();
+    expect(screen.queryByText('Right-click a conversation to start a group')).toBeNull();
   });
 });
 
@@ -546,12 +605,12 @@ describe('Sidebar groups', () => {
     expect(screen.getByText('Billing page')).toBeInTheDocument();
   });
 
-  it('marks every open conversation in the group completed: stops them and keeps them listed', async () => {
+  it('closes every open conversation in the group: stops them and keeps them listed', async () => {
     const group = make('Billing', ['api1', 'web1']);
     render(Sidebar);
 
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
-    await fireEvent.click(screen.getByText('Mark all completed'));
+    await fireEvent.click(screen.getByText('Close all conversations'));
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
     expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
     expect(store.sessions.map((s) => s.status)).toEqual(['stopped', 'stopped']);
@@ -559,9 +618,25 @@ describe('Sidebar groups', () => {
     expect(document.querySelectorAll('[data-row-group]')).toHaveLength(0);
     expect(within(groupEl(group.id)).getByText('Billing page')).toBeInTheDocument();
 
-    // Nothing open is left to mark.
+    // Nothing open is left to close.
     await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
-    expect(screen.queryByText('Mark all completed')).toBeNull();
+    expect(screen.queryByText('Close all conversations')).toBeNull();
+  });
+
+  it('asks once before closing a group with a conversation mid-turn, then closes them all', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    messageStore.setIsRunning('api1', true);
+    render(Sidebar);
+
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    await fireEvent.click(screen.getByText('Close all conversations'));
+    expect(await screen.findByText('Close 2 conversations?')).toBeInTheDocument();
+    expect(screen.getByText(/1 of them is in the middle of a turn/)).toBeInTheDocument();
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
   });
 
   it('counts only the rows the filter shows', async () => {
@@ -897,6 +972,22 @@ describe('Sidebar projects tree', () => {
     expect(store.activeSessionId).toBe('live');
   });
 
+  it('fades closed rows a step further than sleeping ones', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'zz', branch: 'feat-zz', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep one' },
+    ] as any;
+    render(Sidebar);
+    const closed = (await screen.findByText('First on shared')).closest('button')!;
+    // The project's row, after the one under Conversations.
+    const asleep = screen.getAllByText('Asleep one')[1].closest('button')!;
+    const live = screen.getAllByText('Live one')[1].closest('button')!;
+    expect(closed).toHaveClass('opacity-60');
+    expect(asleep).toHaveClass('opacity-70');
+    expect(live).not.toHaveClass('opacity-60');
+    expect(live).not.toHaveClass('opacity-70');
+  });
+
   it('folds and unfolds a branch group from its header', async () => {
     render(Sidebar);
     const header = await screen.findByRole('button', { name: /shared \(2\)/ });
@@ -1080,5 +1171,16 @@ describe('Sidebar rail', () => {
     await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));
     expect(container.querySelector('[data-rail-session]')).toBeNull();
     expect(aside.style.width).toBe('300px');
+  });
+
+  it('fades a sleeping conversation on the rail too', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'sleeping', displayName: 'Fix login' },
+    ] as any;
+    const { container } = render(Sidebar);
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    expect(container.querySelector('[data-rail-session="s1"]')).not.toHaveClass('opacity-70');
+    expect(container.querySelector('[data-rail-session="s2"]')).toHaveClass('opacity-70');
   });
 });

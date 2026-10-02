@@ -17,6 +17,8 @@ import type {
   ToolImageData,
   UserMessage,
 } from './types.js';
+import { net } from 'electron';
+import { ResumeNotFoundError } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
@@ -30,6 +32,10 @@ import { promisify } from 'node:util';
 import * as path from 'node:path';
 
 const execFileAsync = promisify(execFile);
+
+/** Shown when Claude can't sign in: a bad or revoked API key, or an expired
+ *  Claude Code sign-in. */
+export const CLAUDE_AUTH_ERROR_MESSAGE = 'Claude couldn\'t sign in. Check or replace your Anthropic API key in Settings → Agents (Grovekeepers), or run "claude" in a terminal and sign in, then try again.';
 
 // ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
 
@@ -201,6 +207,22 @@ export function toolResultImages(content: unknown[]): ToolImageData[] {
     }
   }
   return images;
+}
+
+/** How the CLI answers a resume of a conversation it no longer has (its
+ *  transcript was deleted or moved): an error result, before any init. */
+const MISSING_CONVERSATION_RE = /No conversation found with session ID\b/;
+
+/** The CLI's "No conversation found" error, when `message` is that result. */
+export function missingConversationError(message: SDKMessage): string | null {
+  if (message.type !== 'result' || !message.is_error || !('errors' in message)) return null;
+  return message.errors.find((e) => MISSING_CONVERSATION_RE.test(e)) ?? null;
+}
+
+/** The parentToolUseId field for an event from an SDK message's
+ *  parent_tool_use_id, or nothing for the main agent's own messages. */
+function subagentTag(parentToolUseId: string | null | undefined): { parentToolUseId?: string } {
+  return parentToolUseId ? { parentToolUseId } : {};
 }
 
 /**
@@ -379,11 +401,22 @@ export function transformMessage(
     }
 
     case 'assistant': {
+      // The API refused the credentials. The message's text is the CLI's own
+      // ("Invalid API key · Fix external API key"), which names nothing in
+      // Grove, so say where to fix it instead.
+      if ((message as { error?: string }).error === 'authentication_failed') {
+        events.push({ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true });
+        break;
+      }
+      // A subagent's messages carry the id of the Agent call that started it.
+      // Tagged with it, they go to that subagent's own thread instead of
+      // reading as the main agent's reply.
+      const subagent = subagentTag(message.parent_tool_use_id);
       const content = message.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block.type === 'text') {
-            events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid });
+            events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid, ...subagent });
           } else if (block.type === 'tool_use') {
             ctx.toolUseMap.set(block.id, block.name);
             events.push({
@@ -393,12 +426,14 @@ export function transformMessage(
               toolUseId: block.id,
               uuid: message.uuid,
               toolCategory: categorizeToolName(block.name),
+              ...subagent,
             });
           } else if (block.type === 'thinking') {
             events.push({
               type: 'thinking',
               thinking: (block as any).thinking || '',
               uuid: message.uuid,
+              ...subagent,
             });
           }
         }
@@ -406,9 +441,8 @@ export function transformMessage(
       // Only track token usage from the main conversation — subagent messages
       // carry a parent_tool_use_id and would cause the status-bar values to
       // fluctuate wildly as their smaller contexts overwrite the main context size.
-      const isSubagent = !!(message as any).parent_tool_use_id;
       const usage = (message.message as any)?.usage;
-      if (usage && !isSubagent) {
+      if (usage && !subagent.parentToolUseId) {
         events.push({
           type: 'usage',
           inputTokens: usage.input_tokens ?? 0,
@@ -435,6 +469,7 @@ export function transformMessage(
               content: capToolResult(resultContent),
               isError: block.is_error,
               ...(imageData.length > 0 && { imageData }),
+              ...subagentTag(message.parent_tool_use_id),
             });
           }
         }
@@ -494,6 +529,10 @@ export function transformMessage(
     }
 
     case 'stream_event': {
+      // The live stream and activity are the main agent's. A subagent's text
+      // arrives whole as an assistant message; its deltas would run into the
+      // main agent's reply.
+      if (message.parent_tool_use_id) break;
       const event = message.event;
       if (event.type === 'content_block_delta') {
         const delta = (event as any).delta;
@@ -1293,6 +1332,38 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
   return null;
 }
 
+/** Lists one model: it needs only the key and runs no model, so it shows
+ *  whether Anthropic accepts a key (https://platform.claude.com/docs/en/api/models/list). */
+const API_KEY_CHECK_URL = 'https://api.anthropic.com/v1/models?limit=1';
+const API_KEY_CHECK_TIMEOUT_MS = 10_000;
+
+type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
+
+/** Whether Anthropic accepts `key`: true when it does, false when it answers
+ *  401, null when that couldn't be told (offline, a proxy in the way, an
+ *  outage). With ANTHROPIC_BASE_URL set, conversations go to that endpoint
+ *  instead, which may take other keys, so nothing is checked. Uses Electron's
+ *  network stack, which follows the system's proxy settings. */
+export async function verifyAnthropicKey(
+  key: string,
+  { env = process.env, fetchFn = (url, init) => net.fetch(url, init) }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
+): Promise<boolean | null> {
+  if (env.ANTHROPIC_BASE_URL?.trim()) return null;
+  try {
+    const res = await fetchFn(API_KEY_CHECK_URL, {
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      signal: AbortSignal.timeout(API_KEY_CHECK_TIMEOUT_MS),
+    });
+    if (res.ok) return true;
+    if (res.status === 401) return false;
+    logger.debug(`[ClaudeCodeAdapter] API key check answered ${res.status}`);
+    return null;
+  } catch (err) {
+    logger.debug('[ClaudeCodeAdapter] API key check failed:', err);
+    return null;
+  }
+}
+
 /**
  * Query options that keep generateText to a single reply. The model gets no
  * tools: a tool call would use up the one turn and fail the query with
@@ -1318,7 +1389,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Grovekeepers (Agents), or run "claude" in a terminal and sign in, then try again.';
+  readonly authErrorMessage = CLAUDE_AUTH_ERROR_MESSAGE;
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
@@ -1354,6 +1425,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   };
 
   constructor(private readonly modelStore: ModelCatalogStore = appStateModelStore) {}
+
+  verifyApiKey(key: string): Promise<boolean | null> {
+    return verifyAnthropicKey(key);
+  }
 
   // ─── Models ───
   // The list comes from the SDK (`Query.supportedModels()`), read when a
@@ -1648,6 +1723,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cwd: config.cwd,
         abortController,
         includePartialMessages: true,
+        // Subagents' text and thinking too, not only their tool calls: the
+        // thread shows each subagent's own thread in a panel. Without this
+        // the CLI sends them for background subagents only.
+        forwardSubagentText: true,
         // We render a per-task stop control (see stopTask below), so an
         // interrupt only aborts the current turn and leaves background
         // tasks running. Without this the CLI fails closed and kills them.
@@ -1713,6 +1792,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (message.type === 'system' && message.subtype === 'init') {
           sessionId = message.session_id;
         }
+
+        // The conversation to resume is gone. Say so instead of passing on
+        // the error result, so the session manager can start a new one.
+        const missing = config.resumeSessionId ? missingConversationError(message) : null;
+        if (missing) throw new ResumeNotFoundError(missing);
 
         const agentEvents = transformMessage(message, ctx);
         for (const event of agentEvents) {

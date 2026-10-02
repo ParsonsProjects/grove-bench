@@ -17,6 +17,40 @@ export async function git(args: string[], cwd: string, opts?: GitOptions): Promi
   return result.stdout;
 }
 
+/** Whether `git <args>` exits 0. For yes/no commands such as check-ignore. */
+async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
+  const result = await execa('git', args, { cwd, reject: false });
+  return result.exitCode === 0;
+}
+
+/**
+ * Keep files Grove writes into a worktree (e.g. `.claude/settings.local.json`)
+ * out of `git status` and the agent's `git add -A`: list each in the
+ * repository's info/exclude, which all its worktrees share and which is never
+ * committed. A file git already ignores, or tracks (where ignoring does
+ * nothing), is left alone. Returns the paths it added.
+ */
+export async function excludeFromGit(cwd: string, relPaths: readonly string[]): Promise<string[]> {
+  const added: string[] = [];
+  for (const rel of relPaths) {
+    if (await gitSucceeds(['ls-files', '--error-unmatch', '--', rel], cwd)) continue;
+    if (await gitSucceeds(['check-ignore', '-q', '--', rel], cwd)) continue;
+    added.push(rel.replace(/\\/g, '/'));
+  }
+  if (added.length === 0) return [];
+
+  // In a worktree this is the main repository's .git/info/exclude.
+  const excludeFile = path.resolve(cwd, (await git(['rev-parse', '--git-path', 'info/exclude'], cwd)).trim());
+  let current = '';
+  try {
+    current = await fs.readFile(excludeFile, 'utf-8');
+  } catch { /* not there yet */ }
+  const lead = current && !current.endsWith('\n') ? '\n' : '';
+  await fs.mkdir(path.dirname(excludeFile), { recursive: true });
+  await fs.appendFile(excludeFile, `${lead}# Written by Grove Bench into each conversation's worktree\n${added.map((rel) => `/${rel}`).join('\n')}\n`);
+  return added;
+}
+
 export async function gitEnv(
   args: string[], cwd: string, env: Record<string, string>
 ): Promise<string> {

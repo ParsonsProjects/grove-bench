@@ -7,6 +7,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 const SID = 's1';
@@ -115,6 +116,34 @@ describe('SessionControlsPopover', () => {
     store.repos = [];
   });
 
+  describe('an alpha agent', () => {
+    beforeEach(() => {
+      mockGroveBench.listAdapters.mockResolvedValue([
+        { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} },
+        { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' },
+      ]);
+    });
+    afterEach(() => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+    });
+
+    it('is offered for a new conversation only once turned on, marked Alpha', async () => {
+      let dialog = await openPopover();
+      expect(within(dialog).queryByRole('button', { name: /OpenCode/ })).not.toBeInTheDocument();
+      cleanup();
+
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      dialog = await openPopover();
+      expect(within(dialog).getByRole('button', { name: /OpenCode/ })).toHaveTextContent('Alpha');
+    });
+
+    it('still shows as the agent of a conversation that runs on it', async () => {
+      store.sessions = [{ ...store.sessions[0], agentType: 'opencode' }];
+      const dialog = await openPopover();
+      expect(within(dialog).getByRole('button', { name: /OpenCode/ })).toHaveAttribute('aria-current', 'true');
+    });
+  });
+
   it('divides grouped options from the provider\'s own with the group as a heading', async () => {
     const dialog = await openPopover();
     const heading = within(dialog).getByText('Grove Bench');
@@ -187,6 +216,10 @@ describe('SessionControlsPopover', () => {
     expect(usage).toHaveTextContent(/resets/);
     expect(usage).toHaveTextContent('Weekly');
     expect(usage).toHaveTextContent('18%');
+    // 42% as 20 blocks of 5%: 8 full, the 9th started, in the "getting full" colour.
+    const blocks = [...usage.querySelector('[data-testid="usage-bar-five_hour"]')!.children] as HTMLElement[];
+    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(8).fill('full'), 'part', ...Array(11).fill('empty')]);
+    expect(blocks[0].className).toContain('bg-yellow-400');
     expect(mockGroveBench.getUsage).toHaveBeenCalledWith(SID);
   });
 
@@ -198,9 +231,17 @@ describe('SessionControlsPopover', () => {
     expect(dialog.querySelector('[data-testid="usage"]')).toHaveTextContent(/isn't reported/);
   });
 
-  it('Done and Escape close the popover', async () => {
+  it('applies a choice without closing, and has no Done button', async () => {
+    const dialog = await openPopover();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Haiku 4.5' }));
+    expect(mockGroveBench.setModel).toHaveBeenCalledWith(SID, 'claude-haiku-4-5-20251001');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+  });
+
+  it('a click outside and Escape close the popover', async () => {
     await openPopover();
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await fireEvent.click(document.body);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTitle(/Agent settings/));

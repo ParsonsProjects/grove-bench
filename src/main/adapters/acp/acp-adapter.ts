@@ -21,15 +21,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
-  CliSignInDescriptor, ModelInfo, PermissionResponse, UserMessage,
+  ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, UserMessage,
 } from '../types.js';
-import type { ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
+import type { AgentStage, ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
+import { getApiKey } from '../../credentials.js';
 import { logger } from '../../logger.js';
+import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadModelCatalog, saveModelCatalog } from '../../app-state.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
@@ -56,10 +59,21 @@ export interface AcpAgentDefinition {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  /** An API key the user can save in Grove; the agent gets it in
+   *  `apiKey.envVar`, over any value inherited from Grove's environment. */
+  apiKey?: ApiKeyDescriptor;
+  /** Checks a key before it is saved (AgentAdapter.verifyApiKey). */
+  verifyApiKey?(key: string): Promise<boolean | null>;
+  /** Variables computed for each process from the environment it is about to
+   *  start with (a fresh secret, config merged over the user's). `savedKey`
+   *  says whether `apiKey` came from Grove's saved key. */
+  spawnEnv?(env: Readonly<Record<string, string>>, info: { savedKey: boolean }): Record<string, string>;
   /** How the user signs in with the agent's own CLI, when it has one. */
   cliSignIn?: CliSignInDescriptor;
   /** Shown when the program isn't found. */
   installInstructions?: string;
+  /** 'alpha' to keep it out of the agent picker until the user turns it on. */
+  stage?: AgentStage;
 }
 
 /** How long the agent gets to answer `initialize` and set up a session. */
@@ -74,6 +88,9 @@ const STDERR_TAIL_CHARS = 4_000;
 const IMAGE_MEDIA: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 /** The tool call fields a Grove tool event is built from (describe()). */
 const SHOWN_FIELDS = ['name', 'kind', 'title', 'rawInput', 'locations', 'content'] as const;
+/** Kinds of call Grove's modes and rules guard: an agent that runs these
+ *  without asking is out of their reach (warnIfUnasked). */
+const GUARDED_KINDS: ReadonlySet<string> = new Set(['edit', 'delete', 'move', 'execute', 'fetch']);
 
 const MODE_OPTIONS: ControlOption[] = [
   { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you whenever the agent asks to run something' },
@@ -146,9 +163,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 /** Start the agent program with Grove's usual options. Shared by
  *  conversations and generateText so a start-up fix lands in both. */
 function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): ResultPromise {
+  const savedKey = def.apiKey ? getApiKey(def.id) : null;
+  const env = {
+    ...cleanEnv(process.env),
+    ...(def.env ?? {}),
+    ...(extraEnv ?? {}),
+    ...(savedKey && def.apiKey ? { [def.apiKey.envVar]: savedKey } : {}),
+  } as Record<string, string>;
+  Object.assign(env, def.spawnEnv?.(env, { savedKey: savedKey !== null }));
   return execa(def.command, def.args, {
     cwd,
-    env: { ...cleanEnv(process.env), ...(def.env ?? {}), ...(extraEnv ?? {}) } as Record<string, string>,
+    env,
     extendEnv: false,
     stdin: 'pipe',
     stdout: 'pipe',
@@ -172,12 +197,13 @@ function collectStderr(proc: ResultPromise, onTail: (tail: string) => void): voi
 
 /** `initialize`, with no fs or terminal capability: the agent reads, writes
  *  and runs commands in the worktree itself, so its own tools and
- *  permission requests apply. */
+ *  permission requests apply. `clientInfo.version` is required by the
+ *  protocol's Implementation type; OpenCode rejects the request without it. */
 async function initializeAgent(rpc: JsonRpcConnection, displayName: string): Promise<AcpInitializeResponse> {
   const init = await withTimeout(rpc.request<AcpInitializeResponse>('initialize', {
     protocolVersion: ACP_PROTOCOL_VERSION,
     clientCapabilities: {},
-    clientInfo: { name: 'grove-bench', title: 'Grove Bench' },
+    clientInfo: { name: 'grove-bench', title: 'Grove Bench', version: app.getVersion() },
   }), STARTUP_TIMEOUT_MS, `${displayName} start-up`);
   if (init?.protocolVersion !== ACP_PROTOCOL_VERSION) {
     throw new Error(`${displayName} speaks ACP version ${init?.protocolVersion}; Grove Bench speaks version ${ACP_PROTOCOL_VERSION}.`);
@@ -203,6 +229,9 @@ export class AcpAdapter implements AgentAdapter {
   readonly displayName: string;
   readonly authErrorMessage: string;
   readonly cliSignIn?: CliSignInDescriptor;
+  readonly apiKey?: ApiKeyDescriptor;
+  readonly verifyApiKey?: (key: string) => Promise<boolean | null>;
+  readonly stage?: AgentStage;
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -230,6 +259,9 @@ export class AcpAdapter implements AgentAdapter {
     this.id = def.id;
     this.displayName = def.displayName;
     this.cliSignIn = def.cliSignIn;
+    this.apiKey = def.apiKey;
+    this.stage = def.stage;
+    if (def.verifyApiKey) this.verifyApiKey = (key) => def.verifyApiKey!(key);
     this.authErrorMessage = def.cliSignIn
       ? `${def.displayName} needs you to sign in. Run "${def.cliSignIn.command}" in a terminal, sign in, then try again.`
       : `${def.displayName} needs you to sign in. Sign in with its own command line tool, then try again.`;
@@ -303,7 +335,7 @@ export class AcpAdapter implements AgentAdapter {
     // A full path is checked directly: where.exe takes a name or
     // path:pattern, not a path.
     if (path.isAbsolute(this.def.command)) {
-      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, authenticated: true };
+      if (fs.existsSync(this.def.command)) return { available: true, path: this.def.command, authenticated: true, authUnchecked: true };
       return {
         available: false,
         authenticated: false,
@@ -318,7 +350,7 @@ export class AcpAdapter implements AgentAdapter {
       if (found) {
         // Signing in happens in the agent's own CLI and is only reported when
         // a session starts (an auth_required error), so it can't be checked here.
-        return { available: true, path: found, authenticated: true };
+        return { available: true, path: found, authenticated: true, authUnchecked: true };
       }
     } catch {
       // fall through
@@ -442,6 +474,10 @@ class AcpQuery {
   private contextSize: number | undefined;
   /** Permission requests waiting on the user; answered "cancelled" on interrupt. */
   private pendingPermissions = new Set<(outcome: AcpPermissionOutcome) => void>();
+  /** Calls this turn the agent asked Grove about. */
+  private askedCalls = new Set<string>();
+  /** Whether this process was already caught acting without asking. */
+  private warnedUnasked = false;
 
   constructor(
     private readonly adapter: AcpAdapter,
@@ -846,6 +882,7 @@ class AcpQuery {
   private resetTurn(): void {
     this.tools.clear();
     this.openTools.clear();
+    this.askedCalls.clear();
     this.text = { kind: null, buffer: '', messageId: null };
     this.planCallId = null;
   }
@@ -875,7 +912,37 @@ class AcpQuery {
       // update changes nothing shown and needs no event.
       if (SHOWN_FIELDS.some((k) => prev[k] !== call[k])) this.emit({ type: 'tool_update', toolUseId: id, ...this.describe(call) });
     }
+    if (call.status === 'completed') this.warnIfUnasked(call);
     if (call.status === 'completed' || call.status === 'failed') this.reportToolEnd(call);
+  }
+
+  /** Grove's modes and rules act on the agent's permission requests. An
+   *  agent set to edit and run commands without asking (OpenCode's default
+   *  permissions, a YOLO mode) never sends one, so they can't stop it. Say
+   *  so once per agent process, the first time it does something Grove
+   *  would have asked about or refused. Calls replayed by session/load
+   *  happened before this process and aren't shown, so they don't count. */
+  private warnIfUnasked(call: AcpToolCall): void {
+    if (this.replaying || this.warnedUnasked || this.askedCalls.has(call.toolCallId) || !GUARDED_KINDS.has(call.kind ?? '')) return;
+    const d = this.describe(call);
+    const decision = this.autoDecision(d);
+    if (decision === 'allow') return;
+    // Read-safe approves read-only calls when the user is asked
+    // (session-permissions.ts), so one that wasn't asked about lost nothing.
+    if (decision === 'ask' && this.groveMode === 'readSafe' && isReadOnlyToolCall(d.toolName, d.toolInput, this.config.cwd, d.toolView)) return;
+    this.warnedUnasked = true;
+    const raw = d.toolView.command ?? d.toolView.path ?? d.toolView.summary ?? call.title ?? 'a tool';
+    const what = raw.length > 80 ? `${raw.slice(0, 79)}…` : raw;
+    const name = this.def.displayName;
+    const mode = MODE_OPTIONS.find((o) => o.value === this.groveMode)?.label;
+    const notAllowed = this.config.allowedTools && !this.config.allowedTools.has(d.toolName);
+    this.emit({
+      type: 'status',
+      level: 'warning',
+      message: decision === 'deny'
+        ? `${name} ran "${what}" without asking, though ${notAllowed ? "this conversation doesn't allow that tool" : 'one of your tool rules denies it'}. Grove Bench's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
+        : `${name} ran "${what}" without asking, so ${mode ? `the ${mode} mode` : "Grove Bench's mode"} and your tool rules don't apply to it. Set ${name} to ask before it edits files or runs commands.`,
+    });
   }
 
   private reportToolStart(call: AcpToolCall): void {
@@ -941,6 +1008,7 @@ class AcpQuery {
   private async onPermission(req: AcpPermissionRequest): Promise<AcpPermissionOutcome> {
     const cancelled: AcpPermissionOutcome = { outcome: { outcome: 'cancelled' } };
     if (!req?.toolCall?.toolCallId || (this.sessionId && req.sessionId !== this.sessionId) || this.closing) return cancelled;
+    this.askedCalls.add(req.toolCall.toolCallId);
     const options = Array.isArray(req.options) ? req.options : [];
     const answer = (decision: 'allow' | 'allowAlways' | 'deny'): AcpPermissionOutcome => {
       const option = pickPermissionOption(options, decision);
@@ -950,21 +1018,12 @@ class AcpQuery {
     // The request carries the call; show it first if the agent hadn't yet.
     this.onToolCall(req.toolCall);
     const call = this.tools.get(req.toolCall.toolCallId)!;
-    const { toolName, toolInput, toolCategory, toolView } = this.describe(call);
+    const d = this.describe(call);
+    const decision = this.autoDecision(d);
+    if (decision !== 'ask') return answer(decision);
+
+    const { toolName, toolInput, toolCategory, toolView } = d;
     const { config } = this;
-
-    if (config.allowedTools && !config.allowedTools.has(toolName)) return answer('deny');
-
-    const verdict = this.checkRules(toolName, toolCategory, toolView);
-    if (verdict === 'deny') return answer('deny');
-    if (verdict === 'allow') return answer('allow');
-    if (config.alwaysAllowedTools.has(toolName)) return answer('allow');
-
-    // Edit and Read-safe modes approve edits inside the worktree.
-    if ((this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe') && toolCategory === 'edit' && this.editsInsideWorktree(toolView)) {
-      return answer('allow');
-    }
-
     const isPlan = call.kind === 'switch_mode';
     const asked = config.onPermissionRequest({
       requestId: '',
@@ -986,6 +1045,21 @@ class AcpQuery {
     } finally {
       this.pendingPermissions.delete(settle);
     }
+  }
+
+  /** What Grove decides about a call without asking the user: the
+   *  conversation's allowed tools, the allow/deny rules, always-allow, then
+   *  the Edit and Read-safe modes, which approve edits inside the worktree. */
+  private autoDecision({ toolName, toolCategory, toolView }: ReturnType<AcpQuery['describe']>): 'allow' | 'deny' | 'ask' {
+    const { config } = this;
+    if (config.allowedTools && !config.allowedTools.has(toolName)) return 'deny';
+    const verdict = this.checkRules(toolName, toolCategory, toolView);
+    if (verdict) return verdict;
+    if (config.alwaysAllowedTools.has(toolName)) return 'allow';
+    if ((this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe') && toolCategory === 'edit' && this.editsInsideWorktree(toolView)) {
+      return 'allow';
+    }
+    return 'ask';
   }
 
   /** Grove's allow/deny rules. Shell commands are matched as both bash and

@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disabledSkills: [],
   autoSkillSuggestions: false,
+  showConversationGoal: false,
 
   // Agent Defaults
   defaultModels: {},
@@ -22,6 +23,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  enabledAlphaAgents: [],
 
   // Memory
   memoryAutoSave: true,
@@ -211,6 +213,7 @@ const settingsSchema = z.object({
   toolDenyRules: z.array(toolRuleSchema).catch(DEFAULT_SETTINGS.toolDenyRules),
   disabledSkills: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledSkills),
   autoSkillSuggestions: z.boolean().catch(DEFAULT_SETTINGS.autoSkillSuggestions),
+  showConversationGoal: z.boolean().catch(DEFAULT_SETTINGS.showConversationGoal),
 
   defaultModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.defaultModels),
   adapterDefaults: z.record(z.string(), z.record(z.string(), z.string())).catch(DEFAULT_SETTINGS.adapterDefaults),
@@ -224,6 +227,7 @@ const settingsSchema = z.object({
     command: z.string(),
     args: z.array(z.string()).catch([]),
   })).catch(DEFAULT_SETTINGS.acpAgents),
+  enabledAlphaAgents: z.array(z.string()).catch(DEFAULT_SETTINGS.enabledAlphaAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),

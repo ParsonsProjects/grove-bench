@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint, isAuthFailure, canonicalizePowerShellCommand } from './agent-utils.js';
+import { cleanEnv, matchToolRule, parseToolRule, toolCallSpecifier, splitShellCommand, splitPowerShellCommand, checkToolRules, readableStreamToAsyncIterable, findRewindForkPoint, lastTurnUuid, isAuthFailure, canonicalizePowerShellCommand } from './agent-utils.js';
 import type { AgentEvent } from '../shared/types.js';
 
 describe('cleanEnv()', () => {
@@ -557,10 +557,42 @@ describe('findRewindForkPoint()', () => {
     expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-1');
   });
 
+  it('skips a subagent\'s events, whose uuids are not in the main transcript', () => {
+    const events: AgentEvent[] = [
+      user('grove-1'), toolUse('sdk-1'),
+      { type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-sub', uuid: 'sub-1', parentToolUseId: 'tu1' },
+      { type: 'assistant_text', text: 'found it', uuid: 'sub-2', parentToolUseId: 'tu1' },
+      user('grove-2'),
+    ];
+    expect(findRewindForkPoint(events, 'grove-2')).toBe('sdk-1');
+  });
+
   it('never uses another user message uuid as a fork point', () => {
     // user_message uuids are Grove-generated, not provider chain uuids
     const events = [user('grove-1'), user('grove-2')];
     expect(findRewindForkPoint(events, 'grove-2')).toBeNull();
+  });
+
+  it('does not fork into a conversation the agent no longer has', () => {
+    const newConversation: AgentEvent = { type: 'status', message: 'starts a new one', level: 'warning', newConversation: true };
+    const events = [
+      user('grove-1'), assistant('old-1'), user('grove-2'), assistant('old-2'),
+      newConversation, user('grove-3'), assistant('new-1'), user('grove-4'),
+    ];
+    expect(findRewindForkPoint(events, 'grove-4')).toBe('new-1');
+    // The new conversation's first message, and anything before the marker.
+    expect(findRewindForkPoint(events, 'grove-3')).toBeNull();
+    expect(findRewindForkPoint(events, 'grove-2')).toBeNull();
+    // An ordinary status line is no boundary.
+    expect(findRewindForkPoint([user('grove-1'), assistant('sdk-1'), { type: 'status', message: 'x' }, user('grove-2')], 'grove-2')).toBe('sdk-1');
+  });
+
+  it('lastTurnUuid() finds the last turn after the last marker', () => {
+    const marker: AgentEvent = { type: 'status', message: 'm', newConversation: true };
+    expect(lastTurnUuid([user('g1'), assistant('a1'), toolResult()])).toBe('a1');
+    expect(lastTurnUuid([user('g1'), assistant('a1'), marker])).toBeNull();
+    expect(lastTurnUuid([assistant('a1'), marker, assistant('a2')])).toBe('a2');
+    expect(lastTurnUuid([])).toBeNull();
   });
 
   it('returns null when rewinding to the first message', () => {

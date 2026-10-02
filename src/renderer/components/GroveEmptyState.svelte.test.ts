@@ -12,6 +12,7 @@ afterEach(() => {
   cleanup();
   store.sessions = [];
   store.repos = [];
+  store.prerequisites = null;
   store.activeSessionId = null;
   store.needsAttention = {};
   store.deferredResume = {};
@@ -66,6 +67,28 @@ describe('GroveEmptyState', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Start a conversation' }));
     expect(draftStore.draft?.repoPath).toBe('/repo/one');
     draftStore.discard();
+  });
+
+  it('starts the first conversation in the project added last, and says which', async () => {
+    store.repos = ['/repo/one', '/repo/two'];
+    render(GroveEmptyState, { variant: 'empty' });
+    expect(screen.getByText(/Start a conversation in two and tell the agent/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Start a conversation' }));
+    expect(draftStore.draft?.repoPath).toBe('/repo/two');
+    draftStore.discard();
+  });
+
+  it('says git is missing before any conversation runs without it', () => {
+    store.prerequisites = { git: { available: false }, agents: {} };
+    render(GroveEmptyState, { variant: 'empty' });
+    expect(screen.getByText(/Git isn't installed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download Git' })).toBeInTheDocument();
+  });
+
+  it('shows no git notice when git is fine', () => {
+    store.prerequisites = { git: { available: true, version: '2.43.0', meetsMinimum: true }, agents: {} };
+    render(GroveEmptyState, { variant: 'empty' });
+    expect(screen.queryByText(/Git isn't installed/)).not.toBeInTheDocument();
   });
 
   it('seats each open conversation with its status and opens it on click', async () => {

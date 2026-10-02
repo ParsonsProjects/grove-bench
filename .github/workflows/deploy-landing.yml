@@ -39,6 +39,10 @@ jobs:
       - name: Build
         working-directory: landing
         run: npm run build
+        env:
+          # PostHog project key (public, it ships in the page). Without the
+          # POSTHOG_API_KEY repository variable the page sends no analytics.
+          VITE_POSTHOG_API_KEY: ${{ vars.POSTHOG_API_KEY }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5

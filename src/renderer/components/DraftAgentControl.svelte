@@ -8,10 +8,12 @@
   import { onMount, onDestroy } from 'svelte';
   import { draftStore } from '../stores/draft.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
   import type { ControlOption } from '../../shared/types.js';
   import { toneText } from '../lib/control-tones.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
+  import AlphaBadge from './AlphaBadge.svelte';
 
   let open = $state(false);
   /** Option under the pointer or focus, explained in the footer. Removing
@@ -22,6 +24,8 @@
 
   const draft = $derived(draftStore.draft);
   const agentName = $derived(agentsStore.get(draft?.agentId)?.displayName ?? draft?.agentId ?? 'Agent');
+  /** Alpha agents appear once turned on in Settings (enabledAlphaAgents). */
+  const offered = $derived(agentsStore.offered(settingsStore.current.enabledAlphaAgents));
   const model = $derived(draftStore.effectiveModel);
   const modelLabel = $derived(draftStore.models.find((m) => m.value === model)?.label ?? model);
 
@@ -77,7 +81,7 @@
       <div class="flex gap-3 overflow-x-auto max-w-[80vw]">
         <div class="min-w-36">
           <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
-          {#each agentsStore.list.length > 0 ? agentsStore.list : [{ id: draft.agentId, displayName: agentName }] as a (a.id)}
+          {#each offered.length > 0 ? offered : [{ id: draft.agentId, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === draft.agentId}
             <button
               onclick={() => draftStore.setAgent(a.id)}
@@ -86,6 +90,7 @@
               aria-pressed={current}
             >
               {a.displayName}
+              {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
             </button>
           {/each}
         </div>
@@ -135,21 +140,15 @@
         {/each}
       </div>
 
-      <div class="flex items-center justify-between gap-4 mt-3 pt-2 border-t border-border">
-        {#if hint}
-          <p class="text-[11px] text-muted-foreground max-w-md" aria-live="polite">
+      <!-- No Done button, as in SessionControlsPopover: choices apply on
+           click, and the hint keeps the full width with two lines reserved. -->
+      {#if hint}
+        <div class="mt-3 pt-2 border-t border-border">
+          <p class="text-[11px] min-h-[2lh] text-muted-foreground" aria-live="polite">
             <span class="text-foreground">{hint.label}:</span> {hint.description}
           </p>
-        {:else}
-          <span></span>
-        {/if}
-        <button
-          onclick={() => open = false}
-          class="px-3 py-1 border border-border text-foreground hover:bg-accent transition-colors"
-        >
-          Done
-        </button>
-      </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

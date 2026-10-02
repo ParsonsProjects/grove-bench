@@ -17,6 +17,8 @@ One ACP client reaches many agents:
   ([changelog](https://github.com/github/copilot-cli/blob/main/changelog.md))
 - Codex, through the separate `codex-acp` wrapper
   ([registry](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/docs/get-started/registry.mdx))
+- OpenCode: `opencode acp`, built in for open models such as DeepSeek through
+  OpenRouter; its settings and why are in `docs/open-model-harnesses-plan.md`
 
 The trade-off: ACP is the common ground, so Claude-only features (plan usage,
 MCP server management, truncating rewind, per-model effort and thinking) stay
@@ -49,7 +51,8 @@ Code: `src/main/adapters/acp/`.
 - **Grove's instructions** (path rules, project memory, your additions) go
   ahead of the first prompt of each new session, since ACP has no system prompt.
 - **Modes**: Grove applies Ask, Edit and Read-safe itself, on the agent's
-  permission requests. The agent's own modes and select options (Gemini's
+  permission requests. An agent that edits or runs a command without sending
+  one is out of their reach; the thread says so once (`warnIfUnasked`). The agent's own modes and select options (Gemini's
   YOLO, Plan) are separate controls, learned from the first session and kept
   for the next launch.
 - **Models**: from a config option in the `model` category, or Gemini's older
@@ -81,7 +84,9 @@ Code: `src/main/adapters/acp/`.
   through Grove, or run commands in Grove's terminal).
 - `session/close` and `session/list` (titles across restarts).
 - Tested against a fake agent in `acp-adapter.test.ts`, not yet against real
-  Gemini CLI or Copilot CLI on Windows.
+  Gemini CLI or Copilot CLI on Windows. OpenCode has been run for real, on
+  Linux with a fake OpenRouter (`scripts/acp-spike/`); a Windows run with a
+  real key is still to come.
 
 ## Names
 

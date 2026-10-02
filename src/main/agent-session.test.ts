@@ -39,6 +39,8 @@ vi.mock('./worktree-manager.js', () => ({
     updateLastActive: vi.fn().mockResolvedValue(undefined),
     saveModel: vi.fn().mockResolvedValue(undefined),
     getModel: vi.fn().mockResolvedValue(undefined),
+    getAdapterType: vi.fn().mockResolvedValue(undefined),
+    getAgentAndModel: vi.fn().mockResolvedValue({}),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
@@ -121,6 +123,7 @@ const attachments = vi.hoisted(() => ({
   }),
 }));
 vi.mock('./attachments.js', () => attachments);
+vi.mock('./credentials.js', () => ({ markApiKeyRejected: vi.fn() }));
 
 // ─── Mock Adapter ───
 
@@ -284,6 +287,8 @@ const settingsMock = await import('./settings.js') as unknown as { getSettings: 
 const { getGitIdentity, isGitRepo } = await import('./git.js');
 const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
 const { logger } = await import('./logger.js');
+const { markApiKeyRejected } = await import('./credentials.js');
+const { ResumeNotFoundError } = await import('./adapters/types.js');
 
 beforeEach(() => {
   mockAdapter = new MockAdapter();
@@ -731,6 +736,42 @@ describe('AgentSessionManager event processing', () => {
     expect(textEvents).toHaveLength(2);
 
     await sessionManager.destroySession('test-history');
+  });
+
+  it('starts the history with the setup steps already shown, without sending them again', async () => {
+    const win = makeMockWindow();
+    const setup = [{ type: 'status' as const, message: 'Creating worktree…' }, { type: 'status' as const, message: 'Starting agent…' }];
+    const adoptSetupEvents = vi.fn(() => setup);
+    await sessionManager.createSession({
+      id: 'test-setup', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock', adoptSetupEvents,
+    });
+
+    expect(adoptSetupEvents).toHaveBeenCalledTimes(1);
+    const history = sessionManager.getEventHistory('test-setup');
+    expect(history.slice(0, 2)).toEqual(setup);
+    const sent = win._send.mock.calls.filter((c: any[]) => c[0].includes('agent:event')).map((c: any[]) => c[1]);
+    expect(sent).not.toContainEqual(setup[0]);
+
+    await sessionManager.destroySession('test-setup');
+  });
+
+  it('flags a saved key the provider refused', async () => {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-refused', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+
+    mockAdapter.control!.emitEvent({ type: 'error', message: 'Sign in again', auth: true, keyRejected: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(markApiKeyRejected).toHaveBeenCalledWith('mock');
+
+    vi.mocked(markApiKeyRejected).mockClear();
+    mockAdapter.control!.emitEvent({ type: 'error', message: 'Something else' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(markApiKeyRejected).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-refused');
   });
 
   it('forwards transient streaming events to the renderer without buffering them', async () => {
@@ -1853,6 +1894,25 @@ describe('AgentSessionManager sleep and wake', () => {
     expect(await sessionManager.sleepSession('test-sleep-own-turn')).toBe(true);
 
     await sessionManager.destroySession('test-sleep-own-turn');
+  });
+
+  it('a background subagent working after the turn ends does not start one', async () => {
+    const { win } = await startSession('test-sleep-subagent');
+
+    mockAdapter.control!.emitEvent({
+      type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-sub', uuid: 'sub-1', parentToolUseId: 'tu-agent',
+    });
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Report', uuid: 'sub-2', parentToolUseId: 'tu-agent' });
+    // Drained in order: once this marker shows, the subagent's events were handled.
+    mockAdapter.control!.emitEvent({ type: 'status', message: 'marker' });
+    await vi.waitFor(() => expect(win._send.mock.calls.some(
+      ([, event]: [string, AgentEvent | undefined]) => event?.type === 'status' && event.message === 'marker',
+    )).toBe(true));
+
+    expect(sessionManager.getSession('test-sleep-subagent')!.turnHandle).toBeNull();
+    expect(await sessionManager.sleepSession('test-sleep-subagent')).toBe(true);
+
+    await sessionManager.destroySession('test-sleep-subagent');
   });
 
   it('a stop while waking waits for the old agent and leaves one agent running', async () => {
@@ -3076,6 +3136,213 @@ describe('AgentSessionManager wake-from-sleep', () => {
   });
 });
 
+describe('AgentSessionManager resume of a missing conversation', () => {
+  const missing = (providerSessionId?: string) =>
+    new ResumeNotFoundError(`No conversation found with session ID: ${providerSessionId}`);
+
+  /** Start a session resuming `providerSessionId`; returns once its query is up. */
+  async function startResume(id: string, providerSessionId?: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+      resumeSessionId: providerSessionId,
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 10));
+    return win;
+  }
+
+  /** Resume `providerSessionId` and fail the run the way Claude Code does
+   *  when that conversation's transcript is gone. */
+  async function resumeMissing(id: string, providerSessionId?: string) {
+    const win = await startResume(id, providerSessionId);
+    mockAdapter.control!.error(missing(providerSessionId));
+    return win;
+  }
+
+  const eventsOf = (win: ReturnType<typeof makeMockWindow>) =>
+    win._send.mock.calls.map(([, event]: [string, AgentEvent | string]) => event).filter((e: unknown) => typeof e === 'object') as AgentEvent[];
+  const sentTexts = (handle: AgentQueryHandle) => vi.mocked(handle.sendMessage).mock.calls.map(([m]) => m.text);
+
+  it('forgets the missing conversation and starts a new one', async () => {
+    const win = await resumeMissing('test-gone', 'gone-id');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+    expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+    const { worktreeManager } = await import('./worktree-manager.js');
+    expect(worktreeManager.saveProviderSessionId).toHaveBeenCalledWith('test-gone', '');
+
+    const events = eventsOf(win);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'status', level: 'warning', newConversation: true, message: expect.stringContaining("couldn't find this conversation"),
+    }));
+    // Not reported as stopped: the renderer would resume the same id again.
+    expect(events.some((e) => e.type === 'process_exit' || e.type === 'error')).toBe(false);
+    expect(win._send).not.toHaveBeenCalledWith(expect.any(String), 'test-gone', 'stopped');
+
+    // The new conversation takes messages as usual.
+    await vi.waitFor(() => expect(sessionManager.getSession('test-gone')?.queryHandle).toBe(mockAdapter.lastHandle));
+    expect(await sessionManager.sendMessage('test-gone', 'hello')).toBe(true);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }));
+
+    await sessionManager.destroySession('test-gone');
+  });
+
+  it('holds a message sent during the restart for the new conversation', async () => {
+    const win = await resumeMissing('test-gone-send', 'gone-id');
+    const sending = sessionManager.sendMessage('test-gone-send', 'held');
+
+    expect(await sending).toBe(true);
+    expect(mockAdapter.startCallCount).toBe(2);
+    expect(mockAdapter.lastHandle!.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'held' }));
+    expect(eventsOf(win).some((e) => e.type === 'error')).toBe(false);
+
+    await sessionManager.destroySession('test-gone-send');
+  });
+
+  it('sends the new conversation a prompt the missing one never answered, ahead of later ones', async () => {
+    await startResume('test-gone-early', 'gone-id');
+    const oldHandle = mockAdapter.lastHandle!;
+    // Sent while the agent is still starting, before it reports the error.
+    expect(await sessionManager.sendMessage('test-gone-early', 'early')).toBe(true);
+    expect(sentTexts(oldHandle)).toEqual(['early']);
+
+    mockAdapter.control!.error(missing('gone-id'));
+    const later = sessionManager.sendMessage('test-gone-early', 'later');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+    const newHandle = mockAdapter.lastHandle!;
+    expect(await later).toBe(true);
+    await vi.waitFor(() => expect(sentTexts(newHandle)).toEqual(['early', 'later']));
+    // A turn is running, so the conversation can't be put to sleep under it.
+    expect(sessionManager.getSession('test-gone-early')?.turnHandle).toBe(newHandle);
+
+    await sessionManager.destroySession('test-gone-early');
+  });
+
+  it('does not resend prompts the agent already had once it reported in', async () => {
+    await startResume('test-gone-init', 'kept-id');
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'kept-id', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-gone-init')?.status).toBe('running'));
+    await sessionManager.sendMessage('test-gone-init', 'answered');
+
+    expect(sessionManager.getSession('test-gone-init')?.promptsBeforeInit).toBeNull();
+
+    await sessionManager.destroySession('test-gone-init');
+  });
+
+  it('holds no prompts for a fresh conversation, which has nothing to lose', async () => {
+    await startResume('test-gone-none');
+    await sessionManager.sendMessage('test-gone-none', 'hi');
+
+    expect(sessionManager.getSession('test-gone-none')?.promptsBeforeInit).toBeNull();
+
+    await sessionManager.destroySession('test-gone-none');
+  });
+
+  it('tells the renderer when the new conversation fails to start', async () => {
+    const win = await startResume('test-gone-fail', 'gone-id');
+    mockAdapter.start = vi.fn(async () => { throw new Error('spawn failed'); });
+    mockAdapter.control!.error(missing('gone-id'));
+
+    await vi.waitFor(() => expect(win._send).toHaveBeenCalledWith(expect.any(String), 'test-gone-fail', 'error'));
+    expect(sessionManager.getSession('test-gone-fail')?.status).toBe('error');
+
+    await sessionManager.destroySession('test-gone-fail');
+  });
+
+  it('reports the error when the run was not a resume', async () => {
+    const win = await resumeMissing('test-gone-fresh');
+
+    await vi.waitFor(() => expect(sessionManager.getSession('test-gone-fresh')?.status).toBe('stopped'));
+    expect(mockAdapter.startCallCount).toBe(1);
+    expect(eventsOf(win)).toContainEqual(expect.objectContaining({ type: 'error' }));
+
+    await sessionManager.destroySession('test-gone-fresh');
+  });
+
+  describe('rewind afterwards', () => {
+    /** Turns one and two ran in a conversation whose transcript then went
+     *  missing on a restart; three and four ran in the new one. */
+    async function conversationAfterSwitch(id: string) {
+      const win = makeMockWindow();
+      await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+      await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+      const turn = async (text: string, replyUuid?: string) => {
+        await sessionManager.sendMessage(id, text);
+        if (replyUuid) mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'reply', uuid: replyUuid });
+        mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+        await new Promise((r) => setTimeout(r, 20));
+      };
+      mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+      await turn('one', 'old-1');
+      await turn('two', 'old-2');
+
+      // Restarted on the same transcript, which is gone by now.
+      await sessionManager.stopQuery(id);
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(2));
+      expect(mockAdapter.lastConfig?.resumeSessionId).toBe('mock-session-id');
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBe(mockAdapter.lastHandle));
+      await new Promise((r) => setTimeout(r, 10));
+      mockAdapter.control!.error(missing('mock-session-id'));
+      await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(3));
+      await vi.waitFor(() => expect(sessionManager.getSession(id)?.queryHandle).toBe(mockAdapter.lastHandle));
+
+      mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'mock-model', tools: [] });
+      await turn('three', 'new-1');
+      await turn('four');
+
+      const session = sessionManager.getSession(id)!;
+      const uuidOf = (text: string) =>
+        (session.eventHistory.find((e) => e.type === 'user_message' && e.text === text) as { uuid: string }).uuid;
+      const rewind = async (text: string) => {
+        await sessionManager.rewindFiles(id, uuidOf(text));
+        await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(4));
+      };
+      return { session, rewind };
+    }
+
+    const markers = (events: AgentEvent[]) => events.filter((e) => e.type === 'status' && e.newConversation);
+
+    it('forks inside the new conversation', async () => {
+      const { rewind } = await conversationAfterSwitch('test-gone-rw-fork');
+      await rewind('four');
+
+      expect(mockAdapter.lastConfig?.resumeAtUuid).toBe('new-1');
+
+      await sessionManager.destroySession('test-gone-rw-fork');
+    });
+
+    it('starts over, not forking into the lost conversation, from the new one\'s first message', async () => {
+      const { session, rewind } = await conversationAfterSwitch('test-gone-rw-first');
+      await rewind('three');
+
+      expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+      expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+      // The marker from the switch still bounds the kept turns.
+      expect(markers(session.eventHistory)).toHaveLength(1);
+
+      await sessionManager.destroySession('test-gone-rw-first');
+    });
+
+    it('starts over from a message in the lost conversation and marks where', async () => {
+      const { session, rewind } = await conversationAfterSwitch('test-gone-rw-old');
+      await rewind('two');
+
+      expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
+      expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
+      // The switch's marker went with the rewound turns; old-1 is still kept,
+      // so a new marker stops a later rewind from forking at it.
+      expect(markers(session.eventHistory)).toEqual([expect.objectContaining({ message: expect.stringContaining('starts a new conversation from here') })]);
+      const markerAt = session.eventHistory.findIndex((e) => e.type === 'status' && e.newConversation);
+      expect(markerAt).toBeGreaterThan(session.eventHistory.findIndex((e) => e.type === 'assistant_text' && e.uuid === 'old-1'));
+
+      await sessionManager.destroySession('test-gone-rw-old');
+    });
+  });
+});
+
 describe('AgentSessionManager session controls', () => {
   const SETTINGS = {
     defaultSystemPromptAppend: null,
@@ -3097,7 +3364,7 @@ describe('AgentSessionManager session controls', () => {
 
     await sessionManager.createSession({ id: 'ctl-defaults', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
-    const controls = sessionManager.getControls('ctl-defaults');
+    const controls = await sessionManager.getControls('ctl-defaults');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
     expect(controls.values).toEqual({ thinking: 'low', speed: 'standard' });
     await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
@@ -3114,7 +3381,7 @@ describe('AgentSessionManager session controls', () => {
       controls: { thinking: 'high', speed: 'warp' },
     });
 
-    expect(sessionManager.getControls('ctl-chosen').values).toEqual({ thinking: 'high', speed: 'standard' });
+    expect((await sessionManager.getControls('ctl-chosen')).values).toEqual({ thinking: 'high', speed: 'standard' });
 
     await sessionManager.destroySession('ctl-chosen');
   });
@@ -3127,7 +3394,7 @@ describe('AgentSessionManager session controls', () => {
       controls: { thinking: 'max' },
     });
 
-    expect(sessionManager.getControls('ctl-chosen-bad').values.thinking).toBe('low');
+    expect((await sessionManager.getControls('ctl-chosen-bad')).values.thinking).toBe('low');
 
     await sessionManager.destroySession('ctl-chosen-bad');
   });
@@ -3137,7 +3404,7 @@ describe('AgentSessionManager session controls', () => {
 
     await sessionManager.createSession({ id: 'ctl-unknown-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
-    expect(sessionManager.getControls('ctl-unknown-default').values.thinking).toBe('high');
+    expect((await sessionManager.getControls('ctl-unknown-default')).values.thinking).toBe('high');
 
     await sessionManager.destroySession('ctl-unknown-default');
   });
@@ -3150,7 +3417,7 @@ describe('AgentSessionManager session controls', () => {
 
     expect(sessionManager.getSession('ctl-mode-default')?.permissionMode).toBe('acceptEdits');
     // Kept out of the other control values: the mode has its own field.
-    expect(sessionManager.getControls('ctl-mode-default').values).not.toHaveProperty('permissionMode');
+    expect((await sessionManager.getControls('ctl-mode-default')).values).not.toHaveProperty('permissionMode');
     const sync = { type: 'mode_sync', mode: 'acceptEdits', source: 'session' };
     expect(sessionManager.getEventHistory('ctl-mode-default')).toContainEqual(sync);
     expect(win.webContents.send).toHaveBeenCalledWith(`${IPC.AGENT_EVENT}:ctl-mode-default`, sync);
@@ -3246,7 +3513,7 @@ describe('AgentSessionManager session controls', () => {
 
     await sessionManager.setModel('ctl-model', 'mock-lite');
 
-    const controls = sessionManager.getControls('ctl-model');
+    const controls = await sessionManager.getControls('ctl-model');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking']);
     expect(controls.values).toEqual({ thinking: 'high' });
     expect(session.controls).toEqual({ thinking: 'high' });
@@ -3310,9 +3577,22 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-usage');
   });
 
-  it('getControls for an unknown session falls back to the default adapter descriptors', () => {
-    const controls = sessionManager.getControls('never-created');
+  it('getControls for an unknown session falls back to the default adapter descriptors', async () => {
+    const controls = await sessionManager.getControls('never-created');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
+    expect(controls.values).toEqual({});
+  });
+
+  it('getControls for a conversation that is not running uses its recorded agent and model', async () => {
+    const { worktreeManager } = await import('./worktree-manager.js');
+    const other = { ...new MockAdapter(), id: 'other' } as unknown as AgentAdapter;
+    other.getControls = vi.fn(() => [{ id: 'acp:mode', label: 'Agent mode', default: 'build', options: [{ value: 'build', label: 'build' }] }]);
+    extraAdapters.other = other;
+    vi.mocked(worktreeManager.getAgentAndModel).mockResolvedValueOnce({ adapterType: 'other', model: 'other-model' });
+
+    const controls = await sessionManager.getControls('asleep');
+    expect(controls.descriptors.map((d) => d.id)).toEqual(['acp:mode']);
+    expect(other.getControls).toHaveBeenCalledWith('other-model');
     expect(controls.values).toEqual({});
   });
 });

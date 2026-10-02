@@ -57,6 +57,11 @@ jobs:
 
       - name: Build installer
         run: npm run dist
+        env:
+          # PostHog project key (public, it ships in the app). Without the
+          # POSTHOG_API_KEY repository variable the app has no analytics or
+          # crash reports. Both are off until the user turns them on.
+          VITE_POSTHOG_API_KEY: ${{ vars.POSTHOG_API_KEY }}
 
       - name: Check the packaged app's run-time packages
         run: node scripts/smoke-deps.mjs

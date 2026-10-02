@@ -6,11 +6,11 @@ In a narrow window the bar drops its extras so the agent settings, the activity,
 
 ## Agent Settings
 
-The left side is a single **Agent settings** control. The first line is the model and the mode, for example `Opus 5.5 · Ask`; a long model name is cut short, and hovering shows it in full. The second line is the agent, followed by any control that is off its default, for example `Claude Agent · Low · Fast`. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. **Done**, `Esc`, or clicking outside closes the popup. A conversation keeps the agent it started with, because its history is stored by that agent and only that agent can pick it up again. Picking another agent starts a new conversation with it in the same project, as a draft, and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.
+The left side is a single **Agent settings** control. The first line is the model and the mode, for example `Opus 5.5 · Ask`; a long model name is cut short, and hovering shows it in full. The second line is the agent, followed by any control that is off its default, for example `Claude Agent · Low · Fast`. Click it to open a popup with one column per setting: **Agent**, **Model**, and each control the provider declares for that model (Mode, Effort, Thinking, Speed). Pick an option in any column; the change applies immediately. A line under the columns says what the current mode does, or what any option you point at or tab to does. `Esc` or clicking outside closes the popup. A conversation keeps the agent it started with, because its history is stored by that agent and only that agent can pick it up again. Picking another agent starts a new conversation with it in the same project, as a draft, and leaves this one as it is. In a draft (see [Getting started](getting-started.md#starting-a-conversation)) every column can still change, the agent included.
 
 ### Usage
 
-Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every conversation on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
+Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. Like the context meter, each bar is a row of pixel blocks, here 5% each, in the same colours. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every conversation on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
 
 ### Mode
 
@@ -32,7 +32,7 @@ The Mode, Effort, Thinking and Speed columns are declared by the agent provider 
 
 ## Activity
 
-Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details.
+Next to the agent settings, the bar says what the agent is doing: **idle**, **thinking**, **writing**, or the tool it is running and for how long. **waiting for you** (amber) means a permission prompt or a question is waiting for your answer in the Thread tab; it shows over whatever the agent was doing. Underneath are any rate-limit warning, pending tools, background tasks and memory compaction. Click a pending tool or background task count for details. When every pending tool belongs to a subagent, the count says so (**1 subagent tool**), since the agent itself may be idle.
 
 ## Last turn
 
@@ -89,7 +89,7 @@ When the agent has MCP servers configured, an **MCP** badge shows how many are c
 - **Reconnect** restarts a connection. **Sign in** starts the browser sign-in for a server that needs it
 - **Disconnect** turns a server off, and **Connect** turns it back on. How long a disconnect lasts depends on the agent: hover the button to see. With Claude Agent it applies to the whole project, not just this conversation, so new conversations in the project also start without it
 
-New servers are added from Settings → Tool shed (MCP servers).
+New servers are added from Settings → MCP servers (Tool shed).
 
 Each server in the popover shows a status dot:
 
@@ -103,7 +103,7 @@ Each server in the popover shows a status dot:
 
 ## Context
 
-**Context N%** and a colored bar show how much of the agent's context window has been used. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
+**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
@@ -112,14 +112,14 @@ Each server in the popover shows a status dot:
 | 70–85% | Orange | Running low |
 | 85–100% | Red | Nearly full: the agent may start summarising older context |
 
-The whole bar takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
+Every filled block takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
 
 Click the bar for details and two actions:
 
 - **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail.
 - **Start fresh…** (`/clear`): clears the conversation and the agent's memory of it. It asks you to confirm first. Your files are not changed.
 
-With **Show grove characters** on (Settings → The grove (General)), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
+With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts with a few small plants and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. Its leaves change with the bar's colour: summer green while there is plenty of room, then late summer, autumn, and rust when the context is nearly full. They turn a plant at a time in the run-up to each change, so by the time the bar changes colour the whole grove has. After `/compact` or `/clear` it thins out and turns green again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 
 ## Rate Limiting
 
@@ -139,4 +139,6 @@ When the agent runs background tasks (subagents), their status is shown:
 | Blue pulsing | Task running |
 | Green | Task completed |
 | Red | Task failed |
+
+Click a subagent's name in the list to open its thread, the same panel its line in the Thread tab opens. In the pending tools list, a subagent's tools show which subagent they run in (**in Explore**), and clicking one, or a running **Agent** call, opens that subagent's thread too.
 

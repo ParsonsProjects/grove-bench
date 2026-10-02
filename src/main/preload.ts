@@ -32,6 +32,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
   autoNameSession: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_AUTO_NAME, sessionId),
+  getConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_GET, sessionId),
+  setConversationGoal: (sessionId: string, text: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_SET, sessionId, text),
+  autoConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_AUTO, sessionId),
+  refreshConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_REFRESH, sessionId),
+  setConversationGoalHidden: (sessionId: string, hidden: boolean) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_HIDE, sessionId, hidden),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations

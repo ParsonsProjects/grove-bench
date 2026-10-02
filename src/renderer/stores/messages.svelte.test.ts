@@ -415,6 +415,79 @@ describe('ingestEvent — tool_use and tool_result', () => {
   });
 });
 
+describe('ingestEvent — subagent events', () => {
+  const agentCall: AgentEvent = {
+    type: 'assistant_tool_use', toolName: 'Agent', toolInput: { description: 'Find the burst' }, toolUseId: 'tu-agent', uuid: 'u1',
+  };
+  const sub = (event: object) => ({ ...event, parentToolUseId: 'tu-agent' }) as AgentEvent;
+
+  it('keeps a subagent\'s text, thinking and tool calls under its Agent call, out of the thread', () => {
+    messageStore.ingestEvent(SID, agentCall);
+    messageStore.ingestEvent(SID, sub({ type: 'thinking', thinking: 'Where is it scheduled?', uuid: 's1' }));
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: { pattern: 'cron' }, toolUseId: 'tu-grep', uuid: 's2' }));
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'I sent the report to your caller.', uuid: 's3' }));
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs.map((m) => [m.kind, 'parentToolUseId' in m ? m.parentToolUseId : undefined])).toEqual([
+      ['tool_call', undefined],
+      ['thinking', 'tu-agent'],
+      ['tool_call', 'tu-agent'],
+      ['text', 'tu-agent'],
+    ]);
+  });
+
+  it('leaves the main agent\'s live reply alone', () => {
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'The cause ' } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'subagent note', uuid: 's1' }));
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'is the cron job' } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's2' }));
+    messageStore.flushStreamBuffers();
+
+    // Neither dropped part of the reply nor cut it short into a message.
+    expect(messageStore.getStreamingText(SID)).toBe('The cause is the cron job');
+    expect(messageStore.getMessages(SID).filter((m) => !('parentToolUseId' in m && m.parentToolUseId))).toEqual([]);
+  });
+
+  it('does not mark an idle conversation running: a background subagent outlives the turn', () => {
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's1' }));
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'note', uuid: 's2' }));
+    messageStore.ingestEvent(SID, sub({ type: 'thinking', thinking: 'hmm', uuid: 's3' }));
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).not.toBe('tool_starting');
+  });
+
+  it('settles a subagent\'s tool call with its result', () => {
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's1' }));
+    messageStore.ingestEvent(SID, sub({ type: 'tool_result', toolUseId: 'tu-grep', content: 'serverless.ts:12' }));
+
+    expect(messageStore.getMessages(SID)[0]).toMatchObject({ kind: 'tool_call', pending: false, result: 'serverless.ts:12', parentToolUseId: 'tu-agent' });
+  });
+
+  it('names the subagent each pending call runs in or starts, for the status bar', () => {
+    messageStore.ingestEvent(SID, { ...agentCall, toolInput: { description: 'Find the burst', subagent_type: 'Explore' } } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId: 'tu-bash', uuid: 's1' }));
+    messageStore.ingestEvent(SID, { type: 'assistant_tool_use', toolName: 'Read', toolInput: {}, toolUseId: 'tu-read', uuid: 'u2' } as AgentEvent);
+
+    expect(messageStore.getPendingTools(SID).map(({ toolUseId, subagentCall, inSubagent }) => ({ toolUseId, subagentCall, inSubagent }))).toEqual([
+      { toolUseId: 'tu-agent', subagentCall: 'tu-agent', inSubagent: undefined },
+      { toolUseId: 'tu-bash', subagentCall: 'tu-agent', inSubagent: 'Explore' },
+      { toolUseId: 'tu-read', subagentCall: undefined, inSubagent: undefined },
+    ]);
+  });
+
+  it('reports a background subagent as running after its Agent call returned', () => {
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-agent', description: 'Find the burst' } as AgentEvent);
+    expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(true);
+    expect(backgroundTaskStore.isRunningFor(SID, 'tu-other')).toBe(false);
+
+    messageStore.ingestEvent(SID, {
+      type: 'task_notification', taskId: 'bg-1', toolUseId: 'tu-agent', taskStatus: 'completed', summary: 'done', outputFile: '',
+    } as AgentEvent);
+    expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(false);
+  });
+});
+
 describe('ingestEvent — permission_request', () => {
   it('pushes permission message for normal tools', () => {
     messageStore.ingestEvent(SID, {
@@ -1068,6 +1141,28 @@ describe('ingestEvent — error/process_exit unlocks input when never initialize
     messageStore.ingestEvent(SID, { type: 'error', message: 'Auth failed' } as AgentEvent);
     expect(messageStore.getIsReady(SID)).toBe(true);
     expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+
+  it('keeps a sign-in failure marked as one, and re-checks credentials when a key was refused', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Sign in again', auth: true, keyRejected: true });
+    const last = messageStore.getMessages(SID).at(-1);
+    expect(last).toMatchObject({ kind: 'error', text: 'Sign in again', auth: true });
+    expect(mockGroveBench.checkPrerequisites).toHaveBeenCalled();
+  });
+
+  it('does not re-check credentials when an old refusal is replayed', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.replayEvents(SID, [{ type: 'error', message: 'Sign in again', auth: true, keyRejected: true }]);
+    expect(messageStore.getMessages(SID).at(-1)).toMatchObject({ kind: 'error', auth: true });
+    expect(mockGroveBench.checkPrerequisites).not.toHaveBeenCalled();
+  });
+
+  it('does not re-check credentials for other errors', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.ingestEvent(SID, { type: 'error', message: 'boom' });
+    expect(messageStore.getMessages(SID).at(-1)).not.toHaveProperty('auth');
+    expect(mockGroveBench.checkPrerequisites).not.toHaveBeenCalled();
   });
 
   it('process_exit unlocks input if session never had system_init', () => {

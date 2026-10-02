@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveMergeBase, squashSince, branchCommits } from './git.js';
+import { resolveMergeBase, squashSince, branchCommits, excludeFromGit } from './git.js';
 
 // Real git is slow to start on Windows, and each test runs a dozen commands.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -102,5 +102,50 @@ describe('a local base ahead of origin', () => {
     commit('m1.txt', 'mine 1');
 
     expect(await resolveMergeBase(repo, 'main')).toEqual({ ref: 'main', mergeBase: localMain });
+  });
+});
+
+describe("Grove's own files in a worktree", () => {
+  const SETTINGS = '.claude/settings.local.json';
+  let wt: string;
+
+  beforeEach(() => {
+    wt = `${repo}-wt`;
+    run('worktree', 'add', '-q', '-b', 'feat', wt);
+    fs.mkdirSync(path.join(wt, '.claude'));
+    fs.writeFileSync(path.join(wt, SETTINGS), '{}\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(wt, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  });
+
+  const wtStatus = () => execFileSync('git', ['status', '--porcelain'], { cwd: wt, encoding: 'utf8' }).trim();
+
+  it('are kept out of status and git add -A, through the shared exclude file', async () => {
+    expect(wtStatus()).toContain('.claude/');
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([SETTINGS]);
+    expect(wtStatus()).toBe('');
+    execFileSync('git', ['add', '-A'], { cwd: wt });
+    expect(wtStatus()).toBe('');
+    expect(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8')).toContain('/.claude/settings.local.json');
+  });
+
+  it('are added once, however many worktrees ask', async () => {
+    await excludeFromGit(wt, [SETTINGS]);
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
+    const lines = fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8').split('\n');
+    expect(lines.filter((l) => l === '/.claude/settings.local.json')).toHaveLength(1);
+  });
+
+  it('are left alone when the project already ignores them', async () => {
+    fs.writeFileSync(path.join(wt, '.gitignore'), '.claude/settings.local.json\n');
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
+  });
+
+  it('are left alone when the project tracks them', async () => {
+    execFileSync('git', ['add', SETTINGS], { cwd: wt });
+    execFileSync('git', ['commit', '-qm', 'track settings'], { cwd: wt });
+    expect(await excludeFromGit(wt, [SETTINGS])).toEqual([]);
   });
 });

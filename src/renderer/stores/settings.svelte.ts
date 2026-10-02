@@ -1,10 +1,12 @@
 import type { GroveBenchSettings, ToolRule } from '../../shared/types.js';
+import type { SettingsSectionId } from '../lib/settings-search.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolAllowRules: [],
   toolDenyRules: [],
   disabledSkills: [],
   autoSkillSuggestions: false,
+  showConversationGoal: false,
   defaultModels: {},
   adapterDefaults: {},
   showThinkingSummaries: true,
@@ -12,6 +14,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   workingDirectories: [],
   defaultSystemPromptAppend: '',
   acpAgents: [],
+  enabledAlphaAgents: [],
   memoryAutoSave: true,
   memoryAutoCompact: false,
   memoryCompactTimeoutSeconds: 300,
@@ -61,6 +64,14 @@ class SettingsStore {
   error = $state<string | null>(null);
   /** Whether the Settings panel is open (gear button or Ctrl+,). */
   panelOpen = $state(false);
+  /** The section Settings should show when it next opens (see openAt). */
+  requestedSection = $state<SettingsSectionId | null>(null);
+
+  /** Open Settings at one section, for links such as "fix your sign-in". */
+  openAt(section: SettingsSectionId) {
+    this.requestedSection = section;
+    this.panelOpen = true;
+  }
 
   get dirty(): boolean {
     return JSON.stringify(this.current) !== JSON.stringify(this.draft);
@@ -185,6 +196,17 @@ class SettingsStore {
   /** Draft default model for an adapter, or '' for the adapter's own default. */
   defaultModel(adapterId: string): string {
     return this.draft.defaultModels?.[adapterId] ?? '';
+  }
+
+  /** Whether an alpha agent is turned on, in the panel's copy. */
+  isAlphaEnabled(adapterId: string): boolean {
+    return this.draft.enabledAlphaAgents.includes(adapterId);
+  }
+
+  /** Turn an alpha agent on or off for new conversations. */
+  setAlphaEnabled(adapterId: string, enabled: boolean) {
+    const rest = this.draft.enabledAlphaAgents.filter((id) => id !== adapterId);
+    this.draft.enabledAlphaAgents = enabled ? [...rest, adapterId] : rest;
   }
 
   /** Set (or with an empty value, clear) an adapter's default model in the draft. */

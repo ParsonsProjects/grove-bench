@@ -8,7 +8,7 @@ Changes save as you make them; there is no Save button. Toggles and lists save a
 
 - **Default thread view**: The view new conversations start in (Summary, Focus or Detailed). Each conversation can switch from its status bar
 - **Default diff view**: Unified or side-by-side diffs
-- **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, on the Changes, Checkpoints and Preview tabs while they have nothing to show (each with its own touch: a watering can, a flag, an easel), and while a conversation starts up again, where its agent walks through the grove. A pixel grove also grows along the top of the status bar as the conversation fills its context window. When you open a sleeping or completed conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. When you start a new conversation, its agent walks up to that bench below your first message, sits down and starts typing, and stays there until the first reply shows. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when completed or sleeping (grey). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
+- **Show grove characters**: Small pixel agents show each conversation's status: in the sidebar in place of the status dot, in permission and question prompts, when no conversation is open, on the Changes, Checkpoints and Preview tabs while they have nothing to show (each with its own touch: a watering can, a flag, an easel), and while a conversation starts up again, where its agent walks through the grove. A pixel grove also grows along the top of the status bar as the conversation fills its context window, and its leaves turn from summer green to autumn as it nears the limit. When you open a sleeping or closed conversation, its agent first wakes up on a bench, then walks off; click or press any key to skip straight to the chat. When you start a new conversation, its agent walks up to that bench below your first message, sits down and starts typing, and stays there until the first reply shows. The pose shows the state as well as the colour: typing while working, a question mark while it waits for you, waving after it finishes a turn, asleep when closed or sleeping (grey). Each conversation's agent has its own skin tone and hair colour, and keeps them wherever it appears. On by default
 - **Project colors**: The accent color for each project in the sidebar. **Use default** puts a project back on its default color
 - **Always on top**: Keep the Grove Bench window above other windows
 - **Spell checking**: Check spelling in the prompt editor
@@ -20,7 +20,7 @@ There is one group per agent, each with:
 
 - **Credentials**: Shows how the agent signs in. Paste an API key to save it (stored encrypted on this computer), or remove a saved key. While a key is saved it is used instead of a CLI sign-in
 - **Default model**: Pick the model new conversations with this agent start on. The list comes from the agent itself and updates after a conversation starts, so new models appear without an app update. **Default** follows the agent's own default model (shown in brackets). A model ID typed in an older version stays in the list, marked "custom"
-- **Background model**: The model used for this agent's background tasks: memory notes, memory compaction, commit messages and skill suggestions. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider you chose for it
+- **Background model**: The model used for this agent's background tasks: memory notes, memory compaction, commit messages, skill suggestions and conversation goals. **Default** is the agent's own cheap model (Haiku 4.5 for Claude Agent). Each task runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider you chose for it
 - **Default permission mode**: The mode new conversations with this agent start in. Only the modes the agent offers on its default model are listed. See [Status bar](status-bar.md#mode) for what each mode allows. For Claude Agent:
   - **Ask**: checks with you before each edit or command; reading files and read-only commands run without asking
   - **Plan**: explores and plans without editing files
@@ -44,10 +44,13 @@ If a conversation starts on a model that doesn't offer the saved mode, it starts
 
 Grove Bench can run any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio. Gemini CLI (`gemini --acp`) and GitHub Copilot CLI (`copilot --acp`) are built in: install one, sign in with it in a terminal, and pick it as the agent for a new conversation. Add others, such as Codex through `codex-acp`, with a name, the command (a name on PATH or a full path) and its arguments. Restart Grove Bench after adding or removing one.
 
+OpenCode (`opencode acp`) is built in too, for open models such as DeepSeek. It is in **alpha**: still being tested, so it stays out of the agent list until you tick **Enable OpenCode** in its group under [Grovekeepers (Agents)](#grovekeepers-agents), and it is marked Alpha where it shows. Claude Agent stays the default. Turning it off again only hides it for new conversations; ones already on OpenCode keep working. Install it with `npm install -g opencode-ai`. It uses the providers you signed in to with `opencode auth login`, or save an OpenRouter API key under **Credentials**: new conversations then start on DeepSeek V4.1 Flash through OpenRouter, and you can pick any other model OpenCode lists in the status bar. Grove Bench starts OpenCode so that it asks before it edits files, runs commands or fetches pages (so your mode and tool rules apply), so its own Plan mode can't edit files, and with a password on the local server OpenCode runs, which would otherwise let any program on this computer use it and read your saved keys. OpenCode's subagents are turned off, because their questions never reach Grove Bench and the turn would hang. A project's own `opencode.json` can still undo the asking in one case: a `"*": "allow"` rule for the build agent written after its other rules. If OpenCode then acts without asking, the thread says so.
+
 With ACP agents:
 
 - Grove Bench's memory and Preview browser tools are offered to every ACP agent. They are served on this computer only, with a key for each conversation. Agents that can't connect to a server by address start a small bridge program that comes with Grove Bench
 - Rewinding a conversation starts the agent on a new conversation from that point, since ACP agents can't forget part of one
+- Your mode and tool rules work on the requests an agent sends before it acts. If an agent edits a file or runs a command without asking, the thread says so once, since nothing Grove Bench does can stop it. Set the agent to ask first (for Gemini CLI, leave YOLO off)
 - Skills, plugins and plan usage are not managed for them
 
 ## The gate (Permissions)
@@ -74,11 +77,12 @@ Control how the agent handles actions that need approval. The mode new conversat
 
 ## Tending (Background work)
 
-Memory and skill suggestions run on each conversation's own agent, using its background model (see [Grovekeepers (Agents)](#grovekeepers-agents)).
+Memory, skill suggestions and conversation goals run on each conversation's own agent, using its background model (see [Grovekeepers (Agents)](#grovekeepers-agents)).
 
 - **Auto-save project memory** and **Auto-compact project memory**: see [Project memory](memory.md)
 - **Compaction timeout**: Stop a compaction pass, manual or automatic, that runs longer than this many seconds, from 30 to 3600 (an hour). A value saved outside that range is moved into it. Default 300 (5 minutes)
 - **Suggest skills automatically**: After each finished turn, look for requests and commands you repeat and suggest skills for them. Each run is a model call. Off by default; the **Suggest** button in the status bar's Skills popover does the same on demand
+- **Show the conversation goal**: Pin one line at the top of each conversation's Thread tab saying what it is for, written after its first reply. Each goal is one model call, plus one each time you press **Refresh**. Off by default; see [Thread tab](thread-tab.md)
 - **Sleep idle conversations after**: After this many minutes idle (not open, not working, not waiting on you, no background task running), a conversation's agent is shut down to save memory and CPU. The conversation stays in the Conversations list with its mode and "always allow" choices, and wakes when you open it or send it a message. Its terminal keeps running; the agent's page in the Preview tab closes. 0 turns it off. Default 30 minutes
 
 ## Tool shed (MCP servers)
@@ -89,7 +93,7 @@ View the MCP servers configured for an agent and add new ones without leaving th
 - **Project** picks which project's servers to list. Project and local servers belong to one project, so the list starts with the open conversation's project. Pick **None** to see only your user servers
 - The list shows each configured server with its live health status (the check can take a few seconds)
 - **Remove** asks you to confirm before it removes a server. Removing a project server changes the project's `.mcp.json`, which your team may share
-- Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off under Seed packets (Plugins), and claude.ai connectors on claude.ai
+- Servers the agent can't remove, such as a plugin's, show who owns them and how to turn them off instead. With Claude Agent: a plugin's servers are turned off under Plugins (Seed packets), and claude.ai connectors on claude.ai
 - With agents that approve project servers before connecting them (Claude Agent does, for `.mcp.json`), an unapproved server shows **needs approval**. Conversations don't connect it until you click **Approve**, which approves it for the project and its conversations. Only approve servers you trust: they run on your machine
 - **Add MCP server**: Register a new server by name, transport (stdio command, HTTP, or SSE), and scope:
   - **User**: available in all projects on this machine

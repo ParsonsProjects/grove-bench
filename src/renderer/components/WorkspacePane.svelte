@@ -8,6 +8,9 @@
   import OutputPanel from './OutputPanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
+  import ConversationGoal from './ConversationGoal.svelte';
+  import GoalFlagIcon from './GoalFlagIcon.svelte';
+  import { goalStore } from '../stores/goals.svelte.js';
   import PromptEditor from './PromptEditor.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import GitNotice from './GitNotice.svelte';
@@ -15,6 +18,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { conversationAgent } from '$lib/session-sprite-state.js';
   import type { GroveTab } from '$lib/agent-sprite.js';
+  import type { AgentEvent } from '../../shared/types.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
@@ -135,6 +139,8 @@
     // Always replay history on mount — clear any stale state first to avoid
     // duplicates. This is critical after refresh/restart where prior state is
     // lost but isReady might have been set by a leaked event.
+    /** The page replayed, for sorting out live events held meanwhile. */
+    let replayedPage: AgentEvent[] | null = null;
     try {
       // Clear existing messages so replay starts fresh.
       // clearSession does NOT reset isReady — that's handled below based on
@@ -151,11 +157,12 @@
 
       // Subscribe to live events BEFORE replaying history so events for a
       // session still being set up (worktree creation, npm install) aren't
-      // missed; replay then fills in prior events. Caveat: a live event that
-      // arrives during the awaited history fetch below is appended ahead of the
-      // replayed history. In practice the window is tiny (system_init arrives
-      // after mount) and the worst case is a single duplicated status line.
+      // missed. Ones that arrive while the page loads are held, then shown
+      // after the replay unless the page already has them: a new
+      // conversation's first events land in that window, and were shown
+      // twice.
       messageStore.subscribe(sessionId);
+      messageStore.holdLiveEvents(sessionId);
 
       // Suppress this session's git refreshes during replay to avoid N IPC
       // calls (per-session so concurrent pane mounts don't clear each other's).
@@ -177,6 +184,7 @@
       // array and flushes to the reactive store in one assignment at the end,
       // avoiding O(n²) array copies and hundreds of intermediate re-renders.
       messageStore.replayEvents(sessionId, page.events, skipDuringReplay, page.startIndex);
+      replayedPage = page.events;
       if (page.events.length > 0) {
         const last = page.events[page.events.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {
@@ -206,6 +214,7 @@
         message: `Failed to load conversation history: ${e?.message || e}`,
       });
     } finally {
+      messageStore.releaseLiveEvents(sessionId, replayedPage);
       gitStatusStore.unsuppressRefresh(sessionId);
       messageStore.setHistoryLoaded(sessionId, true);
     }
@@ -276,6 +285,17 @@
       </button>
       {#if activeTab === 'activity'}
         <ThreadViewSelect {sessionId} />
+        {#if settingsStore.current.showConversationGoal && goalStore.get(sessionId).hidden}
+          <!-- The goal bar was closed for this conversation: bring it back. -->
+          <button
+            onclick={() => goalStore.setHidden(sessionId, false)}
+            class="pr-3 text-muted-foreground hover:text-foreground transition-colors"
+            title="Show the conversation goal"
+            aria-label="Show the conversation goal"
+          >
+            <GoalFlagIcon />
+          </button>
+        {/if}
       {/if}
     </div>
     <button
@@ -344,6 +364,7 @@
 
   <!-- Tab content -->
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'activity' ? '' : 'hidden'}">
+    <ConversationGoal {sessionId} />
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">

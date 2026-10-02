@@ -7,6 +7,8 @@ import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
 import type { AdapterConfig, AdapterEvent, AgentQueryHandle, PermissionRequest, PermissionResponse } from '../types.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
+const savedKeys = vi.hoisted(() => new Map<string, string>());
+vi.mock('../../credentials.js', () => ({ getApiKey: (id: string) => savedKeys.get(id) ?? null }));
 const catalog = new Map<string, unknown[]>();
 vi.mock('../../app-state.js', () => ({
   loadModelCatalog: (id: string) => catalog.get(id) ?? null,
@@ -29,6 +31,7 @@ function def(scenario = 'default'): AcpAgentDefinition {
 let cwd: string;
 beforeEach(() => {
   catalog.clear();
+  savedKeys.clear();
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-'));
 });
 
@@ -279,7 +282,8 @@ describe('AcpAdapter', () => {
 
   it('finds an agent given by full path', async () => {
     const adapter = new AcpAdapter({ ...def(), command: process.execPath });
-    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, path: process.execPath });
+    // Signing in only shows when a session starts.
+    expect(await adapter.checkPrerequisites()).toMatchObject({ available: true, path: process.execPath, authenticated: true, authUnchecked: true });
     const missing = new AcpAdapter({ ...def(), command: path.join(cwd, 'no-such-agent.exe') });
     expect((await missing.checkPrerequisites()).available).toBe(false);
   });
@@ -288,5 +292,111 @@ describe('AcpAdapter', () => {
     const adapter = new AcpAdapter(def());
     const text = await adapter.generateText('You write commit messages.', 'diff here', { cwd, model: 'm2' });
     expect(text).toBe('Fix the thing (no, m2)');
+  });
+
+  describe('an API key saved in Grove and per-process settings', () => {
+    const keyed = (): AcpAgentDefinition => ({
+      ...def(),
+      apiKey: { envVar: 'FAKE_KEY_VAR', label: 'Fake key', helpUrl: 'https://example.com' },
+      spawnEnv: (env, { savedKey }) => ({ FAKE_SPAWN: `${savedKey ? 'saved' : 'not saved'}:${env.FAKE_KEY_VAR ?? 'none'}` }),
+    });
+
+    it('reach the agent, the saved key over an inherited one, in conversations and background tasks', async () => {
+      savedKeys.set('fake-acp', 'k-saved');
+      vi.stubEnv('FAKE_KEY_VAR', 'k-inherited');
+      try {
+        const adapter = new AcpAdapter(keyed());
+        expect(adapter.apiKey).toMatchObject({ envVar: 'FAKE_KEY_VAR' });
+        const handle = await adapter.start(config());
+        await until(handle, 'system_init');
+        handle.sendMessage({ text: 'env' });
+        const text = (await until(handle, 'result')).find((e) => e.type === 'assistant_text');
+        expect(JSON.parse((text as { text: string }).text)).toEqual({ key: 'k-saved', spawn: 'saved:k-saved' });
+        handle.close();
+
+        expect(JSON.parse(await adapter.generateText('sys', 'env', { cwd }))).toEqual({ key: 'k-saved', spawn: 'saved:k-saved' });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('leave an inherited key alone when none is saved', async () => {
+      vi.stubEnv('FAKE_KEY_VAR', 'k-inherited');
+      try {
+        const text = await new AcpAdapter(keyed()).generateText('sys', 'env', { cwd });
+        expect(JSON.parse(text)).toEqual({ key: 'k-inherited', spawn: 'not saved:k-inherited' });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
+
+  describe('an agent that edits and runs commands without asking', () => {
+    const warnings = (events: AdapterEvent[]) =>
+      events.filter((e): e is Extract<AdapterEvent, { type: 'status' }> => e.type === 'status' && /without asking/.test(e.message));
+
+    it('warns once, naming the mode its edits and commands went past', async () => {
+      const asked: PermissionRequest[] = [];
+      const handle = await adapter().start(config({ onPermissionRequest: async (req) => { asked.push(req); return { behavior: 'allow', updatedInput: {} }; } }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      const turn = await until(handle, 'result');
+      handle.sendMessage({ text: 'unasked' });
+      const second = await until(handle, 'result');
+
+      expect(asked).toHaveLength(0);
+      expect(warnings([...turn, ...second])).toHaveLength(1);
+      expect(warnings(turn)[0].message).toContain('Fake Agent ran "b.txt" without asking, so the Ask mode and your tool rules don\'t apply');
+      handle.close();
+    });
+
+    it('says when a deny rule did not stop it', async () => {
+      const handle = await adapter().start(config({ permissionMode: 'acceptEdits', toolDenyRules: [{ pattern: 'shell(rm *)' }] }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      const [warning] = warnings(await until(handle, 'result'));
+      // The edit inside the worktree is what Edit mode allows; the command is the one.
+      expect(warning.message).toContain('ran "rm -rf build" without asking, though one of your tool rules denies it');
+      handle.close();
+    });
+
+    it('says when the conversation doesn\'t allow the tool', async () => {
+      const handle = await adapter().start(config({ allowedTools: new Set(['read']) }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      const [warning] = warnings(await until(handle, 'result'));
+      expect(warning.message).toContain('ran "b.txt" without asking, though this conversation doesn\'t allow that tool');
+      handle.close();
+    });
+
+    it('doesn\'t count calls replayed from an earlier conversation', async () => {
+      const handle = await adapter().start(config({ resumeSessionId: 'old-session' }));
+      expect(warnings(await until(handle, 'system_init'))).toHaveLength(0);
+      handle.sendMessage({ text: 'unasked' });
+      const [warning, ...more] = warnings(await until(handle, 'result'));
+      expect(more).toHaveLength(0);
+      expect(warning.message).toContain('ran "b.txt" without asking');
+      handle.close();
+    });
+
+    it('stays quiet about a read-only command in Read-safe mode, which would have allowed it', async () => {
+      for (const [permissionMode, expected] of [['readSafe', 0], ['default', 1]] as const) {
+        const handle = await adapter().start(config({ permissionMode }));
+        await until(handle, 'system_init');
+        handle.sendMessage({ text: 'unasked-read' });
+        expect(warnings(await until(handle, 'result'))).toHaveLength(expected);
+        handle.close();
+      }
+    });
+
+    it('stays quiet when Grove would have allowed everything it did', async () => {
+      const handle = await adapter().start(config({ permissionMode: 'acceptEdits', toolAllowRules: [{ pattern: 'shell' }] }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      expect(warnings(await until(handle, 'result'))).toHaveLength(0);
+      handle.close();
+    });
+
+    const adapter = () => new AcpAdapter(def());
   });
 });

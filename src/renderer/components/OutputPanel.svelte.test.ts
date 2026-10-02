@@ -94,6 +94,24 @@ describe('OutputPanel: git identity notice', () => {
   });
 });
 
+describe('OutputPanel: sign-in failure', () => {
+  it('links to the Agents settings under a sign-in error, and only there', async () => {
+    store.activeSessionId = SID;
+    messageStore.messagesBySession = { [SID]: [
+      { kind: 'error', id: 'e1', text: 'Claude couldn\'t sign in.', auth: true },
+      { kind: 'error', id: 'e2', text: 'Something else broke' },
+    ] };
+    const { getAllByRole } = render(OutputPanel, { sessionId: SID });
+    const links = getAllByRole('button', { name: 'Open Settings → Agents' });
+    expect(links).toHaveLength(1);
+    await fireEvent.click(links[0]);
+    expect(settingsStore.panelOpen).toBe(true);
+    expect(settingsStore.requestedSection).toBe('agents');
+    settingsStore.panelOpen = false;
+    settingsStore.requestedSection = null;
+  });
+});
+
 describe('OutputPanel — Ctrl+F search gating (fix C)', () => {
   it('opens search when this pane is the active session', async () => {
     store.activeSessionId = SID;

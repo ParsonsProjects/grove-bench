@@ -2,6 +2,8 @@ import type { AgentEvent } from '../../shared/types.js';
 
 export interface BackgroundTask {
   taskId: string;
+  /** The tool call that started it (for a subagent, its Agent call). */
+  toolUseId?: string;
   description: string;
   taskType?: string;
   summary?: string;
@@ -32,6 +34,12 @@ class BackgroundTaskStore {
     return Object.values(this.tasksBySession[sessionId] ?? {});
   }
 
+  /** Whether the task a tool call started is still running: a background
+   *  subagent works on after its Agent call has returned. */
+  isRunningFor(sessionId: string, toolUseId: string): boolean {
+    return this.get(sessionId).some((t) => t.toolUseId === toolUseId && t.status === 'running');
+  }
+
   /** Remove a completed/failed/stopped background task from the list */
   remove(sessionId: string, taskId: string): void {
     const tasks = this.tasksBySession[sessionId];
@@ -44,6 +52,7 @@ class BackgroundTaskStore {
     const tasks = this.tasksBySession[sessionId] ?? {};
     tasks[event.taskId] = {
       taskId: event.taskId,
+      toolUseId: event.toolUseId,
       description: event.description,
       taskType: event.taskType,
       status: 'running',
@@ -110,6 +119,7 @@ class BackgroundTaskStore {
     const existing = tasks[event.taskId];
     tasks[event.taskId] = {
       ...(existing ?? { taskId: event.taskId, status: 'running' }),
+      toolUseId: event.toolUseId ?? existing?.toolUseId,
       description: event.description,
       summary: event.summary,
       lastToolName: event.lastToolName,

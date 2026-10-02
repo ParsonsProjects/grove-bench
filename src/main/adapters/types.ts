@@ -5,7 +5,7 @@
  * plugged into Grove Bench by implementing the AgentAdapter interface.
  */
 import type { ToolView } from '../../shared/tool-view.js';
-import type { AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
+import type { AgentStage, AgentEvent, MemoryEntry, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -193,6 +193,16 @@ export type AdapterEvent =
   | Exclude<AgentEvent, { type: 'tool_result' }>
   | (Omit<Extract<AgentEvent, { type: 'tool_result' }>, 'images'> & { imageData?: ToolImageData[] });
 
+/** Thrown by a handle's `events` when the agent no longer has the conversation
+ *  it was asked to resume (e.g. its transcript was deleted). The session
+ *  manager then starts a new conversation instead. */
+export class ResumeNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ResumeNotFoundError';
+  }
+}
+
 /** Represents a running agent query. Returned by adapter.start(). */
 export interface AgentQueryHandle {
   /** Async iterable of events from the agent */
@@ -255,6 +265,9 @@ export interface AdapterPrerequisiteStatus {
   available: boolean;
   path?: string;
   authenticated?: boolean;
+  /** Signing in can't be checked before a session starts, so `authenticated`
+   *  only means nothing says it is missing. */
+  authUnchecked?: boolean;
   authMethod?: string;
   email?: string;
   errorMessage?: string;
@@ -334,6 +347,11 @@ export interface AgentAdapter {
   /** Set when the provider accepts an API key entered in the app. */
   readonly apiKey?: ApiKeyDescriptor;
 
+  /** Ask the provider whether `key` works, before it is saved: true when it
+   *  is accepted, false when it is refused, null when that couldn't be told
+   *  (offline, a custom endpoint). Omit to save keys unchecked. */
+  verifyApiKey?(key: string): Promise<boolean | null>;
+
   /** Set when the user can sign in with the provider's CLI instead. */
   readonly cliSignIn?: CliSignInDescriptor;
 
@@ -341,6 +359,10 @@ export interface AgentAdapter {
    *  compaction, commit messages, skill suggestions. Used unless the user
    *  picks another in Settings > Agents. Omit to use the agent's own default. */
   readonly backgroundModel?: string;
+
+  /** 'alpha' while Grove Bench's support for the agent is still being
+   *  tested: it is offered only once the user turns it on (AgentStage). */
+  readonly stage?: AgentStage;
 
   /** Release any adapter-level resources (open connections, child processes).
    *  Called during app shutdown. Optional — stateless adapters can omit. */

@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
-import { CONTROL_IDS, PERMISSION_MODES } from '../shared/types.js';
+import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
@@ -12,9 +12,11 @@ import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import { adapterRegistry } from './adapters/index.js';
-import type { AgentAdapter, AgentQueryHandle } from './adapters/types.js';
+import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
+import { ResumeNotFoundError } from './adapters/types.js';
 import { getGitIdentity } from './git.js';
-import { findRewindForkPoint, isAuthFailure } from './agent-utils.js';
+import { findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
+import { markApiKeyRejected } from './credentials.js';
 import { CheckpointManager } from './checkpoints.js';
 import type { EventSearchHit } from './event-search.js';
 import { noGitCheckpoints } from './no-git-checkpoints.js';
@@ -44,6 +46,14 @@ export type { SessionCompletionResult } from './session-types.js';
 // limit of 10 and trigger a MaxListenersExceededWarning.  Raise the cap so the
 // warning doesn't fire under normal multi-session use.
 process.setMaxListeners(50);
+
+/** The error event for an agent that failed to run: the adapter's sign-in
+ *  help when the failure reads as a sign-in problem, else the error itself. */
+function failureEvent(adapter: AgentAdapter, detail: string): AgentEvent {
+  return isAuthFailure(detail)
+    ? { type: 'error', message: adapter.authErrorMessage, auth: true }
+    : { type: 'error', message: detail };
+}
 
 class AgentSessionManager {
   private sessions = new Map<string, ManagedSession>();
@@ -83,6 +93,11 @@ class AgentSessionManager {
   private createEmitter(session: ManagedSession): Emit {
     const id = session.id;
     const emit = (event: AgentEvent) => {
+      // The provider refused the credentials. A saved key is used instead of
+      // any other sign-in, so when one is saved it is the bad one: flag it so
+      // new conversations ask for another.
+      if (event.type === 'error' && event.keyRejected) markApiKeyRejected(session.adapter.id);
+
       // Streaming deltas and activity ticks are only useful live: the renderer
       // drops them on replay, search ignores them, and memory extraction never
       // reads them. Keeping them would grow eventHistory and the JSONL log by
@@ -132,6 +147,11 @@ class AgentSessionManager {
     /** Runs in a folder without git (the worktree entry's `noGit`): no
      *  checkpoints and no commit identity. */
     noGit?: boolean;
+    /** Hands over events already shown while the conversation was being set
+     *  up ("Creating worktree…"), to start its history with. Called once, in
+     *  the same tick the session becomes visible, so the caller can drop its
+     *  own copy then and a history read never sees them twice. */
+    adoptSetupEvents?: () => AgentEvent[];
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -221,11 +241,16 @@ class AgentSessionManager {
       statusBeforeSleep: null,
       sleepSettled: null,
       turnHandle: null,
+      promptsBeforeInit: null,
     };
 
     this.sessions.set(id, session);
 
     this.events.ensureDir();
+
+    // Keep the setup steps in the history: they were only held until now,
+    // and a pane that loads the history later would otherwise miss them.
+    for (const event of opts.adoptSetupEvents?.() ?? []) this.events.append(session, event);
 
     const emit = this.createEmitter(session);
 
@@ -248,11 +273,7 @@ class AgentSessionManager {
     this.runQuery(session, emit).catch((err) => {
         perfSteps.fail(id, 'agent failed to start');
         console.error(`[runQuery] session=${id} FAILED:`, err);
-        const errMsg = String(err.message || err);
-        const isAuthError = isAuthFailure(errMsg);
-        emit({ type: 'error', message: isAuthError
-          ? adapter.authErrorMessage
-          : errMsg });
+        emit(failureEvent(adapter, String(err.message || err)));
         session.status = 'error';
         const w = session.window;
         if (!w.isDestroyed()) {
@@ -278,8 +299,9 @@ class AgentSessionManager {
   }
 
   /** Relaunch a query loop after a stop/restart that arrived during startup.
-   *  Clears the startup guard first so the new run isn't itself deferred. */
-  private relaunchQuery(session: ManagedSession): void {
+   *  Clears the startup guard first so the new run isn't itself deferred.
+   *  `resend` goes to the new query first (see runQuery). */
+  private relaunchQuery(session: ManagedSession, resend: UserMessage[] = []): void {
     session.isStartingQuery = false;
     session.restartRequested = false;
     // The stop that triggered this relaunch is now being consumed by starting a
@@ -287,19 +309,23 @@ class AgentSessionManager {
     // the next natural completion of the new run.
     session.stoppedByUser = false;
     const emit = session.emit ?? this.createEmitter(session);
-    this.runQuery(session, emit).catch((err) => {
+    this.runQuery(session, emit, resend).catch((err) => {
       perfSteps.fail(session.id, 'agent failed to start');
       console.error(`[runQuery] session=${session.id} FAILED on restart:`, err);
-      const errMsg = String(err?.message || err);
-      const isAuthError = isAuthFailure(errMsg);
-      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
+      if (!session.window.isDestroyed()) {
+        session.window.webContents.send(IPC.SESSION_STATUS, session.id, 'error');
+      }
     });
   }
 
+  /** `resend`: prompts to send the new query before any other, carried over
+   *  from a run whose conversation turned out to be gone. */
   private async runQuery(
     session: ManagedSession,
     emit: (event: AgentEvent) => void,
+    resend: UserMessage[] = [],
   ) {
     const { id, abortController } = session;
 
@@ -481,6 +507,17 @@ class AgentSessionManager {
     perfSteps.finish(id, 'agent start');
     session.queryHandle = handle;
     session.isStartingQuery = false;
+    // Only a resumed conversation can turn out to be missing.
+    session.promptsBeforeInit = resumingProviderSession ? { handle, prompts: [] } : null;
+    // Before resolving queryReady below, so they go ahead of sends waiting on it.
+    for (const prompt of resend) {
+      session.turnHandle = handle;
+      try {
+        handle.sendMessage(prompt);
+      } catch (e) {
+        logger.warn(`[runQuery] session=${id} failed to resend a prompt:`, e);
+      }
+    }
     // The truncated resume (if any) has been consumed by this start — later
     // restarts must resume the forked conversation normally.
     if (resumeAtUuid && session.pendingResumeAt === resumeAtUuid) {
@@ -514,9 +551,10 @@ class AgentSessionManager {
         if (event.type === 'user_message') continue;
 
         // A reply means a turn is running, including ones the agent starts
-        // itself (e.g. when a background task finishes).
-        if (event.type === 'assistant_text' || event.type === 'assistant_tool_use'
-          || event.type === 'thinking' || event.type === 'partial_text') {
+        // itself (e.g. when a background task finishes). A subagent's work
+        // doesn't: a background one carries on after the turn ends.
+        if ((event.type === 'assistant_text' || event.type === 'assistant_tool_use'
+          || event.type === 'thinking' || event.type === 'partial_text') && !subagentParent(event)) {
           session.turnHandle = handle;
         }
 
@@ -524,6 +562,7 @@ class AgentSessionManager {
         if (event.type === 'system_init') {
           session.status = 'running';
           session.providerSessionId = handle.getSessionId();
+          if (session.promptsBeforeInit?.handle === handle) session.promptsBeforeInit = null;
           // Remember reported skills so the disabled-skills allowlist can
           // include plugin skills the on-disk scan can't see.
           if (event.skills && event.skills.length > 0) {
@@ -629,6 +668,9 @@ class AgentSessionManager {
       if (err?.message === 'Operation aborted' || abortController.signal.aborted || session.interrupting || session.destroying || session.queryHandle !== handle) {
         session.interrupting = false;
         logger.debug(`[runQuery] session=${id} event loop aborted (expected)`);
+      } else if (err instanceof ResumeNotFoundError && resumingProviderSession) {
+        this.replaceMissingConversation(session, handle, emit, err.message);
+        return;
       } else {
         const errMsg = err?.message || String(err);
         const stderr = err?.stderr || err?.cause?.stderr || '';
@@ -638,7 +680,7 @@ class AgentSessionManager {
 
         const isAuthError = isAuthFailure(detail);
         if (isAuthError) {
-          emit({ type: 'error', message: session.adapter.authErrorMessage });
+          emit(failureEvent(session.adapter, detail));
         } else {
           emit({ type: 'error', message: detail.slice(0, 500) });
         }
@@ -704,6 +746,43 @@ class AgentSessionManager {
     }).catch(err => {
       logger.warn(`[memory-autosave] Auto-save failed for session ${id}: ${err}`);
     });
+  }
+
+  /**
+   * The conversation `handle` resumed is gone from the agent (its transcript
+   * was deleted or moved). Forget it, or every restart would resume it and
+   * fail the same way, and start a new conversation in its place. Reporting
+   * the agent stopped instead would make the renderer resume the same missing
+   * conversation again, in a loop. The new run can't end up here: it has no
+   * provider session to resume.
+   */
+  private replaceMissingConversation(session: ManagedSession, handle: AgentQueryHandle, emit: Emit, reason: string): void {
+    const { id } = session;
+    logger.warn(`[runQuery] session=${id} provider session ${session.providerSessionId} not found, starting a new conversation: ${reason}`);
+    session.providerSessionId = null;
+    session.pendingResumeAt = null;
+    worktreeManager.saveProviderSessionId(id, '').catch(() => { /* non-fatal */ });
+
+    // Prompts sent while it was starting went nowhere; the new one gets them.
+    const unanswered = session.promptsBeforeInit?.handle === handle ? session.promptsBeforeInit.prompts : [];
+    session.promptsBeforeInit = null;
+    if (session.turnHandle === handle) session.turnHandle = null;
+    session.queryHandle = null;
+    try { handle.close(); } catch { /* may already be closed */ }
+
+    emit({
+      type: 'status',
+      level: 'warning',
+      newConversation: true,
+      message: `${session.adapter.displayName} couldn't find this conversation any more, so it starts a new one. The thread above stays, but the agent won't remember it.`,
+    });
+    // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
+    if (!session.resolveQueryReady) {
+      session.queryReady = new Promise<void>((resolve) => {
+        session.resolveQueryReady = resolve;
+      });
+    }
+    this.relaunchQuery(session, unanswered);
   }
 
   /**
@@ -834,10 +913,9 @@ class AgentSessionManager {
     logger.debug(`[sendMessage] session=${id} sending to adapter, providerSessionId=${sessionId || '(not yet initialized)'}${images?.length ? ` with ${images.length} image(s)` : ''}`);
     try {
       session.turnHandle = queryHandle;
-      queryHandle.sendMessage({
-        text: content,
-        images: images,
-      });
+      const message: UserMessage = { text: content, images };
+      queryHandle.sendMessage(message);
+      if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
       logger.debug(`[sendMessage] session=${id} sent successfully`);
       // Update last-active timestamp (fire-and-forget)
       worktreeManager.updateLastActive(id).catch(() => {});
@@ -985,15 +1063,20 @@ class AgentSessionManager {
     return { descriptors, values };
   }
 
-  /** Controls for a session; an unknown id (e.g. a stopped session that was
-   *  never restored) falls back to the default adapter's descriptors so the
+  /** Controls for a session. One that isn't running (asleep, closed, or never
+   *  restored) gets the descriptors of the agent and model its manifest
+   *  records, so a Gemini CLI conversation doesn't show Claude Code's
+   *  controls. Only an unknown id falls back to the default agent, so the
    *  status bar still has something to render. */
-  getControls(id: string): SessionControls {
-    const session = this.sessions.get(id);
-    if (!session) {
-      return { descriptors: adapterRegistry.getDefault().getControls(null), values: {} };
-    }
-    return this.reconcileControls(session);
+  async getControls(id: string): Promise<SessionControls> {
+    const live = this.sessions.get(id);
+    if (live) return this.reconcileControls(live);
+    const { adapterType, model } = await worktreeManager.getAgentAndModel(id).catch(() => ({ adapterType: undefined, model: undefined }));
+    // It may have started while the manifest was read.
+    const started = this.sessions.get(id);
+    if (started) return this.reconcileControls(started);
+    const adapter = (adapterType ? adapterRegistry.get(adapterType) : undefined) ?? adapterRegistry.getDefault();
+    return { descriptors: adapter.getControls(model ?? null), values: {} };
   }
 
   async setControl(id: string, controlId: string, value: string): Promise<void> {
@@ -1244,11 +1327,7 @@ class AgentSessionManager {
     // Start a new query loop — the session stays in the map so sendMessage works
     this.runQuery(session, emit).catch((err) => {
       console.error(`[runQuery] session=${id} FAILED after stop:`, err);
-      const errMsg = String(err.message || err);
-      const isAuthError = isAuthFailure(errMsg);
-      emit({ type: 'error', message: isAuthError
-        ? session.adapter.authErrorMessage
-        : errMsg });
+      emit(failureEvent(session.adapter, String(err.message || err)));
     });
   }
 
@@ -1327,9 +1406,7 @@ class AgentSessionManager {
     })().catch((err) => {
       perfSteps.fail(id, 'agent failed to start');
       console.error(`[runQuery] session=${id} FAILED on wake:`, err);
-      const errMsg = String(err?.message || err);
-      const isAuthError = isAuthFailure(errMsg);
-      emit({ type: 'error', message: isAuthError ? session.adapter.authErrorMessage : errMsg });
+      emit(failureEvent(session.adapter, String(err?.message || err)));
       session.status = 'error';
       if (!session.window.isDestroyed()) {
         session.window.webContents.send(IPC.SESSION_STATUS, id, 'error');
@@ -1627,11 +1704,16 @@ class AgentSessionManager {
     }
 
     session.emit?.({ type: 'rewind', toMessageId: userMessageId, conversationOnly: options?.conversationOnly });
-    if (forkPoint && !canFork) {
+    // Starting over below turns the agent could fork from: mark where the new
+    // conversation begins, so a later rewind can't fork into the old one.
+    if (!(forkPoint && canFork) && lastTurnUuid(session.eventHistory)) {
       session.emit?.({
         type: 'status',
         level: 'warning',
-        message: `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
+        newConversation: true,
+        message: canFork
+          ? `${session.adapter.displayName} starts a new conversation from here. The thread above stays, but the agent won't remember it.`
+          : `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
       });
     }
 
