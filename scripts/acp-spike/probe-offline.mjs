@@ -139,6 +139,7 @@ try {
     const req = backend().findLast((q) => q.body.tools?.length);
     report.check('key reaches OpenRouter via {env:...}', req.auth === `Bearer ${KEY}`);
     report.note('tools offered', req.body.tools.map((t) => t.function.name).join(', '));
+    report.check('no task tool, so no subagents', !req.body.tools.some((t) => t.function.name === 'task'));
     report.note('extra requests per turn', `${backend().slice(before).filter((q) => !q.body.tools?.length).length} without tools (title generation)`);
 
     // C. allow_always sticks for the next turn
@@ -336,6 +337,34 @@ try {
     const slowReq = fake.requests.slice(mark).find((q) => q.body.tools?.length);
     report.check('Stop closes the request to the provider', slowEnd.stopReason === 'cancelled' && !!slowReq?.aborted);
   } finally { await J.close(); }
+
+  // ─── K. A project's own opencode.json against Grove's settings ───
+  // Grove's agent-level rules win over a project's top-level and agent-level
+  // ones, except a rule a project puts after them: OpenCode lets the last
+  // matching rule win, and a merged key keeps the project's position.
+  const project = async (name, repoConfig) => {
+    const K = boot(name);
+    try {
+      fs.writeFileSync(path.join(K.home.work, 'opencode.json'), JSON.stringify(repoConfig));
+      const { session } = await handshake(K.conn, K.home.work);
+      steps = [
+        { toolCalls: [{ name: 'write', args: { filePath: path.join(K.home.work, 'a.txt'), content: 'a\n' } }] },
+        { toolCalls: [{ name: 'bash', args: { command: 'echo hi', description: 'hi' } }] },
+        { text: 'ok' },
+      ];
+      const mark = fake.requests.length;
+      await prompt(K, session.sessionId, 'Write a.txt, then say hi.');
+      const tools = fake.requests.slice(mark).find((q) => q.body.tools?.length).body.tools.map((t) => t.function.name);
+      return { asked: K.perms.map((p) => p.toolCall.kind).join(), task: tools.includes('task') };
+    } finally { await K.close(); }
+  };
+  const loose = await project('project-allow', {
+    permission: { '*': 'allow', bash: 'allow', task: 'allow' },
+    agent: { build: { permission: { edit: 'allow', bash: 'allow', task: 'allow' } } },
+  });
+  report.check('a project allowing everything still asks, and gets no task tool', loose.asked === 'edit,execute' && !loose.task, `asked ${loose.asked || 'nothing'}, task ${loose.task}`);
+  const after = await project('project-allow-after', { agent: { build: { permission: { bash: 'allow', '*': 'allow' } } } });
+  report.check('a project "*": "allow" after bash still skips the command prompt (known gap)', after.asked === 'edit', `asked ${after.asked || 'nothing'}`);
 
   if (SAVE) {
     const out = path.join(import.meta.dirname, 'fixtures');

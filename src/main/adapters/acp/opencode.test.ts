@@ -16,10 +16,21 @@ describe('the OpenCode preset', () => {
 });
 
 describe('openCodeEnv', () => {
-  it('makes edits, commands and fetches ask, and takes edits away from plan mode', () => {
+  it('makes edits, commands and fetches ask, turns off subagents, and takes edits away from plan mode', () => {
     const c = config(openCodeEnv({}, { savedKey: false }));
-    expect(c.permission).toEqual({ edit: 'ask', bash: 'ask', webfetch: 'ask' });
-    expect(c.agent.plan.permission).toEqual({ edit: 'deny' });
+    const asking = { edit: 'ask', bash: 'ask', webfetch: 'ask', task: 'deny' };
+    expect(c.permission).toEqual(asking);
+    expect(c.agent.build.permission).toEqual(asking);
+    expect(c.agent.plan.permission).toEqual({ ...asking, edit: 'deny' });
+  });
+
+  it('puts its own rules after the user\'s, since OpenCode lets the last matching rule win', () => {
+    const user = { permission: { '*': 'allow', read: 'allow' }, agent: { build: { permission: { '*': 'allow', bash: 'allow' } } } };
+    const c = config(openCodeEnv({ OPENCODE_CONFIG_CONTENT: JSON.stringify(user) }, { savedKey: false }));
+    expect(Object.entries(c.permission)).toEqual([
+      ['*', 'allow'], ['read', 'allow'], ['edit', 'ask'], ['bash', 'ask'], ['webfetch', 'ask'], ['task', 'deny'],
+    ]);
+    expect(Object.keys(c.agent.build.permission)).toEqual(['*', 'edit', 'bash', 'webfetch', 'task']);
   });
 
   it('gives each process its own server password', () => {
@@ -41,14 +52,19 @@ describe('openCodeEnv', () => {
       model: 'anthropic/claude-x',
       mcp: { docs: { type: 'remote', url: 'https://example.com' } },
       permission: { edit: 'allow', bash: { 'git *': 'allow' }, external_directory: 'ask' },
-      agent: { build: { temperature: 0.2 }, plan: { model: 'm', permission: { bash: 'allow' } } },
+      agent: { build: { temperature: 0.2 }, plan: { model: 'm', permission: { bash: 'allow', read: 'deny' } }, review: { model: 'r' } },
     };
     const c = config(openCodeEnv({ OPENCODE_CONFIG_CONTENT: JSON.stringify(user) }, { savedKey: true }));
     expect(c.model).toBe('anthropic/claude-x');
     expect(c.small_model).toBe(OPENCODE_DEFAULT_MODEL);
     expect(c.mcp).toEqual(user.mcp);
-    expect(c.permission).toEqual({ edit: 'ask', bash: 'ask', webfetch: 'ask', external_directory: 'ask' });
-    expect(c.agent).toEqual({ build: { temperature: 0.2 }, plan: { model: 'm', permission: { bash: 'allow', edit: 'deny' } } });
+    const asking = { edit: 'ask', bash: 'ask', webfetch: 'ask', task: 'deny' };
+    expect(c.permission).toEqual({ ...asking, external_directory: 'ask' });
+    expect(c.agent).toEqual({
+      build: { temperature: 0.2, permission: asking },
+      plan: { model: 'm', permission: { ...asking, read: 'deny', edit: 'deny' } },
+      review: { model: 'r' },
+    });
   });
 
   it('ignores inline config that isn\'t a JSON object', () => {

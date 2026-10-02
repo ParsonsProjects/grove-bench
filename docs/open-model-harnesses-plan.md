@@ -76,7 +76,7 @@ problems below; each is a separate commit with tests.
 | A new worktree conversation names its agent | The create handler returned no `agentType` for new and existing-branch worktrees, so a Gemini CLI or Copilot CLI conversation showed Claude Code's models and controls until restart. |
 | A sleeping or closed conversation shows its own agent's controls | `getControls` fell back to the default agent for any conversation that wasn't running. It now reads the agent and model from the manifest. |
 | Warning when an agent acts without asking | Grove's modes and tool rules act on permission requests. An agent that doesn't send them (OpenCode's defaults, a YOLO mode) edits and runs commands while Grove shows Ask, and deny rules never fire. The thread now says so once, naming the mode or the rule it went past. |
-| OpenCode preset (`adapters/acp/opencode.ts`, `presets.ts`) | Runs `opencode acp` with three settings merged over the user's: edits, commands and fetches **ask** (OpenCode's default is to just do them); the plan agent **can't edit** (OpenCode's plan mode otherwise lets edits through after a prompt); and a random **`OPENCODE_SERVER_PASSWORD`** per process (the local API otherwise lets any program on the computer use it and read saved provider keys). An OpenRouter key saved in Grove is checked against `GET /api/v1/key` [17], passed in `OPENROUTER_API_KEY`, and makes new conversations start on DeepSeek V4.1 Flash. |
+| OpenCode preset (`adapters/acp/opencode.ts`, `presets.ts`) | Runs `opencode acp` with four settings merged over the user's: edits, commands and fetches **ask** (OpenCode's default is to just do them), set at the top level and on the `build` and `plan` agents, after the user's own rules; **no subagents** (`task: deny`); the plan agent **can't edit** (OpenCode's plan mode otherwise lets edits through after a prompt); and a random **`OPENCODE_SERVER_PASSWORD`** per process (the local API otherwise lets any program on the computer use it and read saved provider keys). An OpenRouter key saved in Grove is checked against `GET /api/v1/key` [17], passed in `OPENROUTER_API_KEY`, and makes new conversations start on DeepSeek V4.1 Flash. |
 
 Checked against real OpenCode 1.18.33 with a fake OpenRouter, through the
 real preset and adapter: it starts on DeepSeek V4.1 Flash with the saved key,
@@ -88,7 +88,7 @@ server answers 401 without the password, and plan mode leaves the file alone.
 
 `scripts/acp-spike/probe-offline.mjs` runs `opencode acp` 1.18.33 against a
 local fake of OpenRouter's chat completions API, so each check runs without
-a network or a key. It passes 41 of 41 checks; the trimmed recordings are in
+a network or a key. It passes 44 of 44 checks; the trimmed recordings are in
 `scripts/acp-spike/fixtures/`. Re-run it before bumping the OpenCode version
 the spike pins.
 
@@ -98,6 +98,8 @@ the spike pins.
 | Model per session? | Yes. `session/set_config_option` switches live; an unknown id returns `-32602`. | Model picker works; effort options follow the model. |
 | Effort per model? | Yes: Flash offers low / high / max, V4 Pro offers high / xhigh. | Shown as a control. |
 | Permission prompts? | With `ask`, write, edit and every command ask; options `once` / `always` / `reject`; a write's request carries a full diff. **By default nothing asks.** | Preset sets `ask`; warning for agents that don't. |
+| A project's own `opencode.json`? | Its agent-level permissions win over the top level, so `agent.build.permission.edit: "allow"` undoes a top-level `ask`. When several rules match, the last one wins, and a key merged from two configs keeps the project's position. With Grove's rules on the `build` and `plan` agents, a project that allows everything still gets asked. **One gap:** a project `agent.build.permission` of `{ "bash": "allow", "*": "allow" }` still runs commands without asking. | Preset sets the agent-level rules; the "without asking" warning covers the gap. |
+| Subagents? | The `task` tool runs a subagent in a child session. Its permission requests are **not sent over ACP**, so a subagent that asks hangs the turn. `task: "deny"` removes the tool, even against a project's `allow`. | Preset denies `task`. |
 | What does rejecting do? | The tool call fails and **the turn ends**. | Known; a deny can't carry a message to the agent. |
 | Plan mode? | `mode: plan` alone still lets edits through. With `agent.plan.permission.edit: "deny"` the edit tools are removed. | Preset sets the deny. |
 | Stop during a prompt? | `session/cancel` gives `stopReason: "cancelled"` and closes the request to the provider. During a retry wait it reports `end_turn`. | The session manager shows any stop the user asked for as a clean stop, whatever the agent reports. |

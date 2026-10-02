@@ -66,13 +66,17 @@ export function isolatedEnv(home, extra = {}) {
   };
 }
 
-/** Grove-style config: every risky tool asks, plan mode denies edits. */
+/** The permissions openCodeEnv (src/main/adapters/acp/opencode.ts) sets. */
+const GROVE_PERMISSION = { edit: 'ask', bash: 'ask', webfetch: 'ask', task: 'deny' };
+
+/** Grove-style config: every risky tool asks, subagents are off, plan mode
+ *  denies edits. */
 export function groveConfig({ model, baseURL }) {
   return {
     model: `openrouter/${model}`,
     small_model: `openrouter/${model}`,
-    permission: { edit: 'ask', bash: 'ask', webfetch: 'ask' },
-    agent: { plan: { permission: { edit: 'deny' } } },
+    permission: GROVE_PERMISSION,
+    agent: { build: { permission: GROVE_PERMISSION }, plan: { permission: { ...GROVE_PERMISSION, edit: 'deny' } } },
     provider: { openrouter: { options: { apiKey: '{env:OPENROUTER_API_KEY}', ...(baseURL ? { baseURL } : {}) } } },
     autoupdate: false,
     share: 'disabled',
