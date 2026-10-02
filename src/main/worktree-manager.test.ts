@@ -107,6 +107,19 @@ describe('saveAdapterType / getAdapterType', () => {
     expect(await manager.getAdapterType('missing')).toBeUndefined();
   });
 
+  it('reads the agent and model together, in one read of the manifest', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
+      'wt-new': { repoPath: '/repo', branch: 'a', createdAt: 1, adapterType: 'codex', model: 'o4' },
+      'wt-old': { repoPath: '/repo', branch: 'b', createdAt: 2 },
+    }));
+    mockFs.readFile.mockClear();
+
+    expect(await manager.getAgentAndModel('wt-new')).toEqual({ adapterType: 'codex', model: 'o4' });
+    expect(mockFs.readFile).toHaveBeenCalledTimes(1);
+    expect(await manager.getAgentAndModel('wt-old')).toEqual({ adapterType: 'claude-code', model: undefined });
+    expect(await manager.getAgentAndModel('missing')).toEqual({});
+  });
+
   it('includes the agent when a stopped session is rebuilt from the manifest', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({
       'wt-codex': { repoPath: '/repo', branch: 'a', createdAt: 1, direct: true, adapterType: 'codex' },

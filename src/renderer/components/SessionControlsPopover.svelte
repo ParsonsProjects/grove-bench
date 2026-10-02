@@ -10,15 +10,18 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { draftStore } from '../stores/draft.svelte.js';
+  import { offeredForNew } from '../stores/agents.svelte.js';
+  import { settingsStore } from '../stores/settings.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
   import { formatResetTime } from '../lib/reset-time.js';
   import { toneClass } from '../lib/control-tones.js';
   // The same scale as the context meter, so the two read alike.
   import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
-  import { CONTROL_SHORTCUTS, type ControlOption } from '../../shared/types.js';
+  import { CONTROL_SHORTCUTS, type AgentSummary, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import PixelMeter from './PixelMeter.svelte';
+  import AlphaBadge from './AlphaBadge.svelte';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
 
@@ -30,13 +33,16 @@
   let hovered = $state<ControlOption | null>(null);
   $effect(() => { if (!open) hovered = null; });
   let rootRef = $state<HTMLDivElement | null>(null);
-  let adapters = $state<Array<{ id: string; displayName: string }>>([]);
+  let adapters = $state<Array<Pick<AgentSummary, 'id' | 'displayName' | 'stage'>>>([]);
 
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
   // Sessions always carry an agentType; the first registered adapter is the
   // default for anything that predates it (demo data, old manifests).
   let agentType = $derived(session?.agentType || adapters[0]?.id || '');
   let agentName = $derived(adapters.find((a) => a.id === agentType)?.displayName || agentType || 'Agent');
+  /** The Agent column: this conversation's agent, and the ones a new
+   *  conversation can start with (alpha agents once turned on in Settings). */
+  let agentChoices = $derived(adapters.filter((a) => a.id === agentType || offeredForNew(a, settingsStore.current.enabledAlphaAgents)));
   let model = $derived(messageStore.getModel(sessionId));
   let modelLabel = $derived(modelOptions.find((o) => o.value === model)?.label ?? model);
   let controls = $derived(messageStore.getControlDescriptors(sessionId));
@@ -103,7 +109,7 @@
     window.addEventListener('click', handleClickOutside);
     window.addEventListener('keydown', handleKeydown, true);
     window.groveBench.listAdapters().then((list) => {
-      adapters = list.map((a) => ({ id: a.id, displayName: a.displayName }));
+      adapters = list.map((a) => ({ id: a.id, displayName: a.displayName, stage: a.stage }));
     }).catch(() => {});
   });
 
@@ -143,7 +149,7 @@
         <!-- Agent + plan usage -->
         <div class="min-w-44">
           <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">Agent</div>
-          {#each adapters.length > 0 ? adapters : [{ id: agentType, displayName: agentName }] as a (a.id)}
+          {#each agentChoices.length > 0 ? agentChoices : [{ id: agentType, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === agentType}
             <button
               onclick={() => { if (!current) startWithAgent(a.id); }}
@@ -152,7 +158,10 @@
               title={current ? 'This conversation\'s agent' : `Start a new conversation in this project with ${a.displayName}. This one keeps its agent.`}
               aria-current={current ? 'true' : undefined}
             >
-              {a.displayName}
+              <span>
+                {a.displayName}
+                {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
+              </span>
               {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">new ↗</span>{/if}
             </button>
           {/each}

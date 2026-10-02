@@ -6,6 +6,7 @@ import DraftAgentControl from './DraftAgentControl.svelte';
 import { draftStore } from '../stores/draft.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { agentsStore } from '../stores/agents.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
@@ -77,6 +78,23 @@ describe('DraftAgentControl', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'GPT X' })).toBeInTheDocument());
     expect(draftStore.draft?.agentId).toBe('codex');
     expect(screen.queryByRole('button', { name: 'Opus' })).not.toBeInTheDocument();
+  });
+
+  it('lists an alpha agent, marked Alpha, only once it is turned on', async () => {
+    agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    const dialog = await openPopover();
+    expect(dialog).not.toHaveTextContent('OpenCode');
+    cleanup();
+
+    settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+    try {
+      await openPopover();
+      const button = screen.getByRole('button', { name: /OpenCode/ });
+      expect(button).toHaveTextContent('Alpha');
+      expect(screen.getByRole('button', { name: 'Codex' })).not.toHaveTextContent('Alpha');
+    } finally {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+    }
   });
 
   it('picks a model and a mode', async () => {

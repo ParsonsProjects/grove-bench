@@ -3,6 +3,8 @@
 //   default  - normal session with modes and a model config option
 //   auth     - session/new answers auth_required
 //   nohttp   - no HTTP MCP support
+// Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
+// 'echo', 'mcp', 'mcp-call'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -67,6 +69,29 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow', kind: 'execute', title: 'Sleep', status: 'in_progress', rawInput: { command: 'sleep 100' } });
     await new Promise((resolve) => { cancelRequested = resolve; });
     return { stopReason: 'cancelled' };
+  }
+  if (text === 'env' || text.endsWith('\n\nenv')) {
+    // What the adapter put in this process's environment.
+    const env = { key: process.env.FAKE_KEY_VAR ?? null, spawn: process.env.FAKE_SPAWN ?? null };
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(env) } });
+    return { stopReason: 'end_turn' };
+  }
+  if (text === 'unasked') {
+    // Like OpenCode with its default permissions: edits and runs commands
+    // without asking the client first.
+    update(sid, { sessionUpdate: 'tool_call', toolCallId: 'u1', kind: 'edit', title: 'write', status: 'pending', rawInput: {} });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'u1', status: 'in_progress', locations: [{ path: path.join(cwd, 'b.txt') }], rawInput: { filePath: path.join(cwd, 'b.txt'), content: 'x' } });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'u1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'Wrote file' } }] });
+    for (const id of ['u2', 'u3']) {
+      update(sid, { sessionUpdate: 'tool_call', toolCallId: id, kind: 'execute', title: 'rm -rf build', status: 'pending', rawInput: { command: 'rm -rf build' } });
+      update(sid, { sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '' } }] });
+    }
+    return { stopReason: 'end_turn' };
+  }
+  if (text === 'unasked-read') {
+    update(sid, { sessionUpdate: 'tool_call', toolCallId: 'r1', kind: 'execute', title: 'git status', status: 'pending', rawInput: { command: 'git status' } });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'r1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'clean' } }] });
+    return { stopReason: 'end_turn' };
   }
   if (text === 'titled-exec') {
     // Like Gemini CLI: a title, no rawInput.
@@ -135,6 +160,11 @@ async function handle(msg) {
   const fail = (code, message) => send({ id, error: { code, message } });
   switch (method) {
     case 'initialize':
+      // As strict as OpenCode: the protocol's Implementation type requires
+      // clientInfo.name and clientInfo.version.
+      if (typeof params?.protocolVersion !== 'number' || typeof params?.clientInfo?.name !== 'string' || typeof params?.clientInfo?.version !== 'string') {
+        return fail(-32602, 'Invalid params');
+      }
       return reply({
         protocolVersion: 1,
         agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, mcpCapabilities: { http: scenario !== 'nohttp' } },
@@ -150,6 +180,8 @@ async function handle(msg) {
       lastMcpServers = params.mcpServers ?? [];
       update(params.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'old question' } });
       update(params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'old answer' } });
+      // A command from the old conversation, run without asking.
+      update(params.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'old1', kind: 'execute', title: 'rm -rf old', status: 'completed', rawInput: { command: 'rm -rf old' } });
       return reply({ modes, configOptions: configOptions() });
     case 'session/set_config_option':
       if (params.configId === 'model') model = params.value;

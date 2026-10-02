@@ -7,12 +7,13 @@
   import * as Select from '$lib/components/ui/select/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
-  import type { CavemanMode, ControlDescriptor, ControlOption } from '../../../shared/types.js';
+  import type { AgentStage, CavemanMode, ControlDescriptor, ControlOption } from '../../../shared/types.js';
   import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../../shared/types.js';
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import ListSetting from './ListSetting.svelte';
   import SettingsGroup from './SettingsGroup.svelte';
+  import AlphaBadge from '../AlphaBadge.svelte';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -26,6 +27,8 @@
   interface AgentGroup {
     id: string;
     displayName: string;
+    /** 'alpha' for an agent that is off until the user turns it on. */
+    stage?: AgentStage;
     models: Array<{ id: string; label: string }>;
     controls: ControlDescriptor[];
     /** The adapter's own model for background tasks, if it declares one. */
@@ -50,6 +53,7 @@
         return {
           id: a.id,
           displayName: a.displayName,
+          stage: a.stage,
           models,
           controls,
           backgroundModel: a.backgroundModel,
@@ -149,106 +153,126 @@
   {@const currentBackground = settingsStore.backgroundModel(agent.id)}
   {@const backgroundChoices = defaultModelChoices(agent.models, currentBackground, agent.backgroundModel ?? null)}
   {@const selectedBackground = currentBackground || DEFAULT_MODEL_VALUE}
-  <SettingsGroup title={agent.displayName} card>
-    <!-- Credentials: asked for when a conversation starts, changed here -->
-    {#if status?.apiKey}
-      <div data-setting="credentials" class="flex flex-col gap-2">
-        <p class="text-xs text-muted-foreground">
-          {#if status.apiKey.saved && status.apiKey.rejected}
-            The saved API key was refused.
-          {:else if status.apiKey.saved}
-            Using the saved API key.
-          {:else if status.authenticated}
-            Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
-          {:else}
-            No credentials found. Add a key, or sign in with the CLI in a terminal.
-          {/if}
-        </p>
-        <ApiKeyField adapterId={agent.id} />
-      </div>
+  <SettingsGroup
+    title={agent.displayName}
+    description={agent.stage === 'alpha' ? `Grove Bench's support for ${agent.displayName} is still being tested, so expect rough edges.` : undefined}
+    card
+  >
+    {#snippet titleAside()}
+      {#if agent.stage === 'alpha'}<AlphaBadge />{/if}
+    {/snippet}
+    {#if agent.stage === 'alpha'}
+      <CheckboxSetting
+        setting="alpha-agents"
+        label="Enable {agent.displayName}"
+        description="Offer {agent.displayName} as an agent for new conversations. Conversations already on it keep working either way."
+        bind:checked={() => settingsStore.isAlphaEnabled(agent.id), (on) => settingsStore.setAlphaEnabled(agent.id, on)}
+      />
     {/if}
 
-    <SettingRow
-      setting="default-model"
-      label="Default model"
-      for="settings-{agent.id}-model"
-      description="New conversations with this agent start on this model. Each conversation can switch from the status bar."
-    >
-      <Select.Root
-        type="single"
-        value={selectedModel}
-        onValueChange={(v) => { if (v) settingsStore.setDefaultModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
-      >
-        <Select.Trigger id="settings-{agent.id}-model" class="w-64" aria-label={`${agent.displayName} default model`}>
-          {modelChoices.find((c) => c.value === selectedModel)?.label ?? selectedModel}
-        </Select.Trigger>
-        <Select.Content>
-          {#each modelChoices as choice (choice.value)}
-            <Select.Item value={choice.value} label={choice.label} />
-          {/each}
-        </Select.Content>
-      </Select.Root>
-    </SettingRow>
+    {#if agent.stage !== 'alpha' || settingsStore.isAlphaEnabled(agent.id)}
+      <!-- Credentials: asked for when a conversation starts, changed here -->
+      {#if status?.apiKey}
+        <div data-setting="credentials" class="flex flex-col gap-2">
+          <p class="text-xs text-muted-foreground">
+            {#if status.apiKey.saved && status.apiKey.rejected}
+              The saved API key was refused.
+            {:else if status.apiKey.saved}
+              Using the saved API key.
+            {:else if status.authUnchecked}
+              No key saved. {agent.displayName} uses its own sign-in if you set one up in a terminal; Grove Bench can only check that when a conversation starts.
+            {:else if status.authenticated}
+              Signed in{status.email ? ` as ${status.email}` : ''}{status.authMethod ? ` via ${status.authMethod}` : ''}.
+            {:else}
+              No credentials found. Add a key, or sign in with the CLI in a terminal.
+            {/if}
+          </p>
+          <ApiKeyField adapterId={agent.id} />
+        </div>
+      {/if}
 
-    <SettingRow
-      setting="background-model"
-      label="Background model"
-      for="settings-{agent.id}-background-model"
-      description="Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's conversations. These run often, so a cheap model is best."
-    >
-      <Select.Root
-        type="single"
-        value={selectedBackground}
-        onValueChange={(v) => { if (v) settingsStore.setBackgroundModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
+      <SettingRow
+        setting="default-model"
+        label="Default model"
+        for="settings-{agent.id}-model"
+        description="New conversations with this agent start on this model. Each conversation can switch from the status bar."
       >
-        <Select.Trigger id="settings-{agent.id}-background-model" class="w-64" aria-label={`${agent.displayName} background model`}>
-          {backgroundChoices.find((c) => c.value === selectedBackground)?.label ?? selectedBackground}
-        </Select.Trigger>
-        <Select.Content>
-          {#each backgroundChoices as choice (choice.value)}
-            <Select.Item value={choice.value} label={choice.label} />
-          {/each}
-        </Select.Content>
-      </Select.Root>
-    </SettingRow>
+        <Select.Root
+          type="single"
+          value={selectedModel}
+          onValueChange={(v) => { if (v) settingsStore.setDefaultModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
+        >
+          <Select.Trigger id="settings-{agent.id}-model" class="w-64" aria-label={`${agent.displayName} default model`}>
+            {modelChoices.find((c) => c.value === selectedModel)?.label ?? selectedModel}
+          </Select.Trigger>
+          <Select.Content>
+            {#each modelChoices as choice (choice.value)}
+              <Select.Item value={choice.value} label={choice.label} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </SettingRow>
 
-    {#if agent.controls.length === 0}
-      <p class="text-xs text-muted-foreground">This agent has no conversation controls to set.</p>
-    {:else}
-      <div data-setting="default-controls" class="flex flex-col gap-5">
-        <p class="text-xs text-muted-foreground">Options depend on the default model above. They apply to new conversations.</p>
-        {#each agent.controls as control (control.id)}
-          {@const value = controlValue(agent.id, control)}
-          {@const selected = control.options.find((o) => o.value === value)}
-          <SettingRow setting="default-{control.id}" label={controlLabel(control)} for="settings-{agent.id}-{control.id}">
-            {#snippet help()}
-              {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
-              {#if CONTROL_SHORTCUTS[control.id]}
-                Each conversation can change it from the status bar ({CONTROL_SHORTCUTS[control.id]}).
-              {/if}
-            {/snippet}
-            <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>
-              <Select.Trigger id="settings-{agent.id}-{control.id}" class="w-48" aria-label={`${agent.displayName} default ${control.label.toLowerCase()}`}>
-                {selected?.label ?? value}
-              </Select.Trigger>
-              <Select.Content>
-                {#each control.options.filter((o) => !o.group) as option (option.value)}
-                  <Select.Item value={option.value} label={option.label} />
-                {/each}
-                {#each optionGroups(control.options) as group (group.name)}
-                  <Select.Separator />
-                  <Select.Group>
-                    <Select.GroupHeading>{group.name}</Select.GroupHeading>
-                    {#each group.options as option (option.value)}
-                      <Select.Item value={option.value} label={option.label} />
-                    {/each}
-                  </Select.Group>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </SettingRow>
-        {/each}
-      </div>
+      <SettingRow
+        setting="background-model"
+        label="Background model"
+        for="settings-{agent.id}-background-model"
+        description="Used for memory notes, memory compaction, commit messages and skill suggestions in this agent's conversations. These run often, so a cheap model is best."
+      >
+        <Select.Root
+          type="single"
+          value={selectedBackground}
+          onValueChange={(v) => { if (v) settingsStore.setBackgroundModel(agent.id, v === DEFAULT_MODEL_VALUE ? '' : v); }}
+        >
+          <Select.Trigger id="settings-{agent.id}-background-model" class="w-64" aria-label={`${agent.displayName} background model`}>
+            {backgroundChoices.find((c) => c.value === selectedBackground)?.label ?? selectedBackground}
+          </Select.Trigger>
+          <Select.Content>
+            {#each backgroundChoices as choice (choice.value)}
+              <Select.Item value={choice.value} label={choice.label} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </SettingRow>
+
+      {#if agent.controls.length === 0}
+        <p class="text-xs text-muted-foreground">This agent has no conversation controls to set.</p>
+      {:else}
+        <div data-setting="default-controls" class="flex flex-col gap-5">
+          <p class="text-xs text-muted-foreground">Options depend on the default model above. They apply to new conversations.</p>
+          {#each agent.controls as control (control.id)}
+            {@const value = controlValue(agent.id, control)}
+            {@const selected = control.options.find((o) => o.value === value)}
+            <SettingRow setting="default-{control.id}" label={controlLabel(control)} for="settings-{agent.id}-{control.id}">
+              {#snippet help()}
+                {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
+                {#if CONTROL_SHORTCUTS[control.id]}
+                  Each conversation can change it from the status bar ({CONTROL_SHORTCUTS[control.id]}).
+                {/if}
+              {/snippet}
+              <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>
+                <Select.Trigger id="settings-{agent.id}-{control.id}" class="w-48" aria-label={`${agent.displayName} default ${control.label.toLowerCase()}`}>
+                  {selected?.label ?? value}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each control.options.filter((o) => !o.group) as option (option.value)}
+                    <Select.Item value={option.value} label={option.label} />
+                  {/each}
+                  {#each optionGroups(control.options) as group (group.name)}
+                    <Select.Separator />
+                    <Select.Group>
+                      <Select.GroupHeading>{group.name}</Select.GroupHeading>
+                      {#each group.options as option (option.value)}
+                        <Select.Item value={option.value} label={option.label} />
+                      {/each}
+                    </Select.Group>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+            </SettingRow>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </SettingsGroup>
 {/each}
@@ -317,7 +341,7 @@
 
 <SettingsGroup
   title="Other agents (ACP)"
-  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI and GitHub Copilot CLI are built in. Restart Grove Bench after a change."
+  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
   card
 >
   <div data-setting="acp-agents" class="flex flex-col gap-2">

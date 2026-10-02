@@ -101,6 +101,7 @@ function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: Agent
     available: agentStatus.available,
     path: agentStatus.path,
     authenticated: agentStatus.authenticated,
+    ...(agentStatus.authUnchecked ? { authUnchecked: true } : {}),
     authMethod: agentStatus.authMethod,
     email: agentStatus.email,
     errorMessage,

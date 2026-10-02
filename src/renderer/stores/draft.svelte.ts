@@ -111,7 +111,9 @@ class DraftStore {
       if (repo !== this.draft.repoPath) this.setRepo(repo);
       if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
     } else {
-      const agentId = opts.agentId || active?.agentType || agentsStore.defaultId || '';
+      // An alpha agent the user hasn't turned on isn't offered, even when the
+      // open conversation runs on it.
+      const agentId = this.offeredAgent(opts.agentId) || this.offeredAgent(active?.agentType) || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
       const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
@@ -211,8 +213,13 @@ class DraftStore {
     if ((group && 'groupId' in group) || hadGroupBranch) this.resetToNewBranch();
   }
 
+  /** `id` when new conversations may use it (agentsStore.isOffered), else ''. */
+  private offeredAgent(id: string | null | undefined): string {
+    return id && agentsStore.isOffered(id, settingsStore.current.enabledAlphaAgents) ? id : '';
+  }
+
   setAgent(agentId: string): void {
-    if (!this.draft || agentId === this.draft.agentId) return;
+    if (!this.draft || agentId === this.draft.agentId || !this.offeredAgent(agentId)) return;
     this.draft.agentId = agentId;
     // Models and controls are the agent's own.
     this.draft.model = '';
@@ -337,6 +344,12 @@ class DraftStore {
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project in the bar below.';
+      return false;
+    }
+    // An alpha agent turned off in Settings while this draft was open.
+    if (d.agentId && !this.offeredAgent(d.agentId)) {
+      const name = agentsStore.get(d.agentId)?.displayName ?? d.agentId;
+      this.error = `${name} is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.`;
       return false;
     }
     this.starting = true;

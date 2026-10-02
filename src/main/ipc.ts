@@ -447,7 +447,11 @@ export function registerHandlers() {
     // Prompts sent to the new tab while setup runs wait for it to finish.
     sessionManager.trackPendingSetup(id, setupPromise, setupAbort);
 
-    return { id, branch };
+    // The agent the session will run on, resolved as sessionManager.createSession
+    // does. The session doesn't exist yet, and without this the renderer files
+    // the conversation under the default agent (its models, controls, usage)
+    // until the app restarts.
+    return { id, branch, agentType: opts.adapterType ?? adapterRegistry.getDefault().id };
   });
 
   ipcMain.handle(IPC.SESSION_RESUME, async (event, id: string, repoPath: string) => {
@@ -1628,6 +1632,7 @@ export function registerHandlers() {
       // capability flag of their own.
       capabilities: { ...a.capabilities, mcpConfig: !!a.listConfiguredMcpServers },
       isDefault: a.id === defaultId,
+      ...(a.stage ? { stage: a.stage } : {}),
       ...(a.backgroundModel ? { backgroundModel: a.backgroundModel } : {}),
       ...(a.mcp ? { mcp: a.mcp } : {}),
       ...(a.generatedFiles?.length ? { generatedFiles: [...a.generatedFiles] } : {}),

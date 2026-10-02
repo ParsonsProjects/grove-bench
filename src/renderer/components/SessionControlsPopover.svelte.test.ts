@@ -7,6 +7,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
+import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 const SID = 's1';
@@ -113,6 +114,34 @@ describe('SessionControlsPopover', () => {
     expect(store.sessions.find((s) => s.id === SID)?.agentType).toBe('claude-code');
     draftStore.discard();
     store.repos = [];
+  });
+
+  describe('an alpha agent', () => {
+    beforeEach(() => {
+      mockGroveBench.listAdapters.mockResolvedValue([
+        { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} },
+        { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' },
+      ]);
+    });
+    afterEach(() => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+    });
+
+    it('is offered for a new conversation only once turned on, marked Alpha', async () => {
+      let dialog = await openPopover();
+      expect(within(dialog).queryByRole('button', { name: /OpenCode/ })).not.toBeInTheDocument();
+      cleanup();
+
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      dialog = await openPopover();
+      expect(within(dialog).getByRole('button', { name: /OpenCode/ })).toHaveTextContent('Alpha');
+    });
+
+    it('still shows as the agent of a conversation that runs on it', async () => {
+      store.sessions = [{ ...store.sessions[0], agentType: 'opencode' }];
+      const dialog = await openPopover();
+      expect(within(dialog).getByRole('button', { name: /OpenCode/ })).toHaveAttribute('aria-current', 'true');
+    });
   });
 
   it('divides grouped options from the provider\'s own with the group as a heading', async () => {

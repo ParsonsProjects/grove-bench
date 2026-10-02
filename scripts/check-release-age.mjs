@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const DAY_MS = 86_400_000;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_LOCKFILES = ['package-lock.json', 'landing/package-lock.json'];
+const DEFAULT_LOCKFILES = ['package-lock.json', 'landing/package-lock.json', 'scripts/acp-spike/package-lock.json'];
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org/';
 const CONCURRENCY = 8;
 

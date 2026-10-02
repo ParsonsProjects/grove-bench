@@ -1045,15 +1045,20 @@ class AgentSessionManager {
     return { descriptors, values };
   }
 
-  /** Controls for a session; an unknown id (e.g. a stopped session that was
-   *  never restored) falls back to the default adapter's descriptors so the
+  /** Controls for a session. One that isn't running (asleep, closed, or never
+   *  restored) gets the descriptors of the agent and model its manifest
+   *  records, so a Gemini CLI conversation doesn't show Claude Code's
+   *  controls. Only an unknown id falls back to the default agent, so the
    *  status bar still has something to render. */
-  getControls(id: string): SessionControls {
-    const session = this.sessions.get(id);
-    if (!session) {
-      return { descriptors: adapterRegistry.getDefault().getControls(null), values: {} };
-    }
-    return this.reconcileControls(session);
+  async getControls(id: string): Promise<SessionControls> {
+    const live = this.sessions.get(id);
+    if (live) return this.reconcileControls(live);
+    const { adapterType, model } = await worktreeManager.getAgentAndModel(id).catch(() => ({ adapterType: undefined, model: undefined }));
+    // It may have started while the manifest was read.
+    const started = this.sessions.get(id);
+    if (started) return this.reconcileControls(started);
+    const adapter = (adapterType ? adapterRegistry.get(adapterType) : undefined) ?? adapterRegistry.getDefault();
+    return { descriptors: adapter.getControls(model ?? null), values: {} };
   }
 
   async setControl(id: string, controlId: string, value: string): Promise<void> {

@@ -89,6 +89,45 @@ describe('draftStore.open', () => {
     expect(draftStore.draft).toBeNull();
   });
 
+  describe('an alpha agent', () => {
+    beforeEach(() => {
+      agentsStore.list = [...agentsStore.list, { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' }];
+    });
+    afterEach(() => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+    });
+
+    it('is not offered until turned on, even from a conversation that runs on it', () => {
+      store.sessions = [{ id: 's1', branch: 'b', repoPath: '/repo/one', status: 'running', agentType: 'opencode' }];
+      store.activeSessionId = 's1';
+      draftStore.open();
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+      draftStore.setAgent('opencode');
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+      draftStore.discard();
+      draftStore.open('/repo/one', { agentId: 'opencode' });
+      expect(draftStore.draft?.agentId).toBe('claude-code');
+    });
+
+    it('can be picked once turned on', () => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      draftStore.open('/repo/one');
+      draftStore.setAgent('opencode');
+      expect(draftStore.draft?.agentId).toBe('opencode');
+    });
+
+    it('doesn\'t start a conversation if it was turned off after being picked', async () => {
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: ['opencode'] };
+      draftStore.open('/repo/one');
+      draftStore.setAgent('opencode');
+      draftStore.setText('hi');
+      settingsStore.current = { ...settingsStore.current, enabledAlphaAgents: [] };
+      expect(await draftStore.start()).toBe(false);
+      expect(createSessionMock()).not.toHaveBeenCalled();
+      expect(draftStore.error).toBe('OpenCode is turned off. Turn it on in Settings → Agents, or pick another agent in the bar below.');
+    });
+  });
+
   it('switches agent when opened for another agent', async () => {
     draftStore.open('/repo/one');
     draftStore.setModel('haiku');

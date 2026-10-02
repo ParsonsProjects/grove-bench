@@ -173,6 +173,7 @@ beforeEach(() => {
   vi.mocked(shell.openExternal).mockResolvedValue(undefined);
 
   m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, branchNamingRule: '' });
+  m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude-code' });
   m.sessionManager.getEventHistory.mockReturnValue([]);
   m.sessionManager.getSession.mockReturnValue(undefined);
   m.sessionManager.isMidTurn.mockReturnValue(false);
@@ -225,6 +226,18 @@ describe('repos', () => {
 
 // ─── Creating a conversation ───
 
+describe('AGENT_LIST_ADAPTERS', () => {
+  it('marks an alpha agent, and only that one', async () => {
+    const claude = { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} };
+    const opencode = { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' };
+    m.adapterRegistry.list.mockReturnValue([claude, opencode]);
+    m.adapterRegistry.getDefault.mockReturnValue(claude);
+    const list = await invoke(IPC.AGENT_LIST_ADAPTERS);
+    expect(list.map((a: { id: string; stage?: string; isDefault: boolean }) => [a.id, a.stage ?? null, a.isDefault]))
+      .toEqual([['claude-code', null, true], ['opencode', 'alpha', false]]);
+  });
+});
+
 describe('SESSION_CREATE', () => {
   const create = (opts: Record<string, unknown> = {}) =>
     invoke(IPC.SESSION_CREATE, { repoPath: '/repo', branchName: '', ...opts });
@@ -241,6 +254,13 @@ describe('SESSION_CREATE', () => {
 
     expect(m.worktreeManager.create).not.toHaveBeenCalled();
     expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
+  });
+
+  it('names the picked agent for a worktree conversation before its setup finishes', async () => {
+    const result = await create({ adapterType: 'gemini-cli' });
+    expect(result.agentType).toBe('gemini-cli');
+    await lastSetup().promise;
+    expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'gemini-cli' }));
   });
 
   describe('joining a group on its branch (continueBranch)', () => {
@@ -283,7 +303,8 @@ describe('SESSION_CREATE', () => {
       permissionMode: 'not-a-mode', model: '', controls: { effort: 'high', permissionMode: 'x', count: 3 },
     });
     // No name given: a placeholder branch, renamed after the first turn.
-    expect(result).toEqual({ id: expect.stringMatching(/^[0-9a-f]{8}$/), branch: `grove/${result.id}` });
+    // No agent given: the default one, named so the renderer files it there.
+    expect(result).toEqual({ id: expect.stringMatching(/^[0-9a-f]{8}$/), branch: `grove/${result.id}`, agentType: 'claude-code' });
 
     const setup = lastSetup();
     expect(setup.id).toBe(result.id);

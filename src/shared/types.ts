@@ -109,10 +109,17 @@ export interface ConversationGoal {
 
 // ─── Prerequisites ───
 
+/** How finished an agent's support in Grove Bench is. An alpha agent stays
+ *  out of the agent picker until the user turns it on in Settings
+ *  (`enabledAlphaAgents`), and is labelled Alpha where it shows. */
+export type AgentStage = 'alpha';
+
 /** A registered agent as the renderer sees it. */
 export interface AgentSummary {
   id: string;
   displayName: string;
+  /** Set for an agent that is still being tested (see AgentStage). */
+  stage?: AgentStage;
   capabilities: Record<string, boolean>;
   isDefault?: boolean;
   /** The adapter's own model for background tasks, if it declares one. */
@@ -128,6 +135,9 @@ export interface AgentPrerequisiteStatus {
   available: boolean;
   path?: string;
   authenticated?: boolean;
+  /** Signing in can't be checked before a conversation starts, so
+   *  `authenticated` only means nothing says it is missing. */
+  authUnchecked?: boolean;
   authMethod?: string;
   email?: string;
   /** Adapter-provided error message when not available (e.g. install instructions). */
@@ -1420,6 +1430,9 @@ export interface GroveBenchSettings {
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
   acpAgents: AcpAgentSetting[];
+  /** Ids of alpha agents (AgentSummary.stage) the user turned on. Others
+   *  stay out of the agent picker; their existing conversations still work. */
+  enabledAlphaAgents: string[];
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */

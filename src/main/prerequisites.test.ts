@@ -172,6 +172,13 @@ describe('checkCorePrerequisites()', () => {
     expect(mockGhAuthenticated).not.toHaveBeenCalled();
   });
 
+  it('says when an agent\'s sign-in could not be checked', async () => {
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: true, authUnchecked: true });
+    expect((await checkCorePrerequisites()).agents['claude-code']).toMatchObject({ authenticated: true, authUnchecked: true });
+    mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: true });
+    expect((await checkCorePrerequisites()).agents['claude-code']).not.toHaveProperty('authUnchecked');
+  });
+
   it('surfaces the adapter auth message when not authenticated', async () => {
     mockCheckPrerequisites.mockResolvedValue({ available: true, authenticated: false });
 
