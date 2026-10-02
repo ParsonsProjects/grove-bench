@@ -359,6 +359,35 @@ describe('AcpAdapter', () => {
       handle.close();
     });
 
+    it('says when the conversation doesn\'t allow the tool', async () => {
+      const handle = await adapter().start(config({ allowedTools: new Set(['read']) }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      const [warning] = warnings(await until(handle, 'result'));
+      expect(warning.message).toContain('ran "b.txt" without asking, though this conversation doesn\'t allow that tool');
+      handle.close();
+    });
+
+    it('doesn\'t count calls replayed from an earlier conversation', async () => {
+      const handle = await adapter().start(config({ resumeSessionId: 'old-session' }));
+      expect(warnings(await until(handle, 'system_init'))).toHaveLength(0);
+      handle.sendMessage({ text: 'unasked' });
+      const [warning, ...more] = warnings(await until(handle, 'result'));
+      expect(more).toHaveLength(0);
+      expect(warning.message).toContain('ran "b.txt" without asking');
+      handle.close();
+    });
+
+    it('stays quiet about a read-only command in Read-safe mode, which would have allowed it', async () => {
+      for (const [permissionMode, expected] of [['readSafe', 0], ['default', 1]] as const) {
+        const handle = await adapter().start(config({ permissionMode }));
+        await until(handle, 'system_init');
+        handle.sendMessage({ text: 'unasked-read' });
+        expect(warnings(await until(handle, 'result'))).toHaveLength(expected);
+        handle.close();
+      }
+    });
+
     it('stays quiet when Grove would have allowed everything it did', async () => {
       const handle = await adapter().start(config({ permissionMode: 'acceptEdits', toolAllowRules: [{ pattern: 'shell' }] }));
       await until(handle, 'system_init');

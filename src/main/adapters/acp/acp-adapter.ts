@@ -32,6 +32,7 @@ import { CONTROL_IDS } from '../../../shared/types.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
 import { getApiKey } from '../../credentials.js';
 import { logger } from '../../logger.js';
+import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadModelCatalog, saveModelCatalog } from '../../app-state.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
@@ -919,22 +920,27 @@ class AcpQuery {
    *  agent set to edit and run commands without asking (OpenCode's default
    *  permissions, a YOLO mode) never sends one, so they can't stop it. Say
    *  so once per agent process, the first time it does something Grove
-   *  would have asked about or refused. */
+   *  would have asked about or refused. Calls replayed by session/load
+   *  happened before this process and aren't shown, so they don't count. */
   private warnIfUnasked(call: AcpToolCall): void {
-    if (this.warnedUnasked || this.askedCalls.has(call.toolCallId) || !GUARDED_KINDS.has(call.kind ?? '')) return;
-    const decision = this.autoDecision(call);
+    if (this.replaying || this.warnedUnasked || this.askedCalls.has(call.toolCallId) || !GUARDED_KINDS.has(call.kind ?? '')) return;
+    const d = this.describe(call);
+    const decision = this.autoDecision(d);
     if (decision === 'allow') return;
+    // Read-safe approves read-only calls when the user is asked
+    // (session-permissions.ts), so one that wasn't asked about lost nothing.
+    if (decision === 'ask' && this.groveMode === 'readSafe' && isReadOnlyToolCall(d.toolName, d.toolInput, this.config.cwd, d.toolView)) return;
     this.warnedUnasked = true;
-    const view = toolViewFor(call, this.config.cwd);
-    const raw = view.command ?? view.path ?? view.summary ?? call.title ?? 'a tool';
+    const raw = d.toolView.command ?? d.toolView.path ?? d.toolView.summary ?? call.title ?? 'a tool';
     const what = raw.length > 80 ? `${raw.slice(0, 79)}…` : raw;
     const name = this.def.displayName;
     const mode = MODE_OPTIONS.find((o) => o.value === this.groveMode)?.label;
+    const notAllowed = this.config.allowedTools && !this.config.allowedTools.has(d.toolName);
     this.emit({
       type: 'status',
       level: 'warning',
       message: decision === 'deny'
-        ? `${name} ran "${what}" without asking, though one of your tool rules denies it. Grove Bench's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
+        ? `${name} ran "${what}" without asking, though ${notAllowed ? "this conversation doesn't allow that tool" : 'one of your tool rules denies it'}. Grove Bench's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
         : `${name} ran "${what}" without asking, so ${mode ? `the ${mode} mode` : "Grove Bench's mode"} and your tool rules don't apply to it. Set ${name} to ask before it edits files or runs commands.`,
     });
   }
@@ -1012,10 +1018,11 @@ class AcpQuery {
     // The request carries the call; show it first if the agent hadn't yet.
     this.onToolCall(req.toolCall);
     const call = this.tools.get(req.toolCall.toolCallId)!;
-    const decision = this.autoDecision(call);
+    const d = this.describe(call);
+    const decision = this.autoDecision(d);
     if (decision !== 'ask') return answer(decision);
 
-    const { toolName, toolInput, toolCategory, toolView } = this.describe(call);
+    const { toolName, toolInput, toolCategory, toolView } = d;
     const { config } = this;
     const isPlan = call.kind === 'switch_mode';
     const asked = config.onPermissionRequest({
@@ -1043,8 +1050,7 @@ class AcpQuery {
   /** What Grove decides about a call without asking the user: the
    *  conversation's allowed tools, the allow/deny rules, always-allow, then
    *  the Edit and Read-safe modes, which approve edits inside the worktree. */
-  private autoDecision(call: AcpToolCall): 'allow' | 'deny' | 'ask' {
-    const { toolName, toolCategory, toolView } = this.describe(call);
+  private autoDecision({ toolName, toolCategory, toolView }: ReturnType<AcpQuery['describe']>): 'allow' | 'deny' | 'ask' {
     const { config } = this;
     if (config.allowedTools && !config.allowedTools.has(toolName)) return 'deny';
     const verdict = this.checkRules(toolName, toolCategory, toolView);
