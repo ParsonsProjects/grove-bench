@@ -7,6 +7,7 @@
   import { contextUsage, formatTokens } from '../lib/context-usage.js';
   import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
   import StatusBarPopover from './StatusBarPopover.svelte';
+  import PixelMeter from './PixelMeter.svelte';
 
   let { sessionId, contextWindow }: { sessionId: string; contextWindow: number } = $props();
 
@@ -18,10 +19,10 @@
   let { usedTokens, freeTokens, usedPercent } = $derived(contextUsage(usage, contextWindow));
   let showContext = $derived(usedTokens > 0);
 
-  // The whole used length takes the fill colour. Cached tokens take up room
-  // like any others (with prompt caching they are nearly all of it), so the
-  // cache split is listed in the popover, not drawn in the bar where it would
-  // hide the warning colour.
+  // Every used block takes the fill colour. Cached tokens take up room like
+  // any others (with prompt caching they are nearly all of it), so the cache
+  // split is listed in the popover, not drawn in the bar where it would hide
+  // the warning colour.
   let usedTextClass = $derived(usageTextClass(usedPercent));
   let usedBarClass = $derived(usageBarClass(usedPercent));
 
@@ -44,10 +45,9 @@
         <span class="font-medium transition-colors {usedTextClass}">
           Context {usedPercent.toFixed(0)}%
         </span>
-        <!-- Mini bar, coloured by how full it is -->
-        <div class="w-16 @3xl:w-24 h-1.5 bg-muted overflow-hidden" data-testid="context-bar">
-          <div class="h-full transition-all {usedBarClass}" style:width="{usedPercent}%"></div>
-        </div>
+        <!-- Mini bar: ten pixel blocks of 10%, coloured by how full it is.
+             Widths that give whole-pixel blocks with the 2px gaps. -->
+        <PixelMeter percent={usedPercent} cells={10} fillClass={usedBarClass} class="w-[58px] @3xl:w-[88px] h-1.5" data-testid="context-bar" />
       </button>
     {/snippet}
 
@@ -63,9 +63,8 @@
       can be lost.
     </p>
 
-    <div class="w-full h-3 bg-muted overflow-hidden mb-1">
-      <div class="h-full transition-all {usedBarClass}" style:width="{usedPercent}%"></div>
-    </div>
+    <!-- Twenty blocks of 5%, so the quarter labels fall between blocks. -->
+    <PixelMeter percent={usedPercent} cells={20} fillClass={usedBarClass} class="w-full h-3 mb-1" />
 
     <!-- Percentage labels under bar -->
     <div class="flex justify-between text-[10px] text-muted-foreground/60 mb-3">

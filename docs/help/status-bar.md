@@ -10,7 +10,7 @@ The left side is a single **Agent settings** control. The first line is the mode
 
 ### Usage
 
-Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every conversation on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
+Under the agent, the popup shows your **plan usage**: one bar per rate-limit window (for example 5-hour and Weekly, plus per-model weekly windows when your plan has them) with the percentage used and when it resets. Like the context meter, each bar is a row of pixel blocks, here 5% each, in the same colours. It refreshes when you open the popup and after each turn, and live rate-limit headers keep it current in between. Usage is per sign-in, so every conversation on the same account shows the same numbers. API-key and third-party sign-ins have no plan limits, and the popup says so instead.
 
 ### Mode
 
@@ -103,7 +103,7 @@ Each server in the popover shows a status dot:
 
 ## Context
 
-**Context N%** and a colored bar show how much of the agent's context window has been used. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
+**Context N%** and a bar of pixel blocks show how much of the agent's context window has been used. Each block is 10% (5% in the popup), and the block the usage is partway through shows dimmed. Context is what the agent can hold in mind at once: your messages, its replies, files it read and command output. Near the limit, Claude Code clears old tool output first, then summarises the conversation, so details from early on can be lost ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works#when-context-fills-up)).
 
 | Usage | Color | Meaning |
 |-------|-------|---------|
@@ -112,14 +112,14 @@ Each server in the popover shows a status dot:
 | 70–85% | Orange | Running low |
 | 85–100% | Red | Nearly full: the agent may start summarising older context |
 
-The whole bar takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
+Every filled block takes the colour. Tokens served from the prompt cache take up room like any others, so they count toward the percentage; the popup lists how many were read from or written to the cache.
 
 Click the bar for details and two actions:
 
 - **Summarise to free space** (`/compact`): replaces the earlier messages with a summary, so the agent has room to keep going. It keeps the gist, not every detail.
 - **Start fresh…** (`/clear`): clears the conversation and the agent's memory of it. It asks you to confirm first. Your files are not changed.
 
-With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts as bare ground and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. After `/compact` or `/clear` it thins out again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
+With **Show grove characters** on (Settings → General (The grove)), a strip of pixel grove also runs along the top of the status bar. It starts with a few small plants and fills in as the conversation uses its context window: grass and saplings first, then bushes and trees, until it is a full grove at 100%. Its leaves change with the bar's colour: summer green while there is plenty of room, then late summer, autumn, and rust when the context is nearly full. They turn a plant at a time in the run-up to each change, so by the time the bar changes colour the whole grove has. After `/compact` or `/clear` it thins out and turns green again. Each conversation grows its own grove, with the plants in their own random places. In the open conversation you can watch it happen: new plants sprout one after another and rise out of the ground (unless your system is set to reduce motion).
 
 ## Rate Limiting
 

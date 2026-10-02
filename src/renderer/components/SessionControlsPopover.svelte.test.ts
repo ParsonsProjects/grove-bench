@@ -187,6 +187,10 @@ describe('SessionControlsPopover', () => {
     expect(usage).toHaveTextContent(/resets/);
     expect(usage).toHaveTextContent('Weekly');
     expect(usage).toHaveTextContent('18%');
+    // 42% as 20 blocks of 5%: 8 full, the 9th started, in the "getting full" colour.
+    const blocks = [...usage.querySelector('[data-testid="usage-bar-five_hour"]')!.children] as HTMLElement[];
+    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(8).fill('full'), 'part', ...Array(11).fill('empty')]);
+    expect(blocks[0].className).toContain('bg-yellow-400');
     expect(mockGroveBench.getUsage).toHaveBeenCalledWith(SID);
   });
 
