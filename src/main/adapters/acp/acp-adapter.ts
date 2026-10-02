@@ -75,6 +75,9 @@ const STDERR_TAIL_CHARS = 4_000;
 const IMAGE_MEDIA: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 /** The tool call fields a Grove tool event is built from (describe()). */
 const SHOWN_FIELDS = ['name', 'kind', 'title', 'rawInput', 'locations', 'content'] as const;
+/** Kinds of call Grove's modes and rules guard: an agent that runs these
+ *  without asking is out of their reach (warnIfUnasked). */
+const GUARDED_KINDS: ReadonlySet<string> = new Set(['edit', 'delete', 'move', 'execute', 'fetch']);
 
 const MODE_OPTIONS: ControlOption[] = [
   { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you whenever the agent asks to run something' },
@@ -444,6 +447,10 @@ class AcpQuery {
   private contextSize: number | undefined;
   /** Permission requests waiting on the user; answered "cancelled" on interrupt. */
   private pendingPermissions = new Set<(outcome: AcpPermissionOutcome) => void>();
+  /** Calls this turn the agent asked Grove about. */
+  private askedCalls = new Set<string>();
+  /** Whether this process was already caught acting without asking. */
+  private warnedUnasked = false;
 
   constructor(
     private readonly adapter: AcpAdapter,
@@ -848,6 +855,7 @@ class AcpQuery {
   private resetTurn(): void {
     this.tools.clear();
     this.openTools.clear();
+    this.askedCalls.clear();
     this.text = { kind: null, buffer: '', messageId: null };
     this.planCallId = null;
   }
@@ -877,7 +885,32 @@ class AcpQuery {
       // update changes nothing shown and needs no event.
       if (SHOWN_FIELDS.some((k) => prev[k] !== call[k])) this.emit({ type: 'tool_update', toolUseId: id, ...this.describe(call) });
     }
+    if (call.status === 'completed') this.warnIfUnasked(call);
     if (call.status === 'completed' || call.status === 'failed') this.reportToolEnd(call);
+  }
+
+  /** Grove's modes and rules act on the agent's permission requests. An
+   *  agent set to edit and run commands without asking (OpenCode's default
+   *  permissions, a YOLO mode) never sends one, so they can't stop it. Say
+   *  so once per agent process, the first time it does something Grove
+   *  would have asked about or refused. */
+  private warnIfUnasked(call: AcpToolCall): void {
+    if (this.warnedUnasked || this.askedCalls.has(call.toolCallId) || !GUARDED_KINDS.has(call.kind ?? '')) return;
+    const decision = this.autoDecision(call);
+    if (decision === 'allow') return;
+    this.warnedUnasked = true;
+    const view = toolViewFor(call, this.config.cwd);
+    const raw = view.command ?? view.path ?? view.summary ?? call.title ?? 'a tool';
+    const what = raw.length > 80 ? `${raw.slice(0, 79)}…` : raw;
+    const name = this.def.displayName;
+    const mode = MODE_OPTIONS.find((o) => o.value === this.groveMode)?.label;
+    this.emit({
+      type: 'status',
+      level: 'warning',
+      message: decision === 'deny'
+        ? `${name} ran "${what}" without asking, though one of your tool rules denies it. Grove's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
+        : `${name} ran "${what}" without asking, so ${mode ? `the ${mode} mode` : "Grove's mode"} and your tool rules don't apply to it. Set ${name} to ask before it edits files or runs commands.`,
+    });
   }
 
   private reportToolStart(call: AcpToolCall): void {
@@ -943,6 +976,7 @@ class AcpQuery {
   private async onPermission(req: AcpPermissionRequest): Promise<AcpPermissionOutcome> {
     const cancelled: AcpPermissionOutcome = { outcome: { outcome: 'cancelled' } };
     if (!req?.toolCall?.toolCallId || (this.sessionId && req.sessionId !== this.sessionId) || this.closing) return cancelled;
+    this.askedCalls.add(req.toolCall.toolCallId);
     const options = Array.isArray(req.options) ? req.options : [];
     const answer = (decision: 'allow' | 'allowAlways' | 'deny'): AcpPermissionOutcome => {
       const option = pickPermissionOption(options, decision);
@@ -952,21 +986,11 @@ class AcpQuery {
     // The request carries the call; show it first if the agent hadn't yet.
     this.onToolCall(req.toolCall);
     const call = this.tools.get(req.toolCall.toolCallId)!;
+    const decision = this.autoDecision(call);
+    if (decision !== 'ask') return answer(decision);
+
     const { toolName, toolInput, toolCategory, toolView } = this.describe(call);
     const { config } = this;
-
-    if (config.allowedTools && !config.allowedTools.has(toolName)) return answer('deny');
-
-    const verdict = this.checkRules(toolName, toolCategory, toolView);
-    if (verdict === 'deny') return answer('deny');
-    if (verdict === 'allow') return answer('allow');
-    if (config.alwaysAllowedTools.has(toolName)) return answer('allow');
-
-    // Edit and Read-safe modes approve edits inside the worktree.
-    if ((this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe') && toolCategory === 'edit' && this.editsInsideWorktree(toolView)) {
-      return answer('allow');
-    }
-
     const isPlan = call.kind === 'switch_mode';
     const asked = config.onPermissionRequest({
       requestId: '',
@@ -988,6 +1012,22 @@ class AcpQuery {
     } finally {
       this.pendingPermissions.delete(settle);
     }
+  }
+
+  /** What Grove decides about a call without asking the user: the
+   *  conversation's allowed tools, the allow/deny rules, always-allow, then
+   *  the Edit and Read-safe modes, which approve edits inside the worktree. */
+  private autoDecision(call: AcpToolCall): 'allow' | 'deny' | 'ask' {
+    const { toolName, toolCategory, toolView } = this.describe(call);
+    const { config } = this;
+    if (config.allowedTools && !config.allowedTools.has(toolName)) return 'deny';
+    const verdict = this.checkRules(toolName, toolCategory, toolView);
+    if (verdict) return verdict;
+    if (config.alwaysAllowedTools.has(toolName)) return 'allow';
+    if ((this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe') && toolCategory === 'edit' && this.editsInsideWorktree(toolView)) {
+      return 'allow';
+    }
+    return 'ask';
   }
 
   /** Grove's allow/deny rules. Shell commands are matched as both bash and

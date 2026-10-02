@@ -289,4 +289,44 @@ describe('AcpAdapter', () => {
     const text = await adapter.generateText('You write commit messages.', 'diff here', { cwd, model: 'm2' });
     expect(text).toBe('Fix the thing (no, m2)');
   });
+
+  describe('an agent that edits and runs commands without asking', () => {
+    const warnings = (events: AdapterEvent[]) =>
+      events.filter((e): e is Extract<AdapterEvent, { type: 'status' }> => e.type === 'status' && /without asking/.test(e.message));
+
+    it('warns once, naming the mode its edits and commands went past', async () => {
+      const asked: PermissionRequest[] = [];
+      const handle = await adapter().start(config({ onPermissionRequest: async (req) => { asked.push(req); return { behavior: 'allow', updatedInput: {} }; } }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      const turn = await until(handle, 'result');
+      handle.sendMessage({ text: 'unasked' });
+      const second = await until(handle, 'result');
+
+      expect(asked).toHaveLength(0);
+      expect(warnings([...turn, ...second])).toHaveLength(1);
+      expect(warnings(turn)[0].message).toContain('Fake Agent ran "b.txt" without asking, so the Ask mode and your tool rules don\'t apply');
+      handle.close();
+    });
+
+    it('says when a deny rule did not stop it', async () => {
+      const handle = await adapter().start(config({ permissionMode: 'acceptEdits', toolDenyRules: [{ pattern: 'shell(rm *)' }] }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      const [warning] = warnings(await until(handle, 'result'));
+      // The edit inside the worktree is what Edit mode allows; the command is the one.
+      expect(warning.message).toContain('ran "rm -rf build" without asking, though one of your tool rules denies it');
+      handle.close();
+    });
+
+    it('stays quiet when Grove would have allowed everything it did', async () => {
+      const handle = await adapter().start(config({ permissionMode: 'acceptEdits', toolAllowRules: [{ pattern: 'shell' }] }));
+      await until(handle, 'system_init');
+      handle.sendMessage({ text: 'unasked' });
+      expect(warnings(await until(handle, 'result'))).toHaveLength(0);
+      handle.close();
+    });
+
+    const adapter = () => new AcpAdapter(def());
+  });
 });

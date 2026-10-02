@@ -3,6 +3,8 @@
 //   default  - normal session with modes and a model config option
 //   auth     - session/new answers auth_required
 //   nohttp   - no HTTP MCP support
+// Prompt texts pick a turn: 'wait', 'titled-exec', 'unasked', 'echo', 'mcp',
+// 'mcp-call'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -67,6 +69,18 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow', kind: 'execute', title: 'Sleep', status: 'in_progress', rawInput: { command: 'sleep 100' } });
     await new Promise((resolve) => { cancelRequested = resolve; });
     return { stopReason: 'cancelled' };
+  }
+  if (text === 'unasked') {
+    // Like OpenCode with its default permissions: edits and runs commands
+    // without asking the client first.
+    update(sid, { sessionUpdate: 'tool_call', toolCallId: 'u1', kind: 'edit', title: 'write', status: 'pending', rawInput: {} });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'u1', status: 'in_progress', locations: [{ path: path.join(cwd, 'b.txt') }], rawInput: { filePath: path.join(cwd, 'b.txt'), content: 'x' } });
+    update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'u1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'Wrote file' } }] });
+    for (const id of ['u2', 'u3']) {
+      update(sid, { sessionUpdate: 'tool_call', toolCallId: id, kind: 'execute', title: 'rm -rf build', status: 'pending', rawInput: { command: 'rm -rf build' } });
+      update(sid, { sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '' } }] });
+    }
+    return { stopReason: 'end_turn' };
   }
   if (text === 'titled-exec') {
     // Like Gemini CLI: a title, no rawInput.
