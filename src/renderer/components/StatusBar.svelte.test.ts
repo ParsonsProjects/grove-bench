@@ -208,18 +208,24 @@ describe('StatusBar context grove', () => {
     messageStore.usageBySession[ACTIVE] = { inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
 
-  it('is bare ground before any context is used', () => {
+  /** Every drawn run, as path data: more grove, more of it. */
+  const drawn = (el: HTMLElement) => [...el.querySelectorAll('path')].map((p) => p.getAttribute('d')).join('');
+
+  it('stands a few small plants before any context is used', () => {
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('context-grove').querySelectorAll('path')).toHaveLength(0);
+    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
   });
 
   it('grows as the context fills', async () => {
     vi.useFakeTimers();
+    const empty = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const before = drawn(empty.getByTestId('context-grove')).length;
+    empty.unmount();
     useContext(100_000);
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
     // The open conversation's grove grows in, so give it time to.
     await vi.advanceTimersByTimeAsync(5000);
-    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
+    expect(drawn(getByTestId('context-grove')).length).toBeGreaterThan(before);
   });
 
   it('shows a hidden conversation\'s grove at once', () => {

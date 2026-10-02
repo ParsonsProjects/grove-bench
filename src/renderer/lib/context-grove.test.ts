@@ -1,10 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import {
-  GROVE_W, GROVE_H, GROVE_STAGE_GAP, GROVE_GROW_MS, GROVE_SEASONS, GroveGrowth, groveLayout, groveRuns, grovePaths, groveSweepMs, plantStage,
+  GROVE_W, GROVE_H, GROVE_STAGE_GAP, GROVE_GROW_MS, GROVE_SEASONS, GROVE_TURN_SPAN, GroveGrowth, groveLayout, groveRuns, grovePaths, groveSweepMs,
+  plantSeason, plantStage,
   type GrovePlant, type GroveRun,
 } from './context-grove.js';
+import { usageTone } from './usage-tone.js';
 
 const pixels = (runs: GroveRun[]) => runs.reduce((n, r) => n + r.w, 0);
+
+/** The start of 'conv-1's grove, and its size, before any plant stood from the start. */
+const BEFORE = [
+  { x: 2, kind: 'bush', at: 18.20317461900413, far: false, bloom: null },
+  { x: 8, kind: 'bush', at: 42.16015343554318, far: false, bloom: null },
+  { x: 11, kind: 'grass', at: 88.31538374070078, far: false, bloom: null },
+];
+const BEFORE_COUNT = 417;
 
 describe('context grove layout', () => {
   it('gives a conversation the same grove every time', () => {
@@ -24,12 +34,27 @@ describe('context grove layout', () => {
     expect(plants.at(-1)!.x).toBeGreaterThan(GROVE_W - 30);
   });
 
-  it('sprouts every plant above 0% and has it fully grown by 100%', () => {
-    for (const p of groveLayout('conv-1')) {
-      expect(p.at).toBeGreaterThan(0);
-      expect(plantStage(p, 0)).toBe(-1);
+  it('stands a few small plants from the start, sprouts the rest above 0%, and has all fully grown by 100%', () => {
+    const plants = groveLayout('conv-1');
+    for (const p of plants) {
+      // Standing plants are at their smallest stage; the rest have not sprouted.
+      expect(plantStage(p, 0)).toBe(p.at <= 0 ? 0 : -1);
+      expect(p.at).toBeGreaterThan(-GROVE_STAGE_GAP);
       expect(plantStage(p, 100)).toBe(plantStage(p, Infinity));
     }
+    const standing = plants.filter((p) => p.at <= 0).length / plants.length;
+    expect(standing).toBeGreaterThan(0.1);
+    expect(standing).toBeLessThan(0.3);
+  });
+
+  it('keeps the places, kinds and sprouting of the plants it had before plants stood from the start', () => {
+    // The first plants of 'conv-1' as they were laid out before; only the
+    // plants now standing from the start sprout earlier.
+    const plants = groveLayout('conv-1');
+    expect(plants).toHaveLength(BEFORE_COUNT);
+    const first = plants.slice(0, 3);
+    expect(first.map(({ x, kind, far, bloom }) => ({ x, kind, far, bloom }))).toEqual(BEFORE.map(({ x, kind, far, bloom }) => ({ x, kind, far, bloom })));
+    first.forEach((p, i) => { if (p.at > 0) expect(p.at).toBeCloseTo(BEFORE[i].at, 10); });
   });
 
   it('grows a plant a stage at a time', () => {
@@ -44,12 +69,15 @@ describe('context grove layout', () => {
 describe('context grove drawing', () => {
   const plants = groveLayout('conv-1');
 
-  it('is bare ground with no context used', () => {
-    expect(groveRuns(plants, 0)).toEqual([]);
+  it('is a little grove of small plants with no context used', () => {
+    const runs = groveRuns(plants, 0);
+    expect(runs.length).toBeGreaterThan(0);
+    // Saplings and tufts are 3 rows high at most.
+    expect(Math.min(...runs.map((r) => r.y))).toBeGreaterThanOrEqual(GROVE_H - 3);
   });
 
   it('shows more of the grove as the context fills', () => {
-    const counts = [5, 25, 50, 75, 100].map((pct) => pixels(groveRuns(plants, pct)));
+    const counts = [0, 5, 25, 50, 75, 100].map((pct) => pixels(groveRuns(plants, pct)));
     for (let i = 1; i < counts.length; i++) expect(counts[i]).toBeGreaterThan(counts[i - 1]);
   });
 
@@ -81,10 +109,10 @@ describe('context grove drawing', () => {
     expect(paths.length).toBeLessThan(20);
   });
 
-  it('turns its leaves at the same steps as the context meter', () => {
+  it('has turned every plant once the bar has', () => {
     const fills = (pct: number) => new Set(groveRuns(plants, pct).map((r) => r.fill));
-    // One percent either side of each step in usage-tone.ts.
-    for (const [pct, season] of [[40, 'ok'], [41, 'filling'], [70, 'filling'], [71, 'low'], [85, 'low'], [86, 'full']] as const) {
+    // Just past each step in usage-tone.ts, the only leaves are that season's.
+    for (const [pct, season] of [[10, 'ok'], [41, 'filling'], [71, 'low'], [86, 'full']] as const) {
       const shown = fills(pct);
       for (const [other, leaves] of Object.entries(GROVE_SEASONS)) {
         for (const leaf of leaves) expect(shown.has(leaf), `${leaf} at ${pct}%`).toBe(other === season);
@@ -93,8 +121,35 @@ describe('context grove drawing', () => {
   });
 });
 
+describe('context grove seasons', () => {
+  const plants = groveLayout('conv-1');
+  const SEASONS = ['ok', 'filling', 'low', 'full'];
+  const turned = (pct: number) => plants.filter((p) => plantSeason(p, pct) !== usageTone(pct)).length;
+
+  it('is never calmer than the bar, and at most one season ahead', () => {
+    for (let pct = 0; pct <= 100; pct += 0.5) {
+      const bar = SEASONS.indexOf(usageTone(pct));
+      for (const p of plants) {
+        const ahead = SEASONS.indexOf(plantSeason(p, pct)) - bar;
+        expect(ahead, `${pct}%`).toBeGreaterThanOrEqual(0);
+        expect(ahead, `${pct}%`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('turns a plant at a time in the run-up to each step', () => {
+    for (const step of [40, 70, 85]) {
+      expect(turned(step - GROVE_TURN_SPAN)).toBe(0);
+      const counts = [0.25, 0.5, 0.75].map((f) => turned(step - GROVE_TURN_SPAN * (1 - f)));
+      for (let i = 1; i < counts.length; i++) expect(counts[i]).toBeGreaterThan(counts[i - 1]);
+      expect(counts[0]).toBeGreaterThan(0);
+      expect(counts.at(-1)).toBeLessThan(plants.length);
+    }
+  });
+});
+
 describe('context grove growing', () => {
-  const tree: GrovePlant = { x: 10, kind: 'tree', at: 10, far: false, bloom: null };
+  const tree: GrovePlant = { x: 10, kind: 'tree', at: 10, far: false, bloom: null, turn: 0 };
   const top = (runs: GroveRun[]) => Math.min(...runs.map((r) => r.y));
 
   it('rises out of the ground, top first', () => {

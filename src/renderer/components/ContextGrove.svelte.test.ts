@@ -18,7 +18,9 @@ afterEach(() => {
 describe('ContextGrove', () => {
   it('jumps straight to the new amount when not animating', async () => {
     const { getByTestId, rerender } = render(ContextGrove, { props: { seed: SEED, percent: 0 } });
-    expect(drawn(getByTestId('context-grove'))).toBe('');
+    // A few small plants stand before any context is used.
+    expect(drawn(getByTestId('context-grove'))).toBe(settledAt(0));
+    expect(settledAt(0)).not.toBe('');
     await rerender({ seed: SEED, percent: 50 });
     expect(drawn(getByTestId('context-grove'))).toBe(settledAt(50));
   });

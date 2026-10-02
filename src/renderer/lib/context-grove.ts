@@ -1,9 +1,10 @@
 /**
  * The context grove: a strip of pixel plants along the top of the status bar
- * that fills in as a conversation uses up its context window. Bare ground at
- * 0%, a full grove at 100%, thinning out again after a compact or clear. Its
- * leaves turn with the context meter's colour: summer green while there is
- * room, then late summer, autumn, and rust when it is nearly full.
+ * that fills in as a conversation uses up its context window. A few small
+ * plants at 0%, a full grove at 100%, thinning out again after a compact or
+ * clear. Its leaves turn with the context meter's colour, a plant at a time:
+ * summer green while there is room, then late summer, autumn, and rust when
+ * it is nearly full.
  *
  * Where each plant stands, what it grows into and when it sprouts are random,
  * seeded by the conversation id. So each conversation keeps its own grove, and
@@ -26,6 +27,14 @@ export const GROVE_STAGE_GAP = 12;
 export const GROVE_STEP_MS = 80;
 /** Milliseconds a plant takes to rise out of the ground. */
 export const GROVE_GROW_MS = 480;
+/** Share of plants that stand from the start, small, so even 0% has a little grove. */
+export const GROVE_BASE_SHARE = 0.2;
+/**
+ * Percent of the context window over which the grove turns, a plant at a
+ * time, ahead of each step of the bar's colour. Under the smallest gap between
+ * steps (70% to 85%), so a plant is never more than one season ahead.
+ */
+export const GROVE_TURN_SPAN = 8;
 
 /**
  * Leaf colours (the a, b, c and d pixels, lightest at the top) for each step
@@ -34,18 +43,23 @@ export const GROVE_GROW_MS = 480;
  */
 export const GROVE_SEASONS: Record<UsageTone, readonly [string, string, string, string]> = {
   ok: ['#6ec87a', '#5ab868', '#4aaa58', '#3a9a48'],
-  filling: ['#c8c860', '#b0b452', '#98a046', '#808a3a'],
+  filling: ['#e2d25c', '#ccbc4e', '#b4a444', '#988a3a'],
   low: ['#f0a848', '#dc903c', '#c47834', '#a8622c'],
   full: ['#e8704c', '#d05840', '#b44436', '#94362e'],
 };
 // The logo tree's trunk and roots, the same in every season.
-const BARK: Record<string, string> = { t: '#8a6a4a', r: '#6a5040' };
-
-/** Pixel colours for the grove with this much context used. */
-function palette(percent: number): Record<string, string> {
-  const [a, b, c, d] = GROVE_SEASONS[usageTone(percent)];
+const BARK = { t: '#8a6a4a', r: '#6a5040' };
+function seasonPalette(season: UsageTone): Record<string, string> {
+  const [a, b, c, d] = GROVE_SEASONS[season];
   return { a, b, c, d, ...BARK };
 }
+/** Each season's pixel colours. */
+const PALETTES: Record<UsageTone, Record<string, string>> = {
+  ok: seasonPalette('ok'),
+  filling: seasonPalette('filling'),
+  low: seasonPalette('low'),
+  full: seasonPalette('full'),
+};
 
 const BLOOMS = ['#e8c65a', '#e88aa6', '#e6e1d6'];
 
@@ -78,6 +92,8 @@ export interface GrovePlant {
   far: boolean;
   /** Flower colour, for grass in bloom. */
   bloom: string | null;
+  /** How early it turns colour: 0 with the bar, up to 1 for GROVE_TURN_SPAN ahead of it. */
+  turn: number;
 }
 
 export interface GroveRun {
@@ -109,6 +125,9 @@ function seededRandom(seed: number): () => number {
 /** A conversation's grove: every plant it will grow, left to right. */
 export function groveLayout(seed: string): GrovePlant[] {
   const random = seededRandom(hashString(seed));
+  // Its own stream for what came later (standing from the start, turning),
+  // so a conversation's plants keep the places and sizes they always had.
+  const later = seededRandom(hashString(`${seed} seasons`));
   const plants: GrovePlant[] = [];
   // Mostly 2 to 6 art pixels apart, so the trees crowd and overlap like a
   // grove, with the odd clearing.
@@ -116,15 +135,26 @@ export function groveLayout(seed: string): GrovePlant[] {
   for (let x = 1 + Math.floor(random() * 4); x < GROVE_W; x += gap()) {
     const roll = random();
     const kind: GrovePlantKind = roll < 0.3 ? 'tree' : roll < 0.47 ? 'small-tree' : roll < 0.67 ? 'bush' : 'grass';
-    // Above 0%, so bare ground stays bare, and early enough that it is fully
-    // grown by 100%.
+    // A few stand from the start at their smallest, each moving up a stage
+    // somewhere in the first GROVE_STAGE_GAP. The rest sprout above 0%. All
+    // early enough that they are fully grown by 100%.
     const span = 100 - (STAGES[kind].length - 1) * GROVE_STAGE_GAP;
-    const at = (1 - random()) * span;
+    const sprouts = (1 - random()) * span;
+    const at = later() < GROVE_BASE_SHARE ? -later() * GROVE_STAGE_GAP : sprouts;
     const far = (kind === 'tree' || kind === 'small-tree') && random() < 0.4;
     const bloom = kind === 'grass' && random() < 0.35 ? BLOOMS[Math.floor(random() * BLOOMS.length)] : null;
-    plants.push({ x, kind, at, far, bloom });
+    plants.push({ x, kind, at, far, bloom, turn: later() });
   }
   return plants;
+}
+
+/**
+ * The plant's season with this much context used: the bar's, or the next one
+ * if the plant turns early. So the grove turns a plant at a time, is never
+ * calmer than the bar, and has all turned once the bar has.
+ */
+export function plantSeason(plant: GrovePlant, percent: number): UsageTone {
+  return usageTone(percent + plant.turn * GROVE_TURN_SPAN);
 }
 
 /** The plant's growth stage with this much context used, or -1 before it sprouts. */
@@ -136,18 +166,18 @@ export function plantStage(plant: GrovePlant, percent: number): number {
 /**
  * The grove with this much context used, as one-pixel-high runs. Plants are
  * painted onto a pixel grid, far ones first, so nearer plants cover them and
- * each pixel ends up a single colour. The leaves take that percent's season.
+ * each pixel ends up a single colour. Each plant's leaves take its season.
  *
  * `growth` holds how far each growing plant (by index) has risen, from 0 to 1.
  * A growing plant comes up out of the ground in front of its stage before.
  */
 export function groveRuns(plants: GrovePlant[], percent: number, growth: ReadonlyMap<number, number> = new Map()): GroveRun[] {
-  const colours = palette(percent);
   const fills: (string | null)[] = new Array(GROVE_W * GROVE_H).fill(null);
   const far: boolean[] = new Array(GROVE_W * GROVE_H).fill(false);
 
   function paint(plant: GrovePlant, stage: number, risen: number) {
     const map = plant.bloom ? FLOWER : STAGES[plant.kind][stage];
+    const colours = PALETTES[plantSeason(plant, percent)];
     // Only the top rows show while it rises; the rest is still underground.
     const rows = risen >= 1 ? map.length : Math.max(1, Math.ceil(risen * map.length));
     // Centred on the plant's column and standing on the bottom row, so each
