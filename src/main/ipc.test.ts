@@ -173,6 +173,7 @@ beforeEach(() => {
   vi.mocked(shell.openExternal).mockResolvedValue(undefined);
 
   m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, branchNamingRule: '' });
+  m.adapterRegistry.getDefault.mockReturnValue({ id: 'claude-code' });
   m.sessionManager.getEventHistory.mockReturnValue([]);
   m.sessionManager.getSession.mockReturnValue(undefined);
   m.sessionManager.isMidTurn.mockReturnValue(false);
@@ -243,6 +244,13 @@ describe('SESSION_CREATE', () => {
     expect(m.sessionManager.trackPendingSetup).not.toHaveBeenCalled();
   });
 
+  it('names the picked agent for a worktree conversation before its setup finishes', async () => {
+    const result = await create({ adapterType: 'gemini-cli' });
+    expect(result.agentType).toBe('gemini-cli');
+    await lastSetup().promise;
+    expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ adapterType: 'gemini-cli' }));
+  });
+
   describe('joining a group on its branch (continueBranch)', () => {
     it('continues the branch when the project has it and nothing has it checked out', async () => {
       vi.mocked(git.branchExistsAnywhere).mockResolvedValue(true);
@@ -283,7 +291,8 @@ describe('SESSION_CREATE', () => {
       permissionMode: 'not-a-mode', model: '', controls: { effort: 'high', permissionMode: 'x', count: 3 },
     });
     // No name given: a placeholder branch, renamed after the first turn.
-    expect(result).toEqual({ id: expect.stringMatching(/^[0-9a-f]{8}$/), branch: `grove/${result.id}` });
+    // No agent given: the default one, named so the renderer files it there.
+    expect(result).toEqual({ id: expect.stringMatching(/^[0-9a-f]{8}$/), branch: `grove/${result.id}`, agentType: 'claude-code' });
 
     const setup = lastSetup();
     expect(setup.id).toBe(result.id);
