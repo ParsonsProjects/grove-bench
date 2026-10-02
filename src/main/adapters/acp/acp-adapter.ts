@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
@@ -172,12 +173,13 @@ function collectStderr(proc: ResultPromise, onTail: (tail: string) => void): voi
 
 /** `initialize`, with no fs or terminal capability: the agent reads, writes
  *  and runs commands in the worktree itself, so its own tools and
- *  permission requests apply. */
+ *  permission requests apply. `clientInfo.version` is required by the
+ *  protocol's Implementation type; OpenCode rejects the request without it. */
 async function initializeAgent(rpc: JsonRpcConnection, displayName: string): Promise<AcpInitializeResponse> {
   const init = await withTimeout(rpc.request<AcpInitializeResponse>('initialize', {
     protocolVersion: ACP_PROTOCOL_VERSION,
     clientCapabilities: {},
-    clientInfo: { name: 'grove-bench', title: 'Grove Bench' },
+    clientInfo: { name: 'grove-bench', title: 'Grove Bench', version: app.getVersion() },
   }), STARTUP_TIMEOUT_MS, `${displayName} start-up`);
   if (init?.protocolVersion !== ACP_PROTOCOL_VERSION) {
     throw new Error(`${displayName} speaks ACP version ${init?.protocolVersion}; Grove Bench speaks version ${ACP_PROTOCOL_VERSION}.`);

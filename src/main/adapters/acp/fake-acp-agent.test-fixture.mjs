@@ -135,6 +135,11 @@ async function handle(msg) {
   const fail = (code, message) => send({ id, error: { code, message } });
   switch (method) {
     case 'initialize':
+      // As strict as OpenCode: the protocol's Implementation type requires
+      // clientInfo.name and clientInfo.version.
+      if (typeof params?.protocolVersion !== 'number' || typeof params?.clientInfo?.name !== 'string' || typeof params?.clientInfo?.version !== 'string') {
+        return fail(-32602, 'Invalid params');
+      }
       return reply({
         protocolVersion: 1,
         agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, mcpCapabilities: { http: scenario !== 'nohttp' } },
