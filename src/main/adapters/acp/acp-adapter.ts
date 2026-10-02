@@ -930,8 +930,8 @@ class AcpQuery {
       type: 'status',
       level: 'warning',
       message: decision === 'deny'
-        ? `${name} ran "${what}" without asking, though one of your tool rules denies it. Grove's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
-        : `${name} ran "${what}" without asking, so ${mode ? `the ${mode} mode` : "Grove's mode"} and your tool rules don't apply to it. Set ${name} to ask before it edits files or runs commands.`,
+        ? `${name} ran "${what}" without asking, though one of your tool rules denies it. Grove Bench's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
+        : `${name} ran "${what}" without asking, so ${mode ? `the ${mode} mode` : "Grove Bench's mode"} and your tool rules don't apply to it. Set ${name} to ask before it edits files or runs commands.`,
     });
   }
 
