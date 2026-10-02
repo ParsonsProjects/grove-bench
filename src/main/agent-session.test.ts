@@ -39,6 +39,7 @@ vi.mock('./worktree-manager.js', () => ({
     saveModel: vi.fn().mockResolvedValue(undefined),
     getModel: vi.fn().mockResolvedValue(undefined),
     getAdapterType: vi.fn().mockResolvedValue(undefined),
+    getAgentAndModel: vi.fn().mockResolvedValue({}),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
@@ -3586,8 +3587,7 @@ describe('AgentSessionManager session controls', () => {
     const other = { ...new MockAdapter(), id: 'other' } as unknown as AgentAdapter;
     other.getControls = vi.fn(() => [{ id: 'acp:mode', label: 'Agent mode', default: 'build', options: [{ value: 'build', label: 'build' }] }]);
     extraAdapters.other = other;
-    vi.mocked(worktreeManager.getAdapterType).mockResolvedValueOnce('other');
-    vi.mocked(worktreeManager.getModel).mockResolvedValueOnce('other-model');
+    vi.mocked(worktreeManager.getAgentAndModel).mockResolvedValueOnce({ adapterType: 'other', model: 'other-model' });
 
     const controls = await sessionManager.getControls('asleep');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['acp:mode']);

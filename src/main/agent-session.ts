@@ -1053,10 +1053,7 @@ class AgentSessionManager {
   async getControls(id: string): Promise<SessionControls> {
     const live = this.sessions.get(id);
     if (live) return this.reconcileControls(live);
-    const [adapterType, model] = await Promise.all([
-      worktreeManager.getAdapterType(id).catch(() => undefined),
-      worktreeManager.getModel(id).catch(() => undefined),
-    ]);
+    const { adapterType, model } = await worktreeManager.getAgentAndModel(id).catch(() => ({ adapterType: undefined, model: undefined }));
     // It may have started while the manifest was read.
     const started = this.sessions.get(id);
     if (started) return this.reconcileControls(started);

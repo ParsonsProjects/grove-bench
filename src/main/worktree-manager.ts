@@ -415,6 +415,12 @@ export class WorktreeManager {
     return entry ? agentTypeOf(entry) : undefined;
   }
 
+  /** getAdapterType and getModel from one read of the manifest. */
+  async getAgentAndModel(worktreeId: string): Promise<{ adapterType?: string; model?: string }> {
+    const entry = (await this.loadManifest())[worktreeId];
+    return entry ? { adapterType: agentTypeOf(entry), model: entry.model } : {};
+  }
+
   /** Persist a name the user gave a session so it survives app restart and
    *  is never replaced by auto-naming. Passing an empty name clears it
    *  (reverting the label back to the branch name). */
