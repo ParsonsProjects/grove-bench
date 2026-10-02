@@ -208,18 +208,24 @@ describe('StatusBar context grove', () => {
     messageStore.usageBySession[ACTIVE] = { inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }
 
-  it('is bare ground before any context is used', () => {
+  /** Every drawn run, as path data: more grove, more of it. */
+  const drawn = (el: HTMLElement) => [...el.querySelectorAll('path')].map((p) => p.getAttribute('d')).join('');
+
+  it('stands a few small plants before any context is used', () => {
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
-    expect(getByTestId('context-grove').querySelectorAll('path')).toHaveLength(0);
+    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
   });
 
   it('grows as the context fills', async () => {
     vi.useFakeTimers();
+    const empty = render(StatusBar, { props: { sessionId: ACTIVE } });
+    const before = drawn(empty.getByTestId('context-grove')).length;
+    empty.unmount();
     useContext(100_000);
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
     // The open conversation's grove grows in, so give it time to.
     await vi.advanceTimersByTimeAsync(5000);
-    expect(getByTestId('context-grove').querySelectorAll('path').length).toBeGreaterThan(0);
+    expect(drawn(getByTestId('context-grove')).length).toBeGreaterThan(before);
   });
 
   it('shows a hidden conversation\'s grove at once', () => {
@@ -281,15 +287,14 @@ describe('StatusBar context actions', () => {
 
   it('colours the whole used length, cached tokens included', () => {
     // Nearly all of it cached, as it is with prompt caching: the bar still
-    // reads as 90% full, in the full colour.
+    // reads as 90% full (nine of ten blocks), in the full colour.
     messageStore.contextWindowBySession[ACTIVE] = 200_000;
     messageStore.usageBySession[ACTIVE] = { inputTokens: 2_000, outputTokens: 0, cacheReadTokens: 170_000, cacheCreationTokens: 8_000 };
     const { getByTestId } = render(StatusBar, { props: { sessionId: ACTIVE } });
 
-    const fill = getByTestId('context-bar').children;
-    expect(fill).toHaveLength(1);
-    expect(fill[0].className).toContain('bg-red-400');
-    expect((fill[0] as HTMLElement).style.width).toBe('90%');
+    const blocks = [...getByTestId('context-bar').children] as HTMLElement[];
+    expect(blocks.map((b) => b.dataset.block)).toEqual([...Array(9).fill('full'), 'empty']);
+    for (const b of blocks.slice(0, 9)) expect(b.className).toContain('bg-red-400');
     expect(screen.getByText('Context 90%').className).toContain('text-red-400');
   });
 });
