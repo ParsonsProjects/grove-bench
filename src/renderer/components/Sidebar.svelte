@@ -7,8 +7,7 @@
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { trackEvent } from '../lib/analytics.js';
   import { getRepoColor } from '../lib/repo-colors.js';
-  import AddRepoButton from './AddRepoButton.svelte';
-  import MessageSquarePlusIcon from '@lucide/svelte/icons/message-square-plus';
+  import { addProject } from '../lib/add-project.js';
   import { draftStore } from '../stores/draft.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import SidebarGroups from './SidebarGroups.svelte';
@@ -52,8 +51,8 @@
   const SIDEBAR_MIN = 240;
   const SIDEBAR_MAX = 480;
   const SIDEBAR_DEFAULT = 300;
-  // Below this width the "+ Project" / "+ Conversation" labels no longer
-  // fit side by side, so the bottom buttons collapse to icons.
+  // Below this width the filter chips' labels no longer fit on one line,
+  // so the chips show just their dot and count.
   const SIDEBAR_COMPACT_BELOW = 280;
   let sidebarWidth = $state(SIDEBAR_DEFAULT);
   let compact = $derived(sidebarWidth < SIDEBAR_COMPACT_BELOW);
@@ -454,6 +453,16 @@
   function openNewAgent(repo = '') {
     draftStore.open(repo);
   }
+
+  /** The draft row, always first under Conversations (and on the rail): back
+   *  to the draft being written, or a new one. */
+  function openDraftRow() {
+    if (draftStore.draft) draftStore.show();
+    else openNewAgent();
+  }
+
+  /** The draft row's tooltip, before there is a draft. */
+  let newConversationHint = $derived(store.canCreate ? 'New conversation (Ctrl+N)' : 'Add a project to start a conversation');
 
   /** What deleting the conversation in the confirm dialog would lose: files
    *  with uncommitted changes in its worktree, and commits on its branch
@@ -940,17 +949,22 @@
       </button>
     </div>
     <div class="flex-1 overflow-y-auto overflow-x-hidden py-2">
-      {#if draftStore.draft}
-        <button
-          type="button"
-          onclick={() => draftStore.show()}
-          class="w-full flex justify-center py-2 transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
-          title="New conversation, not started yet"
-          aria-label="New conversation, not started yet"
-        >
+      <button
+        type="button"
+        onclick={openDraftRow}
+        disabled={!draftStore.draft && !store.canCreate}
+        class="w-full flex justify-center py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+          {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50 disabled:hover:bg-transparent'}"
+        title={draftStore.draft ? 'New conversation, not started yet' : newConversationHint}
+        aria-label={draftStore.draft ? 'New conversation, not started yet' : 'New conversation'}
+        data-rail-draft
+      >
+        {#if draftStore.draft}
           <span class="w-2 h-2 border border-dashed border-muted-foreground"></span>
-        </button>
-      {/if}
+        {:else}
+          <svg class="text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        {/if}
+      </button>
       <!-- Every open conversation: the triage filter isn't on the rail to explain a shorter list. -->
       {#each store.openConversations as session (session.id)}
         {@const isDestroying = destroying.has(session.id)}
@@ -973,17 +987,6 @@
       {/each}
     </div>
     <div class="py-3 border-t border-sidebar-border flex flex-col items-center gap-1 shrink-0">
-      <Button
-        onclick={() => openNewAgent()}
-        disabled={!store.canCreate}
-        size="sm"
-        class="px-2"
-        title="New conversation (Ctrl+N)"
-        aria-label="New conversation"
-      >
-        <MessageSquarePlusIcon aria-hidden="true" />
-      </Button>
-      <div class="w-8"><AddRepoButton compact /></div>
       {@render footerTools()}
     </div>
   {/if}
@@ -1048,9 +1051,10 @@
       <!-- The draft conversation: not started, so nothing exists yet. -->
       <button
         type="button"
-        onclick={() => draftStore.show()}
+        onclick={openDraftRow}
         class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
         title="New conversation, not started yet"
+        data-draft-row
       >
         <span class="w-full flex items-center gap-2 min-w-0">
           <span class="w-2 h-2 shrink-0 border border-dashed border-muted-foreground"></span>
@@ -1061,13 +1065,31 @@
           <span class="pl-4 mt-0.5 text-[11px] text-muted-foreground/70 truncate">{#if draftGroup}<span class="text-foreground/60">{draftGroup}</span>{#if store.repos.length > 1}<span class="text-muted-foreground/40">{' · '}</span>{/if}{/if}{#if store.repos.length > 1}{store.repoDisplayName(draft.repoPath)}{/if}</span>
         {/if}
       </button>
+    {:else}
+      <!-- Always first: starts a draft in the open conversation's project,
+           which then takes this row's place. -->
+      <button
+        type="button"
+        onclick={openDraftRow}
+        disabled={!store.canCreate}
+        class="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent/50
+          disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+        title={newConversationHint}
+        aria-label="New conversation"
+        data-draft-row
+      >
+        <svg class="shrink-0 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        <span class="text-sm truncate min-w-0 flex-1 italic text-muted-foreground">New conversation</span>
+        <span class="text-[10px] text-muted-foreground/50 shrink-0">Ctrl+N</span>
+      </button>
     {/if}
     {#each activeSessions as session (session.id)}
       <!-- The project name only helps when there is more than one. -->
       {@render sessionRow(session, store.repos.length > 1, null, true)}
     {/each}
-    {#if activeSessions.length === 0 && !draftStore.draft}
-      <p class="text-xs text-muted-foreground/50 pl-4 py-1">{triageFilter === 'all' ? 'No conversations' : `No conversations match "${TRIAGE_FILTER_LABELS[triageFilter]}"`}</p>
+    <!-- With no filter the draft row is enough; a filter says why the list is short. -->
+    {#if activeSessions.length === 0 && triageFilter !== 'all'}
+      <p class="text-xs text-muted-foreground/50 pl-4 py-1">No conversations match "{TRIAGE_FILTER_LABELS[triageFilter]}"</p>
     {/if}
 
     <!-- GROUPS: conversations across projects that belong to one piece of work -->
@@ -1086,6 +1108,15 @@
         {#if closedCount}
           <span>{closedCount} closed</span>
         {/if}
+        <button
+          type="button"
+          onclick={addProject}
+          class="w-5 h-5 flex items-center justify-center text-muted-foreground/70 hover:text-primary hover:bg-sidebar-accent transition-colors"
+          title="Add a project"
+          aria-label="Add a project"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        </button>
       </div>
     </div>
 
@@ -1180,29 +1211,8 @@
   </div>
 
   <!-- Bottom controls -->
-  <div class="px-3 py-3 border-t border-sidebar-border {collapsed ? 'hidden' : 'flex'} flex-col gap-2">
-    <div class="flex gap-2">
-      <div class="flex-1 min-w-0">
-        <AddRepoButton {compact} />
-      </div>
-      <Button
-        onclick={() => openNewAgent()}
-        disabled={!store.canCreate}
-        class="flex-1"
-        size="sm"
-        title="New conversation (Ctrl+N)"
-        aria-label="New conversation"
-      >
-        {#if compact}
-          <MessageSquarePlusIcon aria-hidden="true" />
-        {:else}
-          + Conversation
-        {/if}
-      </Button>
-    </div>
-    <div class="flex justify-between px-1">
-      {@render footerTools()}
-    </div>
+  <div class="px-4 py-3 border-t border-sidebar-border {collapsed ? 'hidden' : 'flex'} justify-between">
+    {@render footerTools()}
   </div>
 
   <!-- Resize handle: drag to adjust sidebar width (persisted) -->
