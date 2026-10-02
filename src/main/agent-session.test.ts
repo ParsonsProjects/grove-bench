@@ -38,6 +38,7 @@ vi.mock('./worktree-manager.js', () => ({
     updateLastActive: vi.fn().mockResolvedValue(undefined),
     saveModel: vi.fn().mockResolvedValue(undefined),
     getModel: vi.fn().mockResolvedValue(undefined),
+    getAdapterType: vi.fn().mockResolvedValue(undefined),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
@@ -3361,7 +3362,7 @@ describe('AgentSessionManager session controls', () => {
 
     await sessionManager.createSession({ id: 'ctl-defaults', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
-    const controls = sessionManager.getControls('ctl-defaults');
+    const controls = await sessionManager.getControls('ctl-defaults');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
     expect(controls.values).toEqual({ thinking: 'low', speed: 'standard' });
     await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
@@ -3378,7 +3379,7 @@ describe('AgentSessionManager session controls', () => {
       controls: { thinking: 'high', speed: 'warp' },
     });
 
-    expect(sessionManager.getControls('ctl-chosen').values).toEqual({ thinking: 'high', speed: 'standard' });
+    expect((await sessionManager.getControls('ctl-chosen')).values).toEqual({ thinking: 'high', speed: 'standard' });
 
     await sessionManager.destroySession('ctl-chosen');
   });
@@ -3391,7 +3392,7 @@ describe('AgentSessionManager session controls', () => {
       controls: { thinking: 'max' },
     });
 
-    expect(sessionManager.getControls('ctl-chosen-bad').values.thinking).toBe('low');
+    expect((await sessionManager.getControls('ctl-chosen-bad')).values.thinking).toBe('low');
 
     await sessionManager.destroySession('ctl-chosen-bad');
   });
@@ -3401,7 +3402,7 @@ describe('AgentSessionManager session controls', () => {
 
     await sessionManager.createSession({ id: 'ctl-unknown-default', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
 
-    expect(sessionManager.getControls('ctl-unknown-default').values.thinking).toBe('high');
+    expect((await sessionManager.getControls('ctl-unknown-default')).values.thinking).toBe('high');
 
     await sessionManager.destroySession('ctl-unknown-default');
   });
@@ -3414,7 +3415,7 @@ describe('AgentSessionManager session controls', () => {
 
     expect(sessionManager.getSession('ctl-mode-default')?.permissionMode).toBe('acceptEdits');
     // Kept out of the other control values: the mode has its own field.
-    expect(sessionManager.getControls('ctl-mode-default').values).not.toHaveProperty('permissionMode');
+    expect((await sessionManager.getControls('ctl-mode-default')).values).not.toHaveProperty('permissionMode');
     const sync = { type: 'mode_sync', mode: 'acceptEdits', source: 'session' };
     expect(sessionManager.getEventHistory('ctl-mode-default')).toContainEqual(sync);
     expect(win.webContents.send).toHaveBeenCalledWith(`${IPC.AGENT_EVENT}:ctl-mode-default`, sync);
@@ -3510,7 +3511,7 @@ describe('AgentSessionManager session controls', () => {
 
     await sessionManager.setModel('ctl-model', 'mock-lite');
 
-    const controls = sessionManager.getControls('ctl-model');
+    const controls = await sessionManager.getControls('ctl-model');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking']);
     expect(controls.values).toEqual({ thinking: 'high' });
     expect(session.controls).toEqual({ thinking: 'high' });
@@ -3574,9 +3575,23 @@ describe('AgentSessionManager session controls', () => {
     await sessionManager.destroySession('ctl-usage');
   });
 
-  it('getControls for an unknown session falls back to the default adapter descriptors', () => {
-    const controls = sessionManager.getControls('never-created');
+  it('getControls for an unknown session falls back to the default adapter descriptors', async () => {
+    const controls = await sessionManager.getControls('never-created');
     expect(controls.descriptors.map((d) => d.id)).toEqual(['permissionMode', 'thinking', 'speed']);
+    expect(controls.values).toEqual({});
+  });
+
+  it('getControls for a conversation that is not running uses its recorded agent and model', async () => {
+    const { worktreeManager } = await import('./worktree-manager.js');
+    const other = { ...new MockAdapter(), id: 'other' } as unknown as AgentAdapter;
+    other.getControls = vi.fn(() => [{ id: 'acp:mode', label: 'Agent mode', default: 'build', options: [{ value: 'build', label: 'build' }] }]);
+    extraAdapters.other = other;
+    vi.mocked(worktreeManager.getAdapterType).mockResolvedValueOnce('other');
+    vi.mocked(worktreeManager.getModel).mockResolvedValueOnce('other-model');
+
+    const controls = await sessionManager.getControls('asleep');
+    expect(controls.descriptors.map((d) => d.id)).toEqual(['acp:mode']);
+    expect(other.getControls).toHaveBeenCalledWith('other-model');
     expect(controls.values).toEqual({});
   });
 });
