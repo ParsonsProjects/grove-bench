@@ -1,7 +1,8 @@
-# ACP spike (Phase 0)
+# OpenCode ACP checks
 
-Throwaway checks for `docs/open-model-harnesses-plan.md`. Not part of the app:
-nothing here is built, bundled or tested by `npm test`. It has its own
+Checks behind the OpenCode preset (`src/main/adapters/acp/opencode.ts`,
+`docs/open-model-harnesses-plan.md`). Not part of the app: nothing here is
+built, bundled or tested by `npm test`. It has its own
 `package.json`, which pins OpenCode 1.18.33 and the ACP SDK 1.5.1.
 
 ```
@@ -60,4 +61,4 @@ test the script itself.
 - `lib.mjs`: find the binary, isolated home, spawn and record, report.
 - `fake-openrouter.mjs`: scripted fake of the chat completions endpoint.
 - `fixtures/`: recordings from the offline run, trimmed (model list cut,
-  temp paths replaced by `<TMP>`). Input for the Phase 3 event mapper tests.
+  temp paths replaced by `<TMP>`): what OpenCode actually sends over ACP.
