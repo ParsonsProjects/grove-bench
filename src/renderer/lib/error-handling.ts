@@ -43,12 +43,18 @@ export function reportFromError(
   };
 }
 
+/** Main keeps running after an uncaught exception so the other conversations
+ *  survive, but whatever it was doing may be left half-done. */
+const RESTART_HINT = ' Restart Grove Bench when you can.';
+
 /** One-line toast text. */
 export function shortMessage(report: AppErrorReport): string {
   const where = report.source === 'main' ? 'Background error' : 'Unexpected error';
   const msg = report.message.replace(/\s+/g, ' ').trim() || 'unknown';
+  const hint = report.source === 'main' && report.kind === 'uncaughtException' ? RESTART_HINT : '';
   const text = `${where}: ${msg}`;
-  return text.length > MESSAGE_MAX ? text.slice(0, MESSAGE_MAX - 1) + '…' : text;
+  const max = MESSAGE_MAX - hint.length;
+  return (text.length > max ? text.slice(0, max - 1) + '…' : text) + hint;
 }
 
 /** Drops repeats of the same message inside a short window so a tight loop

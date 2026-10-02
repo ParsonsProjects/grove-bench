@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { memoryStore } from '../stores/memory.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { effectiveCompactTimeoutSeconds } from '../../shared/compact-timeout.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
@@ -45,7 +46,7 @@
   let compactStageLabel = $derived(
     compactStageLabels[memoryStore.compactStage ?? ''] ?? `Compacting ${memoryStore.stats?.fileCount ?? ''} memory files`
   );
-  let compactTimeoutSeconds = $derived(Math.max(30, settingsStore.current.memoryCompactTimeoutSeconds || 300));
+  let compactTimeoutSeconds = $derived(effectiveCompactTimeoutSeconds(settingsStore.current.memoryCompactTimeoutSeconds));
 
   function formatElapsed(seconds: number): string {
     const m = Math.floor(seconds / 60);
@@ -55,15 +56,19 @@
 
   const folders = ['repo', 'conventions', 'architecture', 'sessions'];
 
+  // The project the panel shows by default: the open conversation's, else
+  // the first. A string, so the effect below only re-runs when it changes:
+  // reading the conversation list directly re-ran it on every status change
+  // or rename anywhere, reloading the panel and closing an edit in progress.
+  const defaultRepo = $derived.by(() => {
+    const currentRepo = store.activeSession?.repoPath;
+    return currentRepo && store.repos.includes(currentRepo) ? currentRepo : (store.repos[0] ?? null);
+  });
+
   $effect(() => {
-    if (open && store.repos.length > 0) {
-      // Default to the repo of the currently active session
-      const currentRepo = store.activeSession?.repoPath;
-      const targetRepo = currentRepo && store.repos.includes(currentRepo)
-        ? currentRepo
-        : store.repos[0];
-      memoryStore.loadForRepo(targetRepo);
-    }
+    if (!open || !defaultRepo) return;
+    const repo = defaultRepo;
+    untrack(() => memoryStore.loadForRepo(repo));
   });
 
   function selectFile(path: string) {

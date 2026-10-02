@@ -1,3 +1,5 @@
+import type { ToolView } from './tool-view.js';
+
 // ─── Worktree ───
 
 export interface WorktreeConfig {
@@ -11,6 +13,16 @@ export interface WorktreeConfig {
   adapterType?: string;
 }
 
+/** A folder the user picked to add as a project. A folder outside any git
+ *  repository comes back as `folder` and is added as a plain folder. */
+export type PickedProject =
+  | { kind: 'git'; path: string }
+  | { kind: 'folder'; path: string };
+
+/** What a project path is now: a git repository, a plain folder (projects
+ *  without git), or gone. */
+export type ProjectKind = 'git' | 'folder' | 'missing';
+
 export interface WorktreeInfo {
   id: string;
   path: string;
@@ -21,12 +33,11 @@ export interface WorktreeInfo {
   lastActiveAt?: number;
   /** True when session runs directly on the repo (no worktree created). */
   direct?: boolean;
+  /** The conversation runs in a folder that isn't a git repository (always
+   *  direct). Checkpoints, branches and the Changes tab don't apply. */
+  noGit?: boolean;
   /** User-assigned or auto-generated display name, persisted across restart. */
   displayName?: string | null;
-  /** Epoch ms when the user marked the session completed; null/absent when
-   *  it is still open. Completed sessions are hidden from the sidebar by
-   *  default and reopen on the next user message. */
-  completedAt?: number | null;
   /** Adapter id of the agent the session runs, from the manifest. */
   agentType?: string;
 }
@@ -42,12 +53,12 @@ export interface CreateSessionOpts {
   branchName: string;
   baseBranch?: string;
   useExisting?: boolean;
+  /** A new branch named after the group the conversation joins: when the
+   *  project has that branch already, continue on it instead of refusing the
+   *  name. Refused when another checkout has it. */
+  continueBranch?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
-  /** Attach a new (direct) session to an existing session's checkout + branch,
-   *  sharing its worktree instead of running on the repo's default branch.
-   *  Implies direct mode; the branch/path are resolved from the source session. */
-  attachToSessionId?: string;
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
   /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
@@ -78,6 +89,24 @@ export interface SessionInfo {
   displayName?: string | null;
 }
 
+/** Who wrote a conversation's goal: generated ('auto') or typed ('user').
+ *  A goal is only generated once; Refresh makes a new one on request. */
+export type ConversationGoalSource = 'auto' | 'user';
+
+/** Longest goal the user can type. */
+export const MAX_USER_GOAL_LENGTH = 500;
+
+/** The one-line goal pinned at the top of a conversation's Thread tab. */
+export interface ConversationGoal {
+  /** What the conversation is trying to get done, or null when there is
+   *  none yet (or the user cleared it). */
+  text: string | null;
+  /** Null until a goal has been generated or typed. */
+  source: ConversationGoalSource | null;
+  /** The bar was closed for this conversation. */
+  hidden: boolean;
+}
+
 // ─── Prerequisites ───
 
 /** A registered agent as the renderer sees it. */
@@ -90,6 +119,8 @@ export interface AgentSummary {
   backgroundModel?: string;
   /** How the agent handles MCP servers. Absent: no MCP support Grove can drive. */
   mcp?: McpSupport;
+  /** Untracked files Grove writes into the agent's worktrees for it. */
+  generatedFiles?: string[];
 }
 
 /** One agent's install and sign-in state. */
@@ -108,10 +139,27 @@ export interface AgentPrerequisiteStatus {
   apiKey?: {
     label: string;
     helpUrl: string;
+    /** How using a key is paid for, shown under the field. */
+    billingNote?: string;
     /** A key is saved. While saved it is used instead of any CLI sign-in. */
     saved: boolean;
     /** The OS can encrypt a key. Without it no key can be saved. */
     canStore: boolean;
+    /** The provider refused the saved key the last time it was used. Cleared
+     *  when a key is saved or removed. */
+    rejected?: boolean;
+    /** The key was saved without being checked: the provider couldn't be
+     *  reached. It is checked for real by the first conversation. */
+    unverified?: boolean;
+  };
+  /** Present when the user can sign in with the provider's CLI instead of a
+   *  key. `available` above says whether that CLI is installed. */
+  cliSignIn?: {
+    accountLabel: string;
+    accountDetail?: string;
+    cliName: string;
+    command: string;
+    setupUrl: string;
   };
 }
 
@@ -140,6 +188,10 @@ export interface PrerequisiteStatus {
  */
 export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' | 'agent' | 'other';
 
+/** How long a permission request waits for an answer before it is denied,
+ *  so a query can't hang forever on a prompt nobody sees. */
+export const PERMISSION_TIMEOUT_MINUTES = 30;
+
 // ─── Agent Events (renderer-side, serializable) ───
 
 /**
@@ -149,21 +201,32 @@ export type ToolCategory = 'edit' | 'read' | 'bash' | 'question' | 'web_fetch' |
  */
 export type AgentEvent =
   | { type: 'system_init'; sessionId: string; model: string; tools: string[]; agents?: string[]; skills?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[] }
-  | { type: 'assistant_text'; text: string; uuid: string }
-  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  // parentToolUseId: set when a subagent produced the event, to the id of the
+  // Agent call that started it. See subagentParent().
+  | { type: 'assistant_text'; text: string; uuid: string; parentToolUseId?: string }
+  | { type: 'assistant_tool_use'; toolName: string; toolInput: unknown; toolUseId: string; uuid: string; toolCategory?: ToolCategory; toolView?: ToolView; parentToolUseId?: string }
+  /** More about a tool call the agent already reported: a title, its input
+   *  or its edits once known (ACP agents fill a call in as it runs). Only
+   *  the fields present change. */
+  | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
   | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
-  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; planText?: string }
-  | { type: 'thinking'; thinking: string; uuid: string }
+  | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
+  | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
   | { type: 'partial_thinking'; text: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  | { type: 'user_message'; text: string; uuid?: string }
-  | { type: 'status'; message: string }
-  | { type: 'error'; message: string }
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[] }
+  /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
+   *  `newConversation` marks where the agent started a new conversation: it
+   *  doesn't remember the turns above, so a rewind can't fork from them. */
+  | { type: 'status'; message: string; level?: 'warning'; newConversation?: true }
+  /** `auth`: a sign-in failure, so the UI offers a way to fix it. `keyRejected`:
+   *  the provider refused the credentials outright (a bad or revoked key). */
+  | { type: 'error'; message: string; auth?: boolean; keyRejected?: boolean }
   | { type: 'process_exit'; exitCode?: number }
   // Rate limiting
   | { type: 'rate_limit'; status: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number; utilization?: number; rateLimitType?: string }
@@ -203,6 +266,9 @@ export type AgentEvent =
       /** The user's typed reply for a question (AskUserQuestion) or deny
        *  reason, so replayed history can still show what was answered. */
       message?: string;
+      /** Set when nobody answered: the request waited
+       *  PERMISSION_TIMEOUT_MINUTES and was denied. */
+      reason?: 'timeout';
     }
   // Memory auto-save status
   | { type: 'memory_autosave'; status: 'started' | 'completed' | 'skipped'; filesWritten?: string[] }
@@ -211,6 +277,13 @@ export type AgentEvent =
   // Git has no user.name/user.email for this conversation's checkout, so the
   // agent's commits will likely fail. Emitted at most once per conversation.
   | { type: 'git_identity_missing' };
+
+/** The Agent call whose subagent produced this event, or undefined for the
+ *  conversation's own events. A subagent's work belongs to its own thread,
+ *  not the conversation's turn: it can carry on after the turn ends. */
+export function subagentParent(event: AgentEvent): string | undefined {
+  return 'parentToolUseId' in event ? event.parentToolUseId : undefined;
+}
 
 /** A single full-history search match (main-process search over event history). */
 export interface EventSearchHit {
@@ -241,13 +314,6 @@ export interface SessionPreview {
 // ─── PTY / Terminal ───
 
 /** @deprecated Legacy shell output event — replaced by PTY data stream. */
-export interface ShellOutputEvent {
-  execId: string;
-  stream: 'stdout' | 'stderr' | 'exit';
-  data?: string;
-  exitCode?: number;
-}
-
 /** Permission decision from renderer → main */
 export interface PermissionDecision {
   requestId: string;
@@ -290,6 +356,9 @@ export interface GitStatusResult {
   baseRef?: string;
   /** Set when the branch scope could not find a merge base with `base`. */
   scopeError?: string;
+  /** Set when git could not read the status: `entries` being empty then
+   *  does not mean the tree is clean. */
+  error?: string;
 }
 
 export interface FileDiffOptions {
@@ -728,7 +797,7 @@ export interface McpSupport {
   };
   /** Tooltip for Disconnect: how long it lasts and what it affects. */
   disconnectHint: string;
-  /** Editing configured servers (Settings > MCP). Absent: not supported. */
+  /** Editing configured servers (Settings > MCP servers). Absent: not supported. */
   config?: {
     /** Scopes a server can be added to. */
     scopes: { value: McpConfigScope; label: string; description: string }[];
@@ -786,11 +855,22 @@ export interface SpellcheckMenuRequest {
 
 // ─── Image Attachment ───
 
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
 export interface ImageAttachment {
   /** base64-encoded image data (no data: prefix) */
   data: string;
-  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  mediaType: ImageMediaType;
   name: string;
+}
+
+/** An image saved in a conversation's attachments folder (main/attachments.ts).
+ *  Events carry this instead of the image data so the event log stays small. */
+export interface StoredImage {
+  /** File name in the attachments folder. */
+  file: string;
+  /** The name it was attached under. Absent for images a tool returned. */
+  name?: string;
 }
 
 // ─── Plugins ───
@@ -827,6 +907,26 @@ export interface SessionSortState {
   dir: 'asc' | 'desc';
 }
 
+/** Conversations that belong to one piece of work, usually in different
+ *  projects (an API change and the web change that uses it). Short-lived:
+ *  the group goes when its last conversation leaves it. Each conversation
+ *  still runs in its own project; the group only lists them together.
+ *  Persisted via app-state. */
+export interface ConversationGroup {
+  id: string;
+  name: string;
+  /** Conversation ids, in the order they joined. Never empty, and a
+   *  conversation is in at most one group. */
+  sessionIds: string[];
+}
+
+/** Sidebars that fold down to a thin rail. The Changes and Checkpoints file
+ *  lists are separate so each tab keeps its own. */
+export const COLLAPSIBLE_PANELS = ['sidebar', 'changesFiles', 'checkpointList', 'checkpointFiles'] as const;
+export type CollapsiblePanel = (typeof COLLAPSIBLE_PANELS)[number];
+/** Which panels are collapsed (persisted via app-state). Absent = open. */
+export type CollapsedPanels = Partial<Record<CollapsiblePanel, boolean>>;
+
 // ─── IPC API (exposed via contextBridge) ───
 
 // ─── Preview tab ───
@@ -855,9 +955,9 @@ export interface PreviewPageState {
   error: { code: number; description: string; url: string } | null;
   /** The page's process died. Reload to recover. */
   crashed: boolean;
-  /** Claude's page only: its last action and when it happened. */
+  /** The agent's page only: its last action and when it happened. */
   lastAction?: { text: string; at: number } | null;
-  /** Claude's page only: viewport size in CSS pixels. */
+  /** The agent's page only: viewport size in CSS pixels. */
   size?: { width: number; height: number };
 }
 
@@ -870,12 +970,21 @@ export type PreviewKeyForward =
 
 export interface GroveBenchAPI {
   // Repo operations
-  addRepo(): Promise<string | null>;
+  /** Pick a folder to add as a project. Null when cancelled. */
+  addRepo(): Promise<PickedProject | null>;
+  /** Whether a project path is a git repository, a plain folder, or gone. */
+  repoKind(path: string): Promise<ProjectKind>;
+  /** Keep a project in the remembered list (one found some other way than
+   *  the folder picker, such as the old localStorage list). */
+  rememberRepo(path: string): Promise<void>;
+  /** Whether git has a user.name and user.email for commits in this folder. */
+  hasGitIdentity(path: string): Promise<boolean>;
   removeRepo(repoPath: string): Promise<void>;
   validateRepo(path: string): Promise<boolean>;
 
   // Session operations
-  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string }>;
+  /** `noGit` when the conversation runs in a folder without git. */
+  createSession(opts: CreateSessionOpts): Promise<{ id: string; branch: string; agentType: string; noGit?: boolean }>;
   resumeSession(id: string, repoPath: string): Promise<{ id: string; branch: string }>;
   /** Stop the current turn; the agent process stays up for the next message. */
   stopSession(id: string): Promise<void>;
@@ -900,8 +1009,20 @@ export interface GroveBenchAPI {
    *  generated from its task. Returns the new name, or null when nothing
    *  changed (already named, pushed, no prompt yet, or generation failed). */
   autoNameBranch(sessionId: string): Promise<string | null>;
-  /** Persist the completed flag (see WorktreeInfo.completedAt). */
-  setSessionCompleted(sessionId: string, completed: boolean): Promise<void>;
+  /** A conversation's goal, or null for an unknown conversation. */
+  getConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Save a goal the user typed. Empty text clears it; either way it is
+   *  never replaced automatically. */
+  setConversationGoal(sessionId: string, text: string): Promise<ConversationGoal | null>;
+  /** Generate a goal for a conversation that has never had one, after a
+   *  turn ends. Resolves to the new goal, or null when nothing changed (goals
+   *  turned off, one exists already, no reply yet, or generation failed). */
+  autoConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Generate a new goal now, replacing the current one, typed or not.
+   *  Rejects when generation fails. */
+  refreshConversationGoal(sessionId: string): Promise<ConversationGoal | null>;
+  /** Close (or reopen) the goal bar for one conversation. */
+  setConversationGoalHidden(sessionId: string, hidden: boolean): Promise<ConversationGoal | null>;
   listSessions(): Promise<SessionInfo[]>;
 
   // Worktree operations
@@ -922,6 +1043,9 @@ export interface GroveBenchAPI {
   /** Record the branch the conversation's checkout is on now, if it moved
    *  outside the app. Null when nothing changed. */
   syncBranch(sessionId: string): Promise<BranchSyncResult | null>;
+  /** The conversations working in this conversation's checkout, itself
+   *  included (another conversation can be attached to the same one). */
+  getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[]): void;
@@ -1076,7 +1200,7 @@ export interface GroveBenchAPI {
   previewSetViewport(sessionId: string, bounds: PreviewBounds | null): void;
   /** A picture of your page (JPEG data URL), shown while an overlay covers it. */
   previewSnapshot(sessionId: string): Promise<string | null>;
-  /** Claude's page as a JPEG data URL, or null when it hasn't changed since
+  /** The agent's page as a JPEG data URL, or null when it hasn't changed since
    *  `sinceVersion` (or doesn't exist). */
   previewAgentFrame(sessionId: string, sinceVersion: number): Promise<{ version: number; dataUrl: string } | null>;
   /** Every conversation's open pages, for the renderer to catch up after a reload. */
@@ -1118,12 +1242,6 @@ export interface GroveBenchAPI {
   memoryBackupPreview(repoPath: string, backupId: string): Promise<MemoryBackupFile[]>;
   memoryReadBackupFile(repoPath: string, backupId: string, relativePath: string): Promise<string | null>;
 
-  // Shell / Terminal (legacy)
-  shellRun(sessionId: string, command: string): Promise<string>;
-  shellKill(execId: string): Promise<void>;
-  shellInput(execId: string, data: string): void;
-  onShellOutput(sessionId: string, callback: (event: ShellOutputEvent) => void): () => void;
-
   // PTY Terminal (per-session persistent shell)
   ptySpawn(sessionId: string): Promise<boolean>;
   ptyWrite(sessionId: string, data: string): void;
@@ -1146,6 +1264,12 @@ export interface GroveBenchAPI {
   setSessionSort(sort: SessionSortState): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
+  getCollapsedPanels(): Promise<CollapsedPanels>;
+  setCollapsedPanels(panels: CollapsedPanels): void;
+  /** The saved groups, or null while app-state.json can't be read (a
+   *  passing lock), so "none" is never mistaken for the real list. */
+  getConversationGroups(): Promise<ConversationGroup[] | null>;
+  setConversationGroups(groups: ConversationGroup[]): void;
   /** Sessions flagged unread (finished a turn / got a PR alert while not
    *  focused) when the app last ran, so the flag survives a restart. */
   getUnreadSessions(): Promise<string[]>;
@@ -1162,6 +1286,8 @@ export interface GroveBenchAPI {
   onAppError(callback: (report: AppErrorReport) => void): () => void;
   /** Send an uncaught renderer error to main for the file log. */
   reportError(report: AppErrorReport): void;
+  /** Send a frame the window took long over to main for the file log. */
+  reportFreeze(report: FreezeReport): void;
 
   // Taskbar attention badge
   /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
@@ -1199,9 +1325,14 @@ export interface GroveBenchAPI {
   getModels(adapterType?: string): Promise<Array<{ id: string; label: string; family?: string; contextWindow?: number }>>;
 
   // Auto-update
-  checkForUpdate(): Promise<void>;
+  getUpdateState(): Promise<UpdateState>;
+  /** Check now, on the user's behalf. Resolves to the status once the check
+   *  is done (null in dev builds). */
+  checkForUpdate(): Promise<UpdateStatus | null>;
   downloadUpdate(): Promise<void>;
-  installUpdate(): void;
+  /** Stop every agent and shell the way quitting does, then install the
+   *  downloaded update and reopen the app. */
+  restartToUpdate(): Promise<void>;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
@@ -1242,6 +1373,16 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
   question: 'question',
 };
 
+/** An agent the user added that speaks the Agent Client Protocol over stdio. */
+export interface AcpAgentSetting {
+  /** Stable id (the adapter id is `acp-<id>`); defaults from the name. */
+  id: string;
+  name: string;
+  /** Program to run, on PATH or a full path. */
+  command: string;
+  args: string[];
+}
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -1254,6 +1395,11 @@ export interface GroveBenchSettings {
    *  suggestions in the status bar. Off by default — each analysis is a model
    *  call, so the status bar's manual "Suggest" button is the main route. */
   autoSkillSuggestions: boolean;
+  /** Pin a one-line goal at the top of each conversation's Thread tab,
+   *  generated after its first reply (one background model call per
+   *  conversation, plus one per Refresh). Off by default, as each goal is a
+   *  model call the user didn't ask for. */
+  showConversationGoal: boolean;
 
   // Agent Defaults
   /** Model new conversations start on, keyed by adapter id. Missing or empty
@@ -1264,10 +1410,16 @@ export interface GroveBenchSettings {
    *  ids the adapter actually offers for the session's model are applied;
    *  anything else is ignored, so a stale entry never breaks a session. */
   adapterDefaults: Record<string, Record<string, string>>;
+  /** Ask agents that support it (the `thinkingSummaries` capability) for a
+   *  readable summary of the model's thinking. Off asks for none. Applies
+   *  when a conversation's agent next starts. Default true. */
+  showThinkingSummaries: boolean;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
+  /** The user's own ACP agents. Read at launch, so a change applies after a restart. */
+  acpAgents: AcpAgentSetting[];
 
   // Memory
   /** Enable auto-save of memories at end of session / compaction. Default true. */
@@ -1276,8 +1428,8 @@ export interface GroveBenchSettings {
    *  session-note pruning) when memory grows past its budget. Default false —
    *  it costs an LLM call; the panel's manual Compact button always works. */
   memoryAutoCompact: boolean;
-  /** Abort a memory compaction pass after this many seconds. Clamped to a
-   *  30-second minimum. Default 300 (5 minutes). */
+  /** Abort a memory compaction pass after this many seconds. 30 to 3600,
+   *  default 300 (5 minutes); see shared/compact-timeout.ts. */
   memoryCompactTimeoutSeconds: number;
   /** Model for background tasks (memory notes and compaction, commit
    *  messages, skill suggestions), keyed by adapter id. Missing or empty
@@ -1311,6 +1463,12 @@ export interface GroveBenchSettings {
   branchNamingRule: string;
   theme: 'system' | 'dark' | 'light';
   alwaysOnTop: boolean;
+
+  // Updates
+  /** Download new versions in the background as soon as they're found; they
+   *  install on the next quit, or sooner from the title bar. Off = show the
+   *  update and wait for a click to download. Default true. */
+  autoDownloadUpdates: boolean;
 
   // Appearance
   /** Custom accent color per repository path. Keys are repo paths, values are hex colors. */
@@ -1360,8 +1518,8 @@ export interface GroveBenchSettings {
  * - 'detailed': everything (tool calls, thinking, system, ...)
  * - 'summary':  hides thinking and non-essential tool calls
  * - 'focus':    only user prompts, assistant text, question blocks (with
- *               the answer given), unanswered permission blocks, errors
- *               and turn results
+ *               the answer given), unanswered permission blocks, errors,
+ *               turn results and the calls that start subagents
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];
@@ -1381,6 +1539,17 @@ export interface AppErrorReport {
   /** Session whose view raised it, when known (renderer error boundaries). */
   sessionId?: string;
   timestamp: number;
+}
+
+/** A frame (or, where the browser can't time frames, a task) the window
+ *  took over 100 ms on, sent to main for the freeze log. */
+export interface FreezeReport {
+  kind: 'frame' | 'task';
+  durationMs: number;
+  /** Of that, style and layout, when the browser says. */
+  renderMs?: number;
+  /** The scripts that ran longest in it, longest first, as text. */
+  scripts?: string[];
 }
 
 // ─── Memory ───
@@ -1461,13 +1630,27 @@ export interface UpdateInfo {
   releaseDate?: string;
 }
 
+/** Where the updater is. `manual` marks what the user asked for (Check for
+ *  updates, or a click to download) as opposed to the background schedule,
+ *  so the UI can stay quiet about background work. */
 export type UpdateStatus =
-  | { state: 'checking' }
+  | { state: 'checking'; manual: boolean }
+  /** Found, waiting for the user to download it (automatic download off). */
   | { state: 'available'; info: UpdateInfo }
-  | { state: 'not-available' }
-  | { state: 'downloading'; percent: number }
+  | { state: 'not-available'; manual: boolean }
+  | { state: 'downloading'; info: UpdateInfo; percent: number; manual: boolean }
+  /** Ready: installs on the next quit, or now via restartToUpdate(). */
   | { state: 'downloaded'; info: UpdateInfo }
-  | { state: 'error'; message: string };
+  | { state: 'error'; message: string; during: 'check' | 'download'; manual: boolean };
+
+export interface UpdateState {
+  /** The running app's version. */
+  currentVersion: string;
+  /** False in dev builds: updates are only checked in the installed app. */
+  enabled: boolean;
+  /** The latest status, or null before the first check. */
+  status: UpdateStatus | null;
+}
 
 // ─── IPC Channel Names ───
 
@@ -1490,6 +1673,9 @@ export const IPC = {
   REPO_SELECT: 'repo:select',
   REPO_REMOVE: 'repo:remove',
   REPO_VALIDATE: 'repo:validate',
+  REPO_KIND: 'repo:kind',
+  REPO_REMEMBER: 'repo:remember',
+  GIT_HAS_IDENTITY: 'git:hasIdentity',
   SESSION_CREATE: 'session:create',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
@@ -1500,7 +1686,11 @@ export const IPC = {
   SESSION_DESTROY: 'session:destroy',
   SESSION_RENAME: 'session:rename',
   SESSION_AUTO_NAME: 'session:autoName',
-  SESSION_SET_COMPLETED: 'session:setCompleted',
+  SESSION_GOAL_GET: 'session:getGoal',
+  SESSION_GOAL_SET: 'session:setGoal',
+  SESSION_GOAL_AUTO: 'session:autoGoal',
+  SESSION_GOAL_REFRESH: 'session:refreshGoal',
+  SESSION_GOAL_HIDE: 'session:setGoalHidden',
   SESSION_LIST: 'session:list',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_LIST_REPOS: 'worktree:listRepos',
@@ -1509,6 +1699,7 @@ export const IPC = {
   BRANCH_RENAME: 'branch:rename',
   BRANCH_SWITCH: 'branch:switch',
   BRANCH_SYNC: 'branch:sync',
+  CHECKOUT_SHARERS: 'branch:checkoutSharers',
   BRANCH_AUTO_NAME: 'branch:autoName',
   PREREQUISITES_CHECK: 'prerequisites:check',
   PREREQUISITES_CACHED: 'prerequisites:cached',
@@ -1594,12 +1785,18 @@ export const IPC = {
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
+  APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
+  APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
+  APP_STATE_GET_GROUPS: 'appState:getConversationGroups',
+  APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
   APP_STATE_SET_UNREAD: 'appState:setUnreadSessions',
   /** Main → renderer: an uncaught main-process error. */
   APP_ERROR: 'app:error',
   /** Renderer → main: an uncaught renderer error, for the file log. */
   APP_REPORT_ERROR: 'app:reportError',
+  /** Renderer → main: a frame the window took long over, for the file log. */
+  APP_REPORT_FREEZE: 'app:reportFreeze',
   WIN_SET_ATTENTION_BADGE: 'win:setAttentionBadge',
   /** Main → renderer: show the spell check menu for a misspelled word. */
   SPELLCHECK_MENU: 'spellcheck:menu',
@@ -1625,10 +1822,6 @@ export const IPC = {
   MEMORY_STATS: 'memory:stats',
   MEMORY_BACKUP_PREVIEW: 'memory:backupPreview',
   MEMORY_BACKUP_READ_FILE: 'memory:backupReadFile',
-  SHELL_RUN: 'shell:run',
-  SHELL_KILL: 'shell:kill',
-  SHELL_INPUT: 'shell:input',
-  SHELL_OUTPUT: 'shell:output',
   // PTY channels (per-session persistent terminal)
   PTY_SPAWN: 'pty:spawn',
   PTY_WRITE: 'pty:write',
@@ -1651,9 +1844,10 @@ export const IPC = {
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',
   // Auto-updater
+  UPDATE_GET_STATE: 'update:get-state',
   UPDATE_CHECK: 'update:check',
   UPDATE_DOWNLOAD: 'update:download',
-  UPDATE_INSTALL: 'update:install',
+  UPDATE_RESTART: 'update:restart',
   UPDATE_STATUS: 'update:status',
   // Preview tab
   PREVIEW_NAVIGATE: 'preview:navigate',
@@ -1667,3 +1861,4 @@ export const IPC = {
   /** Main → renderer: (sessionId, PreviewKeyForward). */
   PREVIEW_KEY: 'preview:key',
 } as const;
+

@@ -9,8 +9,13 @@ export interface RateLimitState {
 class RateLimitStore {
   bySession = $state<Record<string, RateLimitState>>({});
 
+  /** The latest status, or null once its window has reset: history replay
+   *  brings back old events, and a live one stops applying at its reset. */
   get(sessionId: string): RateLimitState | null {
-    return this.bySession[sessionId] ?? null;
+    const state = this.bySession[sessionId];
+    if (!state) return null;
+    if (state.resetsAt && state.resetsAt * 1000 <= Date.now()) return null;
+    return state;
   }
 
   set(sessionId: string, state: RateLimitState): void {

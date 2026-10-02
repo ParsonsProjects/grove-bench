@@ -156,6 +156,22 @@ describe('TerminalManager', () => {
         'chunk1chunk2',
       );
     });
+
+    it('drops output nobody can receive instead of holding it', () => {
+      tm.spawnPty('s1', '/tmp', sender);
+      const p = ptyAt(0);
+      const isDestroyed = sender.isDestroyed as ReturnType<typeof vi.fn>;
+      isDestroyed.mockReturnValue(true);
+      p._onDataCb!('dropped');
+      vi.advanceTimersByTime(10);
+
+      // If the buffer had kept 'dropped', it would ride along with this.
+      isDestroyed.mockReturnValue(false);
+      p._onDataCb!('fresh');
+      vi.advanceTimersByTime(10);
+
+      expect((sender.send as ReturnType<typeof vi.fn>).mock.calls).toEqual([['pty:data:s1', 'fresh']]);
+    });
   });
 
   describe('onExit sends exit event for active PTY', () => {

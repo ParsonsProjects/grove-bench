@@ -1,15 +1,15 @@
 import type { PrerequisiteStatus, SessionStatus } from '../../shared/types.js';
 import { sortSessions, DEFAULT_SORT, type SessionSortState } from '../lib/session-sort.js';
 
-/** "Show completed" is a per-viewer convenience, so it lives in localStorage. */
-const SHOW_COMPLETED_KEY = 'grove-bench:sidebar-show-completed';
-
 interface SessionEntry {
   id: string;
   branch: string;
   repoPath: string;
   status: SessionStatus;
   direct?: boolean;
+  /** Runs in a folder that isn't a git repository: no Changes, checkpoints
+   *  or branches. */
+  noGit?: boolean;
   /** Adapter id the session runs on (e.g. 'claude-code'). */
   agentType?: string;
   /** User-assigned display name — shown instead of branch when set. */
@@ -18,14 +18,13 @@ interface SessionEntry {
   createdAt?: number;
   /** Timestamp (ms) of the last user interaction. */
   lastActiveAt?: number;
-  /** Epoch ms when the user marked the session completed; null/absent while
-   *  open. Completed sessions hide from the sidebar unless "Show completed". */
-  completedAt?: number | null;
 }
 
 class SessionStore {
   sessions = $state<SessionEntry[]>([]);
   repos = $state<string[]>([]);
+  /** Projects that are plain folders, not git repositories. */
+  folderRepos = $state<string[]>([]);
   activeSessionId = $state<string | null>(null);
   error = $state<string | null>(null);
   creating = $state(false);
@@ -49,10 +48,6 @@ class SessionStore {
    *  the same order. */
   sessionSort = $state<SessionSortState>({ ...DEFAULT_SORT });
 
-  /** Whether conversations marked completed are shown in the sidebar (and so
-   *  on the landing). */
-  showCompleted = $state(false);
-
   /** Pending status updates for sessions not yet added to the store.
    *  SESSION_STATUS can arrive before addSession during fast worktree setup. */
   private pendingStatuses = new Map<string, SessionStatus>();
@@ -60,24 +55,15 @@ class SessionStore {
   /** LIFO stack of recently-closed session IDs for Ctrl+Shift+T re-open. */
   private recentlyClosedStack: string[] = [];
 
-  constructor() {
-    try { this.showCompleted = localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; } catch { /* storage unavailable */ }
-  }
-
   get count() {
     return this.sessions.length;
   }
 
-  toggleShowCompleted() {
-    this.showCompleted = !this.showCompleted;
-    try { localStorage.setItem(SHOW_COMPLETED_KEY, this.showCompleted ? '1' : '0'); } catch { /* ignore */ }
-  }
-
   /** The sidebar's Conversations list before its triage filter: open tabs,
-   *  completed ones only when shown, in the sidebar's sort order. */
+   *  in the sidebar's sort order. */
   get openConversations(): SessionEntry[] {
     return sortSessions(
-      this.sessions.filter((s) => this.isOpenTab(s) && (this.showCompleted || !s.completedAt)),
+      this.sessions.filter((s) => this.isOpenTab(s)),
       this.sessionSort,
     );
   }
@@ -138,6 +124,9 @@ class SessionStore {
         for (const r of legacyRepos) {
           if (!this.repos.includes(r)) {
             this.repos = [...this.repos, r];
+            // Main keeps the list now; without this a project with no
+            // conversations would be gone at the next launch.
+            await window.groveBench.rememberRepo(r).catch(() => {});
           }
         }
         localStorage.removeItem('grove-bench:repos');
@@ -145,18 +134,28 @@ class SessionStore {
     } catch { /* ignore */ }
   }
 
-  addRepo(path: string) {
+  /** Add a project. `folder` says whether it's a plain folder (no git);
+   *  left out, an existing project keeps what it was. */
+  addRepo(path: string, opts: { folder?: boolean } = {}) {
     if (!this.repos.includes(path)) {
       this.repos = [...this.repos, path];
     }
+    if (opts.folder !== undefined) this.setFolderProject(path, opts.folder);
   }
 
   removeRepo(path: string) {
     this.repos = this.repos.filter((r) => r !== path);
+    this.setFolderProject(path, false);
   }
 
-  canRemoveRepo(path: string): boolean {
-    return this.sessionsForRepo(path).length === 0;
+  isFolderProject(path: string): boolean {
+    return this.folderRepos.includes(path);
+  }
+
+  setFolderProject(path: string, folder: boolean) {
+    const has = this.folderRepos.includes(path);
+    if (folder && !has) this.folderRepos = [...this.folderRepos, path];
+    if (!folder && has) this.folderRepos = this.folderRepos.filter((r) => r !== path);
   }
 
   sessionsForRepo(path: string): SessionEntry[] {
@@ -183,27 +182,9 @@ class SessionStore {
     this.addRepo(entry.repoPath);
   }
 
-  /** Quick-create a new session (no dialog) that lands on `sourceSessionId`'s
-   *  branch, sharing its checkout. The main process resolves the branch + path
-   *  from the source session, so a new session forked off a worktree session
-   *  stays on that branch instead of the repo's default branch. Runs in-place
-   *  (direct), so it never creates or removes a worktree. It runs the same
-   *  agent as the source session. */
-  async createAttachedSession(sourceSessionId: string, repoPath: string): Promise<void> {
-    try {
-      const adapterType = this.sessions.find((s) => s.id === sourceSessionId)?.agentType;
-      const result = await window.groveBench.createSession({
-        repoPath, branchName: '', direct: true, attachToSessionId: sourceSessionId,
-        ...(adapterType ? { adapterType } : {}),
-      });
-      this.addSession({ id: result.id, branch: result.branch, repoPath, status: 'running', direct: true, agentType: result.agentType, createdAt: Date.now() });
-    } catch (e: any) {
-      this.setError(e?.message || String(e));
-    }
-  }
-
   removeSession(id: string) {
     this.sessions = this.sessions.filter((s) => s.id !== id);
+    this.removeFromRecentlyClosed(id);
     this.clearNeedsAttention(id);
     this.clearDeferredResume(id);
     // Back to the landing screen rather than jumping into another conversation.
@@ -249,30 +230,6 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, lastActiveAt: now } : s
     );
-    // New user activity reopens a completed session — it is clearly not done.
-    if (this.sessions.find((s) => s.id === id)?.completedAt) {
-      this.setCompleted(id, false).catch(() => {});
-    }
-  }
-
-  get completedCount() {
-    return this.sessions.filter((s) => !!s.completedAt).length;
-  }
-
-  /** Mark a session completed (or reopen it). Applied optimistically and
-   *  persisted through main; rolled back if persistence fails. */
-  async setCompleted(id: string, completed: boolean): Promise<void> {
-    const previous = this.sessions.find((s) => s.id === id)?.completedAt ?? null;
-    const next = completed ? Date.now() : null;
-    if (!!previous === completed) return;
-    this.sessions = this.sessions.map((s) => (s.id === id ? { ...s, completedAt: next } : s));
-    if (completed) this.clearNeedsAttention(id);
-    try {
-      await window.groveBench.setSessionCompleted(id, completed);
-    } catch (e) {
-      console.warn('[setCompleted] persist failed, rolling back:', e);
-      this.sessions = this.sessions.map((s) => (s.id === id ? { ...s, completedAt: previous } : s));
-    }
   }
 
   updateDisplayName(id: string, displayName: string | null) {

@@ -1,19 +1,19 @@
 <script lang="ts">
   import CopyButton from './CopyButton.svelte';
   import DiffView, { computeDiffLines } from './DiffView.svelte';
+  import type { ToolView } from '../../shared/tool-view.js';
 
   let {
     sessionId,
-    toolName,
-    toolInput,
+    view,
     result,
     pending,
     isError,
     summaryMode = false,
   }: {
     sessionId: string;
-    toolName: string;
-    toolInput: unknown;
+    /** The edit call (see shared/tool-view.ts). */
+    view: ToolView;
     result?: string;
     pending: boolean;
     isError?: boolean;
@@ -21,16 +21,13 @@
   } = $props();
 
   let sideBySide = $state(false);
-  let input = $derived(toolInput as Record<string, unknown>);
-  let filePath = $derived(String(input?.file_path ?? input?.filePath ?? 'file'));
+  let filePath = $derived(view.path || 'file');
+  /** A whole-file write rather than replacements within the file. */
+  let isWrite = $derived(!view.edits?.length && view.write !== undefined);
 
-  let diffLines = $derived(pending ? [] : computeDiffLines(toolName, input, filePath));
+  let diffLines = $derived(pending ? [] : computeDiffLines(view, filePath));
 
-  let copyContent = $derived.by(() => {
-    if (toolName === 'Write') return String(input?.content ?? '');
-    if (toolName === 'Edit') return String(input?.new_string ?? '');
-    return '';
-  });
+  let copyContent = $derived(isWrite ? (view.write ?? '') : (view.edits ?? []).map((e) => e.newText).join('\n'));
 
   function openInEditor() {
     window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
@@ -40,7 +37,7 @@
 {#if summaryMode}
   <div class="py-0.5 my-0.5 border-l-4 border-primary pl-3">
     <div class="flex items-center gap-2 text-xs group/diff-hdr">
-      <span class="text-primary font-bold">{toolName === 'Write' ? '+ new' : 'edit'}</span>
+      <span class="text-primary font-bold">{isWrite ? '+ new' : 'edit'}</span>
       <button
         onclick={openInEditor}
         class="text-foreground/80 hover:text-primary hover:underline cursor-pointer truncate"
@@ -57,7 +54,7 @@
   <div class="py-1 my-1 border-l-4 border-primary pl-3">
     <!-- Header -->
     <div class="flex items-center gap-2 text-xs mb-1 group/diff-hdr">
-      <span class="text-primary font-bold">{toolName === 'Write' ? '+ new file' : 'edit'}</span>
+      <span class="text-primary font-bold">{isWrite ? '+ new file' : 'edit'}</span>
       <button
         onclick={openInEditor}
         class="text-foreground/80 hover:text-primary hover:underline cursor-pointer"
@@ -71,7 +68,7 @@
       {:else if diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
           <CopyButton text={copyContent} class="opacity-0 group-hover/diff-hdr:opacity-100" />
-          {#if toolName === 'Edit'}
+          {#if !isWrite}
             <button
               onclick={() => sideBySide = !sideBySide}
               class="text-muted-foreground hover:text-foreground select-none"

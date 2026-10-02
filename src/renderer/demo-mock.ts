@@ -17,6 +17,17 @@ window.addEventListener('unhandledrejection', (e) => {
 const now = Date.now();
 const min = 60_000;
 
+// The Claude Code adapter's mode options (PERMISSION_MODE_OPTIONS in
+// src/main/adapters/claude-code.ts), for both the draft and the live
+// conversation, so the two don't drift apart.
+const CLAUDE_MODE_OPTIONS = [
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
+  { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
+  { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+];
+
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
 
@@ -25,8 +36,11 @@ const SETTINGS = {
   toolDenyRules: [],
   disabledSkills: ['legacy-deploy'] as string[],
   autoSkillSuggestions: false,
+  // On here (off by default) so the demo shows the goal bar.
+  showConversationGoal: true,
   defaultModels: {},
   adapterDefaults: {},
+  showThinkingSummaries: true,
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
@@ -41,6 +55,7 @@ const SETTINGS = {
   branchNamingRule: '',
   theme: 'dark',
   alwaysOnTop: false,
+  autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
   diffViewMode: 'unified',
@@ -54,6 +69,11 @@ const SETTINGS = {
   analyticsEnabled: false,
   analyticsPrompted: true,
   crashReportsEnabled: false,
+};
+
+const GOALS: Record<string, string> = {
+  's-sidebar': 'Redesign the sidebar so conversations group by project and show their status at a glance',
+  's-oauth': 'Fix the OAuth refresh flow so sessions stop dropping after one hour',
 };
 
 const PREVIEWS: Record<string, { firstPrompt: string; lastText: string }> = {
@@ -168,6 +188,24 @@ const memoryBackups = [
 const compactListeners = new Set<(e: unknown) => void>();
 let compactCancelled = false;
 
+// Update pill and Settings > Updates: start in a state with
+// ?update=available|downloading|downloaded|error|up-to-date, or send more
+// from the console with __demoUpdate({ state: ... }).
+const DEMO_UPDATE_INFO = { version: '0.0.0-alpha.3' };
+const DEMO_UPDATES: Record<string, unknown> = {
+  available: { state: 'available', info: DEMO_UPDATE_INFO },
+  downloading: { state: 'downloading', info: DEMO_UPDATE_INFO, percent: 42, manual: true },
+  downloaded: { state: 'downloaded', info: DEMO_UPDATE_INFO },
+  error: { state: 'error', message: 'net::ERR_INTERNET_DISCONNECTED', during: 'download', manual: false },
+  'up-to-date': { state: 'not-available', manual: true },
+};
+let demoUpdateStatus: unknown = DEMO_UPDATES[new URLSearchParams(location.search).get('update') ?? ''] ?? null;
+const updateListeners = new Set<(status: unknown) => void>();
+(window as never as Record<string, unknown>).__demoUpdate = (status: unknown) => {
+  demoUpdateStatus = status;
+  updateListeners.forEach((l) => l(status));
+};
+
 const api: Record<string, unknown> = {
   memoryList: async () => memoryFiles.map(({ content: _c, ...entry }) => entry),
   memoryRead: async (_repo: string, p: string) => memoryFiles.find(f => f.relativePath === p)?.content ?? null,
@@ -277,6 +315,10 @@ const api: Record<string, unknown> = {
   }),
   checkGhPrerequisite: async () => ({ available: true, version: '2.65.0', authenticated: true }),
   listRepos: async () => [],
+  // Adding a project picks a folder without git.
+  addRepo: async () => ({ kind: 'folder', path: 'C:\\Users\\sam\\notes' }),
+  repoKind: async (p: string) => (p.endsWith('notes') ? 'folder' : 'git'),
+  hasGitIdentity: async () => true,
   listSessions: async () => [],
   resumeSession: async (id: string) => ({ id, branch: '' }),
   // Main reports a woken conversation 'running' straight away.
@@ -297,10 +339,16 @@ const api: Record<string, unknown> = {
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
   getSidebarWidth: async () => 320,
+  getCollapsedPanels: async () => ({}),
+  // One piece of work across both projects: the API fix and the sign-in UI that uses it.
+  getConversationGroups: async () => [
+    { id: 'g-oauth', name: 'OAuth refresh', sessionIds: ['s-oauth', 's-oauth-ui'] },
+  ],
   getUnreadSessions: async () => [],
   setUnreadSessions: () => {},
   onAppError: () => () => {},
   reportError: () => {},
+  reportFreeze: () => {},
   setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0 }),
   getEventHistoryCount: async () => 0,
@@ -309,6 +357,11 @@ const api: Record<string, unknown> = {
     q.toLowerCase().includes('oauth') ? CONTENT_HITS : [],
   getSessionPreviews: async (ids: string[]) =>
     Object.fromEntries(ids.filter((id) => PREVIEWS[id]).map((id) => [id, PREVIEWS[id]])),
+  // The goal pinned at the top of the Thread tab.
+  getConversationGoal: async (id: string) => {
+    const text = GOALS[id] ?? null;
+    return { text, source: text ? 'auto' : null, hidden: false };
+  },
   getDefaultBranch: async () => 'main',
   // Branch picker: `main` is checked out in the project folder, so picking it
   // from a worktree conversation shows the refusal.
@@ -376,11 +429,7 @@ const api: Record<string, unknown> = {
     ] },
   ] : [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-      { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
-      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-      { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
-      { value: 'auto', label: 'Auto', tone: 'highlight' },
-      { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+      ...CLAUDE_MODE_OPTIONS,
     ] },
     { id: 'effort', label: 'Effort', default: 'medium', options: [
       { value: 'low', label: 'Low', description: 'Fastest and cheapest; brief reasoning' },
@@ -401,7 +450,6 @@ const api: Record<string, unknown> = {
   ],
   setModel: async () => {},
   setMode: async () => {},
-  setSessionCompleted: async () => {},
   getUsage: async () => ({
     available: true,
     plan: 'max',
@@ -418,9 +466,7 @@ const api: Record<string, unknown> = {
   getControls: async () => ({
     descriptors: [
       { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-        { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
-        { value: 'acceptEdits', label: 'Edit', tone: 'accent' }, { value: 'auto', label: 'Auto', tone: 'highlight' },
-        { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
+        ...CLAUDE_MODE_OPTIONS,
       ] },
       { id: 'effort', label: 'Effort', default: 'medium', options: [
         { value: 'low', label: 'Low', tone: 'muted' }, { value: 'medium', label: 'Medium', tone: 'accent-soft' },
@@ -435,7 +481,12 @@ const api: Record<string, unknown> = {
   }),
   setControl: async () => {},
   pluginList: async () => ({ installed: [], available: [] }),
-  checkForUpdate: async () => null,
+  checkForUpdate: async () => demoUpdateStatus,
+  getUpdateState: async () => ({ currentVersion: '0.0.0-alpha.2', enabled: true, status: demoUpdateStatus }),
+  onUpdateStatus: (cb: (status: unknown) => void) => {
+    updateListeners.add(cb);
+    return () => updateListeners.delete(cb);
+  },
   ptyIsAlive: async () => false,
   winIsMaximized: async () => false,
   // The MCP settings tab reads `.length` of this list.
@@ -459,6 +510,7 @@ async function seedSessions() {
 
   store.addSession({ id: 's-sidebar', branch: 'claude/sidebar-revamp', repoPath: REPO_A, status: 'running', displayName: 'Sidebar revamp', createdAt: now - 52 * min, lastActiveAt: now - 1 * min }, false);
   store.addSession({ id: 's-oauth', branch: 'claude/fix-oauth-refresh', repoPath: REPO_B, status: 'running', createdAt: now - 3 * 60 * min, lastActiveAt: now - 4 * min }, false);
+  store.addSession({ id: 's-oauth-ui', branch: 'claude/fix-oauth-refresh', repoPath: REPO_A, status: 'running', displayName: 'Sign-in retry banner', createdAt: now - 2 * 60 * min, lastActiveAt: now - 9 * min }, false);
   store.addSession({ id: 's-e2e', branch: 'claude/flaky-e2e-retries', repoPath: REPO_B, status: 'running', displayName: 'Flaky e2e retries', createdAt: now - 26 * 60 * min, lastActiveAt: now - 38 * min }, false);
   store.addSession({ id: 's-readme', branch: 'claude/update-readme', repoPath: REPO_A, status: 'stopped', createdAt: now - 2 * 24 * 60 * min, lastActiveAt: now - 26 * 60 * min }, false);
   store.addSession({ id: 's-perf', branch: 'claude/perf-audit', repoPath: REPO_B, status: 'stopped', createdAt: now - 5 * 24 * 60 * min, lastActiveAt: now - 3 * 24 * 60 * min }, false);
@@ -485,7 +537,7 @@ async function seedConversations() {
     's-oauth': [
       { kind: 'user', id: 'd4', text: 'Fix the OAuth refresh flow — sessions drop after exactly one hour' },
       { kind: 'text', id: 'd5', text: 'Found it: the refresh token is rotated twice per request. I need to patch src/auth/refresh.ts to reuse the rotation result.', uuid: '' },
-      { kind: 'permission', id: 'd6', requestId: 'dr1', toolName: 'Write', toolInput: { file_path: 'src/auth/refresh.ts' }, toolUseId: 'dt2', resolved: false },
+      { kind: 'permission', id: 'd6', requestId: 'dr1', toolName: 'Write', toolInput: { file_path: 'src/auth/refresh.ts' }, toolUseId: 'dt2', toolCategory: 'edit', resolved: false },
     ],
     // Idle: finished its turn with a document-style report (exercises the
     // markdown preview affordance in screenshots)

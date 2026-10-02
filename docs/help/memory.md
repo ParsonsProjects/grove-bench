@@ -33,7 +33,7 @@ You can also compact on demand with the **Compact** button. After a pass, a summ
 
 **Clean up notes** lists conversation notes older than a chosen cutoff (any number of days) so you can review exactly what will be removed before deleting it. This deletes memory files only — your actual conversations in the sidebar are never touched. Notes without a readable date are surfaced at the top as "unknown date" rather than deleted silently. Unlike compaction, conversation-note deletion is permanent — conversation notes are not included in backups. (To remove old *conversations* themselves, use **Clean up old conversations** in the sidebar.)
 
-**Auto-save project memory** (on by default) and **Auto-compact project memory** (off by default) are both in **Settings → General**.
+**Auto-save project memory** (on by default) and **Auto-compact project memory** (off by default) are both in **Settings → Background work (Tending)**.
 
 ## Managing Memory
 

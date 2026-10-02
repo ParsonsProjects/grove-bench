@@ -20,6 +20,11 @@ describe('searchableEventText', () => {
     expect(text).toContain('/src/widget.ts');
   });
 
+  it('leaves out a subagent\'s events, which the thread shows in its own panel', () => {
+    expect(searchableEventText({ type: 'assistant_text', text: 'report', uuid: '', parentToolUseId: 'tu1' })).toBe('');
+    expect(searchableEventText({ type: 'tool_result', toolUseId: 't', content: 'match', parentToolUseId: 'tu1' })).toBe('');
+  });
+
   it('includes plan text for permission requests', () => {
     const text = searchableEventText({
       type: 'permission_request', toolName: 'Bash', toolUseId: 't', requestId: 'r',
@@ -245,6 +250,14 @@ describe('findEventIndexByUuid', () => {
 });
 
 describe('extractSessionPreview', () => {
+  it('lists attached images with the prompt, as the thread labels it', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'fix it', images: [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }] },
+    ];
+    expect(extractSessionPreview(events).firstPrompt).toBe('[shot.png] fix it');
+    expect(searchableEventText(events[0])).toBe('[shot.png] fix it');
+  });
+
   it('returns the first real user prompt and the latest text', () => {
     const events: AgentEvent[] = [
       { type: 'status', message: 'creating worktree' },
@@ -259,6 +272,15 @@ describe('extractSessionPreview', () => {
     expect(preview.lastText).toBe('Done — added tests for the sidebar');
   });
 
+  it('previews the main agent\'s reply, not a subagent\'s', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: 'find the cause' },
+      { type: 'assistant_text', text: 'The cause is the cron job', uuid: '' },
+      { type: 'assistant_text', text: 'I sent the report to your caller', uuid: '', parentToolUseId: 'tu1' },
+    ];
+    expect(extractSessionPreview(events).lastText).toBe('The cause is the cron job');
+  });
+
   it('falls back to the latest user message when the assistant has not replied', () => {
     const events: AgentEvent[] = [
       { type: 'user_message', text: 'first prompt' },
@@ -267,6 +289,24 @@ describe('extractSessionPreview', () => {
     const preview = extractSessionPreview(events);
     expect(preview.firstPrompt).toBe('first prompt');
     expect(preview.lastText).toBe('first prompt');
+  });
+
+  it('shows messages as plain text, without markdown syntax', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '## Plan\n\n- fix **the** parser' },
+      { type: 'assistant_text', text: '## Investigation summary\n\n| Test | Rate |\n| --- | --- |\n| e2e | 18% |', uuid: '' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'Plan fix the parser', lastText: 'Investigation summary Test · Rate e2e · 18%' });
+  });
+
+  it('skips a message that is only markdown syntax', () => {
+    const events: AgentEvent[] = [
+      { type: 'user_message', text: '---' },
+      { type: 'user_message', text: 'real prompt' },
+      { type: 'assistant_text', text: 'real answer', uuid: '' },
+      { type: 'assistant_text', text: '|---|---|', uuid: '' },
+    ];
+    expect(extractSessionPreview(events)).toEqual({ firstPrompt: 'real prompt', lastText: 'real answer' });
   });
 
   it('uses tool_use_summary text when it is the latest', () => {

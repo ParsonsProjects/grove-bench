@@ -3,6 +3,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 
 import { prStore } from './pr.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { messageStore } from './messages.svelte.js';
 import type { PrInfo, SessionStatus } from '../../shared/types.js';
 
 const SID = 'pr-test-session';
@@ -89,6 +90,22 @@ describe('PR alert gating by session status', () => {
     await refreshWith(info);
     expect(prStore.getPr(SID)).toEqual(info);
   });
+
+  it('markAlertsSeen drops what was only "new", but keeps a request to step in', async () => {
+    setStatus('running');
+    await refreshWith(pr({ commentSignature: ['c1'] }));
+    prStore.alertsBySession = {
+      [SID]: [
+        { kind: 'ci_failed', checks: ['build'], id: 1, prNumber: 7 },
+        { kind: 'new_comments', count: 1, id: 2, prNumber: 7 },
+        { kind: 'needs_human', reason: 'Auto-fix gave up', id: 3, prNumber: 7 },
+      ],
+    };
+
+    prStore.markAlertsSeen(SID);
+
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'needs_human' }]);
+  });
 });
 
 describe('refresh — partial failure', () => {
@@ -116,6 +133,15 @@ describe('refresh — partial failure', () => {
     await refreshWith(pr({ number: 8 }));
     expect(prStore.fetchFailedBySession[SID]).toBe(false);
     expect(prStore.getPr(SID)?.number).toBe(8);
+  });
+
+  it('does not flag the PR as stale when only the local sync check fails', async () => {
+    setStatus('running');
+    mockGroveBench.getGitSyncStatus.mockRejectedValueOnce(new Error('not a git repository'));
+    await refreshWith(pr({ number: 7 }));
+
+    expect(prStore.getPr(SID)?.number).toBe(7);
+    expect(prStore.fetchFailedBySession[SID]).toBeFalsy();
   });
 
   it('still records a "no PR" answer as null', async () => {
@@ -227,6 +253,7 @@ describe('global sweep', () => {
       { id: A, branch: 'a', repoPath: 'C:/repo', status: 'running' },
       { id: B, branch: 'b', repoPath: 'C:/repo', status: 'running' },
     ];
+    prStore.setViewing(null);
     prStore.clear(A);
     prStore.clear(B);
   });
@@ -258,7 +285,8 @@ describe('global sweep', () => {
 
     await vi.advanceTimersByTimeAsync(60_000 + 45_000); // sweep 1: A hangs, B done
     const afterFirst = calls;
-    await vi.advanceTimersByTimeAsync(60_000 + 45_000); // sweep 2 must still run
+    // Neither is on screen, so the next refresh is due after the idle interval.
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 45_000); // later sweeps must still run
     expect(calls).toBeGreaterThan(afterFirst);
   });
 
@@ -275,5 +303,204 @@ describe('global sweep', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mockGroveBench.getPrs).toHaveBeenCalledWith(A);
     expect(prStore.getPr(A)?.number).toBe(9);
+  });
+
+  const fetchesOf = (id: string) => mockGroveBench.getPrs.mock.calls.filter(([s]) => s === id).length;
+
+  it('refreshes a conversation nobody has looked at only every 5 minutes', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.startGlobalPolling(() => [A]);
+
+    await vi.advanceTimersByTimeAsync(60_000); // first sweep: never fetched, so due
+    expect(fetchesOf(A)).toBe(1);
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchesOf(A)).toBe(1);
+    await vi.advanceTimersByTimeAsync(2 * 60_000); // 5 minutes since the last fetch
+    expect(fetchesOf(A)).toBe(2);
+  });
+
+  it('refreshes the conversation on screen every sweep', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.startGlobalPolling(() => [A, B]);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchesOf(A)).toBe(1); // never fetched, so opening it fetches now
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchesOf(A)).toBe(4);
+    expect(fetchesOf(B)).toBe(1); // idle: only the first sweep
+  });
+
+  it('keeps a conversation on the full rate for 10 minutes after leaving it', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.startGlobalPolling(() => [A]);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    prStore.setViewing(B); // leave A
+
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    expect(fetchesOf(A)).toBe(10); // on open, then all 9 sweeps
+
+    // Past 10 minutes: idle cadence, so nothing until 5 minutes after the last fetch.
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(fetchesOf(A)).toBe(10);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchesOf(A)).toBe(11);
+  });
+
+  it('keeps the full rate while PR automation is on', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    prStore.setAuto(A, { fixCi: true });
+    prStore.startGlobalPolling(() => [A]);
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchesOf(A)).toBe(3);
+  });
+
+  it('fetches on opening only when the data is older than one poll', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([]);
+    await prStore.refresh(A, true);
+    expect(fetchesOf(A)).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchesOf(A)).toBe(1); // fresh enough
+
+    prStore.setViewing(null);
+    await vi.advanceTimersByTimeAsync(60_000);
+    prStore.setViewing(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchesOf(A)).toBe(2);
+  });
+});
+
+describe('auto-fix CI limit', () => {
+  const failing = (sha: string) => pr({ headSha: sha, checks: { total: 1, passed: 0, failed: 1, pending: 0 }, failingChecks: ['build'] });
+  const passing = (sha: string) => pr({ headSha: sha });
+  const fixTurns = () => mockGroveBench.sendMessage.mock.calls.filter(([id]) => id === SID).length;
+  /** The fix turn ran and ended; the agent pushed a new commit. */
+  const turnEnds = () => messageStore.setIsRunning(SID, false);
+
+  beforeEach(() => {
+    setStatus('running');
+    turnEnds(); // idle, whatever earlier tests left
+    prStore.setAuto(SID, { fixCi: true });
+  });
+
+  afterEach(() => {
+    prStore.setAuto(SID, { fixCi: false });
+    messageStore.destroySession(SID);
+  });
+
+  it('stops after 2 fix turns on a PR, even though each fix is a new commit', async () => {
+    await refreshWith(passing('sha-1')); // seeds
+    await refreshWith(failing('sha-2'));
+    turnEnds();
+    await refreshWith(failing('sha-3'));
+    turnEnds();
+    await refreshWith(failing('sha-4'));
+
+    expect(fixTurns()).toBe(2);
+    expect(prStore.getAlerts(SID)).toMatchObject([{ kind: 'needs_human' }]);
+  });
+
+  it('gives the attempts back once CI goes green, but not while it is still running', async () => {
+    await refreshWith(passing('sha-1'));
+    await refreshWith(failing('sha-2'));
+    turnEnds();
+    await refreshWith(pr({ headSha: 'sha-3', checks: { total: 1, passed: 0, failed: 0, pending: 1 } }));
+    await refreshWith(failing('sha-3'));
+    turnEnds();
+    await refreshWith(passing('sha-4'));
+    await refreshWith(failing('sha-5'));
+
+    expect(fixTurns()).toBe(3);
+    expect(prStore.getAlerts(SID).some((a) => a.kind === 'needs_human')).toBe(false);
+  });
+});
+
+describe('push errors', () => {
+  const IPC_WRAPPED = "Error invoking remote method 'git:push': Error: ! [rejected] feat/x -> feat/x (fetch first)";
+
+  async function failPush() {
+    mockGroveBench.push.mockRejectedValueOnce(new Error(IPC_WRAPPED));
+    await expect(prStore.push(SID)).rejects.toThrow();
+  }
+
+  it("keeps git's own words, without Electron's IPC wrapper", async () => {
+    setStatus('running');
+    await failPush();
+    expect(prStore.getPushError(SID)).toBe('! [rejected] feat/x -> feat/x (fetch first)');
+  });
+
+  it('clears on the next successful push', async () => {
+    setStatus('running');
+    await failPush();
+    await prStore.push(SID);
+    expect(prStore.getPushError(SID)).toBe('');
+  });
+
+  it('clears once the branch has nothing left to push (pushed from elsewhere)', async () => {
+    setStatus('running');
+    await failPush();
+    mockGroveBench.getGitSyncStatus.mockResolvedValueOnce({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
+    await prStore.refresh(SID, true);
+    expect(prStore.getPushError(SID)).toBe('');
+  });
+
+  it('is not cleared by a poll that started before the push failed', async () => {
+    setStatus('running');
+    let finishSync!: (v: { upstream: string; ahead: number; behind: number }) => void;
+    mockGroveBench.getGitSyncStatus.mockReturnValueOnce(new Promise((r) => { finishSync = r; }));
+    const poll = prStore.refresh(SID, true); // counted before the new commit
+
+    await failPush();
+    finishSync({ upstream: 'origin/feat/x', ahead: 0, behind: 0 });
+    await poll;
+
+    expect(prStore.getPushError(SID)).toContain('rejected');
+  });
+
+  it('stays for a branch that was never pushed, which also reports ahead 0', async () => {
+    setStatus('running');
+    await failPush();
+    mockGroveBench.getGitSyncStatus.mockResolvedValueOnce({ upstream: null, ahead: 0, behind: 0 });
+    await prStore.refresh(SID, true);
+    expect(prStore.getPushError(SID)).toContain('rejected');
+  });
+
+  it('only applies to the branch it was pushing', async () => {
+    setStatus('running');
+    await failPush();
+    sessionStore.sessions = [{ id: SID, branch: 'feat/y', repoPath: 'C:/repo', status: 'running' }];
+    expect(prStore.getPushError(SID)).toBe('');
+  });
+});
+
+describe('auto toggles', () => {
+  const OTHER = 'pr-test-restored';
+  afterEach(() => prStore.clear(OTHER));
+
+  it('are saved per conversation', () => {
+    prStore.setAuto(SID, { fixCi: true });
+    expect(JSON.parse(localStorage.getItem(`grove-bench:pr-auto:${SID}`)!)).toEqual({ fixCi: true, addressReviews: false });
+    expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: false });
+  });
+
+  it('come back after a restart', () => {
+    localStorage.setItem(`grove-bench:pr-auto:${OTHER}`, JSON.stringify({ addressReviews: true }));
+    expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: true });
+  });
+
+  it('are forgotten when turned off or the conversation is deleted', () => {
+    prStore.setAuto(SID, { fixCi: true });
+    prStore.setAuto(SID, { fixCi: false });
+    expect(localStorage.getItem(`grove-bench:pr-auto:${SID}`)).toBeNull();
+
+    prStore.setAuto(OTHER, { addressReviews: true });
+    prStore.clear(OTHER);
+    expect(localStorage.getItem(`grove-bench:pr-auto:${OTHER}`)).toBeNull();
+    expect(prStore.getAuto(OTHER)).toEqual({ fixCi: false, addressReviews: false });
   });
 });

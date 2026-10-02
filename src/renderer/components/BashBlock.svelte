@@ -5,12 +5,15 @@
 
   let {
     toolInput,
+    command: commandProp,
     result,
     isError,
     pending,
     summaryMode = false,
   }: {
     toolInput: unknown;
+    /** The command, when the caller already knows it (from the tool's view). */
+    command?: string;
     result?: string;
     isError?: boolean;
     pending: boolean;
@@ -20,7 +23,8 @@
   let expanded = $state(true);
 
   let command = $derived(
-    (typeof toolInput === 'object' && toolInput !== null && 'command' in toolInput)
+    commandProp !== undefined ? commandProp
+    : (typeof toolInput === 'object' && toolInput !== null && 'command' in toolInput)
       ? String((toolInput as Record<string, unknown>).command)
       : ''
   );

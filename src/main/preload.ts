@@ -7,6 +7,9 @@ const api: GroveBenchAPI = {
   addRepo: () => ipcRenderer.invoke(IPC.REPO_SELECT),
   removeRepo: (repoPath: string) => ipcRenderer.invoke(IPC.REPO_REMOVE, repoPath),
   validateRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_VALIDATE, path),
+  repoKind: (path: string) => ipcRenderer.invoke(IPC.REPO_KIND, path),
+  rememberRepo: (path: string) => ipcRenderer.invoke(IPC.REPO_REMEMBER, path),
+  hasGitIdentity: (path: string) => ipcRenderer.invoke(IPC.GIT_HAS_IDENTITY, path),
 
   // Session operations
   createSession: (opts: CreateSessionOpts) =>
@@ -29,8 +32,16 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_RENAME, sessionId, displayName),
   autoNameSession: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_AUTO_NAME, sessionId),
-  setSessionCompleted: (sessionId: string, completed: boolean) =>
-    ipcRenderer.invoke(IPC.SESSION_SET_COMPLETED, sessionId, completed),
+  getConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_GET, sessionId),
+  setConversationGoal: (sessionId: string, text: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_SET, sessionId, text),
+  autoConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_AUTO, sessionId),
+  refreshConversationGoal: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_REFRESH, sessionId),
+  setConversationGoalHidden: (sessionId: string, hidden: boolean) =>
+    ipcRenderer.invoke(IPC.SESSION_GOAL_HIDE, sessionId, hidden),
   listSessions: () => ipcRenderer.invoke(IPC.SESSION_LIST),
 
   // Worktree operations
@@ -46,6 +57,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.BRANCH_SWITCH, sessionId, branch, opts),
   syncBranch: (sessionId: string) =>
     ipcRenderer.invoke(IPC.BRANCH_SYNC, sessionId),
+  getCheckoutSharers: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.CHECKOUT_SHARERS, sessionId) as Promise<string[]>,
   autoNameBranch: (sessionId: string) =>
     ipcRenderer.invoke(IPC.BRANCH_AUTO_NAME, sessionId),
 
@@ -307,23 +320,6 @@ const api: GroveBenchAPI = {
   memoryReadBackupFile: (repoPath: string, backupId: string, relativePath: string) =>
     ipcRenderer.invoke(IPC.MEMORY_BACKUP_READ_FILE, repoPath, backupId, relativePath),
 
-  // Shell / Terminal
-  shellRun: (sessionId: string, command: string) =>
-    ipcRenderer.invoke(IPC.SHELL_RUN, sessionId, command),
-  shellKill: (execId: string) =>
-    ipcRenderer.invoke(IPC.SHELL_KILL, execId),
-  shellInput: (execId: string, data: string) =>
-    ipcRenderer.send(IPC.SHELL_INPUT, execId, data),
-  onShellOutput: (sessionId: string, callback: (event: import('../shared/types.js').ShellOutputEvent) => void) => {
-    const channel = `${IPC.SHELL_OUTPUT}:${sessionId}`;
-    const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').ShellOutputEvent) =>
-      callback(data);
-    ipcRenderer.on(channel, handler);
-    return () => {
-      ipcRenderer.removeListener(channel, handler);
-    };
-  },
-
   // PTY Terminal (per-session persistent shell)
   ptySpawn: (sessionId: string) =>
     ipcRenderer.invoke(IPC.PTY_SPAWN, sessionId),
@@ -375,6 +371,14 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SIDEBAR_WIDTH) as Promise<number | null>,
   setSidebarWidth: (width: number) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SIDEBAR_WIDTH, width),
+  getCollapsedPanels: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_PANELS) as Promise<import('../shared/types.js').CollapsedPanels>,
+  setCollapsedPanels: (panels: import('../shared/types.js').CollapsedPanels) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_PANELS, panels),
+  getConversationGroups: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_GROUPS) as Promise<import('../shared/types.js').ConversationGroup[] | null>,
+  setConversationGroups: (groups: import('../shared/types.js').ConversationGroup[]) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_GROUPS, groups),
   // App lifecycle
   onAppClosing: (callback: () => void) => {
     const handler = () => callback();
@@ -420,6 +424,8 @@ const api: GroveBenchAPI = {
   },
   reportError: (report: import('../shared/types.js').AppErrorReport) =>
     ipcRenderer.send(IPC.APP_REPORT_ERROR, report),
+  reportFreeze: (report: import('../shared/types.js').FreezeReport) =>
+    ipcRenderer.send(IPC.APP_REPORT_FREEZE, report),
 
   // Taskbar attention badge
   setAttentionBadge: (count: number, dataUrl: string | null) =>
@@ -450,9 +456,10 @@ const api: GroveBenchAPI = {
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),
 
   // Auto-update
+  getUpdateState: () => ipcRenderer.invoke(IPC.UPDATE_GET_STATE),
   checkForUpdate: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   downloadUpdate: () => ipcRenderer.invoke(IPC.UPDATE_DOWNLOAD),
-  installUpdate: () => ipcRenderer.send(IPC.UPDATE_INSTALL),
+  restartToUpdate: () => ipcRenderer.invoke(IPC.UPDATE_RESTART),
   onUpdateStatus: (callback: (status: import('../shared/types.js').UpdateStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: import('../shared/types.js').UpdateStatus) =>
       callback(status);

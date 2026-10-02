@@ -221,18 +221,27 @@ function sprite(label: string, colorClass: string, maps: string[][], opts: Parti
   };
 }
 
+/**
+ * The sidebar's status colours follow its filter chips, so a colour always
+ * means the same thing: amber needs you, blue is working (starting up
+ * included), green finished a turn you haven't seen, red is an error. Every
+ * quiet state is grey, told apart by pose: sitting (ready) or asleep (sleeping,
+ * closed).
+ */
 export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
   working: sprite('Working', 'text-primary', [TYPE_A, TYPE_B], { frameSeconds: 0.4 }),
   // Covers questions as well as permissions, like the sidebar's "Needs you" filter.
   permission: sprite('Waiting for you', 'text-amber-500', [withSymbol(SIT, QUESTION)], { pulseSymbol: true }),
   unread: sprite('Finished a turn', 'text-green-400', [WAVE_A, WAVE_B], { frameSeconds: 0.45 }),
-  ready: sprite('Ready', 'text-green-500', [SIT]),
-  stopped: sprite('Stopped', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
-  // Still open, agent shut down until it is opened: a dimmed Ready.
-  sleeping: sprite('Sleeping', 'text-green-500/50', [withSymbol(ASLEEP, ZZZ)]),
+  ready: sprite('Ready', 'text-foreground/60', [SIT]),
+  // Status 'stopped' and no longer an open tab: the user closed it.
+  stopped: sprite('Closed', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
+  // Still open, agent shut down until it is opened (idle sleep, or a tab
+  // restored at startup). Looks like Closed: both wake when opened.
+  sleeping: sprite('Sleeping', 'text-neutral-500', [withSymbol(ASLEEP, ZZZ)]),
   error: sprite('Error', 'text-red-500', [withSymbol(SIT, BANG)]),
-  starting: sprite('Starting', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
-  installing: sprite('Installing dependencies', 'text-yellow-500', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
+  starting: sprite('Starting', 'text-primary', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
+  installing: sprite('Installing dependencies', 'text-primary', [WALK_A, WALK_B], { frameSeconds: 0.35 }),
   removing: sprite('Removing', 'text-muted-foreground', [ASLEEP], { fade: true }),
   allowed: sprite('Allowed', 'text-green-400', [withSymbol(SIT, CHECK)]),
   denied: sprite('Denied', 'text-destructive', [withSymbol(SIT, CROSS)]),
@@ -243,13 +252,41 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
 /** Exported for tests: every pose map, so their sizes can be checked. */
 export const SPRITE_MAPS = { SIT, TYPE_A, TYPE_B, ASLEEP, WAVE_A, WAVE_B, WALK_A, WALK_B };
 
-// Scenery for the empty states: a park bench and an unlit lamp post.
+// Scenery for the empty states: a park bench and an unlit lamp post, and
+// each workspace tab's own props, which stand in for the lamp.
 export const SCENERY_PALETTE: Record<string, string> = {
   w: '#8a6a4a', // wood
   W: '#6a5040', // dark wood
   m: '#57534e', // metal
   o: '#3f3f46', // unlit lamp
+  g: '#6b7f8e', // watering can
+  G: '#4f5f6b', // watering can, shaded
+  l: '#5ab868', // leaf, the tree's middle green
+  r: '#c2553d', // flag cloth, muted so it doesn't read as an error
+  p: '#d6d3d1', // paper
+  b: '#4a7aaa', // page title bar, the background pixels' blue
+  k: '#a8a29e', // page content
 };
 
 export const BENCH = ['WWWWWWWWWWWW', '.w........w.', 'wwwwwwwwwwww', '.W........W.', '.W........W.'];
 export const LAMP = ['mmm', '.o.', 'mmm', '.m.', '.m.', '.m.', '.m.', '.m.', '.m.', '.m.', 'mmm'];
+
+/** The workspace tabs whose empty states have their own props. */
+export type GroveTab = 'changes' | 'checkpoints' | 'preview';
+
+// Changes: a watering can by a sprout, for the agent tending your files.
+export const WATERING_CAN = ['....GGG.', '...G...G', 'g..ggggg', '.g.ggggg', '..gggggg', '...GGGGG'];
+export const SPROUT = ['l.l', '.l.', '.l.'];
+// Checkpoints: a flag on a pole, as in a game.
+export const FLAG = [
+  '.m....', '.mrrrr', '.mrrr.', '.mrrrr', '.m....', '.m....',
+  '.m....', '.m....', '.m....', '.m....', 'mmm...',
+];
+// Preview: an easel holding a small web page.
+export const EASEL = [
+  '....W....', 'WWWWWWWWW', 'WbbbbbbbW', 'WpkkkkppW', 'WpppppppW', 'WpkkpkkpW',
+  'WWWWWWWWW', '.W..W..W.', '.W..W..W.', 'W...W...W', 'W...W...W',
+];
+
+/** Exported for tests: every scenery map, so their sizes and colours can be checked. */
+export const SCENERY_MAPS = { BENCH, LAMP, WATERING_CAN, SPROUT, FLAG, EASEL };

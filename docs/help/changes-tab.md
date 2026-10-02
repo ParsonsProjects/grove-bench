@@ -2,6 +2,10 @@
 
 The Changes tab (`Alt+2`) shows the git status of your conversation's worktree, letting you review all file modifications the agent has made.
 
+In a conversation that runs without git there is nothing to compare against, so the tab only says it needs git. Check the agent's edits in your editor or file explorer.
+
+If git isn't installed, or is older than 2.17, a warning at the top of this tab says so, with **Download Git** and **Re-check**. Grove Bench doesn't warn about it anywhere else: without git, projects are plain folders.
+
 ## File Categories
 
 Files are organized into three groups:
@@ -20,6 +24,10 @@ Click any file to see its diff. Two view modes are available:
 ## File Search
 
 Use the **Filter files** box at the top of the file list to filter files by name. This is helpful when the agent has modified many files.
+
+## Collapsing the file list
+
+Click the panel button next to **Filter files** to fold the file list down to a thin rail, which gives the diff more room. The rail shows one status letter per file (M, A, D and so on). Click a letter to open that file, or use the arrow keys, and hover it to see the path. Click the panel button at the top of the rail to open the list again. The Changes and Checkpoints tabs remember this separately.
 
 ## Edit History
 

@@ -11,9 +11,12 @@
   import { agentsStore } from '../stores/agents.svelte.js';
   import { prerequisitesStore } from '../stores/prerequisites.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
-  import { agentReady } from '../../shared/prerequisites.js';
+  import { agentReady, gitReady } from '../../shared/prerequisites.js';
+  import { controlHint } from '../lib/control-hint.js';
   import ApiKeyField from './ApiKeyField.svelte';
   import GroveEmptyState from './GroveEmptyState.svelte';
+  import GitIdentityNotice from './GitIdentityNotice.svelte';
+  import GitNotice from './GitNotice.svelte';
   import DraftStatusBar from './DraftStatusBar.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -60,9 +63,54 @@
       && (start?.kind !== 'existing' || !!start.branch),
   );
 
+  /** Set when credentials go from missing to ready in this draft, so the
+   *  user sees that the Re-check or the saved key worked. */
+  let credentialsFound = $state(false);
+  let wasMissing = false;
+  $effect(() => {
+    if (credentials === 'missing') wasMissing = true;
+    else if (credentials === 'ready' && wasMissing) {
+      wasMissing = false;
+      credentialsFound = true;
+    }
+  });
+  const credentialsNote = $derived.by(() => {
+    if (!credentialsFound || !agentStatus) return '';
+    if (agentStatus.apiKey?.saved) {
+      return agentStatus.apiKey.unverified
+        ? 'API key saved. The first message will show whether it works.'
+        : 'API key saved. You\'re ready to start.';
+    }
+    return `Signed in${agentStatus.email ? ` as ${agentStatus.email}` : ''}. You're ready to start.`;
+  });
+
+  /** Git isn't installed (or is too old): every project runs without it. */
+  const gitMissing = $derived(!!store.prerequisites && !gitReady(store.prerequisites));
+
+  /** Why Start is off, in words, for its tooltip and for Enter. */
+  const startBlocker = $derived.by(() => {
+    if (!draft || draftStore.starting) return null;
+    if (credentials === 'missing') return 'Add credentials above to start.';
+    if (credentials === 'checking') return 'Checking credentials…';
+    if (credentials === 'no-agent') return 'No agent is available to start this conversation.';
+    if (start?.kind === 'existing' && !start.branch) return 'Pick a branch or pull request first.';
+    return null;
+  });
+  /** Enter was pressed while Start was off: say why under the message box. */
+  let nudged = $state(false);
+  $effect(() => {
+    if (!startBlocker) nudged = false;
+  });
+
+  /** A project used without git: not a repository, or git isn't installed. */
+  const folderProject = $derived(!!draft && store.isFolderProject(draft.repoPath));
+
   /** One line on what sending will do, so nothing about it is a surprise. */
   const plan = $derived.by(() => {
     if (!start) return '';
+    if (start.kind === 'folder' && folderProject) {
+      return 'The agent will work in the project folder itself, without git, so its edits land in place and can\'t be rewound.';
+    }
     if (start.kind === 'folder') return 'The agent will work in the project folder itself, on the branch it has checked out.';
     if (start.kind === 'existing') {
       return start.pr
@@ -70,10 +118,30 @@
         : `The agent will open ${start.branch} in a separate copy.`;
     }
     const from = start.baseBranch.trim() || 'the default branch';
+    if (draftStore.onGroupBranch) {
+      return `The agent will work on ${start.branchName.trim()}, the group's branch, in a separate copy: the project's own branch if it has one, else a new one from ${from}.`;
+    }
     return start.branchName.trim()
       ? `The agent will work on a new branch, ${start.branchName.trim()}, from ${from}, in a separate copy.`
       : `The agent will work on a new branch from ${from}, in a separate copy. The branch is named from your message after the first reply.`;
   });
+
+  /** Git has no name and email for this project, so the agent's commits
+   *  would fail. Said before the first message rather than mid-task. */
+  let identityMissing = $state(false);
+  $effect(() => {
+    const repo = draft?.repoPath;
+    identityMissing = false;
+    if (!repo || store.isFolderProject(repo)) return;
+    let stale = false;
+    window.groveBench.hasGitIdentity(repo)
+      .then((ok) => { if (!stale) identityMissing = !ok; })
+      .catch(() => {});
+    return () => { stale = true; };
+  });
+
+  /** The mode the conversation will start in, in words. */
+  const modeHint = $derived(controlHint(draftStore.descriptors, (id) => draftStore.controlValue(id), null));
 
   onMount(() => {
     agentsStore.load().finally(() => { agentsTried = true; });
@@ -89,9 +157,23 @@
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (canStart) draftStore.start();
+      else if (startBlocker) nudged = true;
     }
   }
 </script>
+
+<!-- Under the plan: what changed or still needs doing before the first message. -->
+{#snippet notices()}
+  {#if credentialsNote}
+    <p class="text-xs text-green-400 mt-3 max-w-md" role="status">✓ {credentialsNote}</p>
+  {/if}
+  {#if gitMissing}
+    <div class="mt-3 w-full max-w-md text-left"><GitNotice boxed /></div>
+  {/if}
+  {#if identityMissing}
+    <div class="mt-3 max-w-md text-left"><GitIdentityNotice beforeStart /></div>
+  {/if}
+{/snippet}
 
 {#if draft}
 <div class="flex flex-col h-full bg-background">
@@ -123,14 +205,52 @@
         </div>
       </div>
     {:else if credentials === 'missing'}
-      <div class="relative z-10 w-full max-w-sm flex flex-col gap-3 bg-background border border-border p-4">
-        <p class="text-sm text-foreground">Add credentials for {agentName} to start.</p>
+      {@const cli = agentStatus?.cliSignIn}
+      <div class="relative z-10 w-full max-w-md flex flex-col gap-4 bg-background border border-border p-4">
+        <p class="text-sm text-foreground">
+          {#if agentStatus?.apiKey?.saved && agentStatus.apiKey.rejected}
+            {agentName} couldn't sign in with the saved API key.
+          {:else}
+            Add credentials for {agentName} to start.
+          {/if}
+        </p>
+        {#if cli && cli.cliName !== agentName}
+          <p class="text-xs text-muted-foreground -mt-2">{agentName} runs on {cli.cliName}, so it signs in the same way.</p>
+        {/if}
+        {#if cli}
+          <!-- Two ways in, subscription first: most people have a plan, not
+               an API key, and a key is billed separately. -->
+          <section class="flex flex-col gap-1.5" aria-label="Sign in with {cli.cliName}">
+            <p class="text-xs font-medium text-foreground">
+              Use your {cli.accountLabel}{#if cli.accountDetail}{' '}<span class="font-normal text-muted-foreground">({cli.accountDetail})</span>{/if}
+            </p>
+            {#if agentStatus?.available}
+              <p class="text-xs text-muted-foreground">
+                Run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
+              </p>
+            {:else}
+              <p class="text-xs text-muted-foreground">
+                Install {cli.cliName}, run <code class="text-foreground">{cli.command}</code> in a terminal and sign in when it asks. Then click <span class="text-foreground">Re-check</span>.
+              </p>
+              <button
+                type="button"
+                class="self-start text-xs text-primary hover:underline"
+                onclick={() => window.groveBench.openExternal(cli.setupUrl)}
+              >
+                How to install {cli.cliName}
+              </button>
+            {/if}
+          </section>
+        {/if}
         {#if agentStatus?.apiKey}
-          {#key agentId}
-            <ApiKeyField adapterId={agentId} autofocus />
-          {/key}
-          <p class="text-xs text-muted-foreground">Signed in with the CLI in a terminal instead? Re-check.</p>
-        {:else}
+          <section class="flex flex-col gap-1.5" aria-label="Use an API key">
+            {#if cli}<p class="text-xs font-medium text-foreground">Or use an API key</p>{/if}
+            {#key agentId}
+              <ApiKeyField adapterId={agentId} autofocus />
+            {/key}
+          </section>
+        {/if}
+        {#if !cli && !agentStatus?.apiKey}
           <p class="text-sm text-muted-foreground">
             {agentStatus?.authErrorMessage ?? agentStatus?.errorMessage ?? 'Could not check the agent\'s credentials.'}
           </p>
@@ -143,12 +263,20 @@
       <GroveEmptyState variant="draft">
         <p class="text-sm mt-5 mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs text-muted-foreground max-w-md">{plan}</p>
-        <p class="text-xs text-muted-foreground/70 mt-2 max-w-md">Change the agent, model, mode or branch in the bar below before you send.</p>
+        {#if modeHint}
+          <p class="text-xs text-muted-foreground max-w-md mt-1">Mode: <span class="text-foreground/80">{modeHint.label}</span>. {modeHint.description}.</p>
+        {/if}
+        <p class="text-xs text-muted-foreground/70 mt-2 max-w-md">{folderProject ? 'Change the agent, model or mode' : 'Change the agent, model, mode or branch'} in the bar below before you send.</p>
+        {@render notices()}
       </GroveEmptyState>
     {:else}
       <div class="relative z-10 text-center">
         <p class="text-sm mb-2 text-foreground/80">New conversation in {store.repoDisplayName(draft.repoPath)}</p>
         <p class="text-xs max-w-md">{plan}</p>
+        {#if modeHint}
+          <p class="text-xs max-w-md mt-1">Mode: {modeHint.label}. {modeHint.description}.</p>
+        {/if}
+        {@render notices()}
       </div>
     {/if}
   </div>
@@ -179,12 +307,15 @@
         variant="outline"
         onclick={() => draftStore.start()}
         disabled={!canStart}
-        title="Start the conversation{draft.text.trim() ? ' and send this message' : ''}"
+        title={startBlocker ?? `Start the conversation${draft.text.trim() ? ' and send this message' : ''}`}
         class="text-primary border-primary hover:bg-primary/10 h-auto"
       >
         {draftStore.starting ? 'Starting…' : 'Start'}
       </Button>
     </div>
+    {#if nudged && startBlocker}
+      <p class="px-4 pb-2 -mt-1 text-xs text-amber-500" role="status">{startBlocker}</p>
+    {/if}
   </div>
 </div>
 {/if}

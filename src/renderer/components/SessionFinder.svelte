@@ -5,7 +5,11 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { sortSessions } from '../lib/session-sort.js';
+  import { firstPromptSnippet } from '../lib/session-subtitle.js';
+  import { sessionSpriteState } from '../lib/session-sprite-state.js';
+  import type { AgentSpriteState } from '../lib/agent-sprite.js';
   import HighlightedText from './HighlightedText.svelte';
+  import StatusDot from './StatusDot.svelte';
   import type { CrossSessionSearchHit } from '../../shared/types.js';
 
   let { onclose }: { onclose: (selectedId?: string) => void } = $props();
@@ -17,17 +21,18 @@
   /** Message hits kept per conversation, and in total. */
   const HITS_PER_CONVERSATION = 3;
   const MAX_CONTENT_HITS = 30;
+  /** A first prompt's length, matching the main-process preview (PREVIEW_MAX_LEN). */
+  const PROMPT_MAX_LEN = 160;
 
+  /** What the search looks at. Live state (status, running) is read per row
+   *  instead, so it can change without rebuilding the search index. */
   interface SessionEntry {
     id: string;
     label: string;
     branch: string;
     repoName: string;
     repoPath: string;
-    status: string;
     firstPrompt: string;
-    isRunning: boolean;
-    hasPending: boolean;
   }
 
   onMount(() => {
@@ -36,27 +41,31 @@
     sessionPreviewStore.ensure(store.sessions.map((s) => s.id));
   });
 
-  let entries = $derived.by((): SessionEntry[] => {
-    return store.sessions.map((s) => {
-      const msgs = messageStore.getMessages(s.id);
-      const firstUser = msgs.find((m) => m.kind === 'user');
-      const firstPrompt =
-        (firstUser && 'text' in firstUser ? firstUser.text.slice(0, 120) : '') ||
-        sessionPreviewStore.get(s.id)?.firstPrompt ||
-        '';
-      return {
-        id: s.id,
-        label: s.displayName || s.branch,
-        branch: s.branch,
-        repoName: store.repoDisplayName(s.repoPath),
-        repoPath: s.repoPath,
-        status: s.status,
-        firstPrompt,
-        isRunning: messageStore.getIsRunning(s.id),
-        hasPending: messageStore.hasPendingPermission(s.id),
-      };
-    });
-  });
+  // Re-read on every message (the first prompt comes from the messages), but
+  // kept as a string: the index below is only rebuilt when the searchable
+  // text changes, not each time any conversation gets a message.
+  let entriesKey = $derived(JSON.stringify(store.sessions.map((s): SessionEntry => {
+    // The same plain text (and length) as the main-process preview, so a
+    // conversation reads the same whether or not its messages are loaded.
+    const firstPrompt =
+      firstPromptSnippet(messageStore.getMessages(s.id), PROMPT_MAX_LEN) ||
+      sessionPreviewStore.get(s.id)?.firstPrompt ||
+      '';
+    return {
+      id: s.id,
+      label: s.displayName || s.branch || 'New conversation',
+      branch: s.branch,
+      repoName: store.repoDisplayName(s.repoPath),
+      repoPath: s.repoPath,
+      firstPrompt,
+    };
+  })));
+  let entries = $derived(JSON.parse(entriesKey) as SessionEntry[]);
+
+  /** Same state, so the same dot, as the conversation's sidebar row. */
+  function spriteStateOf(id: string): AgentSpriteState {
+    return sessionSpriteState(store.sessions.find((s) => s.id === id) ?? { id, status: 'stopped' });
+  }
 
   let fuse = $derived(
     new Fuse(entries, {
@@ -93,6 +102,7 @@
     const q = query.trim();
     const ids: string[] = JSON.parse(searchOrder);
     if (q.length < 2 || ids.length === 0) {
+      reqToken++; // a search still in flight is for a query that's gone
       contentHits = [];
       contentLoading = false;
       return;
@@ -124,7 +134,7 @@
   function sessionLabelFor(sessionId: string): { repoName: string; label: string } {
     const s = store.sessions.find((x) => x.id === sessionId);
     if (!s) return { repoName: '?', label: sessionId };
-    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch };
+    return { repoName: store.repoDisplayName(s.repoPath), label: s.displayName || s.branch || 'New conversation' };
   }
 
   function selectSession(entry: SessionEntry) {
@@ -144,6 +154,7 @@
   }
 
   function selectAt(index: number) {
+    if (index < 0) return;
     if (index < sessionResults.length) {
       selectSession(sessionResults[index]);
     } else {
@@ -155,7 +166,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      selectedIndex = Math.min(selectedIndex + 1, totalResults - 1);
+      selectedIndex = Math.max(0, Math.min(selectedIndex + 1, totalResults - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       selectedIndex = Math.max(selectedIndex - 1, 0);
@@ -215,21 +226,7 @@
               onmouseenter={() => selectedIndex = i}
             >
               <div class="flex items-center gap-2">
-                {#if entry.status === 'error'}
-                  <span class="w-2 h-2 bg-red-500 shrink-0"></span>
-                {:else if entry.status === 'starting' || entry.status === 'installing'}
-                  <span class="w-2 h-2 bg-yellow-500 animate-pulse shrink-0"></span>
-                {:else if entry.isRunning}
-                  <span class="w-2 h-2 bg-primary animate-pulse shrink-0"></span>
-                {:else if entry.hasPending}
-                  <span class="w-2 h-2 bg-amber-500 animate-pulse shrink-0"></span>
-                {:else if entry.status === 'stopped'}
-                  <span class="w-2 h-2 bg-neutral-500 shrink-0"></span>
-                {:else if entry.status === 'sleeping'}
-                  <span class="w-2 h-2 bg-green-500/40 shrink-0"></span>
-                {:else}
-                  <span class="w-2 h-2 bg-green-500 shrink-0"></span>
-                {/if}
+                <StatusDot state={spriteStateOf(entry.id)} />
                 <span class="text-muted-foreground shrink-0"><HighlightedText text={entry.repoName} {query} words /></span>
                 <span class="text-muted-foreground/40 shrink-0">/</span>
                 <span class="font-medium truncate min-w-0"><HighlightedText text={entry.label} {query} words /></span>

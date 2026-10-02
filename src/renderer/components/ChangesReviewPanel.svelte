@@ -6,7 +6,7 @@
   import { store as sessionStore } from '../stores/sessions.svelte.js';
   import type { GitStatusEntry, DiffScope } from '../../shared/types.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
-  import GitOpsDialog from './GitOpsDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -20,6 +20,7 @@
 
   /** Rebase / squash / cherry-pick dialog (branch operations between agent branches). */
   let gitOpsOpen = $state(false);
+  const loadGitOpsDialog = lazyComponent(() => import('./GitOpsDialog.svelte'));
 
   let gitStatus = $derived(gitStatusStore.getStatus(sessionId));
   let isLoading = $derived(gitStatusStore.isLoading(sessionId));
@@ -121,12 +122,21 @@
         await prStore.push(sessionId);
       }
     } catch (e: any) {
-      commitError = e?.message || (committed ? 'Push failed' : 'Commit failed');
+      // A failed push after a good commit is kept by prStore and shown in
+      // the status bar as "push failed": the commit box disappears once
+      // nothing is staged, so an error here would never be seen.
+      if (!committed) commitError = e?.message || 'Commit failed';
     } finally {
       committing = false;
       pushing = false;
     }
   }
+
+  // With nothing staged the commit box is hidden. Drop any error then, so it
+  // can't come back, out of date, with the next staged file.
+  $effect(() => {
+    if (stagedEntries.length === 0) commitError = '';
+  });
 
   // ── Revert / discard (destructive, confirmed first) ──
   let confirmEntry = $state<GitStatusEntry | null>(null);
@@ -262,11 +272,21 @@
     <Dialog.Content class="max-w-md">
       {#if confirmEntry}
         {@const isUntracked = confirmEntry.status === 'untracked'}
+        <!-- Revert on a staged entry runs `git checkout HEAD`, which also
+             drops edits not staged yet, and on a staged new file `git rm -f`,
+             which deletes it. Say so, rather than "the changes shown here". -->
+        {@const isNewStaged = confirmEntry.staged && confirmEntry.status === 'added'}
+        {@const entryPath = confirmEntry.filePath}
+        {@const alsoUnstaged = confirmEntry.staged && gitStatus.entries.some((e) => !e.staged && e.filePath === entryPath)}
         <Dialog.Header>
-          <Dialog.Title>{isUntracked ? 'Discard file?' : 'Revert file?'}</Dialog.Title>
+          <Dialog.Title>{isUntracked || isNewStaged ? 'Discard file?' : 'Revert file?'}</Dialog.Title>
           <Dialog.Description>
             {#if isUntracked}
               <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be permanently deleted from disk. This cannot be undone.
+            {:else if isNewStaged}
+              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> is a new file, so reverting it deletes it from disk{alsoUnstaged ? ', including its unstaged edits' : ''}. This cannot be undone.
+            {:else if alsoUnstaged}
+              <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be reset to its last committed state. That discards the staged changes shown here and its unstaged edits too.
             {:else}
               <span class="font-mono text-xs break-all">{confirmEntry.filePath}</span> will be reset to its last committed state, discarding the changes shown here.
             {/if}
@@ -274,14 +294,16 @@
         </Dialog.Header>
         <Dialog.Footer>
           <Button variant="outline" onclick={() => confirmEntry = null}>Cancel</Button>
-          <Button variant="destructive" onclick={confirmRevert}>{isUntracked ? 'Discard' : 'Revert'}</Button>
+          <Button variant="destructive" onclick={confirmRevert}>{isUntracked || isNewStaged ? 'Discard' : 'Revert'}</Button>
         </Dialog.Footer>
       {/if}
     </Dialog.Content>
   </Dialog.Root>
 
   {#if gitOpsOpen}
-    <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
+    {#await loadGitOpsDialog() then GitOpsDialog}
+      <GitOpsDialog {sessionId} onclose={() => gitOpsOpen = false} />
+    {/await}
   {/if}
 {/snippet}
 
@@ -289,6 +311,7 @@
   {sessionId}
   {sourceKey}
   entries={gitStatus.entries}
+  active={sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'changes'}
   loading={isLoading}
   changesLabel={isBranchScope ? 'Changed on branch' : 'Changes'}
   {loadDiff}
@@ -301,7 +324,8 @@
   commentContext={isBranchScope ? `branch vs ${gitStatus.baseRef ?? scopeState.base ?? 'base'}` : undefined}
   {emptyTitle}
   emptyHint={isRunning ? 'Edits show up here as the agent makes them' : undefined}
-  emptyExtra={scopeToggle}
+  emptyScene="changes"
+  panel="changesFiles"
   {sidebarTop}
   {sidebarSummaryExtra}
   sidebarFooter={commitBox}

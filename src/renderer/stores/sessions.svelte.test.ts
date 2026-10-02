@@ -29,7 +29,6 @@ describe('SessionStore', () => {
     store.creating = false;
     store.repos = [];
     store.deferredResume = {};
-    store.showCompleted = false;
     store.sessionSort = { key: 'name', dir: 'asc' };
     localStorageMock.clear();
   });
@@ -177,18 +176,6 @@ describe('SessionStore', () => {
       store.sessionSort = { key: 'age', dir: 'desc' };
       expect(store.openConversations.map((s) => s.id)).toEqual(['c', 'a', 'b']);
     });
-
-    it('includes completed open tabs only while "Show completed" is on, and remembers the toggle', () => {
-      store.sessions = [
-        makeSession({ id: 'a' }),
-        { ...makeSession({ id: 'done' }), completedAt: 5 },
-      ];
-      expect(store.openConversations.map((s) => s.id)).toEqual(['a']);
-
-      store.toggleShowCompleted();
-      expect(store.openConversations.map((s) => s.id).sort()).toEqual(['a', 'done']);
-      expect(localStorageMock.getItem('grove-bench:sidebar-show-completed')).toBe('1');
-    });
   });
 
   describe('needsAttention', () => {
@@ -211,55 +198,6 @@ describe('SessionStore', () => {
       store.removeSession('s1');
 
       expect(store.needsAttention['s1']).toBeUndefined();
-    });
-  });
-
-  describe('completed', () => {
-    beforeEach(() => {
-      mockGroveBench.setSessionCompleted.mockReset();
-      mockGroveBench.setSessionCompleted.mockResolvedValue(undefined);
-    });
-
-    it('marks a session completed optimistically, clears its attention flag, and persists', async () => {
-      store.addSession(makeSession({ id: 's1' }), false);
-      store.markNeedsAttention('s1');
-
-      const pending = store.setCompleted('s1', true);
-      expect(store.sessions[0].completedAt).toEqual(expect.any(Number));
-      expect(store.needsAttention['s1']).toBeUndefined();
-      await pending;
-
-      expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('s1', true);
-      expect(store.completedCount).toBe(1);
-    });
-
-    it('rolls back when persistence fails', async () => {
-      store.addSession(makeSession({ id: 's1' }), false);
-      mockGroveBench.setSessionCompleted.mockRejectedValueOnce(new Error('disk'));
-
-      await store.setCompleted('s1', true);
-
-      expect(store.sessions[0].completedAt).toBeNull();
-      expect(store.completedCount).toBe(0);
-    });
-
-    it('is a no-op when the flag already matches', async () => {
-      store.addSession(makeSession({ id: 's1' }), false);
-
-      await store.setCompleted('s1', false);
-
-      expect(mockGroveBench.setSessionCompleted).not.toHaveBeenCalled();
-    });
-
-    it('reopens a completed session when the user is active in it again', async () => {
-      store.addSession(makeSession({ id: 's1' }), false);
-      await store.setCompleted('s1', true);
-
-      store.updateLastActive('s1');
-      await Promise.resolve();
-
-      expect(store.sessions[0].completedAt).toBeNull();
-      expect(mockGroveBench.setSessionCompleted).toHaveBeenLastCalledWith('s1', false);
     });
   });
 
@@ -337,17 +275,6 @@ describe('SessionStore', () => {
       expect(result).toHaveLength(2);
       expect(result.every(s => s.repoPath === '/repo/a')).toBe(true);
     });
-
-    it('canRemoveRepo returns true when no sessions', () => {
-      store.addRepo('/repo/a');
-      expect(store.canRemoveRepo('/repo/a')).toBe(true);
-    });
-
-    it('canRemoveRepo returns false when sessions exist', () => {
-      store.addRepo('/repo/a');
-      store.addSession(makeSession({ repoPath: '/repo/a' }), false);
-      expect(store.canRemoveRepo('/repo/a')).toBe(false);
-    });
   });
 
   describe('repoDisplayName', () => {
@@ -377,6 +304,13 @@ describe('SessionStore', () => {
       expect(store.popRecentlyClosed()).toBe('s3');
       expect(store.popRecentlyClosed()).toBe('s2');
       expect(store.popRecentlyClosed()).toBe('s1');
+    });
+
+    it('forgets a conversation once it is deleted', () => {
+      store.sessions = [{ id: 's1', branch: 'b', repoPath: '/r', status: 'stopped' }] as never;
+      store.pushRecentlyClosed('s1');
+      store.removeSession('s1');
+      expect(store.popRecentlyClosed()).toBeNull();
     });
 
     it('popRecentlyClosed returns null when empty', () => {
@@ -465,17 +399,17 @@ describe('SessionStore', () => {
   });
 });
 
-describe('createAttachedSession', () => {
-  it("runs the source conversation's agent", async () => {
-    store.sessions = [];
-    store.addSession({ id: 'src', branch: 'feat/x', repoPath: '/repo/test', status: 'running', agentType: 'codex' } as never);
-    const createSession = vi.fn().mockResolvedValue({ id: 'attached', branch: 'feat/x', agentType: 'codex' });
-    (mockGroveBench as unknown as { createSession: typeof createSession }).createSession = createSession;
+describe('loadRepos', () => {
+  it('moves projects from the old localStorage list into the remembered list', async () => {
+    localStorage.setItem('grove-bench:repos', JSON.stringify(['/repo/known', '/repo/legacy']));
+    mockGroveBench.listRepos.mockResolvedValueOnce(['/repo/known']);
 
-    await store.createAttachedSession('src', '/repo/test');
+    await store.loadRepos();
 
-    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ attachToSessionId: 'src', adapterType: 'codex' }));
-    expect(store.sessions.find((s) => s.id === 'attached')?.agentType).toBe('codex');
-    store.sessions = [];
+    expect(store.repos).toEqual(['/repo/known', '/repo/legacy']);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.rememberRepo).toHaveBeenCalledWith('/repo/legacy');
+    expect(localStorage.getItem('grove-bench:repos')).toBeNull();
+    store.repos = [];
   });
 });

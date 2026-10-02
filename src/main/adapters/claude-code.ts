@@ -1,23 +1,28 @@
 /**
  * Claude Code adapter — wraps the @anthropic-ai/claude-agent-sdk.
  */
-import type { AgentEvent, ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
+import type { ControlDescriptor, ControlOption, McpServerInfo, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpServerContextCost, McpServerManager, McpSupport, ImageMediaType, PermissionMode, ProviderUsage, SkillDefinition, ThinkingLevel, ToolCategory, UsageWindow } from '../../shared/types.js';
 import { CONTROL_IDS, THINKING_LEVELS } from '../../shared/types.js';
 import type {
   AgentAdapter,
   AgentCapabilities,
   AgentQueryHandle,
   AdapterConfig,
+  AdapterEvent,
   AdapterPrerequisiteStatus,
   ApiKeyDescriptor,
+  CliSignInDescriptor,
   ModelInfo,
   PermissionResponse,
+  ToolImageData,
   UserMessage,
 } from './types.js';
+import { net } from 'electron';
+import { ResumeNotFoundError } from './types.js';
 import { getApiKey } from '../credentials.js';
 import { loadModelCatalog, saveModelCatalog } from '../app-state.js';
 import { z } from 'zod';
-import { cleanEnv, isPathInside, matchToolRule, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
+import { asarUnpackedPath, cleanEnv, isPathInside, checkToolRules, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { createMemoryMcpServer, GROVE_MEMORY_TOOL_NAMES } from './memory-mcp-server.js';
 import { createPreviewMcpServer, GROVE_PREVIEW_READ_TOOL_NAMES } from './preview-mcp-server.js';
 import * as skillsModule from '../skills.js';
@@ -27,6 +32,10 @@ import { promisify } from 'node:util';
 import * as path from 'node:path';
 
 const execFileAsync = promisify(execFile);
+
+/** Shown when Claude can't sign in: a bad or revoked API key, or an expired
+ *  Claude Code sign-in. */
+export const CLAUDE_AUTH_ERROR_MESSAGE = 'Claude couldn\'t sign in. Check or replace your Anthropic API key in Settings → Agents (Grovekeepers), or run "claude" in a terminal and sign in, then try again.';
 
 // ─── SDK dynamic import (ESM-only module in a CJS Electron main process) ───
 
@@ -40,15 +49,16 @@ type SdkElicitationRequest = import('@anthropic-ai/claude-agent-sdk').Elicitatio
 /**
  * Custom spawn used for the SDK's `spawnClaudeCodeProcess` hook.
  *
- * By default the SDK launches its bundled CLI as `node <…/cli.js>`, relying on a
- * `node` binary being on PATH. A GUI-launched Electron app on Windows frequently
- * inherits a minimal PATH with no `node`, so that spawn fails with ENOENT —
- * surfaced confusingly as "Claude Code executable not found at …cli.js. Is
- * options.pathToClaudeCodeExecutable set?". Electron's own binary runs as a plain
- * Node process when ELECTRON_RUN_AS_NODE=1, and `process.execPath` is always a
- * valid path in both dev and packaged builds — so we redirect the `node`
- * invocation to ourselves and drop the PATH dependency entirely. Non-node
- * commands (e.g. a native `claude` binary) are spawned unchanged.
+ * The SDK runs its native `claude` binary, which it finds next to its own
+ * module. In the packaged app that path is inside app.asar: Electron can read
+ * files there, so the SDK sees the binary, but the OS can't run one (spawn
+ * fails with ENOTDIR or ENOENT). electron-builder unpacks the binary to
+ * app.asar.unpacked (see asarUnpack in electron-builder.yml), so it runs
+ * from there.
+ *
+ * A `node` command (older SDKs ran `node <…/cli.js>`) is redirected to
+ * Electron's own binary with ELECTRON_RUN_AS_NODE=1: a GUI-launched app on
+ * Windows often has no `node` on PATH, and `process.execPath` is always valid.
  */
 /** Tool results are kept only for display, replay and memory extraction — the
  *  model already received the full text. Cap what we retain so a test suite
@@ -64,12 +74,12 @@ export function capToolResult(content: string): string {
   return `${content.slice(0, TOOL_RESULT_HEAD_CHARS)}\n\n… [${omitted.toLocaleString()} characters omitted] …\n\n${content.slice(content.length - tailChars)}`;
 }
 
-function spawnClaudeCodeProcess(
+export function spawnClaudeCodeProcess(
   opts: SpawnOptions,
   onStderr?: (data: string) => void,
 ): SpawnedProcess & { readonly pid?: number } {
   const isNode = /^node(\.exe)?$/i.test(path.basename(opts.command));
-  const command = isNode ? process.execPath : opts.command;
+  const command = isNode ? process.execPath : asarUnpackedPath(opts.command);
   const env = isNode
     ? { ...opts.env, ELECTRON_RUN_AS_NODE: '1' }
     : opts.env;
@@ -111,6 +121,7 @@ function categorizeToolName(toolName: string): ToolCategory {
     case 'MultiEdit':
       return 'edit';
     case 'Bash':
+    case 'PowerShell':
       return 'bash';
     case 'Read':
     case 'Grep':
@@ -141,6 +152,8 @@ const WRITE_TOOL_PATH_FIELD: Record<string, string> = {
 // Re-exported so existing importers (tests) keep working after the move to
 // agent-utils, where non-adapter modules can share it.
 export { isPathInside };
+// Moved to agent-utils (the MCP bridge launcher uses it too); importers keep working.
+export { asarUnpackedPath };
 
 // ─── SDKMessage → AgentEvent transform ───
 
@@ -179,6 +192,39 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
   return mode === 'acceptEdits' && ctx.groveMode === 'readSafe' ? 'readSafe' : mode;
 }
 
+const IMAGE_MEDIA_TYPES = new Set<string>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/** The base64 images in a tool result's content: API image blocks (Read on an
+ *  image file) or MCP ones (`data` + `mimeType`), in case they arrive unconverted. */
+export function toolResultImages(content: unknown[]): ToolImageData[] {
+  const images: ToolImageData[] = [];
+  for (const c of content as any[]) {
+    if (c?.type !== 'image') continue;
+    const data = c.source?.type === 'base64' ? c.source.data : c.data;
+    const mediaType = c.source?.type === 'base64' ? c.source.media_type : c.mimeType;
+    if (typeof data === 'string' && data && IMAGE_MEDIA_TYPES.has(mediaType)) {
+      images.push({ data, mediaType: mediaType as ImageMediaType });
+    }
+  }
+  return images;
+}
+
+/** How the CLI answers a resume of a conversation it no longer has (its
+ *  transcript was deleted or moved): an error result, before any init. */
+const MISSING_CONVERSATION_RE = /No conversation found with session ID\b/;
+
+/** The CLI's "No conversation found" error, when `message` is that result. */
+export function missingConversationError(message: SDKMessage): string | null {
+  if (message.type !== 'result' || !message.is_error || !('errors' in message)) return null;
+  return message.errors.find((e) => MISSING_CONVERSATION_RE.test(e)) ?? null;
+}
+
+/** The parentToolUseId field for an event from an SDK message's
+ *  parent_tool_use_id, or nothing for the main agent's own messages. */
+function subagentTag(parentToolUseId: string | null | undefined): { parentToolUseId?: string } {
+  return parentToolUseId ? { parentToolUseId } : {};
+}
+
 /**
  * Transform a single SDKMessage into zero or more AgentEvents.
  * This is a pure function (given a context bag) extracted from the former
@@ -187,8 +233,8 @@ export function fromSdkSyncMode(mode: PermissionMode, ctx: MessageContext): Perm
 export function transformMessage(
   message: SDKMessage,
   ctx: MessageContext,
-): AgentEvent[] {
-  const events: AgentEvent[] = [];
+): AdapterEvent[] {
+  const events: AdapterEvent[] = [];
 
   switch (message.type) {
     case 'system': {
@@ -218,6 +264,13 @@ export function transformMessage(
         const modeValue = m.permissionMode ?? m.permission_mode;
         if (modeValue) {
           events.push({ type: 'mode_sync', mode: fromSdkSyncMode(modeValue, ctx), source: 'sdk' });
+        }
+      } else if (message.subtype === 'informational') {
+        // The CLI's own warnings (e.g. a sandbox that could not start) reach
+        // the user; lower levels are transcript-only chatter in the CLI too.
+        const m = message as { content?: unknown; level?: unknown };
+        if (m.level === 'warning' && typeof m.content === 'string' && m.content.trim()) {
+          events.push({ type: 'status', level: 'warning', message: m.content.trim() });
         }
       } else if (message.subtype === 'local_command_output') {
         const content = (message as any).content;
@@ -348,11 +401,22 @@ export function transformMessage(
     }
 
     case 'assistant': {
+      // The API refused the credentials. The message's text is the CLI's own
+      // ("Invalid API key · Fix external API key"), which names nothing in
+      // Grove, so say where to fix it instead.
+      if ((message as { error?: string }).error === 'authentication_failed') {
+        events.push({ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true });
+        break;
+      }
+      // A subagent's messages carry the id of the Agent call that started it.
+      // Tagged with it, they go to that subagent's own thread instead of
+      // reading as the main agent's reply.
+      const subagent = subagentTag(message.parent_tool_use_id);
       const content = message.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block.type === 'text') {
-            events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid });
+            events.push({ type: 'assistant_text', text: block.text, uuid: message.uuid, ...subagent });
           } else if (block.type === 'tool_use') {
             ctx.toolUseMap.set(block.id, block.name);
             events.push({
@@ -362,12 +426,14 @@ export function transformMessage(
               toolUseId: block.id,
               uuid: message.uuid,
               toolCategory: categorizeToolName(block.name),
+              ...subagent,
             });
           } else if (block.type === 'thinking') {
             events.push({
               type: 'thinking',
               thinking: (block as any).thinking || '',
               uuid: message.uuid,
+              ...subagent,
             });
           }
         }
@@ -375,9 +441,8 @@ export function transformMessage(
       // Only track token usage from the main conversation — subagent messages
       // carry a parent_tool_use_id and would cause the status-bar values to
       // fluctuate wildly as their smaller contexts overwrite the main context size.
-      const isSubagent = !!(message as any).parent_tool_use_id;
       const usage = (message.message as any)?.usage;
-      if (usage && !isSubagent) {
+      if (usage && !subagent.parentToolUseId) {
         events.push({
           type: 'usage',
           inputTokens: usage.input_tokens ?? 0,
@@ -397,11 +462,14 @@ export function transformMessage(
             const resultContent = Array.isArray(block.content)
               ? block.content.map((c: any) => c.text || '').join('')
               : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+            const imageData = Array.isArray(block.content) ? toolResultImages(block.content) : [];
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
               content: capToolResult(resultContent),
               isError: block.is_error,
+              ...(imageData.length > 0 && { imageData }),
+              ...subagentTag(message.parent_tool_use_id),
             });
           }
         }
@@ -461,6 +529,10 @@ export function transformMessage(
     }
 
     case 'stream_event': {
+      // The live stream and activity are the main agent's. A subagent's text
+      // arrives whole as an assistant message; its deltas would run into the
+      // main agent's reply.
+      if (message.parent_tool_use_id) break;
       const event = message.event;
       if (event.type === 'content_block_delta') {
         const delta = (event as any).delta;
@@ -570,17 +642,37 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | null> = {
 };
 
 /**
+ * How thinking text is returned: a readable summary, or none. Opus 4.7+,
+ * Opus 5/5.5, Fable 5/5.1 and Sonnet 5/5.5 default to 'omitted' (thinking
+ * blocks with empty text), and Claude Code doesn't ask for anything else in
+ * SDK mode, so we always send one. Claude Code drops the field for models
+ * that don't take it (Haiku 4.5, Claude 3).
+ */
+export type ThinkingDisplay = 'summarized' | 'omitted';
+
+/** The display the showThinkingSummaries setting asks for (unset = on). */
+export function thinkingDisplayFor(summaries: boolean | undefined): ThinkingDisplay {
+  return summaries === false ? 'omitted' : 'summarized';
+}
+
+type ThinkingConfig =
+  | { type: 'adaptive'; display: ThinkingDisplay }
+  | { type: 'disabled' }
+  | { type: 'enabled'; budgetTokens: number; display: ThinkingDisplay };
+
+/**
  * Thinking level → the SDK's query-start `thinking` config, which (unlike the
  * deprecated runtime token control) can express adaptive thinking explicitly.
  * Returns null for 'high' (and unset) so the provider default applies.
  */
 export function thinkingConfigFor(
   level: ThinkingLevel | null | undefined,
-): { type: 'adaptive' } | { type: 'disabled' } | { type: 'enabled'; budgetTokens: number } | null {
+  display: ThinkingDisplay = 'summarized',
+): ThinkingConfig | null {
   if (!level || level === 'high') return null;
-  if (level === 'adaptive') return { type: 'adaptive' };
+  if (level === 'adaptive') return { type: 'adaptive', display };
   if (level === 'off') return { type: 'disabled' };
-  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]! };
+  return { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS[level]!, display };
 }
 
 // ─── Session controls ───
@@ -678,13 +770,13 @@ export function supportsFastMode(model: string | null | undefined, learned?: Lea
 }
 
 const PERMISSION_MODE_OPTIONS: ControlOption[] = [
-  { value: 'default', label: 'Code', tone: 'info', description: 'Ask before edits and non-trivial commands' },
+  { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you before each edit or command (reading files and read-only commands run freely)' },
   { value: 'plan', label: 'Plan', tone: 'warning', description: 'Explore and plan without editing files' },
-  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree' },
+  { value: 'acceptEdits', label: 'Edit', tone: 'accent', description: 'Auto-accept file edits inside the worktree; commands still ask' },
   { value: 'auto', label: 'Auto', tone: 'highlight', description: "Claude's classifier approves or blocks each action instead of asking" },
   // Grove's own mode, listed after Claude's so the divider shows it isn't one
   // of the CLI's.
-  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks (sandbox-backed)' },
+  { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench', description: 'Auto-accept edits and read-only commands; everything else asks. Uses an OS sandbox where one can start' },
 ];
 
 /**
@@ -768,16 +860,19 @@ export function claudeControlsFor(model?: string | null, learned?: LearnedModel)
 /**
  * The query-start `thinking` and `effort` options for recorded control values.
  * Models that reject disabled thinking get no Thinking control, so a stale
- * recorded value (e.g. 'off' carried over from another model) is not sent.
+ * recorded value (e.g. 'off' carried over from another model) is not sent;
+ * they always think adaptively, and we send that only to set the display.
  */
 export function reasoningOptionsFor(
   model: string | null | undefined,
   controls: Record<string, string> | null | undefined,
   learned?: LearnedModel,
+  display: ThinkingDisplay = 'summarized',
 ): { thinking: ReturnType<typeof thinkingConfigFor>; effort: EffortLevel | undefined } {
-  const thinking = claudeModelCaps(model, learned).thinkingOff
-    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined)
-    : null;
+  const caps = claudeModelCaps(model, learned);
+  const thinking = caps.thinkingOff
+    ? thinkingConfigFor(controls?.[CONTROL_IDS.thinking] as ThinkingLevel | undefined, display)
+    : caps.adaptiveThinking ? thinkingConfigFor('adaptive', display) : null;
   return { thinking, effort: effortFor(model, controls?.[CONTROL_IDS.effort], learned) };
 }
 
@@ -1096,6 +1191,27 @@ export function validateMcpName(name: string): void {
   }
 }
 
+/** Plugin ids as the CLI lists them (`name@marketplace`). The claude CLI runs
+ *  through the shell (a .cmd shim on Windows), and ids reach it from the
+ *  renderer and, before that, from marketplace listings that may be
+ *  third-party, so only shell-inert characters are accepted, and no leading
+ *  dash (it would read as a CLI option). */
+export function validatePluginId(id: unknown): string {
+  if (typeof id !== 'string' || id.startsWith('-') || !/^[A-Za-z0-9._\/:@+-]+$/.test(id)) {
+    throw new Error(`Invalid plugin id: ${String(id).slice(0, 80)}`);
+  }
+  return id;
+}
+
+const CONFIG_SCOPES: ReadonlySet<string> = new Set<McpConfigScope>(['local', 'user', 'project']);
+const MCP_TRANSPORTS: ReadonlySet<string> = new Set(['stdio', 'http', 'sse']);
+
+/** A settings scope for the claude CLI's -s/--scope; anything else throws. */
+export function validateConfigScope(scope: unknown): McpConfigScope {
+  if (typeof scope !== 'string' || !CONFIG_SCOPES.has(scope)) throw new Error(`Invalid scope: ${String(scope).slice(0, 40)}`);
+  return scope as McpConfigScope;
+}
+
 /**
  * Quote a single argument for execFile with `shell: true` (cmd.exe on
  * Windows joins args with spaces and does NOT quote them). Values that could
@@ -1166,7 +1282,8 @@ interface McpAuthenticateResponse {
 /** Build the `claude mcp add ...` argument list for the given options. */
 export function buildMcpAddArgs(opts: McpAddServerOpts): string[] {
   validateMcpName(opts.name);
-  const args = ['mcp', 'add', '-s', opts.scope, '-t', opts.transport];
+  if (!MCP_TRANSPORTS.has(opts.transport)) throw new Error(`Invalid transport: ${String(opts.transport).slice(0, 40)}`);
+  const args = ['mcp', 'add', '-s', validateConfigScope(opts.scope), '-t', opts.transport];
   for (const [key, value] of Object.entries(opts.env ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       throw new Error(`Invalid environment variable name: ${key}`);
@@ -1215,6 +1332,55 @@ export function envAuthMethod(env: NodeJS.ProcessEnv = process.env): string | nu
   return null;
 }
 
+/** Lists one model: it needs only the key and runs no model, so it shows
+ *  whether Anthropic accepts a key (https://platform.claude.com/docs/en/api/models/list). */
+const API_KEY_CHECK_URL = 'https://api.anthropic.com/v1/models?limit=1';
+const API_KEY_CHECK_TIMEOUT_MS = 10_000;
+
+type KeyCheckFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
+
+/** Whether Anthropic accepts `key`: true when it does, false when it answers
+ *  401, null when that couldn't be told (offline, a proxy in the way, an
+ *  outage). With ANTHROPIC_BASE_URL set, conversations go to that endpoint
+ *  instead, which may take other keys, so nothing is checked. Uses Electron's
+ *  network stack, which follows the system's proxy settings. */
+export async function verifyAnthropicKey(
+  key: string,
+  { env = process.env, fetchFn = (url, init) => net.fetch(url, init) }: { env?: NodeJS.ProcessEnv; fetchFn?: KeyCheckFetch } = {},
+): Promise<boolean | null> {
+  if (env.ANTHROPIC_BASE_URL?.trim()) return null;
+  try {
+    const res = await fetchFn(API_KEY_CHECK_URL, {
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      signal: AbortSignal.timeout(API_KEY_CHECK_TIMEOUT_MS),
+    });
+    if (res.ok) return true;
+    if (res.status === 401) return false;
+    logger.debug(`[ClaudeCodeAdapter] API key check answered ${res.status}`);
+    return null;
+  } catch (err) {
+    logger.debug('[ClaudeCodeAdapter] API key check failed:', err);
+    return null;
+  }
+}
+
+/**
+ * Query options that keep generateText to a single reply. The model gets no
+ * tools: a tool call would use up the one turn and fail the query with
+ * "Reached maximum number of turns (1)". No plan mode either, as its reminder
+ * tells the model to explore the code before answering; 'dontAsk' still
+ * denies anything that isn't pre-approved.
+ */
+export const TEXT_GENERATION_OPTIONS: Pick<
+  import('@anthropic-ai/claude-agent-sdk').Options,
+  'tools' | 'strictMcpConfig' | 'permissionMode' | 'maxTurns'
+> = {
+  tools: [],
+  strictMcpConfig: true,
+  permissionMode: 'dontAsk',
+  maxTurns: 1,
+};
+
 // ─── Claude Code Adapter ───
 
 export class ClaudeCodeAdapter implements AgentAdapter {
@@ -1223,19 +1389,33 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // our UI and suggest "Claude Agent" for menus
   // (https://code.claude.com/docs/en/agent-sdk/overview#branding-guidelines).
   readonly displayName = 'Claude Agent';
-  readonly authErrorMessage = 'Authentication failed. Add or check your Anthropic API key in Settings > Agent, or run "claude auth login" in a terminal, then try again.';
+  readonly authErrorMessage = CLAUDE_AUTH_ERROR_MESSAGE;
   readonly apiKey: ApiKeyDescriptor = {
     envVar: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API key',
     helpUrl: 'https://platform.claude.com/',
+    // https://support.claude.com/en/articles/9876003
+    billingNote: 'Billed per use by Anthropic, separately from any Claude plan.',
+  };
+  // Anthropic's own sign-in in its own CLI; Grove only reads `claude auth
+  // status` (DESIGN.md, "Allowed: the user's own Claude subscription").
+  readonly cliSignIn: CliSignInDescriptor = {
+    accountLabel: 'Claude plan',
+    accountDetail: 'Pro, Max, Team or Enterprise',
+    cliName: 'Claude Code',
+    command: 'claude',
+    setupUrl: 'https://code.claude.com/docs/en/setup',
   };
   readonly mcp = CLAUDE_MCP_SUPPORT;
+  readonly generatedFiles = ['.claude/settings.local.json'];
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
     resume: true,
+    rewind: true,
     modelSwitching: true,
     thinking: true,
+    thinkingSummaries: true,
     plugins: true,
     skills: true,
     usage: true,
@@ -1245,6 +1425,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   };
 
   constructor(private readonly modelStore: ModelCatalogStore = appStateModelStore) {}
+
+  verifyApiKey(key: string): Promise<boolean | null> {
+    return verifyAnthropicKey(key);
+  }
 
   // ─── Models ───
   // The list comes from the SDK (`Query.supportedModels()`), read when a
@@ -1377,7 +1561,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         authenticated: envMethod !== null,
         ...(envMethod ? { authMethod: envMethod } : {}),
         errorMessage: 'Claude Code CLI not found',
-        installInstructions: 'Install with: npm install -g @anthropic-ai/claude-code',
+        installInstructions: 'Install Claude Code: https://code.claude.com/docs/en/setup',
       };
     }
 
@@ -1456,22 +1640,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       // Settings rules are written in neutral terms (shell(...), edit(...),
       // read(...), ...) or with Claude's tool names; both match here.
+      // Chained shell commands are split first, so an allow rule has to
+      // match every command in the chain (see checkToolRules). shell(...)
+      // covers PowerShell too, split by PowerShell's own syntax.
       const category = categorizeToolName(toolName);
       const specifier = toolCallSpecifier(toolName, input, category);
-      const toolCall = specifier ? `${toolName}(${specifier})` : toolName;
-
-      // Deny rules
-      for (const rule of config.toolDenyRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
-          return { behavior: 'deny' as const, message: `Denied by settings rule: ${rule.pattern}` };
-        }
+      const shellSyntax = toolName === 'PowerShell' ? 'powershell' : 'bash';
+      const ruleVerdict = checkToolRules(
+        config.toolAllowRules, config.toolDenyRules, toolName, specifier, category, shellSyntax,
+      );
+      if (ruleVerdict?.behavior === 'deny') {
+        return { behavior: 'deny' as const, message: `Denied by settings rule: ${ruleVerdict.pattern}` };
       }
-
-      // Allow rules
-      for (const rule of config.toolAllowRules) {
-        if (matchToolRule(rule.pattern, toolName, toolCall, category)) {
-          return { behavior: 'allow' as const, updatedInput: input };
-        }
+      if (ruleVerdict?.behavior === 'allow') {
+        return { behavior: 'allow' as const, updatedInput: input };
       }
 
       // Sandbox auto-approve Bash — only when the sandbox config opts in,
@@ -1531,7 +1713,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         : { type: 'preset' as const, preset: 'claude_code' as const };
 
     const learned = this.learnedFor(config.model);
-    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned);
+    const thinkingDisplay = thinkingDisplayFor(config.thinkingSummaries);
+    const { thinking, effort } = reasoningOptionsFor(config.model, config.controls, learned, thinkingDisplay);
     const fastMode = config.controls?.[CONTROL_IDS.speed] === 'fast' && supportsFastMode(config.model, learned);
 
     const q: Query = queryFn({
@@ -1540,6 +1723,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cwd: config.cwd,
         abortController,
         includePartialMessages: true,
+        // Subagents' text and thinking too, not only their tool calls: the
+        // thread shows each subagent's own thread in a panel. Without this
+        // the CLI sends them for background subagents only.
+        forwardSubagentText: true,
         // We render a per-task stop control (see stopTask below), so an
         // interrupt only aborts the current turn and leaves background
         // tasks running. Without this the CLI fails closed and kills them.
@@ -1597,7 +1784,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     // Create the async event generator
-    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+    async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       for await (const message of q) {
         if (abortController.signal.aborted) break;
 
@@ -1605,6 +1792,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (message.type === 'system' && message.subtype === 'init') {
           sessionId = message.session_id;
         }
+
+        // The conversation to resume is gone. Say so instead of passing on
+        // the error result, so the session manager can start a new one.
+        const missing = config.resumeSessionId ? missingConversationError(message) : null;
+        if (missing) throw new ResumeNotFoundError(missing);
 
         const agentEvents = transformMessage(message, ctx);
         for (const event of agentEvents) {
@@ -1698,7 +1890,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             // The runtime token control can't express 'adaptive'; null clears
             // the limit so the provider default (adaptive on capable models)
             // applies until the next query start passes the full config.
-            await q.setMaxThinkingTokens(THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null);
+            // A session that started with thinking off has no display set,
+            // so turning it on must send it again.
+            await q.setMaxThinkingTokens(
+              THINKING_LEVEL_TOKENS[value as ThinkingLevel] ?? null,
+              value === 'off' ? undefined : thinkingDisplay,
+            );
             return;
           case CONTROL_IDS.effort:
             // Session-scoped; 'max' is accepted here though never persisted
@@ -1785,11 +1982,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   // ─── Skill management (native format: .claude/skills/<name>/SKILL.md) ───
 
   async listSkills(worktreePath: string) {
-    return skillsModule.listSkills(worktreePath);
+    return skillsModule.listSkills(worktreePath, skillsModule.CLAUDE_SKILL_DIRS);
   }
 
   async addSkill(worktreePath: string, def: SkillDefinition) {
-    return skillsModule.writeSkill(worktreePath, def);
+    return skillsModule.writeSkill(worktreePath, def, skillsModule.CLAUDE_SKILL_DIRS);
   }
 
   // ─── MCP server configuration (delegates to `claude mcp` CLI) ───
@@ -1819,7 +2016,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       throw new Error(`${name} can't be removed from Grove Bench (${managedBy.label}). ${managedBy.hint}`);
     }
     validateMcpName(name);
-    const args = ['mcp', 'remove', ...(scope ? ['-s', scope] : []), quoteArg(name)];
+    const args = ['mcp', 'remove', ...(scope ? ['-s', validateConfigScope(scope)] : []), quoteArg(name)];
     await execFileAsync('claude', args, {
       shell: true,
       ...(cwd ? { cwd } : {}),
@@ -1839,19 +2036,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async installPlugin(pluginId: string, scope = 'user'): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'install', pluginId, '--scope', scope], { shell: true });
+    await execFileAsync('claude', ['plugin', 'install', validatePluginId(pluginId), '--scope', validateConfigScope(scope)], { shell: true });
   }
 
   async uninstallPlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'uninstall', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'uninstall', validatePluginId(pluginId)], { shell: true });
   }
 
   async enablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'enable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'enable', validatePluginId(pluginId)], { shell: true });
   }
 
   async disablePlugin(pluginId: string): Promise<void> {
-    await execFileAsync('claude', ['plugin', 'disable', pluginId], { shell: true });
+    await execFileAsync('claude', ['plugin', 'disable', validatePluginId(pluginId)], { shell: true });
   }
 
   // ─── Text generation (for memory extraction) ───
@@ -1885,8 +2082,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         cwd: options?.cwd ?? process.cwd(),
         abortController,
         systemPrompt,
-        permissionMode: 'plan',
-        maxTurns: 1,
+        ...TEXT_GENERATION_OPTIONS,
         ...(options?.model ? { model: options.model } : {}),
         // `env` replaces the inherited environment rather than merging, so
         // only pass it when there is a saved key to add.

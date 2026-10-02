@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { store } from '../stores/sessions.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
@@ -40,6 +41,12 @@
   let pickLoading = $state(false);
 
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
+
+  // These rewrite the checkout under an agent that may be editing it, so
+  // they wait while any conversation working there is mid-turn (branch
+  // switching has the same rule).
+  let sharers = $state<string[]>(untrack(() => [sessionId]));
+  let agentBusy = $derived(sharers.some((id) => messageStore.getIsRunning(id)));
   let sessionBranch = $derived(session?.branch ?? '');
 
   const MODES: { id: GitOpMode; label: string }[] = [
@@ -49,6 +56,9 @@
   ];
 
   onMount(async () => {
+    window.groveBench.getCheckoutSharers(sessionId)
+      .then((ids) => { if (ids.length > 0) sharers = ids; })
+      .catch(() => { /* keep this conversation's own check */ });
     baseBranch = await resolveBaseBranch(session?.repoPath ?? '');
     candidates = candidateBranches(store.sessions, sessionId, baseBranch);
     rebaseOnto = candidates[0]?.branch ?? baseBranch;
@@ -56,29 +66,39 @@
     pickSource = candidates.find((c) => c.sessionId)?.branch ?? '';
   });
 
+  // Each field edit starts a lookup; only the latest one's reply counts, so
+  // a slow reply for what was typed earlier can't replace the list.
+  let squashReq = 0;
+  let pickReq = 0;
+
   // Squash preview: the commits that would be folded together
   $effect(() => {
     const base = squashBase.trim();
-    if (mode !== 'squash' || !base) { squashCommits = []; return; }
+    const req = ++squashReq;
+    if (mode !== 'squash' || !base) { squashCommits = []; squashLoading = false; return; }
     squashLoading = true;
     window.groveBench.gitLogCommits(sessionId, 'HEAD', base)
       .then((commits) => {
+        if (req !== squashReq) return;
         squashCommits = commits;
         if (!squashMessage.trim()) squashMessage = squashMessageFrom(commits);
       })
-      .catch(() => { squashCommits = []; })
-      .finally(() => { squashLoading = false; });
+      .catch(() => { if (req === squashReq) squashCommits = []; })
+      .finally(() => { if (req === squashReq) squashLoading = false; });
   });
 
-  // Cherry-pick: commits on the source branch that this branch doesn't have
+  // Cherry-pick: commits on the source branch that this branch doesn't have.
+  // The selection goes with the list, so Cherry-pick never applies a commit
+  // that isn't shown.
   $effect(() => {
     const source = pickSource.trim();
-    if (mode !== 'cherry-pick' || !source) { pickCommits = []; return; }
+    const req = ++pickReq;
+    if (mode !== 'cherry-pick' || !source) { pickCommits = []; pickSha = ''; pickLoading = false; return; }
     pickLoading = true;
     window.groveBench.gitLogCommits(sessionId, source, 'HEAD')
-      .then((commits) => { pickCommits = commits; pickSha = commits[0]?.sha ?? ''; })
-      .catch(() => { pickCommits = []; })
-      .finally(() => { pickLoading = false; });
+      .then((commits) => { if (req === pickReq) { pickCommits = commits; pickSha = commits[0]?.sha ?? ''; } })
+      .catch(() => { if (req === pickReq) { pickCommits = []; pickSha = ''; } })
+      .finally(() => { if (req === pickReq) pickLoading = false; });
   });
 
   function afterChange() {
@@ -88,7 +108,7 @@
   }
 
   async function run() {
-    if (busy) return;
+    if (busy || agentBusy) return;
     busy = true;
     result = null;
     try {
@@ -102,7 +122,10 @@
       } else {
         const r = await window.groveBench.gitCherryPick(sessionId, pickSha);
         result = describeOpResult(r, 'Cherry-pick');
-        if (r.success) pickCommits = pickCommits.filter((c) => c.sha !== pickSha);
+        if (r.success) {
+          pickCommits = pickCommits.filter((c) => c.sha !== pickSha);
+          pickSha = pickCommits[0]?.sha ?? '';
+        }
       }
       if (result.ok) afterChange();
     } catch (e: any) {
@@ -113,7 +136,7 @@
   }
 
   let canRun = $derived.by(() => {
-    if (busy) return false;
+    if (busy || agentBusy) return false;
     if (mode === 'rebase') return !!rebaseOnto.trim();
     if (mode === 'squash') return !!squashBase.trim() && !!squashMessage.trim() && squashCommits.length >= 2;
     return !!pickSha;
@@ -229,6 +252,12 @@
           <option value={c.branch}>{c.label}</option>
         {/each}
       </datalist>
+
+      {#if agentBusy}
+        <div role="status" class="p-2 text-xs border border-border bg-muted/40 text-muted-foreground">
+          An agent is working in this checkout. Wait for its turn to finish, then try again.
+        </div>
+      {/if}
 
       {#if result}
         <div class="p-2 text-xs whitespace-pre-wrap border {result.ok ? 'bg-green-500/10 border-green-500/40 text-green-400' : 'bg-destructive/10 border-destructive/50 text-destructive'}">

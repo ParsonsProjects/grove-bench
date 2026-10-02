@@ -8,6 +8,16 @@ export const TAB_BY_KEY: Record<string, WorkspaceTab> = {
   '5': 'preview',
 };
 
+/** Names of the tabs with an Alt+<n> shortcut, as their tabs show them. */
+export const TAB_LABELS: Record<(typeof TAB_BY_KEY)[string], string> = {
+  activity: 'Thread',
+  changes: 'Changes',
+  checkpoints: 'Checkpoints',
+  plan: 'Plan',
+  terminal: 'Terminal',
+  preview: 'Preview',
+};
+
 /**
  * Map an Alt+<n> keyboard event to the workspace tab it selects, or null if the
  * event isn't a tab shortcut. Pure so the tab-switch wiring can be unit-tested

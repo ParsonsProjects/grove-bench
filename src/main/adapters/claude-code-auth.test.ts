@@ -14,7 +14,7 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-import { ClaudeCodeAdapter, envAuthMethod } from './claude-code.js';
+import { ClaudeCodeAdapter, CLAUDE_AUTH_ERROR_MESSAGE, envAuthMethod, transformMessage, verifyAnthropicKey } from './claude-code.js';
 import { getApiKey } from '../credentials.js';
 
 type ExecResult = { stdout: string } | Error;
@@ -130,5 +130,59 @@ describe('ClaudeCodeAdapter saved API key', () => {
   it('adds nothing when no key is saved', () => {
     vi.mocked(getApiKey).mockReturnValue(null);
     expect(adapter['savedKeyEnv']()).toEqual({});
+  });
+});
+
+describe('verifyAnthropicKey()', () => {
+  const answer = (status: number) => vi.fn().mockResolvedValue({ ok: status >= 200 && status < 300, status });
+
+  it('accepts a key Anthropic accepts, sending it the way the API expects', async () => {
+    const fetchFn = answer(200);
+    expect(await verifyAnthropicKey('sk-good', { env: {}, fetchFn })).toBe(true);
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('https://api.anthropic.com/v1/models?limit=1');
+    expect(init.headers).toEqual({ 'x-api-key': 'sk-good', 'anthropic-version': '2023-06-01' });
+  });
+
+  it('refuses a key Anthropic answers 401 to', async () => {
+    expect(await verifyAnthropicKey('typo', { env: {}, fetchFn: answer(401) })).toBe(false);
+  });
+
+  it("can't tell on other answers or when offline", async () => {
+    expect(await verifyAnthropicKey('k', { env: {}, fetchFn: answer(500) })).toBeNull();
+    expect(await verifyAnthropicKey('k', { env: {}, fetchFn: answer(403) })).toBeNull();
+    expect(await verifyAnthropicKey('k', { env: {}, fetchFn: vi.fn().mockRejectedValue(new Error('offline')) })).toBeNull();
+  });
+
+  it('checks nothing when conversations go to a custom endpoint', async () => {
+    const fetchFn = answer(401);
+    expect(await verifyAnthropicKey('k', { env: { ANTHROPIC_BASE_URL: 'https://gateway.example' }, fetchFn })).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('a refused sign-in mid-conversation', () => {
+  it("replaces the CLI's \"Invalid API key\" reply with Grove's own help, flagged as an auth failure", () => {
+    const events = transformMessage({
+      type: 'assistant',
+      error: 'authentication_failed',
+      uuid: 'u1',
+      message: { content: [{ type: 'text', text: 'Invalid API key · Fix external API key' }] },
+    } as any, { toolUseMap: new Map() });
+    expect(events).toEqual([{ type: 'error', message: CLAUDE_AUTH_ERROR_MESSAGE, auth: true, keyRejected: true }]);
+  });
+
+  it('leaves other API errors as the CLI words them', () => {
+    const events = transformMessage({
+      type: 'assistant',
+      error: 'rate_limit',
+      uuid: 'u1',
+      message: { content: [{ type: 'text', text: 'Rate limited' }] },
+    } as any, { toolUseMap: new Map() });
+    expect(events).toEqual([{ type: 'assistant_text', text: 'Rate limited', uuid: 'u1' }]);
+  });
+
+  it('points to the Agents settings by their plain name', () => {
+    expect(CLAUDE_AUTH_ERROR_MESSAGE).toContain('Settings → Agents');
   });
 });

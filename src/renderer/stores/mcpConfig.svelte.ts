@@ -1,5 +1,8 @@
 import type { McpConfiguredServer, McpAddServerOpts, McpConfigScope } from '../../shared/types.js';
 
+/** What the store was doing: listing, or changing one server. */
+export type McpConfigAction = 'list' | 'add' | 'remove' | 'approve';
+
 const STALE_BRIDGE_ERROR =
   'MCP configuration is unavailable in this running build — restart Grove Bench to enable it.';
 
@@ -14,16 +17,31 @@ class McpConfigStore {
   loading = $state(false);
   /** True once the first refresh has completed (empty list vs never loaded). */
   loaded = $state(false);
+  /** True once a refresh has finished, even a failed one. Opening the tab
+   *  loads until this is set; after a failure the Refresh button retries. */
+  attempted = $state(false);
   error = $state<string | null>(null);
+  /** What `error` came from, so the panel can show it next to that action. */
+  errorKind = $state<McpConfigAction | null>(null);
   /** Server name currently being added/removed/approved. */
   actionInProgress = $state<string | null>(null);
   /** What is being done to `actionInProgress`. */
-  actionKind = $state<'add' | 'remove' | 'approve' | null>(null);
+  actionKind = $state<Exclude<McpConfigAction, 'list'> | null>(null);
   /** Project the list was loaded for. Project and local servers only show
    *  for one project; undefined lists user-level servers only. */
   cwd = $state<string | undefined>(undefined);
   /** Agent whose configuration this is; undefined means the default agent. */
   adapterType = $state<string | undefined>(undefined);
+
+  private fail(kind: McpConfigAction, message: string) {
+    this.error = message;
+    this.errorKind = kind;
+  }
+
+  private clearError() {
+    this.error = null;
+    this.errorKind = null;
+  }
 
   /** List the servers for `cwd`; undefined lists user servers only. */
   async showProject(cwd: string | undefined) {
@@ -40,35 +58,36 @@ class McpConfigStore {
   /** Reload the list for the project it shows. */
   async refresh() {
     if (!bridgeHas('mcpConfigList')) {
-      this.error = STALE_BRIDGE_ERROR;
+      this.fail('list', STALE_BRIDGE_ERROR);
       return;
     }
     this.loading = true;
-    this.error = null;
+    this.clearError();
     try {
       this.servers = await window.groveBench.mcpConfigList(this.cwd, this.adapterType);
       this.loaded = true;
     } catch (e: any) {
-      this.error = e.message || String(e);
+      this.fail('list', e.message || String(e));
     } finally {
       this.loading = false;
+      this.attempted = true;
     }
   }
 
   async add(opts: McpAddServerOpts) {
     if (!bridgeHas('mcpConfigAdd')) {
-      this.error = STALE_BRIDGE_ERROR;
+      this.fail('add', STALE_BRIDGE_ERROR);
       return false;
     }
     this.actionInProgress = opts.name;
     this.actionKind = 'add';
-    this.error = null;
+    this.clearError();
     try {
       await window.groveBench.mcpConfigAdd(opts, this.adapterType);
       await this.showAdded(opts);
       return true;
     } catch (e: any) {
-      this.error = e.message || String(e);
+      this.fail('add', e.message || String(e));
       return false;
     } finally {
       this.actionInProgress = null;
@@ -78,17 +97,17 @@ class McpConfigStore {
 
   async remove(name: string, scope?: McpConfigScope) {
     if (!bridgeHas('mcpConfigRemove')) {
-      this.error = STALE_BRIDGE_ERROR;
+      this.fail('remove', STALE_BRIDGE_ERROR);
       return;
     }
     this.actionInProgress = name;
     this.actionKind = 'remove';
-    this.error = null;
+    this.clearError();
     try {
       await window.groveBench.mcpConfigRemove(name, scope, this.cwd, this.adapterType);
       await this.refresh();
     } catch (e: any) {
-      this.error = e.message || String(e);
+      this.fail('remove', e.message || String(e));
     } finally {
       this.actionInProgress = null;
       this.actionKind = null;
@@ -99,10 +118,10 @@ class McpConfigStore {
    *  slow). Stops at the first failure. Returns the names that were added. */
   async addMany(list: McpAddServerOpts[]): Promise<string[]> {
     if (!bridgeHas('mcpConfigAdd')) {
-      this.error = STALE_BRIDGE_ERROR;
+      this.fail('add', STALE_BRIDGE_ERROR);
       return [];
     }
-    this.error = null;
+    this.clearError();
     const added: string[] = [];
     let error: string | null = null;
     try {
@@ -120,7 +139,7 @@ class McpConfigStore {
     }
     // Refreshing clears the error, so set it after
     if (added.length > 0) await this.showAdded(list[0]);
-    if (error) this.error = added.length > 0 ? `Added ${added.join(', ')}, then failed: ${error}` : error;
+    if (error) this.fail('add', added.length > 0 ? `Added ${added.join(', ')}, then failed: ${error}` : error);
     return added;
   }
 
@@ -134,18 +153,18 @@ class McpConfigStore {
   /** Approve a project (.mcp.json) server for the listed project. */
   async approve(name: string) {
     if (!bridgeHas('mcpConfigApprove')) {
-      this.error = STALE_BRIDGE_ERROR;
+      this.fail('approve', STALE_BRIDGE_ERROR);
       return;
     }
     if (!this.cwd) return;
     this.actionInProgress = name;
     this.actionKind = 'approve';
-    this.error = null;
+    this.clearError();
     try {
       await window.groveBench.mcpConfigApprove(name, this.cwd, this.adapterType);
       await this.refresh();
     } catch (e: any) {
-      this.error = e.message || String(e);
+      this.fail('approve', e.message || String(e));
     } finally {
       this.actionInProgress = null;
       this.actionKind = null;

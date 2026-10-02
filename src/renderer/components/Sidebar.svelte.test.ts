@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
 import Sidebar from './Sidebar.svelte';
@@ -8,10 +8,18 @@ import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { prStore } from '../stores/pr.svelte.js';
+import { panelStore } from '../stores/panels.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import { DEFAULT_REPO_COLORS } from '../lib/repo-colors.js';
+import { AGENT_SPRITES } from '../lib/agent-sprite.js';
+import { agentsStore } from '../stores/agents.svelte.js';
+import { groupStore } from '../stores/groups.svelte.js';
+import { draftStore } from '../stores/draft.svelte.js';
 
 beforeEach(() => {
+  // Call counts start from zero in every test, whatever ran before it.
+  vi.clearAllMocks();
   store.repos = ['/repo-a'];
   store.sessions = [
     { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
@@ -24,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  settingsStore.panelOpen = false;
   vi.restoreAllMocks();
   mockGroveBench.getSessionPreviews.mockReset();
   mockGroveBench.getCollapsedRepos.mockReset();
@@ -32,7 +41,7 @@ afterEach(() => {
   store.repos = [];
   store.activeSessionId = null;
   store.finderOpen = false;
-  store.showCompleted = false;
+  store.deferredResume = {};
   store.sessionSort = { key: 'name', dir: 'asc' };
   messageStore.messagesBySession = {};
   messageStore.isRunning = {};
@@ -63,7 +72,7 @@ describe('Sidebar session rows', () => {
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
     render(Sidebar);
-    expect(await screen.findByText('Waiting for approval — Write')).toBeInTheDocument();
+    expect(await screen.findByText('Wants to edit a file')).toBeInTheDocument();
   });
 
   it('uses the main-process preview for sessions with no loaded messages', async () => {
@@ -85,14 +94,111 @@ describe('Sidebar session rows', () => {
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
     render(Sidebar);
-    expect(await screen.findByRole('img', { name: 'Waiting for you' })).toBeInTheDocument();
+    expect((await screen.findByRole('img', { name: 'Waiting for you' })).tagName).toBe('svg');
 
     settingsStore.current = { ...settingsStore.current, groveCharacters: false };
     try {
-      await waitFor(() => expect(screen.queryByRole('img', { name: 'Waiting for you' })).toBeNull());
+      // The dot says the same thing, in the character's colour.
+      await waitFor(() => expect(screen.getByRole('img', { name: 'Waiting for you' }).tagName).toBe('SPAN'));
+      expect(screen.getByRole('img', { name: 'Waiting for you' })).toHaveClass(AGENT_SPRITES.permission.colorClass, 'bg-current');
     } finally {
       settingsStore.current = { ...settingsStore.current, groveCharacters: true };
     }
+  });
+
+  it('only moves the plain dot when the system allows motion', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Working one' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Finished one' },
+    ] as any;
+    store.needsAttention = { s2: true };
+    messageStore.setIsRunning('s1', true);
+    settingsStore.current = { ...settingsStore.current, groveCharacters: false };
+    try {
+      render(Sidebar);
+      const working = screen.getByRole('img', { name: 'Working' });
+      expect(working).toHaveClass('motion-safe:animate-pulse');
+      expect(working).not.toHaveClass('animate-pulse');
+      // Its flash is defined under prefers-reduced-motion: no-preference.
+      expect(screen.getByRole('img', { name: 'Finished a turn' })).toHaveClass('needs-attention-flash');
+    } finally {
+      store.needsAttention = {};
+      settingsStore.current = { ...settingsStore.current, groveCharacters: true };
+    }
+  });
+
+  it('draws stopped and sleeping dots hollow, like the character asleep', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep' }] as any;
+    settingsStore.current = { ...settingsStore.current, groveCharacters: false };
+    try {
+      render(Sidebar);
+      const dot = screen.getByRole('img', { name: 'Sleeping' });
+      expect(dot).toHaveClass('border-current');
+      expect(dot).not.toHaveClass('bg-current');
+    } finally {
+      settingsStore.current = { ...settingsStore.current, groveCharacters: true };
+    }
+  });
+
+  it('fades sleeping rows a little, including tabs restored at startup', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Awake' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep' },
+      { id: 's3', branch: 'feat-z', repoPath: '/repo-a', status: 'stopped', displayName: 'Restored' },
+    ] as any;
+    store.deferResume('s3');
+    render(Sidebar);
+    const row = (name: string) => screen.getAllByText(name)[0].closest('button')!;
+    expect(row('Awake')).not.toHaveClass('opacity-70');
+    expect(row('Asleep')).toHaveClass('opacity-70');
+    expect(row('Restored')).toHaveClass('opacity-70');
+  });
+
+  it('gives the name the first line and puts the project on the second', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    messageStore.setIsRunning('s1', true);
+    messageStore.activityBySession['s1'] = { activity: 'tool_starting', toolName: 'Bash', toolSummary: 'npm test' };
+    const { container } = render(Sidebar);
+    const [line1, line2] = container.querySelector('.group\\/session > button')!.children;
+    expect(line1).toHaveTextContent('Sidebar revamp');
+    expect(line1).not.toHaveTextContent('repo-a');
+    expect(line2).toHaveTextContent('repo-a · Bash: npm test');
+  });
+
+  it('leaves the project out of the row when there is only one', async () => {
+    const { container } = render(Sidebar);
+    expect(container.querySelector('.group\\/session')).not.toHaveTextContent('repo-a');
+  });
+
+  it('keeps the quick action outside the row button', async () => {
+    render(Sidebar);
+    const close = screen.getByTitle(/^Close conversation/);
+    expect(close.tagName).toBe('BUTTON');
+    expect(close.parentElement!.closest('button')).toBeNull();
+    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
+  });
+
+  it('offers Close, not delete, on a tab restored at startup', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'stopped', displayName: 'Sidebar revamp' }] as any;
+    store.deferResume('s1');
+    render(Sidebar);
+    expect(screen.getByTitle(/^Close conversation/)).toBeInTheDocument();
+    expect(screen.queryByTitle('Delete conversation')).toBeNull();
+  });
+
+  it('swaps the age for the quick action on keyboard focus anywhere in the row', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp', createdAt: Date.now() }] as any;
+    render(Sidebar);
+    const focusRule = 'group-has-[:focus-visible]/session';
+    expect(screen.getByTitle(/^Close conversation/)).toHaveClass(`${focusRule}:opacity-100`);
+    expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
+  });
+
+  it('has no menu item that starts a second agent in the same worktree', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Sidebar revamp'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('New Conversation')).toBeNull();
   });
 
   it('shows the project colour on the laptop instead of a square when grove characters are on', async () => {
@@ -117,25 +223,86 @@ describe('Sidebar session rows', () => {
     }
   });
 
-  it('goes back to the landing screen when the open conversation is stopped', async () => {
+  it('goes back to the landing screen when the open conversation is closed', async () => {
     store.sessions = [
       { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
       { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Other one' },
     ] as any;
-    const closeSession = vi.fn().mockResolvedValue(undefined);
-    (mockGroveBench as any).closeSession = closeSession;
+    const { closeSession } = mockGroveBench;
+    render(Sidebar);
+    const row = (await screen.findAllByText('Sidebar revamp'))
+      .map((el) => el.closest('.group\\/session'))
+      .find((el) => el?.querySelector('[title^="Close conversation"]'))!;
+    await fireEvent.click(row.querySelector('[title^="Close conversation"]')!);
+
+    expect(closeSession).toHaveBeenCalledWith('s1');
+    // Not the other running conversation.
+    expect(store.activeSessionId).toBeNull();
+  });
+
+  it('describes the quick close for screen readers without repeating its name', async () => {
+    render(Sidebar);
+    const close = screen.getByTitle(/^Close conversation/);
+    expect(close).toHaveAccessibleName('Close conversation Sidebar revamp');
+    expect(close).toHaveAccessibleDescription(/^Stops the agent and terminal and takes it off the Conversations list/);
+  });
+
+  it('closes an idle conversation straight away', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(screen.queryByText('Close conversation?')).toBeNull();
+  });
+
+  it('asks before closing a conversation in the middle of a turn', async () => {
+    messageStore.setIsRunning('s1', true);
+    render(Sidebar);
+
+    await fireEvent.click(screen.getByTitle(/^Close conversation/));
+    expect(await screen.findByText('Close conversation?')).toBeInTheDocument();
+    expect(screen.getByText(/is in the middle of a turn/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+    expect(store.sessions[0].status).toBe('running');
+
+    // The context menu asks too.
+    await fireEvent.contextMenu(screen.getAllByText('Sidebar revamp')[0]);
+    await fireEvent.click(screen.getByText('Close Conversation'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('s1');
+    expect(store.sessions[0].status).toBe('stopped');
+  });
+
+  it('colours the branch icon by the PR health shown in the status bar', async () => {
+    const icon = () => screen.getByRole('img', { name: /^Worktree/ });
+    render(Sidebar);
+    expect(icon()).toHaveAttribute('data-pr-health', 'none');
+    expect(icon()).toHaveClass('text-muted-foreground');
+
+    prStore.prsBySession = { s1: [{ number: 12, url: 'u', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }] };
+    try {
+      await waitFor(() => expect(icon()).toHaveAttribute('data-pr-health', 'failing'));
+      expect(icon()).toHaveClass('text-red-500');
+      expect(icon()).toHaveAccessibleName('Worktree, PR #12: CI failing');
+      // The app's tooltip layer reads title attributes, so hovering the icon explains the colour.
+      expect(icon()).toHaveAttribute('title', 'Worktree, PR #12: CI failing');
+    } finally {
+      prStore.clear('s1');
+    }
+  });
+
+  it('keeps the branch icon neutral for stopped conversations, whose PR data is not polled', async () => {
+    store.sessions = [
+      { id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' },
+    ] as any;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    prStore.prsBySession = { s2: [{ number: 3, url: 'u', state: 'MERGED' }] };
     try {
       render(Sidebar);
-      const row = (await screen.findAllByText('Sidebar revamp'))
-        .map((el) => el.closest('.group\\/session'))
-        .find((el) => el?.querySelector('[title="Stop agent"]'))!;
-      await fireEvent.click(row.querySelector('[title="Stop agent"]')!);
-
-      expect(closeSession).toHaveBeenCalledWith('s1');
-      // Not the other running conversation.
-      expect(store.activeSessionId).toBeNull();
+      const icon = await screen.findByRole('img', { name: 'Worktree' });
+      expect(icon).toHaveAttribute('data-pr-health', 'none');
     } finally {
-      delete (mockGroveBench as any).closeSession;
+      prStore.clear('s2');
     }
   });
 
@@ -161,20 +328,17 @@ describe('Sidebar attention triage', () => {
     messageStore.messagesBySession['blocked'] = [
       { kind: 'permission', id: 'p1', requestId: 'r1', toolName: 'Write', toolInput: {}, toolUseId: 't1', resolved: false },
     ];
-    localStorage.removeItem('grove-bench:sidebar-show-completed');
   });
 
   afterEach(() => {
     store.needsAttention = {};
-    mockGroveBench.setSessionCompleted.mockReset();
-    mockGroveBench.setSessionCompleted.mockResolvedValue(undefined);
   });
 
   it('shows filter chips with mutually exclusive counts', async () => {
     render(Sidebar);
 
     const group = screen.getByRole('group', { name: 'Filter conversations' });
-    expect(group).toHaveTextContent('All 4');
+    expect(group).not.toHaveTextContent('All');
     expect(group).toHaveTextContent('Needs you 1');
     expect(group).toHaveTextContent('Working 1');
     expect(group).toHaveTextContent('Unread 1');
@@ -192,6 +356,42 @@ describe('Sidebar attention triage', () => {
     await fireEvent.click(screen.getByTitle('Unread: 1'));
     expect(screen.getByText('Finished one')).toBeInTheDocument();
     expect(screen.queryByText('Blocked one')).not.toBeInTheDocument();
+
+    // Clicking the active chip again shows everything.
+    await fireEvent.click(screen.getByRole('button', { name: 'Unread 1', pressed: true }));
+    expect(screen.getByText('Blocked one')).toBeInTheDocument();
+    expect(screen.getByText('Quiet one')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unread 1' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('counts a conversation that is starting up as working, matching its colour', async () => {
+    store.sessions = [...store.sessions, { id: 'booting', branch: 'feat-e', repoPath: '/repo-b', status: 'starting', displayName: 'Booting one' }] as any;
+    render(Sidebar);
+    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('Working 2');
+    expect(screen.getByRole('img', { name: 'Starting' })).toHaveClass(AGENT_SPRITES.working.colorClass);
+  });
+
+  it('counts an errored conversation under no chip, even when it is also unread', async () => {
+    store.sessions = [...store.sessions, { id: 'broken', branch: 'feat-e', repoPath: '/repo-b', status: 'error', displayName: 'Broken one' }] as any;
+    store.needsAttention = { finished: true, broken: true };
+    render(Sidebar);
+    // Red, not green: it isn't counted as unread.
+    expect(screen.getByRole('img', { name: 'Error' })).toHaveClass(AGENT_SPRITES.error.colorClass);
+    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('Unread 1');
+  });
+
+  it('shows only dots and counts on the chips when the sidebar is narrow', async () => {
+    mockGroveBench.getSidebarWidth.mockResolvedValue(250);
+    try {
+      render(Sidebar);
+      const chip = screen.getByRole('button', { name: 'Needs you 1' });
+      await waitFor(() => expect(chip).not.toHaveTextContent('Needs you'));
+      expect(chip).toHaveTextContent('1');
+      expect(chip).toHaveAttribute('title', 'Needs you: 1');
+    } finally {
+      mockGroveBench.getSidebarWidth.mockReset();
+      mockGroveBench.getSidebarWidth.mockResolvedValue(null);
+    }
   });
 
   it('shows per-repo attention counts in the repo header', async () => {
@@ -202,31 +402,40 @@ describe('Sidebar attention triage', () => {
     expect(screen.getByTitle('1 unread')).toBeInTheDocument();
   });
 
-  it('hides completed sessions until "Show completed" is on, and reopens them from the context menu', async () => {
-    store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, completedAt: 123 } : s));
+  it('closes a conversation from the context menu: stops it and clears its unread flag', async () => {
     render(Sidebar);
 
-    expect(screen.queryByText('Quiet one')).not.toBeInTheDocument();
-    expect(screen.getByRole('group', { name: 'Filter conversations' })).toHaveTextContent('All 3');
+    await fireEvent.contextMenu(screen.getByText('Finished one'));
+    await fireEvent.click(screen.getByText('Close Conversation'));
 
-    await fireEvent.click(screen.getByText('Show completed (1)'));
-    expect(screen.getByText('Quiet one')).toBeInTheDocument();
-
-    await fireEvent.contextMenu(screen.getByText('Quiet one'));
-    await fireEvent.click(screen.getByText('Reopen'));
-
-    expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('quiet', false);
-    expect(store.sessions.find((s) => s.id === 'quiet')?.completedAt).toBeNull();
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('finished');
+    expect(store.sessions.find((s) => s.id === 'finished')?.status).toBe('stopped');
+    expect(store.needsAttention['finished']).toBeUndefined();
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument();
   });
 
-  it('marks a session completed from the context menu', async () => {
+  it('offers no Close Conversation for a conversation that is already stopped', async () => {
+    store.sessions = store.sessions.map((s) => (s.id === 'quiet' ? { ...s, status: 'stopped' } : s));
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-b': false });
     render(Sidebar);
 
-    await fireEvent.contextMenu(screen.getByText('Working one'));
-    await fireEvent.click(screen.getByText('Mark Completed'));
+    expect(screen.getByText('1 closed')).toBeInTheDocument();
+    await fireEvent.contextMenu(await screen.findByText('Quiet one'));
 
-    expect(mockGroveBench.setSessionCompleted).toHaveBeenCalledWith('working', true);
-    expect(screen.queryByText('Working one')).not.toBeInTheDocument();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByText('Close Conversation')).toBeNull();
+  });
+});
+
+describe('Sidebar for a new user', () => {
+  it('leaves out the filter chips, sort and Groups until there is a conversation', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [];
+    render(Sidebar);
+    expect(await screen.findByText('No conversations')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Filter conversations' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sort conversations' })).toBeNull();
+    expect(screen.queryByText('Right-click a conversation to start a group')).toBeNull();
   });
 });
 
@@ -252,6 +461,194 @@ describe('Sidebar bottom buttons', () => {
     const addRepo = screen.getByRole('button', { name: 'Add a project' });
     expect(addRepo).not.toHaveTextContent('Repository');
     expect(addRepo.querySelector('svg')).not.toBeNull();
+  });
+});
+
+describe('Sidebar settings', () => {
+  it('loads the Settings panel when first opened', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(Sidebar);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    await fireEvent.click(screen.getByTitle('Settings (Ctrl+,)'));
+
+    // The panel's code loads on first open, which can be slow under test.
+    expect(await screen.findByRole('dialog', {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar rename', () => {
+  it('shows a saved name even if the dialog closed before the save returned', async () => {
+    let finish!: () => void;
+    mockGroveBench.renameSession.mockImplementationOnce(() => new Promise<void>((r) => { finish = r; }));
+    render(Sidebar);
+    await fireEvent.contextMenu(await screen.findByText('Sidebar revamp'));
+    await fireEvent.click(await screen.findByText('Rename'));
+    const input = await screen.findByDisplayValue('Sidebar revamp');
+    await fireEvent.input(input, { target: { value: 'Faster sidebar' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    finish();
+
+    expect(await screen.findByText('Faster sidebar')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar groups', () => {
+  beforeEach(() => {
+    store.repos = ['/api', '/web', '/infra'];
+    store.sessions = [
+      { id: 'api1', branch: 'feat/billing', repoPath: '/api', status: 'running', displayName: 'Billing endpoint' },
+      { id: 'web1', branch: 'feat/billing', repoPath: '/web', status: 'running', displayName: 'Billing page' },
+    ] as any;
+    groupStore.groups = [];
+    groupStore.ready = true;
+  });
+
+  afterEach(() => {
+    groupStore.groups = [];
+    groupStore.nameRequest = null;
+    draftStore.discard();
+  });
+
+  const groupEl = (id: string) => document.querySelector(`[data-group="${id}"]`) as HTMLElement;
+  const make = (name: string, ids: string[]) => groupStore.create(name, ids)!;
+
+  it('has no Groups section with one project and no groups', () => {
+    store.repos = ['/api'];
+    render(Sidebar);
+    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+  });
+
+  it('hides groups until the saved ones are read', async () => {
+    groupStore.ready = false;
+    render(Sidebar);
+    expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+    await fireEvent.contextMenu(screen.getByText('Billing endpoint'));
+    expect(screen.queryByText('New Group…')).not.toBeInTheDocument();
+  });
+
+  it('starts a group from a conversation\'s menu, named after it', async () => {
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Billing endpoint'));
+    await fireEvent.click(screen.getByText('New Group…'));
+    const input = await screen.findByDisplayValue('Billing endpoint');
+    await fireEvent.input(input, { target: { value: 'Billing' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    const [group] = groupStore.groups;
+    expect(group).toMatchObject({ name: 'Billing', sessionIds: ['api1'] });
+    expect(mockGroveBench.setConversationGroups).toHaveBeenLastCalledWith([group]);
+    expect(within(groupEl(group.id)).getByText('Billing endpoint')).toBeInTheDocument();
+  });
+
+  it('adds a conversation to a group from its menu, and lists each with its project', async () => {
+    const group = make('Billing', ['api1']);
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Billing page'));
+    await fireEvent.click(screen.getByText('Add to Billing'));
+
+    expect(groupStore.get(group.id)?.sessionIds).toEqual(['api1', 'web1']);
+    const section = within(groupEl(group.id));
+    expect(section.getByText('Billing page')).toBeInTheDocument();
+    expect(section.getByText('web')).toBeInTheDocument();
+    expect(section.getByText('api')).toBeInTheDocument();
+  });
+
+  it('tags grouped conversations in the Conversations list', async () => {
+    make('Billing', ['api1']);
+    render(Sidebar);
+    // Projects start folded, and rows in the Groups section leave the tag
+    // out, so the one tag is on the Conversations list's row.
+    const tags = [...document.querySelectorAll('[data-row-group]')];
+    expect(tags.map((t) => t.textContent)).toEqual(['Billing']);
+    expect(tags[0].closest('[data-group]')).toBeNull();
+  });
+
+  it('opens a draft in the group, in a project it has nothing in yet', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    expect(draftStore.draft).toMatchObject({ repoPath: '/infra', groupId: group.id, start: { kind: 'new', branchName: 'feat/billing' } });
+  });
+
+  it('a new group from the heading opens a draft and is made only when it starts', async () => {
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New group' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Group name' }), { target: { value: 'Billing' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(groupStore.groups).toEqual([]);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/api', newGroupName: 'Billing' });
+    // The draft row says which group it starts.
+    expect(screen.getByText('Billing')).toBeInTheDocument();
+  });
+
+  it('opening the draft from a project\'s + takes it out of the group', async () => {
+    const group = make('Billing', ['api1']);
+    store.repos = ['/api', '/web'];
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in Billing' }));
+    expect(draftStore.draft?.groupId).toBe(group.id);
+    await fireEvent.click(screen.getByRole('button', { name: 'New conversation in web' }));
+    expect(draftStore.draft?.groupId).toBeUndefined();
+    expect(draftStore.draft?.start).toMatchObject({ branchName: '' });
+  });
+
+  it('ungroups, keeping the conversations', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'Ungroup Billing' }));
+    expect(groupStore.groups).toEqual([]);
+    expect(groupEl(group.id)).toBeNull();
+    expect(screen.getByText('Billing page')).toBeInTheDocument();
+  });
+
+  it('closes every open conversation in the group: stops them and keeps them listed', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    render(Sidebar);
+
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    await fireEvent.click(screen.getByText('Close all conversations'));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
+    expect(store.sessions.map((s) => s.status)).toEqual(['stopped', 'stopped']);
+    // Off the Conversations list, still in the group.
+    expect(document.querySelectorAll('[data-row-group]')).toHaveLength(0);
+    expect(within(groupEl(group.id)).getByText('Billing page')).toBeInTheDocument();
+
+    // Nothing open is left to close.
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    expect(screen.queryByText('Close all conversations')).toBeNull();
+  });
+
+  it('asks once before closing a group with a conversation mid-turn, then closes them all', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    messageStore.setIsRunning('api1', true);
+    render(Sidebar);
+
+    await fireEvent.contextMenu(within(groupEl(group.id)).getByText('Billing'));
+    await fireEvent.click(screen.getByText('Close all conversations'));
+    expect(await screen.findByText('Close 2 conversations?')).toBeInTheDocument();
+    expect(screen.getByText(/1 of them is in the middle of a turn/)).toBeInTheDocument();
+    expect(mockGroveBench.closeSession).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop and close' }));
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('api1');
+    expect(mockGroveBench.closeSession).toHaveBeenCalledWith('web1');
+  });
+
+  it('counts only the rows the filter shows', async () => {
+    const group = make('Billing', ['api1', 'web1']);
+    messageStore.setIsRunning('api1', true);
+    render(Sidebar);
+    const header = () => groupEl(group.id).querySelector('button[aria-expanded]') as HTMLElement;
+    expect(header().textContent).toContain('2');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Working 1' }));
+    expect(header().textContent).toContain('1');
+    expect(header().textContent).not.toContain('2');
   });
 });
 
@@ -373,6 +770,80 @@ describe('Sidebar clean-up dialog', () => {
     expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
   });
 
+  it('keeps PR lookups to 3 at a time across cutoff edits, and stops them on close', async () => {
+    const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
+    const recent = (n: number) => ({ id: `new${n}`, branch: `b-new${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `New ${n}`, lastActiveAt: Date.now() - 10 * DAY });
+    store.sessions = [old(1), old(2), old(3), old(4), recent(1), recent(2), recent(3)] as any;
+    const pending: Array<() => void> = [];
+    mockGroveBench.getPrs.mockImplementation((() => new Promise((res) => { pending.push(() => res([])); })) as any);
+
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getPrs).toHaveBeenCalled());
+    await fireEvent.click(screen.getByRole('button', { name: '7' }));
+    await waitFor(() => expect(screen.getByLabelText(/New 3/)).toBeInTheDocument());
+    await tick();
+    // None has finished, so every call so far is still running.
+    expect(mockGroveBench.getPrs.mock.calls.length).toBeLessThanOrEqual(3);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const before = mockGroveBench.getPrs.mock.calls.length;
+    for (const finish of pending.splice(0)) finish();
+    await tick();
+    await tick();
+    expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(before);
+  });
+
+  it('runs at most 3 git status checks at once, and none left waiting after close', async () => {
+    const old = (n: number) => ({ id: `old${n}`, branch: `b-old${n}`, repoPath: '/repo-a', status: 'stopped', displayName: `Old ${n}`, lastActiveAt: longAgo });
+    store.sessions = [old(1), old(2), old(3), old(4), old(5)] as any;
+    const pending: Array<() => void> = [];
+    mockGroveBench.getGitStatus.mockImplementation((() => new Promise((res) => { pending.push(() => res({ entries: [] })); })) as any);
+
+    await openDialog();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
+    pending.shift()!();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    for (const finish of pending.splice(0)) finish();
+    await tick();
+    await tick();
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not tick a conversation until its status check comes back clean', async () => {
+    let finish!: (v: unknown) => void;
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
+      id === 'open' ? new Promise((r) => { finish = r; }) : { entries: [] }) as any);
+    await openDialog();
+    await waitFor(() => expect(screen.getByLabelText(/Merged one/)).toBeChecked());
+
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+
+    finish({ entries: [] });
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeChecked());
+  });
+
+  it('leaves one whose status git could not read unticked, and says so', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) =>
+      id === 'nopr' ? { entries: [], error: 'fatal: index file corrupt' } : { entries: [] }) as any);
+    await openDialog();
+    await screen.findByText('· changes unknown');
+
+    expect(screen.getByLabelText(/No PR one/)).not.toBeChecked();
+    expect(screen.getByLabelText(/Open one/)).toBeChecked();
+  });
+
+  it('lists nothing while the day field is empty', async () => {
+    await openDialog();
+    await waitFor(() => expect(screen.getByLabelText(/Open one/)).toBeInTheDocument());
+    const days = screen.getByRole('spinbutton');
+    await fireEvent.input(days, { target: { value: '' } });
+    await waitFor(() => expect(screen.queryByLabelText(/Open one/)).not.toBeInTheDocument());
+  });
+
   it('does not run a git status check for direct conversations', async () => {
     store.sessions = [
       ...store.sessions,
@@ -383,6 +854,17 @@ describe('Sidebar clean-up dialog', () => {
     await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(3));
     expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('direct');
     await waitFor(() => expect(screen.getByLabelText(/Direct one/)).toBeChecked());
+  });
+
+  it('says how many "Select all" leaves out for uncommitted changes', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
+      entries: id === 'open' ? [{ filePath: 'a.ts', status: 'M', staged: false }] : [],
+    })) as any);
+    await openDialog();
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Select all except 1 with changes' }));
+    expect(screen.getByLabelText(/Open one/)).not.toBeChecked();
+    expect(screen.getByText('2 of 3 selected')).toBeInTheDocument();
   });
 
   it('skips PR lookups when the GitHub CLI is unavailable', async () => {
@@ -401,5 +883,304 @@ describe('Sidebar clean-up dialog', () => {
 
     expect(await screen.findByTestId('cleanup-pr-merged')).toHaveTextContent('PR unknown');
     expect(screen.queryByRole('button', { name: /Select merged/ })).toBeDisabled();
+  });
+});
+
+describe('Sidebar delete conversation', () => {
+  async function openDeleteDialog() {
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    return screen.findByRole('dialog');
+  }
+
+  it('warns about uncommitted files before deleting', async () => {
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] } as any);
+    const dialog = await openDeleteDialog();
+    expect(dialog).toHaveTextContent('Delete conversation?');
+    expect(await screen.findByText('2 files have uncommitted changes that will be lost.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('warns about commits the base branch lacks once the branch is to be deleted too', async () => {
+    mockGroveBench.getBranchCommits.mockResolvedValueOnce([{ subject: 'Fix parser', body: '' }] as any);
+    await openDeleteDialog();
+    await waitFor(() => expect(mockGroveBench.getBranchCommits).toHaveBeenCalledWith('s2', 'main'));
+    expect(screen.queryByText(/isn't on main yet/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('checkbox'));
+    expect(await screen.findByText(/1 commit on fix-parser isn't on main yet/)).toBeInTheDocument();
+  });
+
+  it('says a conversation in a folder without git leaves the files alone', async () => {
+    store.sessions = [{ id: 'n1', branch: '', repoPath: '/repo-a', status: 'stopped', direct: true, noGit: true }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete conversation'));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('It worked in the project folder itself, so no files are deleted.');
+    expect(screen.queryByText('Also delete the branch')).toBeNull();
+  });
+
+  it('deletes after confirming', async () => {
+    const { destroySession } = mockGroveBench;
+    await openDeleteDialog();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(destroySession).toHaveBeenCalledWith('s2', false));
+  });
+
+  it('waits for its checks before Delete can be pressed', async () => {
+    let finish!: (v: { entries: [] }) => void;
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+    await openDeleteDialog();
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+    finish({ entries: [] });
+    expect(await screen.findByRole('button', { name: 'Delete' })).not.toBeDisabled();
+  });
+
+  it('does not count the settings file Grove writes into every worktree', async () => {
+    agentsStore.list = [{ id: 'claude-code', displayName: 'Claude Agent', capabilities: {}, generatedFiles: ['.claude/settings.local.json'] }];
+    agentsStore.loaded = true;
+    mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: '.claude/settings.local.json', status: 'untracked', staged: false }] } as any);
+    await openDeleteDialog();
+    await screen.findByRole('button', { name: 'Delete' });
+    expect(screen.queryByText(/uncommitted changes that will be lost/)).toBeNull();
+  });
+
+describe('Sidebar projects tree', () => {
+  beforeEach(() => {
+    store.sessions = [
+      { id: 'live', branch: 'feat-live', repoPath: '/repo-a', status: 'running', displayName: 'Live one' },
+      { id: 'a1', branch: 'shared', repoPath: '/repo-a', status: 'stopped', displayName: 'First on shared' },
+      { id: 'a2', branch: 'shared', repoPath: '/repo-a', status: 'stopped', displayName: 'Second on shared' },
+    ] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+  });
+
+  it('lists open conversations here too, and they open like any other row', async () => {
+    render(Sidebar);
+    // Once under Conversations, once under the project.
+    await waitFor(() => expect(screen.getAllByText('Live one')).toHaveLength(2));
+    const rows = screen.getAllByText('Live one').map((el) => el.closest('button')!);
+    expect(rows[1]).not.toBeDisabled();
+
+    await fireEvent.click(rows[1]);
+    expect(store.activeSessionId).toBe('live');
+  });
+
+  it('fades closed rows a step further than sleeping ones', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'zz', branch: 'feat-zz', repoPath: '/repo-a', status: 'sleeping', displayName: 'Asleep one' },
+    ] as any;
+    render(Sidebar);
+    const closed = (await screen.findByText('First on shared')).closest('button')!;
+    // The project's row, after the one under Conversations.
+    const asleep = screen.getAllByText('Asleep one')[1].closest('button')!;
+    const live = screen.getAllByText('Live one')[1].closest('button')!;
+    expect(closed).toHaveClass('opacity-60');
+    expect(asleep).toHaveClass('opacity-70');
+    expect(live).not.toHaveClass('opacity-60');
+    expect(live).not.toHaveClass('opacity-70');
+  });
+
+  it('folds and unfolds a branch group from its header', async () => {
+    render(Sidebar);
+    const header = await screen.findByRole('button', { name: /shared \(2\)/ });
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('First on shared')).toBeInTheDocument();
+
+    await fireEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('First on shared')).toBeNull();
+    expect(screen.queryByText('Second on shared')).toBeNull();
+
+    await fireEvent.click(header);
+    expect(screen.getByText('Second on shared')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar remove project', () => {
+  const { destroySession, removeRepo } = mockGroveBench;
+
+  beforeEach(() => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 'w1', branch: 'feat-one', repoPath: '/repo-a', status: 'running', displayName: 'Worktree one' },
+      { id: 'w2', branch: 'feat-two', repoPath: '/repo-a', status: 'stopped', displayName: 'Worktree two' },
+      { id: 'd1', branch: 'main', repoPath: '/repo-a', status: 'stopped', direct: true, displayName: 'Direct one' },
+      { id: 'other', branch: 'feat-x', repoPath: '/repo-b', status: 'stopped', displayName: 'Elsewhere' },
+    ] as any;
+    store.activeSessionId = null;
+    destroySession.mockReset().mockResolvedValue(undefined);
+    removeRepo.mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    mockGroveBench.getGitStatus.mockReset();
+    mockGroveBench.getGitStatus.mockResolvedValue({ entries: [] });
+    mockGroveBench.getBranchCommits.mockReset();
+    mockGroveBench.getBranchCommits.mockResolvedValue([]);
+  });
+
+  async function openRemoveDialog() {
+    render(Sidebar);
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove project repo-a' }));
+    return screen.findByRole('dialog');
+  }
+
+  it('is offered while the project still has conversations, and says they go too', async () => {
+    const dialog = await openRemoveDialog();
+    expect(dialog).toHaveTextContent('This also deletes its 3 conversations and their copies of the project (worktrees).');
+    expect(dialog).toHaveTextContent("The project folder itself isn't touched.");
+  });
+
+  it('warns about uncommitted changes, checking only worktree conversations', async () => {
+    mockGroveBench.getGitStatus.mockImplementation((async (id: string) => ({
+      entries: id === 'w2' ? [{ filePath: 'a.ts', status: 'modified', staged: false }] : [],
+    })) as any);
+    await openRemoveDialog();
+    expect(await screen.findByText('1 conversation has uncommitted changes that will be lost.')).toBeInTheDocument();
+    expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('d1');
+    expect(mockGroveBench.getGitStatus).not.toHaveBeenCalledWith('other');
+  });
+
+  it('warns about unmerged commits once the branches are to be deleted too', async () => {
+    mockGroveBench.getBranchCommits.mockImplementation((async (id: string) => (id === 'w1' ? [{ subject: 'x', body: '' }] : [])) as any);
+    await openRemoveDialog();
+    await screen.findByRole('button', { name: 'Remove' });
+    expect(screen.queryByText(/aren't on main yet/)).toBeNull();
+
+    await fireEvent.click(screen.getByRole('checkbox'));
+    expect(await screen.findByText(/1 branch has commits that aren't on main yet/)).toBeInTheDocument();
+  });
+
+  it('waits for its checks before Remove can be pressed', async () => {
+    let finish!: (v: { entries: [] }) => void;
+    mockGroveBench.getGitStatus.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+    await openRemoveDialog();
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+    finish({ entries: [] });
+    expect(await screen.findByRole('button', { name: 'Remove' })).not.toBeDisabled();
+  });
+
+  it('says which conversations are running and will be stopped', async () => {
+    messageStore.setIsRunning('w1', true);
+    const dialog = await openRemoveDialog();
+    expect(dialog).toHaveTextContent('1 conversation is running and will be stopped, 1 in the middle of a turn.');
+  });
+
+  it('runs at most 3 git checks at once', async () => {
+    store.sessions = Array.from({ length: 8 }, (_, i) => ({ id: `w${i}`, branch: `b${i}`, repoPath: '/repo-a', status: 'stopped' })) as any;
+    let inFlight = 0;
+    let most = 0;
+    mockGroveBench.getGitStatus.mockImplementation((async () => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { entries: [] };
+    }) as any);
+    await openRemoveDialog();
+    await screen.findByRole('button', { name: 'Remove' });
+    expect(mockGroveBench.getGitStatus).toHaveBeenCalledTimes(8);
+    expect(most).toBe(3);
+  });
+
+  it('checks again, rather than delete it unchecked, when a conversation starts while the dialog is open', async () => {
+    await openRemoveDialog();
+    await fireEvent.click(screen.getByRole('checkbox'));
+    await screen.findByRole('button', { name: 'Remove' });
+    store.sessions = [...store.sessions, { id: 'late', branch: 'feat-late', repoPath: '/repo-a', status: 'running' }] as any;
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    expect(destroySession).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('New conversations started in this project, so it checked again.');
+    expect(dialog).toHaveTextContent('This also deletes its 4 conversations');
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith('late'));
+  });
+
+  it("deletes each of the project's conversations, then the project", async () => {
+    await openRemoveDialog();
+    await fireEvent.click(screen.getByRole('checkbox'));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(removeRepo).toHaveBeenCalledWith('/repo-a'));
+    expect(destroySession.mock.calls).toEqual([['w1', true], ['w2', true], ['d1', true]]);
+    expect(store.repos).toEqual(['/repo-b']);
+    expect(store.sessions.map((s) => s.id)).toEqual(['other']);
+  });
+
+  it('keeps the project when a conversation fails to delete', async () => {
+    destroySession.mockImplementation(async (id: string) => { if (id === 'w2') throw new Error('locked'); });
+    await openRemoveDialog();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(destroySession.mock.calls.map(([id]) => id)).toEqual(['w1', 'w2']);
+    expect(removeRepo).not.toHaveBeenCalled();
+    expect(store.repos).toContain('/repo-a');
+    expect(store.error).toBe('locked');
+    store.error = null;
+  });
+});
+
+describe('Sidebar rows for folder projects without git', () => {
+  it('names a conversation with no branch and no name yet "New conversation"', async () => {
+    store.sessions = [
+      { id: 'n1', branch: '', repoPath: '/repo-a', status: 'running', direct: true, noGit: true, displayName: null },
+    ] as any;
+    render(Sidebar);
+    expect(await screen.findByText('New conversation')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toBeInTheDocument();
+  });
+});
+});
+
+describe('Sidebar rail', () => {
+  afterEach(() => {
+    panelStore.collapsed = {};
+  });
+
+  it('folds to a rail of open conversations that still switches between them', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'running', displayName: 'Fix login' },
+    ] as any;
+    const { container } = render(Sidebar);
+    const aside = container.querySelector('aside')!;
+    expect(container.querySelector('[data-rail-session]')).toBeNull();
+
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    expect(mockGroveBench.setCollapsedPanels).toHaveBeenCalledWith({ sidebar: true });
+    expect(aside.style.width).toBe('48px');
+    const s2 = container.querySelector('[data-rail-session="s2"]') as HTMLButtonElement;
+    expect(s2.getAttribute('aria-label')).toBe('repo-a / Fix login');
+
+    await fireEvent.click(s2);
+    expect(store.activeSessionId).toBe('s2');
+    expect(s2.className).toContain('bg-sidebar-accent');
+
+    // The full sidebar stays mounted but hidden, so use the rail's own button.
+    await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));
+    expect(container.querySelector('[data-rail-session]')).toBeNull();
+    expect(aside.style.width).toBe('300px');
+  });
+
+  it('fades a sleeping conversation on the rail too', async () => {
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 's2', branch: 'feat-y', repoPath: '/repo-a', status: 'sleeping', displayName: 'Fix login' },
+    ] as any;
+    const { container } = render(Sidebar);
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    expect(container.querySelector('[data-rail-session="s1"]')).not.toHaveClass('opacity-70');
+    expect(container.querySelector('[data-rail-session="s2"]')).toHaveClass('opacity-70');
   });
 });

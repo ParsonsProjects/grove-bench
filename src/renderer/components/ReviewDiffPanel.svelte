@@ -2,6 +2,7 @@
   import { untrack, type Snippet } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import DiffView, { computeDiffLines, parseDiffLines } from './DiffView.svelte';
+  import { toolViewOf } from '../../shared/tool-view.js';
   import type { DiffLine, CommentAnchor, ContextGap } from './DiffView.svelte';
   import { hunkLineIndices } from '../lib/diff-highlight.js';
   import { withExpandableContext, reveal, expansionFor, type RevealedRanges } from '../lib/diff-context.js';
@@ -12,6 +13,12 @@
   import ImageDiffView from './ImageDiffView.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { conversationAgent } from '../lib/session-sprite-state.js';
+  import type { GroveTab } from '../lib/agent-sprite.js';
+  import type { CollapsiblePanel } from '../../shared/types.js';
+  import { panelStore } from '../stores/panels.svelte.js';
+  import PanelToggle from './PanelToggle.svelte';
 
   /**
    * Shared review UI: a file sidebar (search, sections, viewed marks, comment
@@ -25,6 +32,7 @@
     sessionId,
     sourceKey,
     entries,
+    active = true,
     loading = false,
     changesLabel = 'Changes',
     loadDiff: fetchDiff,
@@ -38,7 +46,8 @@
     commentContext,
     emptyTitle,
     emptyHint,
-    emptyExtra,
+    emptyScene,
+    panel,
     sidebarTop,
     sidebarSummaryExtra,
     sidebarFooter,
@@ -50,6 +59,10 @@
      *  cache (diffs, expansions, composer) resets. */
     sourceKey: string;
     entries: GitStatusEntry[];
+    /** Whether this panel is on screen. Hidden, it doesn't fetch diffs on
+     *  each status refresh (one runs after every file edit); it fetches
+     *  them when shown again. */
+    active?: boolean;
     loading?: boolean;
     /** Heading for the unstaged section. */
     changesLabel?: string;
@@ -68,7 +81,10 @@
     commentContext?: string;
     emptyTitle: string;
     emptyHint?: string;
-    emptyExtra?: Snippet;
+    /** Which tab's props the grove scene over the empty message shows. */
+    emptyScene?: GroveTab;
+    /** Which saved flag folds the file sidebar down to a rail. */
+    panel: CollapsiblePanel;
     sidebarTop?: Snippet;
     sidebarSummaryExtra?: Snippet;
     sidebarFooter?: Snippet;
@@ -77,12 +93,19 @@
   } = $props();
 
   let isLoading = $derived(loading);
+  /** The conversation's agent on its bench above the empty message. */
+  let groveAgent = $derived(settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null);
   let hasStaging = $derived(!!onStage && !!onUnstage);
 
   // Group entries by section
   let stagedEntries = $derived(entries.filter(e => e.staged));
   let unstagedEntries = $derived(entries.filter(e => !e.staged && e.status !== 'untracked'));
   let untrackedEntries = $derived(entries.filter(e => e.status === 'untracked'));
+
+  // Folded down to a rail: one status letter per file, in section order. The
+  // search box and section headers are hidden there, so neither filters it.
+  let collapsed = $derived(panelStore.isCollapsed(panel));
+  let railEntries = $derived([...stagedEntries, ...unstagedEntries, ...untrackedEntries]);
 
   // ── Viewed tracking ──
   let reviewState = $derived(reviewStore.bySession[sessionId]);
@@ -133,6 +156,7 @@
   // Search filter
   let searchQuery = $state('');
   let searchInputEl = $state<HTMLInputElement | null>(null);
+  let fileListEl = $state<HTMLDivElement | null>(null);
   let searchFocused = $state(false);
   let dropdownIndex = $state(-1);
 
@@ -167,11 +191,7 @@
     searchQuery = '';
     searchFocused = false;
     searchInputEl?.blur();
-    // Scroll sidebar item into view
-    requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    });
+    scrollSidebarItemIntoView(key);
   }
 
   function handleSearchKeydown(e: KeyboardEvent) {
@@ -202,8 +222,9 @@
   // Collapsed sections
   let collapsedSections = $state<Set<string>>(new Set());
 
-  // Flat list of visible entries (respects collapsed sections and search)
-  let visibleEntries = $derived([
+  // Flat list of the files on screen, in order: the rail's, or the sections'
+  // (respects collapsed sections and search). Arrow keys walk this.
+  let visibleEntries = $derived(collapsed ? railEntries : [
     ...(collapsedSections.has('staged') ? [] : filteredStagedEntries),
     ...(collapsedSections.has('unstaged') ? [] : filteredUnstagedEntries),
     ...(collapsedSections.has('untracked') ? [] : filteredUntrackedEntries),
@@ -226,9 +247,19 @@
       lastSourceKey = key;
       const kept: Record<string, FileDiffResult> = {};
       if (!scopeChanged) {
+        const byKey = new Map(list.map(e => [fileKey(e), e]));
         for (const [key, diff] of Object.entries(fileDiffs)) {
-          if (currentKeys.has(key)) kept[key] = diff;
+          const e = byKey.get(key);
+          // Keep a diff while its file is as it was when fetched. Only the
+          // selected file and its neighbours reload below, so a changed file
+          // kept here would show its old patch when selected. The selected
+          // one stays on screen until its reload lands.
+          if (e && (diffSigByKey.get(key) === entrySig(e) || key === selectedFileKey)) kept[key] = diff;
         }
+      } else {
+        // Replies still on their way are for the old comparison.
+        diffGen++;
+        diffInFlight.clear();
       }
       fileDiffs = kept;
       if (scopeChanged) { revealedByKey = {}; fileLinesByKey = {}; composer = null; }
@@ -240,7 +271,7 @@
         selectedFileKey = null;
       }
 
-      loadSelectedAndNeighbors(true);
+      refreshDiffs(true);
     });
   });
 
@@ -252,7 +283,25 @@
     selectedFileKey;
     untrack(() => {
       hunkIdx = 0;
-      loadSelectedAndNeighbors(false);
+      // The open comment box holds only a side and line: left open, it would
+      // save its draft against the same line of the next file.
+      composer = null;
+      refreshDiffs(false);
+    });
+  });
+
+  // Set while hidden when a load was skipped; shown again, reload then.
+  let reloadWhenShown = false;
+  function refreshDiffs(forceReload: boolean) {
+    if (!active) { reloadWhenShown = true; return; }
+    loadSelectedAndNeighbors(forceReload);
+  }
+  $effect(() => {
+    if (!active) return;
+    untrack(() => {
+      if (!reloadWhenShown) return;
+      reloadWhenShown = false;
+      loadSelectedAndNeighbors(true);
     });
   });
 
@@ -277,11 +326,19 @@
   // request has not resolved yet.
   const diffRequestSeq = new Map<string, number>();
   const diffInFlight = new Set<string>();
+  /** Bumped when the comparison changes, so older replies are dropped. */
+  let diffGen = 0;
+  /** The file state each cached diff was fetched for. */
+  const diffSigByKey = new Map<string, string>();
+  function entrySig(e: GitStatusEntry): string {
+    return [e.status, e.origPath ?? '', e.contentHash ?? '', e.additions ?? '', e.deletions ?? ''].join('|');
+  }
 
   async function loadDiff(entry: GitStatusEntry, forceReload = false) {
     const key = fileKey(entry);
     if (!forceReload && (fileDiffs[key] !== undefined || diffInFlight.has(key))) return;
     const seq = (diffRequestSeq.get(key) ?? 0) + 1;
+    const gen = diffGen;
     diffRequestSeq.set(key, seq);
     diffInFlight.add(key);
     let diff: FileDiffResult;
@@ -290,8 +347,9 @@
     } catch {
       diff = { kind: 'text', patch: '' };
     }
-    if (diffRequestSeq.get(key) !== seq) return;
+    if (gen !== diffGen || diffRequestSeq.get(key) !== seq) return;
     diffInFlight.delete(key);
+    diffSigByKey.set(key, entrySig(entry));
     fileDiffs = { ...fileDiffs, [key]: diff };
   }
 
@@ -355,11 +413,14 @@
   // prefetches and git-status refreshes reassign `fileDiffs` several times per
   // selection, and each reassignment would otherwise reparse (and re-highlight)
   // the whole patch.
+  // Keyed on the file key, a string: every status refresh hands back new
+  // entry objects, and reading the entry here would rebuild the lines below
+  // (and re-render every row of the diff) even when the patch is the same.
+  let selectedKey = $derived(selectedEntry ? fileKey(selectedEntry) : null);
   let parsedDiff: { key: string; patch: string; lines: DiffLine[] } | null = null;
   let selectedDiffLines = $derived.by((): DiffLine[] => {
-    const entry = selectedEntry;
-    if (!entry) return [];
-    const key = fileKey(entry);
+    const key = selectedKey;
+    if (key === null) return [];
     const result = fileDiffs[key];
     if (!result || result.kind !== 'text' || !result.patch) return [];
     if (parsedDiff && parsedDiff.key === key && parsedDiff.patch === result.patch) return parsedDiff.lines;
@@ -390,9 +451,8 @@
     });
   });
   let displayLines = $derived.by((): DiffLine[] => {
-    const entry = selectedEntry;
-    if (!entry) return [];
-    const key = fileKey(entry);
+    const key = selectedKey;
+    if (key === null) return [];
     return withExpandableContext(selectedDiffLines, fileLinesByKey[key] ?? null, revealedByKey[key] ?? []);
   });
 
@@ -526,7 +586,9 @@
 
   function scrollSidebarItemIntoView(key: string) {
     requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
+      // This panel's list: a hidden panel (another conversation, or Changes
+      // beside Checkpoints) can show the same file.
+      const el = fileListEl?.querySelector(`[data-file-key="${CSS.escape(key)}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }
@@ -605,7 +667,7 @@
 
 <svelte:window onkeydown={handleShortcuts} />
 
-{#if entries.length === 0}
+{#snippet emptyPane(title: string, hint: string | undefined)}
   <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground text-sm relative overflow-hidden">
     {#each Array(20) as _, i}
       <span
@@ -618,77 +680,119 @@
         "
       ></span>
     {/each}
-    <div class="relative z-10 flex flex-col items-center gap-2">
-      <span>{emptyTitle}</span>
-      {#if emptyExtra}{@render emptyExtra()}{/if}
-      {#if emptyHint}
+    {#snippet emptyDetails()}
+      {#if hint}
         <span class="text-xs text-muted-foreground/60 flex items-center gap-1.5">
           <span class="w-1.5 h-1.5 bg-primary animate-pulse"></span>
-          {emptyHint}
+          {hint}
         </span>
       {/if}
-    </div>
+    {/snippet}
+    {#if groveAgent}
+      <GroveEmptyState variant="agent" agent={groveAgent} tab={emptyScene}>
+        <div class="mt-5 flex flex-col items-center gap-2">
+          <span class="text-foreground/80">{title}</span>
+          {@render emptyDetails()}
+        </div>
+      </GroveEmptyState>
+    {:else}
+      <div class="relative z-10 flex flex-col items-center gap-2">
+        <span>{title}</span>
+        {@render emptyDetails()}
+      </div>
+    {/if}
   </div>
-{:else}
-  <div class="flex-1 flex overflow-hidden">
-    <!-- Left: File sidebar -->
-    <div
-      class="w-56 flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
-      role="listbox"
-      aria-label="Changed files"
-      tabindex="0"
-      onkeydown={handleFileListKeydown}
-    >
+{/snippet}
+
+<div class="flex-1 flex overflow-hidden">
+  <!-- Left: File sidebar -->
+  <div
+    bind:this={fileListEl}
+    class="{collapsed ? 'w-9' : 'w-56'} flex flex-col border-r border-border bg-sidebar shrink-0 overflow-hidden focus:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:ring-inset"
+    role="listbox"
+    aria-label="Changed files"
+    tabindex="0"
+    onkeydown={handleFileListKeydown}
+  >
+    {#if collapsed}
+      <!-- Rail: expand button, file count, one status letter per file -->
+      <div class="border-b border-border py-1.5 shrink-0 flex flex-col items-center gap-1">
+        <PanelToggle {panel} label="file list" />
+        <span class="text-[10px] text-muted-foreground tabular-nums" title="{entries.length} change{entries.length !== 1 ? 's' : ''}">{entries.length}</span>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        {#each railEntries as entry (fileKey(entry))}
+          {@const key = fileKey(entry)}
+          {@const badge = statusBadge(entry.status)}
+          {@const isSelected = key === selectedFileKey}
+          {@const viewed = isViewed(entry)}
+          <button
+            onclick={() => selectFile(entry)}
+            data-file-key={key}
+            data-viewed={viewed ? 'true' : undefined}
+            title="{entry.filePath}{entry.staged ? ' (staged)' : ''}"
+            class="w-full h-6 flex items-center justify-center text-xs font-bold border-l-2 transition-colors
+              {isSelected ? 'bg-sidebar-accent border-primary' : 'border-transparent hover:bg-sidebar-accent/50'}
+              {viewed && !isSelected ? 'opacity-60' : ''}"
+          >
+            <span class={badge.color}>{badge.label}</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
       <!-- Sidebar header: search + summary -->
       <div class="border-b border-border px-3 py-2 shrink-0">
-        <div class="relative">
-          <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            bind:this={searchInputEl}
-            bind:value={searchQuery}
-            onfocus={() => searchFocused = true}
-            onblur={() => { setTimeout(() => searchFocused = false, 150); }}
-            onkeydown={handleSearchKeydown}
-            type="text"
-            placeholder="Filter files..."
-            class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-          />
-          {#if searchQuery}
-            <button
-              onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
-              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label="Clear filter"
-              title="Clear filter"
-            >
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          {/if}
+        <div class="flex items-center gap-1">
+          <div class="relative flex-1 min-w-0">
+            <svg class="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              bind:this={searchInputEl}
+              bind:value={searchQuery}
+              onfocus={() => searchFocused = true}
+              onblur={() => { setTimeout(() => searchFocused = false, 150); }}
+              onkeydown={handleSearchKeydown}
+              type="text"
+              placeholder="Filter files..."
+              class="w-full text-xs bg-background/50 border border-border/50 px-2 py-1 pl-7 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+            />
+            {#if searchQuery}
+              <button
+                onclick={() => { searchQuery = ''; searchInputEl?.focus(); }}
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear filter"
+                title="Clear filter"
+              >
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            {/if}
 
-          <!-- Dropdown -->
-          {#if showDropdown}
-            <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border shadow-lg max-h-56 overflow-y-auto z-50">
-              {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
-                {@const badge = statusBadge(entry.status)}
-                <button
-                  onmousedown={() => selectDropdownEntry(entry)}
-                  onmouseenter={() => dropdownIndex = i}
-                  class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
-                >
-                  <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
-                  <span class="truncate">
-                    <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
-                  </span>
-                  {#if entry.staged}
-                    <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
+            <!-- Dropdown -->
+            {#if showDropdown}
+              <div class="absolute left-0 right-0 top-full mt-1 bg-card border border-border shadow-lg max-h-56 overflow-y-auto z-50">
+                {#each dropdownEntries as entry, i (entry.filePath + ':' + entry.staged)}
+                  {@const badge = statusBadge(entry.status)}
+                  <button
+                    onmousedown={() => selectDropdownEntry(entry)}
+                    onmouseenter={() => dropdownIndex = i}
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-accent/50 {i === dropdownIndex ? 'bg-accent/50' : ''}"
+                  >
+                    <span class="font-bold {badge.color} shrink-0">{badge.label}</span>
+                    <span class="truncate">
+                      <span class="text-muted-foreground">{dirPath(entry.filePath)}</span><span class="text-foreground">{fileName(entry.filePath)}</span>
+                    </span>
+                    {#if entry.staged}
+                      <span class="ml-auto text-[10px] text-green-400 shrink-0">staged</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <PanelToggle {panel} label="file list" class="-mr-1.5" />
         </div>
         {#if searchQuery && filteredTotal !== entries.length && !showDropdown}
           <div class="text-[10px] text-muted-foreground mt-1">
@@ -753,178 +857,176 @@
       </div>
 
       {#if sidebarFooter}{@render sidebarFooter()}{/if}
-    </div>
+    {/if}
+  </div>
 
-    <!-- Right: Diff viewer -->
-    <div class="flex-1 flex flex-col overflow-hidden">
-      {#if selectedEntry}
-        {@const key = fileKey(selectedEntry)}
-        {@const diffResult = fileDiffs[key]}
-        {@const diffLines = selectedDiffLines}
-        {@const badge = statusBadge(selectedEntry.status)}
-        {@const history = editHistoryByFile.get(selectedEntry.filePath)}
-        {@const historyExpanded = editHistoryExpanded.has(key)}
+  <!-- Right: Diff viewer -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    {#if selectedEntry}
+      {@const key = fileKey(selectedEntry)}
+      {@const diffResult = fileDiffs[key]}
+      {@const diffLines = selectedDiffLines}
+      {@const badge = statusBadge(selectedEntry.status)}
+      {@const history = editHistoryByFile.get(selectedEntry.filePath)}
+      {@const historyExpanded = editHistoryExpanded.has(key)}
 
-        <!-- Diff header -->
-        <div class="border-b border-border bg-card/50 px-4 py-2 shrink-0 flex items-center gap-2 group/diff-hdr">
-          <span class="text-xs font-bold {badge.color}">{badge.label}</span>
+      <!-- Diff header -->
+      <div class="border-b border-border bg-card/50 px-4 py-2 shrink-0 flex items-center gap-2 group/diff-hdr">
+        <span class="text-xs font-bold {badge.color}">{badge.label}</span>
 
+        <button
+          onclick={() => openInEditor(selectedEntry.filePath)}
+          class="text-xs text-foreground/80 hover:text-primary hover:underline cursor-pointer truncate"
+          title="Open in editor"
+        >
+          <span class="text-muted-foreground">{dirPath(selectedEntry.filePath)}</span>{fileName(selectedEntry.filePath)}
+        </button>
+
+        {@render diffStat(selectedEntry)}
+
+        {#if selectedEntry.origPath}
+          <span class="text-xs text-muted-foreground truncate">← {selectedEntry.origPath}</span>
+        {/if}
+
+        <CopyButton text={selectedEntry.filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
+
+        {#if history && history.edits.length > 0}
           <button
-            onclick={() => openInEditor(selectedEntry.filePath)}
-            class="text-xs text-foreground/80 hover:text-primary hover:underline cursor-pointer truncate"
-            title="Open in editor"
+            onclick={() => toggleEditHistory(key)}
+            class="text-xs text-muted-foreground hover:text-foreground {historyExpanded ? 'text-foreground' : ''}"
+            title="Show individual edits from this conversation"
           >
-            <span class="text-muted-foreground">{dirPath(selectedEntry.filePath)}</span>{fileName(selectedEntry.filePath)}
+            {history.edits.length} edit{history.edits.length !== 1 ? 's' : ''}
           </button>
+        {/if}
 
-          {@render diffStat(selectedEntry)}
-
-          {#if selectedEntry.origPath}
-            <span class="text-xs text-muted-foreground truncate">← {selectedEntry.origPath}</span>
-          {/if}
-
-          <CopyButton text={selectedEntry.filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
-
-          {#if history && history.edits.length > 0}
-            <button
-              onclick={() => toggleEditHistory(key)}
-              class="text-xs text-muted-foreground hover:text-foreground {historyExpanded ? 'text-foreground' : ''}"
-              title="Show individual edits from this conversation"
-            >
-              {history.edits.length} edit{history.edits.length !== 1 ? 's' : ''}
-            </button>
-          {/if}
-
-          <div class="ml-auto flex items-center gap-2">
-            {#if selectedHunkCount > 1}
-              <div class="flex items-center text-muted-foreground" title="Jump between hunks">
-                <button onclick={() => gotoHunk(-1)} class="hover:text-foreground px-0.5" aria-label="Previous hunk">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
-                </button>
-                <button onclick={() => gotoHunk(1)} class="hover:text-foreground px-0.5" aria-label="Next hunk">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-                </button>
-              </div>
-            {/if}
-            <label class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none" title="Mark this file as viewed (x). Clears automatically if the file changes again.">
-              <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
-              Viewed
-              {#if changedSinceViewed(selectedEntry)}
-                <span class="text-[10px] text-yellow-400">· changed since</span>
-              {/if}
-            </label>
-            {#if !hasStaging}
-              <!-- No staging for this source (branch scope / checkpoints): the diff doesn't map onto the index. -->
-            {:else if selectedEntry.staged}
-              <button
-                onclick={() => unstageEntry(selectedEntry)}
-                class="text-xs px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
-                title="Unstage this file"
-              >
-                Unstage
+        <div class="ml-auto flex items-center gap-2">
+          {#if selectedHunkCount > 1}
+            <div class="flex items-center text-muted-foreground" title="Jump between hunks">
+              <button onclick={() => gotoHunk(-1)} class="hover:text-foreground px-0.5" aria-label="Previous hunk">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
               </button>
-            {:else}
-              <button
-                onclick={() => stageEntry(selectedEntry)}
-                class="text-xs px-2 py-0.5 border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors"
-                title="Stage this file"
-              >
-                Stage
+              <button onclick={() => gotoHunk(1)} class="hover:text-foreground px-0.5" aria-label="Next hunk">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
               </button>
-            {/if}
-            <button
-              onclick={() => sideBySide = !sideBySide}
-              class="text-xs text-muted-foreground hover:text-foreground select-none"
-            >
-              {sideBySide ? 'unified' : 'side-by-side'}
-            </button>
-            {#if onRefresh}
-            <button
-              onclick={onRefresh}
-              class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
-              title="Refresh"
-              disabled={isLoading}
-            >
-              <svg class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-            {/if}
-            {#if headerActions}{@render headerActions(selectedEntry)}{/if}
-          </div>
-        </div>
-
-        <!-- Diff content -->
-        <div class="flex-1 overflow-y-auto px-4 py-2" bind:this={diffContainer}>
-          {#if diffResult?.kind === 'image'}
-            <ImageDiffView {sessionId} filePath={selectedEntry.filePath} />
-          {:else if diffResult?.kind === 'binary'}
-            <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
-              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-              </svg>
-              Binary file — no text diff to display.
             </div>
-          {:else if diffLines.length > 0}
-            <DiffView
-              lines={displayLines}
-              {sideBySide}
-              maxHeight="none"
-              filePath={selectedEntry.filePath}
-              onExpand={expandContext}
-              comments={sourceComments.filter(c => c.filePath === selectedEntry.filePath)}
-              {composer}
-              {onAddComment}
-              onSaveComment={saveComment}
-              onCancelComment={() => composer = null}
-              onUpdateComment={(id, body) => reviewStore.updateComment(sessionId, id, body)}
-              onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
-            />
+          {/if}
+          <label class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none" title="Mark this file as viewed (x). Clears automatically if the file changes again.">
+            <input type="checkbox" checked={isViewed(selectedEntry)} onchange={() => toggleViewed(selectedEntry)} class="accent-green-500" />
+            Viewed
+            {#if changedSinceViewed(selectedEntry)}
+              <span class="text-[10px] text-yellow-400">· changed since</span>
+            {/if}
+          </label>
+          {#if !hasStaging}
+            <!-- No staging for this source (branch scope / checkpoints): the diff doesn't map onto the index. -->
+          {:else if selectedEntry.staged}
+            <button
+              onclick={() => unstageEntry(selectedEntry)}
+              class="text-xs px-2 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
+              title="Unstage this file"
+            >
+              Unstage
+            </button>
           {:else}
-            <div class="text-xs text-muted-foreground py-2">No diff available</div>
+            <button
+              onclick={() => stageEntry(selectedEntry)}
+              class="text-xs px-2 py-0.5 border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors"
+              title="Stage this file"
+            >
+              Stage
+            </button>
           {/if}
-
-          <!-- Edit history sub-section -->
-          {#if history && historyExpanded}
-            <div class="mt-2 border-t border-border/50 pt-2">
-              <div class="text-xs text-muted-foreground mb-1.5 font-medium">Edit History</div>
-              {#each history.edits as edit, idx}
-                {@const input = edit.toolInput as Record<string, unknown>}
-                {@const editDiffLines = computeDiffLines(edit.toolName, input, selectedEntry.filePath)}
-                {#if editDiffLines.length > 0}
-                  <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
-                    <div class="text-[10px] text-muted-foreground/60 mb-1">
-                      {edit.toolName} #{idx + 1}
-                    </div>
-                    <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} />
-                  </div>
-                {/if}
-              {/each}
-            </div>
+          <button
+            onclick={() => sideBySide = !sideBySide}
+            class="text-xs text-muted-foreground hover:text-foreground select-none"
+          >
+            {sideBySide ? 'unified' : 'side-by-side'}
+          </button>
+          {#if onRefresh}
+          <button
+            onclick={onRefresh}
+            class="text-muted-foreground hover:text-foreground transition-colors p-0.5"
+            title="Refresh"
+            disabled={isLoading}
+          >
+            <svg class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
           {/if}
+          {#if headerActions}{@render headerActions(selectedEntry)}{/if}
         </div>
-        {#if comments.length > 0}
-          <div data-review-bar class="border-t border-primary/30 bg-card/60 px-4 py-1.5 shrink-0 flex items-center gap-2 text-xs">
-            <span class="text-foreground/80">{comments.length} review comment{comments.length === 1 ? '' : 's'}</span>
-            <span class="text-muted-foreground/60">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
-            <div class="ml-auto flex items-center gap-1.5">
-              <button onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }} class="px-2 py-0.5 text-muted-foreground hover:text-destructive">Discard</button>
-              <button onclick={reviewToPrompt} class="px-2 py-0.5 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground" title="Put the batched comments into the prompt so you can edit before sending">To prompt</button>
-              <button onclick={sendReview} disabled={sendingReview} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40" title="Send all comments to the agent as one prompt (queued if it is busy)">
-                Send to agent
-              </button>
-            </div>
+      </div>
+
+      <!-- Diff content -->
+      <div class="flex-1 overflow-y-auto px-4 py-2" bind:this={diffContainer}>
+        {#if diffResult?.kind === 'image'}
+          <ImageDiffView {sessionId} filePath={selectedEntry.filePath} />
+        {:else if diffResult?.kind === 'binary'}
+          <div class="flex items-center gap-2 text-xs text-muted-foreground py-3 px-2 border border-border/50 bg-card/30">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            Binary file — no text diff to display.
+          </div>
+        {:else if diffLines.length > 0}
+          <DiffView
+            lines={displayLines}
+            {sideBySide}
+            maxHeight="none"
+            filePath={selectedEntry.filePath}
+            onExpand={expandContext}
+            comments={sourceComments.filter(c => c.filePath === selectedEntry.filePath)}
+            {composer}
+            {onAddComment}
+            onSaveComment={saveComment}
+            onCancelComment={() => composer = null}
+            onUpdateComment={(id, body) => reviewStore.updateComment(sessionId, id, body)}
+            onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
+          />
+        {:else}
+          <div class="text-xs text-muted-foreground py-2">No diff available</div>
+        {/if}
+
+        <!-- Edit history sub-section -->
+        {#if history && historyExpanded}
+          <div class="mt-2 border-t border-border/50 pt-2">
+            <div class="text-xs text-muted-foreground mb-1.5 font-medium">Edit History</div>
+            {#each history.edits as edit, idx}
+              {@const editDiffLines = computeDiffLines(toolViewOf(edit), selectedEntry.filePath)}
+              {#if editDiffLines.length > 0}
+                <div class="mb-2 {idx > 0 ? 'border-t border-border/30 pt-2' : ''}">
+                  <div class="text-[10px] text-muted-foreground/60 mb-1">
+                    {edit.toolName} #{idx + 1}
+                  </div>
+                  <DiffView lines={editDiffLines} sideBySide={false} maxHeight="300px" filePath={selectedEntry.filePath} />
+                </div>
+              {/if}
+            {/each}
           </div>
         {/if}
-      {:else}
-        <!-- No file selected -->
-        <div class="flex-1 flex items-center justify-center text-muted-foreground text-xs">
-          Select a file to view changes
+      </div>
+      {#if comments.length > 0}
+        <div data-review-bar class="border-t border-primary/30 bg-card/60 px-4 py-1.5 shrink-0 flex items-center gap-2 text-xs">
+          <span class="text-foreground/80">{comments.length} review comment{comments.length === 1 ? '' : 's'}</span>
+          <span class="text-muted-foreground/60">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
+          <div class="ml-auto flex items-center gap-1.5">
+            <button onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }} class="px-2 py-0.5 text-muted-foreground hover:text-destructive">Discard</button>
+            <button onclick={reviewToPrompt} class="px-2 py-0.5 border border-border text-foreground/80 hover:bg-accent hover:text-accent-foreground" title="Put the batched comments into the prompt so you can edit before sending">To prompt</button>
+            <button onclick={sendReview} disabled={sendingReview} class="px-2 py-0.5 bg-primary/90 text-primary-foreground hover:bg-primary disabled:opacity-40" title="Send all comments to the agent as one prompt (queued if it is busy)">
+              Send to agent
+            </button>
+          </div>
         </div>
       {/if}
-    </div>
+    {:else if entries.length === 0}
+      {@render emptyPane(emptyTitle, emptyHint)}
+    {:else}
+      {@render emptyPane('Select a file to view changes', undefined)}
+    {/if}
   </div>
-{/if}
+</div>
 
 <!-- Text-selection actions (Bookmark / To prompt) over the diff content -->
 <SelectionMenu {sessionId} container={diffContainer} />

@@ -23,7 +23,8 @@ beforeEach(async () => {
     : [{ id: 'opus', label: 'Opus' }, { id: 'haiku', label: 'Haiku' }]);
   mockGroveBench.getAdapterControls.mockImplementation(async (id?: string) => id === 'codex' ? [] : [
     { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-      { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
+      { value: 'default', label: 'Ask', tone: 'info', description: 'Check with you first' },
+      { value: 'plan', label: 'Plan', tone: 'warning', description: 'Plan without editing' },
     ] },
   ]);
   draftStore.discard();
@@ -50,7 +51,24 @@ describe('DraftAgentControl', () => {
     render(DraftAgentControl);
     const trigger = screen.getByTitle(/Agent settings/);
     expect(trigger).toHaveTextContent('Claude Agent');
-    expect(trigger).toHaveTextContent('Opus · Code');
+    expect(trigger).toHaveTextContent('Opus · Ask');
+  });
+
+  it('says what the current mode does, and what a pointed-at option does', async () => {
+    const dialog = await openPopover();
+    expect(dialog).toHaveTextContent('Ask: Check with you first');
+    await fireEvent.mouseEnter(screen.getByRole('button', { name: 'Plan' }));
+    expect(dialog).toHaveTextContent('Plan: Plan without editing');
+    await fireEvent.mouseLeave(screen.getByRole('button', { name: 'Plan' }));
+    expect(dialog).toHaveTextContent('Ask: Check with you first');
+  });
+
+  it('forgets the pointed-at option when the popover closes', async () => {
+    await openPopover();
+    await fireEvent.mouseEnter(screen.getByRole('button', { name: 'Plan' }));
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.click(screen.getByTitle(/Agent settings/));
+    expect(screen.getByRole('dialog', { name: 'Agent settings' })).toHaveTextContent('Ask: Check with you first');
   });
 
   it('lets any agent be picked, then shows that agent\'s models', async () => {

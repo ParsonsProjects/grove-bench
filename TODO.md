@@ -9,14 +9,14 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Agent settings popover — one two-line status-bar trigger (agent on top; model, mode, and any non-default control beneath) opening a column-per-setting popover for agent, model, and every declared control (`SessionControlsPopover.svelte`). Alt+M / Alt+T still cycle.
 - [x] Multi-agent groundwork — per-agent prerequisite status (`PrerequisiteStatus.agents`), saved API keys and default models (`settings.defaultModels`, schema v5 migration); Agent picker in New Conversation; Settings > Agent grouped per agent; status bar model list follows the conversation's agent; Settings MCP / Plugins tabs hidden when the default agent lacks them
 - [x] Per-agent background tasks — memory notes, compaction, commit messages and skill suggestions run on the conversation's own agent with its background model (`adapter.backgroundModel`, `settings.backgroundModels`, schema v6 migration from `memoryModel`); the manifest records each conversation's agent so restarts resume on it
-- [ ] Codex adapter — implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; the popover, shortcuts, triage, and session manager need no changes
+- [ ] Codex adapter: implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; attach a `toolView` (shared/tool-view.ts) to tool events so the thread, permission prompts and Read-safe mode understand Codex's tools. Until then Codex runs through the ACP adapter with `codex-acp` as a custom agent
 - [ ] Grok Build adapter
 - [ ] Open-model harnesses through ACP: one generic Agent Client Protocol adapter with per-harness profiles, starting with OpenCode on OpenRouter (DeepSeek V4.1 Flash). Plan in `docs/open-model-harnesses-plan.md`
 - [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
 - [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
 - [ ] Switch agent mid-conversation — needs the on-disk transcript (see Session Export) to replay context into another backend
 - [ ] Agent discovery/install marketplace ("app store")
-- [ ] Agent Client Protocol for custom agent integration
+- [x] Agent Client Protocol for custom agent integration: `adapters/acp/`, with Gemini CLI and GitHub Copilot CLI built in, others added in Settings → Agent; see docs/acp-adapter-plan.md for what is left
 
 ### Embedded Terminal
 - [x] Full working shell with color support and interactive command execution
@@ -29,10 +29,16 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Per-turn diff viewing (what changed in each turn)
 - [x] Revert workspace to any previous turn's checkpoint
 - [x] Preserve checkpoints across `/clear` — the git refs are kept and a `__clear__` sentinel checkpoint marks the boundary; `list()` flags earlier turns `beforeClear`, the Checkpoints tab shows them under a "Before /clear" divider with a files-only Restore (the conversation they belonged to is gone, so no conversation rewind is offered)
+- [ ] Checkpoints for projects used without git. Today a folder project has none (`noGitCheckpoints` in `src/main/no-git-checkpoints.ts`), so only the conversation can be rewound. Grove takes the snapshot itself before each message, so any option below works for every agent and catches Bash edits (unlike the SDK's own `enableFileCheckpointing`, which is Claude-only and tracks only its file editing tools). First decide who it's for: users with git whose folder isn't a repository, or users with no git at all.
+  1. Git kept outside the folder: a hidden repository in the app's data folder with the project as its work tree. Needs git installed; closest to `checkpoints.ts`, so the smallest change.
+  2. isomorphic-git (pure JavaScript git): no git install, same format as 1. No diff command, so diffs come from the `diff` package; 4.9 MB; its README says it is run by two volunteers who "don't write much code".
+  3. Own snapshots: hashed file copies plus a file list per turn. No dependency, byte-exact restores, Node's built-in hashing; we own storage, cleanup, ignore rules (`ignore` package) and Windows edge cases. Preferred if the goal is users with no git.
 
 ### Settings UI
 - [x] GUI-based settings panel (no manual JSON editing)
 - [x] Configurable UI layouts (full-featured to minimal)
+- [x] Settings redesign: auto-save (no Save/Cancel; text saves after a pause, numbers on blur and only when valid), a left-hand list of sections, each with a grove name over its plain one (The grove / General, Grovekeepers / Agents, The gate / Permissions, Branches & roots / Git & worktrees, Bells / Notifications, Tending / Background work, Tool shed / MCP servers, Seed packets / Plugins, Hedges / Privacy) with search (`settings-search.ts`), `Ctrl+,`, confirm before removing an MCP server or plugin, and `--muted-foreground` raised to 4.5:1 contrast
+- [ ] Light theme: `globals.css` only defines dark colours, so the Theme setting (`theme`) had no visible effect and is hidden from Settings. Needs a light palette for every token (plus a light highlight.js and xterm theme), then the Theme picker back in Settings → The grove (General), and `theme` applied to `nativeTheme.themeSource` again. Meanwhile a saved `theme` is ignored, so native menus and Preview pages follow Windows
 
 ### Merge-Back Workflow
 - ~~Merge a session's branch into the base branch from within the app~~ — implemented, then removed; sessions land their work through the PR workflow instead (local `git merge` from the terminal remains available for repos without a remote)
@@ -48,7 +54,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Attention Triage
 - [x] Sidebar filter chips All / Needs you / Working / Unread with counts — `session-triage.ts` puts each session in exactly one state (needs-you = pending permission or question, working = turn in progress, unread = finished while unfocused)
 - [x] Per-repo attention counts on each Projects header
-- [x] Mark Completed / Reopen in the session context menu — persisted as `completedAt` in the worktree manifest, hidden behind a "Show completed" toggle, reopened automatically by the next user message
+- [x] Mark Completed in the conversation context menu and the row's hover tick: stops the conversation (it was called Stop), which takes it off the Conversations list, and its state shows as Completed. A separate `completedAt` hide flag was dropped as it overlapped with Stop. Since renamed Close Conversation, with an ✕ in place of the tick, as it's used to set work aside as much as to finish it
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
 - [x] Persist the unread flag across restarts — `unreadSessionIds` in app-state.json, restored after worktree restore
 
@@ -73,7 +79,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Multiple PRs per session — every PR on the session's branch and on branches checked out in it (via the HEAD reflog) is listed; one primary PR (open first, newest first, or user-picked) drives alerts and auto turns
 - [x] One-click fix turns — clickable failing-checks / changes-requested badges send the agent to read CI logs or review comments and fix
 - [x] New-failure / new-comment detection with pulsing alert chips (baseline seeded on startup, one alert per pushed commit)
-- [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 attempts per commit then "needs human", collaborator-authored comments only)
+- [x] Opt-in auto mode per session — auto-fix CI and auto-address reviews (idle-only, max 2 fix attempts per PR until CI goes green, then "needs human"; collaborator-authored comments only)
 - [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
 
 ### Session Search
@@ -81,7 +87,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Filter/search within message history (Ctrl+F with highlighting)
 
 ### Help System
-- [ ] Keybinding documentation (F1 or similar) — content exists at `docs/help/keyboard-shortcuts.md` and HelpPanel is mounted; missing piece is the F1 shortcut
+- [x] Keybinding documentation (F1 or similar) — `F1` opens Help, and the empty state links to Getting Started
 - [ ] Context-aware footer showing relevant keyboard shortcuts
 
 ### Cost & Usage Dashboard
@@ -121,10 +127,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 
 ### Maintenance & Hygiene
 - [ ] ESLint/Prettier config (CONTRIBUTING.md notes none exists)
-- [ ] Tests for the IPC layer (`ipc.ts` currently has zero coverage)
+- [x] Tests for the IPC layer: `ipc.test.ts` covers handler validation, file access bounds, setup cancel and history paging
 - [ ] Component tests (5 of 42 Svelte components covered) and E2E tests (Playwright)
 - [ ] In-app log viewer or "open logs folder" action; configurable log level
 - [ ] Worktree disk-usage reporting and a "reclaim space" tool
+- [ ] Measure live conversation memory: a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
 - [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)

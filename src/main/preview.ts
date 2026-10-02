@@ -8,10 +8,10 @@
  *   where the Preview tab's content area is and the view is placed on top of
  *   it. Native views draw above the HTML, so the renderer hides the view (and
  *   shows a snapshot) whenever a Grove menu or dialog overlaps it.
- * - Claude's page: an offscreen-rendered hidden window the agent's browser
+ * - The agent's page: an offscreen-rendered hidden window the agent's browser
  *   tools drive. Offscreen rendering keeps it painting while nobody is
  *   looking, so screenshots, clicks and typing work from any tab. A hidden
- *   WebContentsView stops painting and can't be captured reliably. Claude's
+ *   WebContentsView stops painting and can't be captured reliably. The agent's
  *   page only opens local URLs (see preview-policy.ts).
  *
  * Both pages run sandboxed with no preload and no Node, deny permission
@@ -30,11 +30,11 @@ import { locateScript, readScript, type LocateResult, type PageReadResult } from
 import type { PreviewOperations, PreviewScreenshot, PreviewTarget } from './adapters/types.js';
 import { logger } from './logger.js';
 
-/** Claude's page viewport. A common laptop size; the agent can change it. */
+/** The agent's page viewport. A common laptop size; the agent can change it. */
 const AGENT_DEFAULT_SIZE = { width: 1280, height: 800 };
 const AGENT_MIN_SIZE = { width: 320, height: 240 };
 const AGENT_MAX_SIZE = { width: 2560, height: 1600 };
-/** Offscreen paint rate for Claude's page. Enough to watch; low CPU. */
+/** Offscreen paint rate for the agent's page. Enough to watch; low CPU. */
 const AGENT_FRAME_RATE = 10;
 const LOAD_TIMEOUT_MS = 20_000;
 /** Longest any one browser tool call may take, so a stuck page can't stall
@@ -179,6 +179,19 @@ export class PreviewManager {
     ses.clearCache().catch(() => { /* best effort */ });
   }
 
+  /** Close the agent's page, e.g. when the conversation goes to sleep: nothing
+   *  drives it then, and it would keep running the page's scripts and
+   *  painting. Your page and the shared storage (logins) stay; the agent
+   *  opens a new page with preview_open. */
+  closeAgentPage(sessionId: string): void {
+    const entry = this.entries.get(sessionId);
+    const page = entry?.agent;
+    if (!entry || !page) return;
+    entry.agent = null;
+    if (!page.win.isDestroyed()) page.win.destroy();
+    this.sendState(sessionId, 'agent', null);
+  }
+
   closeAll(): void {
     for (const id of [...this.entries.keys()]) this.close(id);
   }
@@ -196,7 +209,7 @@ export class PreviewManager {
     ses.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write');
     ses.setDevicePermissionHandler(() => false);
 
-    // Files load only from inside the worktree, and Claude's page only loads
+    // Files load only from inside the worktree, and the agent's page only loads
     // web file types: an iframe or script tag could otherwise show it any file.
     // No URL filter: 'file:///*' would miss UNC paths (file://server/share).
     ses.webRequest.onBeforeRequest((details, callback) => {
@@ -214,7 +227,7 @@ export class PreviewManager {
       callback({ cancel: !check.ok });
     });
 
-    // Claude reads failed requests with preview_logs. Handlers look the entry
+    // The agent reads failed requests with preview_logs. Handlers look the entry
     // up on each call: the partition outlives a closed and reopened page.
     ses.webRequest.onCompleted((details) => {
       if (details.statusCode < 400) return;
@@ -227,7 +240,7 @@ export class PreviewManager {
       agent?.log.add({ kind: 'network', level: 'error', text: `${details.method} ${details.url} failed: ${details.error}` });
     });
 
-    // Downloads from Claude's page would open a save dialog nobody asked for.
+    // Downloads from the agent's page would open a save dialog nobody asked for.
     ses.on('will-download', (event, item, wc) => {
       const agent = this.agentPageFor(sessionId, wc?.id);
       if (!agent) return;
@@ -313,7 +326,7 @@ export class PreviewManager {
   }
 
   /**
-   * Answer alert and confirm dialogs on Claude's page. Nobody can click a
+   * Answer alert and confirm dialogs on the agent's page. Nobody can click a
    * dialog on a hidden page, and an open one blocks it, so the action that
    * opened it and every later one would hang. What the dialog said and the
    * answer go in the log, so the action's result reports them. (Electron
@@ -333,7 +346,7 @@ export class PreviewManager {
       try {
         wc.debugger.attach('1.3');
       } catch (e) {
-        logger.warn(`[preview] could not attach to Claude's page: ${errorText(e)}`);
+        logger.warn(`[preview] could not attach to the agent's page: ${errorText(e)}`);
         return;
       }
       // Resolves only after the page's first load, so it isn't awaited.
@@ -618,7 +631,7 @@ export class PreviewManager {
     return result;
   }
 
-  /** Claude's page with something loaded on a URL it's allowed to act on. */
+  /** The agent's page with something loaded on a URL it's allowed to act on. */
   private requireAgentPage(sessionId: string): AgentPage {
     const entry = this.entries.get(sessionId);
     const page = entry?.agent;
@@ -627,7 +640,7 @@ export class PreviewManager {
     }
     if (page.state.crashed) throw new Error('The page crashed. Reload it with preview_open (no url).');
     const check = checkNavigation(page.state.url, 'agent', entry.worktreePath);
-    if (!check.ok) throw new Error(`The page is on ${page.state.url}, which Claude's browser can't act on. ${check.reason}`);
+    if (!check.ok) throw new Error(`The page is on ${page.state.url}, which the agent's browser can't act on. ${check.reason}`);
     return page;
   }
 
@@ -801,8 +814,9 @@ export class PreviewManager {
   }
 
   /** Real (trusted) input goes through the DevTools protocol, which works on
-   *  an offscreen page without focus. Attached only for the action, so it
-   *  doesn't hold on to the page if the user opens DevTools on it. */
+   *  an offscreen page without focus. The dialog handler normally keeps the
+   *  debugger attached (see answerDialogs); if that attach failed, this one
+   *  lasts only for the action. */
   private async withDebugger<T>(wc: WebContents, fn: (send: (method: string, params?: object) => Promise<unknown>) => Promise<T>): Promise<T> {
     const dbg = wc.debugger;
     const attachedHere = !dbg.isAttached();

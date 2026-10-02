@@ -2,7 +2,9 @@ import type { ControlDescriptor, CreateSessionOpts } from '../../shared/types.js
 import { CONTROL_IDS } from '../../shared/types.js';
 import { deriveSessionName } from '../../shared/session-name.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { groupStore } from './groups.svelte.js';
 import { messageStore } from './messages.svelte.js';
+import { arrivalScene } from './arrivalScene.svelte.js';
 import { agentsStore } from './agents.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { resolveBaseBranch } from '../lib/base-branch.js';
@@ -36,14 +38,40 @@ export interface Draft {
   start: DraftStart;
   /** The first message, as typed so far. */
   text: string;
+  /** Group the conversation joins once it starts. */
+  groupId?: string;
+  /** A group made with this conversation once it starts (from New group).
+   *  Not made before, so a discarded draft leaves no empty group. Never set
+   *  together with groupId. */
+  newGroupName?: string;
 }
+
+/** The group a draft joins, or the one it starts. */
+export type DraftGroup = { groupId: string } | { newGroupName: string };
 
 export interface DraftModelOption {
   value: string;
   label: string;
 }
 
-const newBranchStart = (): DraftStart => ({ kind: 'new', branchName: '', baseBranch: '' });
+const newBranchStart = (branchName = ''): DraftStart => ({ kind: 'new', branchName, baseBranch: '' });
+
+/** The draft starts a new branch named after its group's branch. Main then
+ *  continues that branch if the project has it already (continueBranch). */
+function onGroupBranch(d: Draft): boolean {
+  if (!d.groupId || d.start.kind !== 'new') return false;
+  const groupBranch = groupStore.sharedBranch(d.groupId, d.repoPath);
+  return !!groupBranch && d.start.branchName.trim() === groupBranch;
+}
+
+/** Where a new draft in `repo` starts: a new branch, or the folder itself
+ *  for a project that isn't a git repository (the only place it can run).
+ *  In a group, the new branch takes the group's branch name, so the work has
+ *  one branch name in every project it touches. */
+const defaultStart = (repo: string, groupId?: string): DraftStart =>
+  sessionStore.isFolderProject(repo)
+    ? { kind: 'folder' }
+    : newBranchStart(groupId ? groupStore.sharedBranch(groupId, repo) : '');
 
 class DraftStore {
   draft = $state<Draft | null>(null);
@@ -54,8 +82,6 @@ class DraftStore {
   models = $state<DraftModelOption[]>([]);
   descriptors = $state<ControlDescriptor[]>([]);
 
-  /** The user picked a mode; picking a PR no longer switches it to Plan. */
-  private modeTouched = false;
   /** Guards against an older agent-info load landing after a newer one. */
   private infoRequest = 0;
 
@@ -69,25 +95,34 @@ class DraftStore {
    * Open the draft in `repoPath` (default: the open conversation's project,
    * then the first project) and show it. An existing draft keeps its message
    * and moves to that project. A new one takes its agent and model from the
-   * open conversation, or `agentId` when given.
+   * open conversation, or `agentId` when given. With `group`, the
+   * conversation joins that group (or starts it) when it starts. Opened for
+   * a project without one (a project's +, a conversation's controls), an
+   * existing draft leaves its group: it is no longer that group's work.
    */
-  open(repoPath = '', opts: { agentId?: string } = {}): void {
+  open(repoPath = '', opts: { agentId?: string; group?: DraftGroup } = {}): void {
     const active = sessionStore.activeSession;
     const repo = repoPath || active?.repoPath || this.draft?.repoPath || sessionStore.repos[0] || '';
     if (!repo) return;
 
     if (this.draft) {
+      if (opts.group) this.setGroup(opts.group);
+      else if (repoPath) this.setGroup(null);
       if (repo !== this.draft.repoPath) this.setRepo(repo);
       if (opts.agentId && opts.agentId !== this.draft.agentId) this.setAgent(opts.agentId);
     } else {
       const agentId = opts.agentId || active?.agentType || agentsStore.defaultId || '';
       // Same agent as the open conversation: start on its model too.
       const model = active && active.agentType === agentId ? messageStore.getModel(active.id) : '';
-      this.draft = { repoPath: repo, agentId, model, controls: {}, start: newBranchStart(), text: '' };
-      this.modeTouched = false;
+      const groupId = opts.group && 'groupId' in opts.group ? opts.group.groupId : undefined;
+      this.draft = {
+        repoPath: repo, agentId, model, controls: {}, start: defaultStart(repo, groupId), text: '',
+        ...opts.group,
+      };
       this.error = '';
       void this.prefillBaseBranch(repo);
       void this.loadAgentInfo();
+      void this.refreshKind(repo);
     }
     sessionStore.activeSessionId = null;
   }
@@ -113,14 +148,67 @@ class DraftStore {
     this.draft.repoPath = repo;
     // Branches belong to the old project.
     this.resetToNewBranch();
+    void this.refreshKind(repo);
+  }
+
+  /** Check what the project is now: git may have been installed, or
+   *  `git init` run in a folder project, since launch. When it changed, the
+   *  draft goes back to that kind of project's default start. */
+  private async refreshKind(repo: string): Promise<void> {
+    let kind: Awaited<ReturnType<typeof window.groveBench.repoKind>>;
+    try {
+      kind = await window.groveBench.repoKind(repo);
+    } catch {
+      return;
+    }
+    if (kind === 'missing') return;
+    const folder = kind === 'folder';
+    if (folder === sessionStore.isFolderProject(repo)) return;
+    sessionStore.setFolderProject(repo, folder);
+    if (this.draft?.repoPath === repo) this.resetToNewBranch();
   }
 
   /** Back to the default place to run: a new branch from the project's
    *  default branch. */
   resetToNewBranch(): void {
     if (!this.draft) return;
-    this.setStart(newBranchStart());
+    this.setStart(defaultStart(this.draft.repoPath, this.draft.groupId));
     void this.prefillBaseBranch(this.draft.repoPath);
+  }
+
+  /** Whether the draft starts on its group's branch name, which it continues
+   *  if the project has that branch already. */
+  get onGroupBranch(): boolean {
+    return !!this.draft && onGroupBranch(this.draft);
+  }
+
+  /** The name of the group the draft joins or starts, or null. */
+  get groupName(): string | null {
+    const d = this.draft;
+    if (d?.groupId) return groupStore.get(d.groupId)?.name ?? null;
+    return d?.newGroupName ?? null;
+  }
+
+  /** Start outside the group. */
+  leaveGroup(): void {
+    this.setGroup(null);
+  }
+
+  /** Join a group, start a new one, or (null) leave it. The branch follows:
+   *  joining an existing group starts on its branch name, and leaving drops
+   *  that name. A branch the user picked otherwise stays. */
+  private setGroup(group: DraftGroup | null): void {
+    const d = this.draft;
+    if (!d) return;
+    const same = group
+      ? ('groupId' in group ? d.groupId === group.groupId : d.newGroupName === group.newGroupName)
+      : !d.groupId && !d.newGroupName;
+    if (same) return;
+    const hadGroupBranch = onGroupBranch(d);
+    delete d.groupId;
+    delete d.newGroupName;
+    if (group) Object.assign(d, group);
+    if ((group && 'groupId' in group) || hadGroupBranch) this.resetToNewBranch();
   }
 
   setAgent(agentId: string): void {
@@ -129,7 +217,6 @@ class DraftStore {
     // Models and controls are the agent's own.
     this.draft.model = '';
     this.draft.controls = {};
-    this.modeTouched = false;
     void this.loadAgentInfo();
   }
 
@@ -142,24 +229,14 @@ class DraftStore {
   setControl(controlId: string, value: string): void {
     if (!this.draft) return;
     this.draft.controls = { ...this.draft.controls, [controlId]: value };
-    if (controlId === CONTROL_IDS.permissionMode) this.modeTouched = true;
   }
 
+  /** Where the draft runs. The mode stays as it is: a PR starts on the
+   *  saved default like any branch (it used to switch to Plan, but a branch
+   *  with an open PR is only listed as the PR, so your own branches did too). */
   setStart(start: DraftStart): void {
     if (!this.draft) return;
     this.draft.start = start;
-    this.applyAutoMode();
-  }
-
-  /** Opening a PR is usually a review: start it in Plan mode unless the user
-   *  chose a mode themselves. Anything else goes back to the default. Runs
-   *  again once the agent's modes load, and after the agent changes. */
-  private applyAutoMode(): void {
-    const d = this.draft;
-    if (!d || this.modeTouched) return;
-    const { [CONTROL_IDS.permissionMode]: _mode, ...rest } = d.controls;
-    const plan = d.start.kind === 'existing' && !!d.start.pr && this.offers(CONTROL_IDS.permissionMode, 'plan');
-    d.controls = plan ? { ...rest, [CONTROL_IDS.permissionMode]: 'plan' } : rest;
   }
 
   /** The model the draft would start on. */
@@ -187,6 +264,8 @@ class DraftStore {
   }
 
   private async prefillBaseBranch(repo: string): Promise<void> {
+    // A folder without git has no branches to start from.
+    if (sessionStore.isFolderProject(repo)) return;
     const base = await resolveBaseBranch(repo);
     const d = this.draft;
     if (d && d.repoPath === repo && d.start.kind === 'new' && !d.start.baseBranch) {
@@ -217,7 +296,6 @@ class DraftStore {
       if (this.draft) {
         const kept = Object.entries(this.draft.controls).filter(([id, v]) => this.offers(id, v));
         this.draft.controls = Object.fromEntries(kept);
-        this.applyAutoMode();
       }
     } catch (e) {
       console.warn('[draft] could not load the agent\'s models and controls:', e);
@@ -241,15 +319,21 @@ class DraftStore {
       case 'existing':
         return { ...base, branchName: d.start.branch, useExisting: true };
       case 'new':
-        return { ...base, branchName: d.start.branchName.trim(), baseBranch: baseBranch || undefined };
+        return {
+          ...base, branchName: d.start.branchName.trim(), baseBranch: baseBranch || undefined,
+          ...(onGroupBranch(d) ? { continueBranch: true } : {}),
+        };
     }
   }
 
   /** Create the conversation and send the draft's message as its first turn.
    *  Returns whether it started; on failure the draft stays with the error. */
   async start(): Promise<boolean> {
-    const d = this.draft;
-    if (!d || this.starting) return false;
+    const draft = this.draft;
+    if (!draft || this.starting) return false;
+    // A copy: the pickers stay usable while this awaits, and changes made
+    // meanwhile must not leak into the conversation being created.
+    const d = $state.snapshot(draft) as Draft;
     if (d.start.kind === 'existing' && !d.start.branch) return false;
     if (!sessionStore.repos.includes(d.repoPath)) {
       this.error = 'This project was removed. Pick another project in the bar below.';
@@ -288,15 +372,23 @@ class DraftStore {
         agentType: result.agentType,
         createdAt: Date.now(),
         ...(direct ? { direct: true } : {}),
+        ...(result.noGit ? { noGit: true } : {}),
         ...(placeholderName ? { displayName: placeholderName } : {}),
       });
+      // A group ungrouped while this ran is gone, and add() does nothing.
+      if (d.groupId) groupStore.add(d.groupId, result.id);
+      else if (d.newGroupName) groupStore.create(d.newGroupName, [result.id]);
       // Main holds a prompt sent during setup until the agent is ready.
       if (text) {
+        // The chat shows the agent walking to its bench until the first reply.
+        arrivalScene.begin(result.id);
         messageStore.addUserMessage(result.id, text);
         window.groveBench.sendMessage(result.id, text);
         sessionStore.updateLastActive(result.id);
       }
-      this.discard();
+      // Discarded (and maybe replaced by a new draft) while this ran: leave
+      // the new one alone.
+      if (this.draft === draft) this.discard();
       return true;
     } catch (e: any) {
       this.error = e?.message || String(e);

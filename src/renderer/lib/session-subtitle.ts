@@ -1,4 +1,8 @@
 import type { ChatMessage } from '../stores/messages.svelte.js';
+import { userMessageLabel } from './message-label.js';
+import { approvalRequest, toolLabel } from './tool-names.js';
+import { oneLine, plainSnippet } from '../../shared/plain-text.js';
+import type { ToolView } from '../../shared/tool-view.js';
 
 /** Visual tone of the subtitle line — drives its color in the sidebar. */
 export type SubtitleTone = 'working' | 'waiting' | 'context';
@@ -10,9 +14,10 @@ export interface SessionSubtitle {
 
 const MAX_LEN = 90;
 
-function collapse(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > MAX_LEN ? `${normalized.slice(0, MAX_LEN)}…` : normalized;
+/** A chat message as one line of plain text: markdown syntax dropped. Null
+ *  when nothing is left (a message that is only syntax), so the search goes on. */
+function snippet(text: string, maxLen = MAX_LEN): string | null {
+  return plainSnippet(text, maxLen) || null;
 }
 
 /** The tool name of the most recent unresolved permission request, if any. */
@@ -25,20 +30,37 @@ export function pendingPermissionTool(messages: ChatMessage[]): string | null {
   return null;
 }
 
+/** The view the adapter gave the tool awaiting approval (see
+ *  shared/tool-view.ts), when it gave one. */
+export function pendingPermissionView(messages: ChatMessage[]): ToolView | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.kind === 'permission' && !m.resolved) return m.toolView;
+    if ((m.kind === 'question' || m.kind === 'elicitation') && !m.resolved) return undefined;
+  }
+  return undefined;
+}
+
 /** Most recent user/assistant text in the loaded messages (slash commands skipped). */
 export function lastTextSnippet(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.kind === 'text' && m.text.trim()) return collapse(m.text);
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
+    // A user message reads as the chat shows it: attachment names, then the text.
+    const text =
+      m.kind === 'text' ? snippet(m.text)
+      : m.kind === 'user' && !m.text.trim().startsWith('/') ? snippet(userMessageLabel(m))
+      : null;
+    if (text) return text;
   }
   return null;
 }
 
-/** First real user prompt in the loaded messages (slash commands skipped). */
-export function firstPromptSnippet(messages: ChatMessage[]): string | null {
+/** First real user prompt in the loaded messages (slash commands skipped).
+ *  `maxLen` defaults to the sidebar row's length. */
+export function firstPromptSnippet(messages: ChatMessage[], maxLen = MAX_LEN): string | null {
   for (const m of messages) {
-    if (m.kind === 'user' && m.text.trim() && !m.text.trim().startsWith('/')) return collapse(m.text);
+    const text = m.kind === 'user' && !m.text.trim().startsWith('/') ? snippet(userMessageLabel(m), maxLen) : null;
+    if (text) return text;
   }
   return null;
 }
@@ -50,6 +72,8 @@ export interface SubtitleInput {
   activity: { activity: 'thinking' | 'tool_starting' | 'generating' | 'idle'; toolName?: string; toolSummary?: string };
   /** Tool awaiting user approval (null when none). */
   pendingTool: string | null;
+  /** The adapter's view of that tool, when it gave one. */
+  pendingToolView?: ToolView;
   /** Most recent conversation text (loaded messages or main-process preview). */
   lastText: string | null;
   /** First user prompt (loaded messages or main-process preview). */
@@ -64,7 +88,7 @@ export interface SubtitleInput {
 export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
   if (input.pendingTool) {
     return {
-      text: input.pendingTool === 'question' ? 'Waiting for your answer' : `Waiting for approval — ${input.pendingTool}`,
+      text: input.pendingTool === 'question' ? 'Waiting for your answer' : capitalise(approvalRequest(input.pendingTool, input.pendingToolView)),
       tone: 'waiting',
     };
   }
@@ -72,12 +96,17 @@ export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
   if (input.isRunning) {
     const { activity, toolName, toolSummary } = input.activity;
     if (activity === 'tool_starting' && toolName) {
-      return { text: collapse(toolSummary ? `${toolName}: ${toolSummary}` : `Running ${toolName}…`), tone: 'working' };
+      const name = toolLabel(toolName);
+      return { text: oneLine(toolSummary ? `${name}: ${toolSummary}` : `Running ${name}…`, MAX_LEN), tone: 'working' };
     }
     if (activity === 'thinking') return { text: 'Thinking…', tone: 'working' };
     return { text: 'Working…', tone: 'working' };
   }
 
   const context = input.lastText || input.firstPrompt;
-  return context ? { text: collapse(context), tone: 'context' } : null;
+  return context ? { text: oneLine(context, MAX_LEN), tone: 'context' } : null;
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

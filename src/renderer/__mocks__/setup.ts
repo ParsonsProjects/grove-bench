@@ -1,4 +1,11 @@
-import { vi } from 'vitest';
+import { afterAll, vi } from 'vitest';
+import type { GroveBenchAPI } from '../../shared/types.js';
+
+// A closed bits-ui dialog resets the page body's style on a timer (24ms by
+// default, see bits-ui's body-scroll-lock). One left over from a file's last
+// test can fire after jsdom is torn down and throw "document is not defined",
+// which fails the run. Let it fire while the page still exists.
+afterAll(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
 
 // ─── localStorage mock ───
 const localStorageMock = (() => {
@@ -24,7 +31,6 @@ const mockGroveBench = {
   setModel: vi.fn().mockResolvedValue(undefined),
   getModels: vi.fn().mockResolvedValue([]),
   getUsage: vi.fn().mockResolvedValue(null),
-  setSessionCompleted: vi.fn().mockResolvedValue(undefined),
   stopBackgroundTask: vi.fn().mockResolvedValue(undefined),
   listAdapters: vi.fn().mockResolvedValue([]),
   onModelsChanged: vi.fn(() => () => {}),
@@ -51,9 +57,22 @@ const mockGroveBench = {
   gitCherryPick: vi.fn(() => Promise.resolve({ success: true } as import('../../shared/types.js').GitOpResult)),
   gitSquash: vi.fn(() => Promise.resolve({ success: true } as import('../../shared/types.js').GitOpResult)),
   getDefaultBranch: vi.fn(() => Promise.resolve('main')),
+  addRepo: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').PickedProject | null)),
+  rememberRepo: vi.fn(() => Promise.resolve()),
+  repoKind: vi.fn(() => Promise.resolve('git' as import('../../shared/types.js').ProjectKind)),
+  hasGitIdentity: vi.fn(() => Promise.resolve(true)),
+  onUpdateStatus: vi.fn(() => () => {}),
+  getUpdateState: vi.fn(() => Promise.resolve({ currentVersion: '0.0.0-test', enabled: true, status: null } as import('../../shared/types.js').UpdateState)),
+  downloadUpdate: vi.fn(() => Promise.resolve()),
+  restartToUpdate: vi.fn(() => Promise.resolve()),
+  winIsMaximized: vi.fn(() => Promise.resolve(false)),
+  winMinimize: vi.fn(),
+  winMaximize: vi.fn(),
+  winClose: vi.fn(),
   listBranches: vi.fn((_repoPath: string, _opts?: { fetch?: boolean }) => Promise.resolve([] as string[])),
   switchBranch: vi.fn(() => Promise.resolve({ success: false, error: 'not mocked' } as import('../../shared/types.js').BranchSwitchResult)),
   syncBranch: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').BranchSyncResult | null)),
+  getCheckoutSharers: vi.fn((sessionId: string) => Promise.resolve([sessionId])),
   getPrs: vi.fn((_sessionId: string) => Promise.resolve([] as import('../../shared/types.js').PrInfo[])),
   listOpenPrs: vi.fn((_repoPath: string) => Promise.resolve([] as import('../../shared/types.js').OpenPrSummary[])),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),
@@ -74,7 +93,13 @@ const mockGroveBench = {
   getSessionPreviews: vi.fn(() => Promise.resolve({} as Record<string, import('../../shared/types.js').SessionPreview>)),
   autoNameSession: vi.fn(() => Promise.resolve(null as string | null)),
   autoNameBranch: vi.fn((_sessionId: string) => Promise.resolve(null as string | null)),
+  getConversationGoal: vi.fn((_sessionId: string) => Promise.resolve({ text: null, source: null, hidden: false } as import('../../shared/types.js').ConversationGoal | null)),
+  setConversationGoal: vi.fn((_sessionId: string, text: string) => Promise.resolve({ text: text || null, source: 'user', hidden: false } as import('../../shared/types.js').ConversationGoal | null)),
+  autoConversationGoal: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').ConversationGoal | null)),
+  refreshConversationGoal: vi.fn((_sessionId: string) => Promise.resolve(null as import('../../shared/types.js').ConversationGoal | null)),
+  setConversationGoalHidden: vi.fn((_sessionId: string, hidden: boolean) => Promise.resolve({ text: null, source: null, hidden } as import('../../shared/types.js').ConversationGoal | null)),
   getGitStatus: vi.fn(() => Promise.resolve({ entries: [] } as import('../../shared/types.js').GitStatusResult)),
+  listFiles: vi.fn(() => Promise.resolve([] as string[])),
   getFileDiff: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve({ kind: 'text', patch: '' } as import('../../shared/types.js').FileDiffResult)),
   openInEditor: vi.fn(() => Promise.resolve()),
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
@@ -99,10 +124,15 @@ const mockGroveBench = {
   setSessionSort: vi.fn(),
   getSidebarWidth: vi.fn(() => Promise.resolve(null as number | null)),
   setSidebarWidth: vi.fn(),
+  getCollapsedPanels: vi.fn(() => Promise.resolve({} as import('../../shared/types.js').CollapsedPanels)),
+  setCollapsedPanels: vi.fn(),
+  getConversationGroups: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').ConversationGroup[] | null)),
+  setConversationGroups: vi.fn(),
   getUnreadSessions: vi.fn(() => Promise.resolve([] as string[])),
   setUnreadSessions: vi.fn(),
   onAppError: vi.fn(() => () => {}),
   reportError: vi.fn(),
+  reportFreeze: vi.fn(),
   setAttentionBadge: vi.fn(),
   onSpellcheckMenu: vi.fn(() => () => {}),
   spellcheckReplace: vi.fn(),
@@ -137,7 +167,57 @@ const mockGroveBench = {
   previewGetStates: vi.fn(() => Promise.resolve({} as Record<string, { user: import('../../shared/types.js').PreviewPageState | null; agent: import('../../shared/types.js').PreviewPageState | null }>)),
   onPreviewState: vi.fn((_cb: (sessionId: string, page: import('../../shared/types.js').PreviewPageKind, state: import('../../shared/types.js').PreviewPageState | null) => void) => () => {}),
   onPreviewKey: vi.fn((_cb: (sessionId: string, key: import('../../shared/types.js').PreviewKeyForward) => void) => () => {}),
+
+  // The rest of the bridge: harmless defaults, so a component that calls one
+  // in a test gets an answer rather than "is not a function". Tests that care
+  // override them. Calls whose answer has no sensible default reject.
+  removeRepo: vi.fn((_repoPath: string) => Promise.resolve()),
+  createSession: vi.fn(() => notMocked('createSession')),
+  closeSession: vi.fn((_id: string) => Promise.resolve()),
+  destroySession: vi.fn((_id: string, _deleteBranch?: boolean) => Promise.resolve()),
+  stopSession: vi.fn(() => Promise.resolve()),
+  sleepSession: vi.fn(() => Promise.resolve(true)),
+  wakeSession: vi.fn(() => Promise.resolve()),
+  renameSession: vi.fn((_sessionId: string, _displayName: string) => Promise.resolve()),
+  renameBranch: vi.fn(() => notMocked('renameBranch')),
+  openSessionFolder: vi.fn(() => Promise.resolve()),
+  getOpenTabs: vi.fn(() => Promise.resolve([] as string[])),
+  setOpenTabs: vi.fn(),
+  onSessionStatus: vi.fn(() => () => {}),
+  onFocusSession: vi.fn(() => () => {}),
+  onPowerResume: vi.fn(() => () => {}),
+  onAppClosing: vi.fn(() => () => {}),
+  getEventHistory: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').AgentEvent[])),
+  getEventHistoryCount: vi.fn(() => Promise.resolve(0)),
+  getImageDiffContent: vi.fn(() => Promise.resolve({ working: null, head: null } as import('../../shared/types.js').ImageDiffContent)),
+  readFile: vi.fn(() => Promise.resolve('')),
+  ptySpawn: vi.fn(() => Promise.resolve(true)),
+  ptyWrite: vi.fn(),
+  ptyResize: vi.fn(),
+  ptyKill: vi.fn(() => Promise.resolve()),
+  ptyIsAlive: vi.fn(() => Promise.resolve(false)),
+  onPtyData: vi.fn(() => () => {}),
+  onPtyExit: vi.fn(() => () => {}),
+  listSkills: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SkillInfo[])),
+  addSkill: vi.fn(() => notMocked('addSkill')),
+  getSkillSuggestions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SkillSuggestion[])),
+  analyzeSkillSuggestions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SkillSuggestion[])),
+  dismissSkillSuggestion: vi.fn(() => Promise.resolve()),
+  pluginList: vi.fn(() => Promise.resolve({ installed: [], available: [] } as import('../../shared/types.js').PluginListResult)),
+  pluginInstall: vi.fn(() => Promise.resolve()),
+  pluginUninstall: vi.fn(() => Promise.resolve()),
+  pluginEnable: vi.fn(() => Promise.resolve()),
+  pluginDisable: vi.fn(() => Promise.resolve()),
+  checkForUpdate: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').UpdateStatus | null)),
 };
+
+function notMocked(name: string): Promise<never> {
+  return Promise.reject(new Error(`window.groveBench.${name} is not mocked in this test`));
+}
+
+// Fails the type check when the bridge gains a method the mock lacks.
+const coversBridge: Record<keyof GroveBenchAPI, unknown> = mockGroveBench;
+void coversBridge;
 // Attach the IPC bridge onto the existing (jsdom) window rather than replacing
 // it — replacing window wipes addEventListener/dispatchEvent and breaks any
 // component test that mounts a component using window event listeners.

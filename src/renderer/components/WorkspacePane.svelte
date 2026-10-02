@@ -6,18 +6,35 @@
   import { checkpointStore } from '../stores/checkpoints.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import OutputPanel from './OutputPanel.svelte';
-  import ChangesReviewPanel from './ChangesReviewPanel.svelte';
-  import CheckpointsPanel from './CheckpointsPanel.svelte';
-  import TerminalPanel from './TerminalPanel.svelte';
-  import PreviewPanel from './PreviewPanel.svelte';
   import StatusBar from './StatusBar.svelte';
+  import ThreadViewSelect from './ThreadViewSelect.svelte';
+  import ConversationGoal from './ConversationGoal.svelte';
+  import GoalFlagIcon from './GoalFlagIcon.svelte';
+  import { goalStore } from '../stores/goals.svelte.js';
   import PromptEditor from './PromptEditor.svelte';
-  import RewindDialog from './RewindDialog.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
+  import GitNotice from './GitNotice.svelte';
+  import GroveEmptyState from './GroveEmptyState.svelte';
+  import { settingsStore } from '../stores/settings.svelte.js';
+  import { conversationAgent } from '$lib/session-sprite-state.js';
+  import type { GroveTab } from '$lib/agent-sprite.js';
+  import type { AgentEvent } from '../../shared/types.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { previewStore } from '../stores/preview.svelte.js';
   import { parseTabShortcut, type WorkspaceTab } from '$lib/keyboard-shortcuts.js';
 
   let { sessionId }: { sessionId: string } = $props();
+
+  // What the tab strip shows as it widens (measured in the demo, with
+  // badges on every tab): every label from 672px (about 650px needed), wider
+  // padding and the Thread view's hidden count from 768px, and the Alt+N
+  // hints from 1024px.
+  /** Inactive tabs show only their icon when the strip is narrow. sr-only,
+   *  not hidden, so screen readers still hear the tab's name. */
+  function tabLabelClass(tab: WorkspaceTab): string {
+    return activeTab === tab ? '' : 'sr-only @2xl:not-sr-only';
+  }
+  const TAB_HINT_CLASS = 'hidden @5xl:inline text-muted-foreground/60';
 
   let activeTab = $derived(messageStore.getActiveTab(sessionId));
 
@@ -29,6 +46,10 @@
   let previewLoading = $derived(!!previewStore.getUser(sessionId)?.loading || !!previewStore.getAgent(sessionId)?.loading);
   let previewUnseen = $derived(previewStore.hasUnseenAgentActivity(sessionId));
   let previewVisible = $derived(activeTab === 'preview' && store.activeSessionId === sessionId);
+  /** A conversation in a folder without git: nothing to diff, commit or
+   *  checkpoint, so those tabs say why instead of loading. */
+  let session = $derived(store.sessions.find((s) => s.id === sessionId));
+  let noGit = $derived(!!session?.noGit);
 
   // Derive whether there's an unresolved permission request
   let hasPendingPermission = $derived(messageStore.hasPendingPermission(sessionId));
@@ -41,9 +62,29 @@
     if (activeTab === 'terminal') terminalMounted = true;
   });
 
+  // The terminal (and xterm, its largest library) loads on first visit.
+  const loadTerminalPanel = lazyComponent(() => import('./TerminalPanel.svelte'));
+
+  // The Changes and Checkpoints tabs load and mount on first visit too: their
+  // data lives in stores, so nothing is lost before then, and until visited
+  // their code stays out of startup.
+  const loadChangesPanel = lazyComponent(() => import('./ChangesReviewPanel.svelte'));
+  const loadCheckpointsPanel = lazyComponent(() => import('./CheckpointsPanel.svelte'));
+  let changesMounted = $state(false);
+  let checkpointsMounted = $state(false);
+  $effect(() => {
+    if (activeTab === 'changes') changesMounted = true;
+    if (activeTab === 'checkpoints') checkpointsMounted = true;
+  });
+
   // The Preview panel mounts on first open too. Its pages live in the main
   // process, so nothing is lost before then.
   let previewMounted = $state(false);
+  // Loaded when first needed: the Preview tab's first visit, the first rewind.
+  const loadPreviewPanel = lazyComponent(() => import('./PreviewPanel.svelte'));
+  const loadRewindDialog = lazyComponent(() => import('./RewindDialog.svelte'));
+  let rewindOpened = $state(false);
+  $effect(() => { if (messageStore.rewindDialogOpen[sessionId]) rewindOpened = true; });
   $effect(() => {
     if (activeTab === 'preview') previewMounted = true;
   });
@@ -51,6 +92,7 @@
   function switchTab(tab: WorkspaceTab) {
     if (tab === activeTab) return;
     messageStore.setActiveTab(sessionId, tab);
+    if (noGit) return;
     if (tab === 'changes') {
       gitStatusStore.refresh(sessionId);
     }
@@ -92,6 +134,8 @@
     // Always replay history on mount — clear any stale state first to avoid
     // duplicates. This is critical after refresh/restart where prior state is
     // lost but isReady might have been set by a leaked event.
+    /** The page replayed, for sorting out live events held meanwhile. */
+    let replayedPage: AgentEvent[] | null = null;
     try {
       // Clear existing messages so replay starts fresh.
       // clearSession does NOT reset isReady — that's handled below based on
@@ -108,11 +152,12 @@
 
       // Subscribe to live events BEFORE replaying history so events for a
       // session still being set up (worktree creation, npm install) aren't
-      // missed; replay then fills in prior events. Caveat: a live event that
-      // arrives during the awaited history fetch below is appended ahead of the
-      // replayed history. In practice the window is tiny (system_init arrives
-      // after mount) and the worst case is a single duplicated status line.
+      // missed. Ones that arrive while the page loads are held, then shown
+      // after the replay unless the page already has them: a new
+      // conversation's first events land in that window, and were shown
+      // twice.
       messageStore.subscribe(sessionId);
+      messageStore.holdLiveEvents(sessionId);
 
       // Suppress this session's git refreshes during replay to avoid N IPC
       // calls (per-session so concurrent pane mounts don't clear each other's).
@@ -132,6 +177,7 @@
       // array and flushes to the reactive store in one assignment at the end,
       // avoiding O(n²) array copies and hundreds of intermediate re-renders.
       messageStore.replayEvents(sessionId, page.events, skipDuringReplay, page.startIndex);
+      replayedPage = page.events;
       if (page.events.length > 0) {
         const last = page.events[page.events.length - 1];
         if (last.type === 'result' || last.type === 'process_exit') {
@@ -159,12 +205,13 @@
         message: `Failed to load conversation history: ${e?.message || e}`,
       });
     } finally {
+      messageStore.releaseLiveEvents(sessionId, replayedPage);
       gitStatusStore.unsuppressRefresh(sessionId);
       messageStore.setHistoryLoaded(sessionId, true);
     }
 
-    // Single git status refresh after replay
-    gitStatusStore.refresh(sessionId);
+    // Single git status refresh after replay (none without git)
+    if (!noGit) gitStatusStore.refresh(sessionId);
   });
 
   onDestroy(() => {
@@ -173,103 +220,165 @@
   });
 </script>
 
+{#snippet noGitNote(scene: GroveTab, tab: string, why: string)}
+  {@const agent = settingsStore.current.groveCharacters ? conversationAgent(sessionId) : null}
+  <div class="flex-1 flex items-center justify-center p-6">
+    {#if agent}
+      <!-- The conversation's agent on its bench, as in the sidebar: typing
+           while it edits your files in place, sitting when it's idle. -->
+      <GroveEmptyState variant="agent" {agent} tab={scene}>
+        <p class="text-sm mt-5 mb-2 text-foreground/80">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground max-w-md">This conversation runs without git, so {why}</p>
+      </GroveEmptyState>
+    {:else}
+      <div class="max-w-md text-center">
+        <p class="text-sm text-foreground">{tab} needs git</p>
+        <p class="text-xs text-muted-foreground mt-1">This conversation runs without git, so {why}</p>
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <div class="flex flex-col h-full bg-background">
-  <!-- Tab bar -->
-  <div class="flex items-center border-b border-border bg-card/50 shrink-0">
-    <button
-      onclick={() => switchTab('activity')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'activity'
-        ? 'border-primary text-foreground'
-        : 'border-transparent text-muted-foreground hover:text-foreground'}"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 13h8v6h2v2h-2v2h-2v-8H2v-4h2v2Zm12 6h-2v-2h2v2Zm2-2h-2v-2h2v2Zm2-2h-2v-2h2v2Zm-6-6h8v4h-2v-2h-8V5h-2V3h2V1h2v8Zm-8 2H4V9h2v2Zm2-2H6V7h2v2Zm2-2H8V5h2v2Z"/></svg>
-      Activity
-      {#if hasPendingPermission}
-        <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
-      {:else if isRunning}
-        <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+  <!-- Tab bar. The window can be 800px wide with the sidebar open, which
+       leaves about 480px here: narrow, only the open tab keeps its label
+       (the rest are icons, named for screen readers and in the tooltip),
+       and the Alt+N hints show only when everything fits. -->
+  <div class="@container flex items-center border-b border-border bg-card/50 shrink-0">
+    <!-- The Thread tab carries its view picker while it is the open tab. -->
+    <div class="flex items-stretch border-b-2 {activeTab === 'activity' ? 'border-primary' : 'border-transparent'}">
+      <button
+        onclick={() => switchTab('activity')}
+        class="{activeTab === 'activity' ? 'pl-3 @3xl:pl-4 pr-1' : 'px-3 @3xl:px-4'} py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 {activeTab === 'activity'
+          ? 'text-foreground'
+          : 'text-muted-foreground hover:text-foreground'}"
+        title="Thread (Alt+1)"
+      >
+        <!-- A pixel chat bubble: two lines of text, tail at the bottom left. -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M4 4h16v2H4ZM2 6h2v16H2Zm18 0h2v10h-2ZM8 16h12v2H8Zm-2 2h2v2H6Zm-2 2h2v2H4ZM6 8h12v2H6Zm0 4h8v2H6Z"/></svg>
+        <span class={tabLabelClass('activity')}>Thread</span>
+        {#if hasPendingPermission}
+          <span class="inline-block w-2 h-2 bg-amber-500 animate-pulse"></span>
+        {:else if isRunning}
+          <span class="inline-block w-2 h-2 bg-primary animate-pulse"></span>
+        {/if}
+        <span class="{TAB_HINT_CLASS} ml-1">Alt+1</span>
+      </button>
+      {#if activeTab === 'activity'}
+        <ThreadViewSelect {sessionId} />
+        {#if settingsStore.current.showConversationGoal && goalStore.get(sessionId).hidden}
+          <!-- The goal bar was closed for this conversation: bring it back. -->
+          <button
+            onclick={() => goalStore.setHidden(sessionId, false)}
+            class="pr-3 text-muted-foreground hover:text-foreground transition-colors"
+            title="Show the conversation goal"
+            aria-label="Show the conversation goal"
+          >
+            <GoalFlagIcon />
+          </button>
+        {/if}
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+1</span>
-    </button>
+    </div>
     <button
       onclick={() => switchTab('changes')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'changes'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'changes'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Changes (Alt+2)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 24 24" class="shrink-0"><path d="M16 19h2v2H4v-2h10v-2h2v2ZM6 15h8v2H4v2H2v-4h2V5h2v10ZM20 5h2v6h-2v8h-2V5H6V3h14v2Z"/></svg>
-      Changes
+      <span class={tabLabelClass('changes')}>Changes</span>
       {#if hasChanges}
         <span class="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
           {gitStatus.entries.length}
         </span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+2</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+2</span>
     </button>
     <button
       onclick={() => switchTab('checkpoints')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'checkpoints'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'checkpoints'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Checkpoints (Alt+3)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
-      Checkpoints
+      <span class={tabLabelClass('checkpoints')}>Checkpoints</span>
       {#if checkpointCount > 0}
         <span class="bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 leading-none font-bold">
           {checkpointCount}
         </span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+3</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+3</span>
     </button>
     <button
       onclick={() => switchTab('terminal')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'terminal'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'terminal'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
+      title="Terminal (Alt+4)"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><polyline points="4,6 10,12 4,18"/><line x1="12" y1="18" x2="20" y2="18"/></svg>
-      Terminal
+      <span class={tabLabelClass('terminal')}>Terminal</span>
       {#if terminalRunning}
         <span class="inline-block w-2 h-2 bg-green-500 animate-pulse"></span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+4</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+4</span>
     </button>
     <button
       onclick={() => switchTab('preview')}
-      class="px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
+      class="px-3 @3xl:px-4 py-1.5 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 {activeTab === 'preview'
         ? 'border-primary text-foreground'
         : 'border-transparent text-muted-foreground hover:text-foreground'}"
-      title="Browse your app, and watch Claude's page when it checks its work"
+      title="Preview (Alt+5): browse your app, and watch the agent's page when it checks its work"
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" class="shrink-0"><rect x="3" y="4" width="18" height="16"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="6" y1="6.5" x2="7" y2="6.5"/></svg>
-      Preview
+      <span class={tabLabelClass('preview')}>Preview</span>
       {#if previewUnseen}
-        <span class="inline-block w-2 h-2 bg-primary" title="Claude used the browser"></span>
+        <span class="inline-block w-2 h-2 bg-primary" title="The agent used the browser"></span>
       {:else if previewLoading}
         <span class="inline-block w-2 h-2 bg-primary/60 animate-pulse"></span>
       {/if}
-      <span class="text-muted-foreground/60 ml-1">Alt+5</span>
+      <span class="{TAB_HINT_CLASS} ml-1">Alt+5</span>
     </button>
   </div>
 
   <!-- Tab content -->
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'activity' ? '' : 'hidden'}">
+    <ConversationGoal {sessionId} />
     <OutputPanel {sessionId} />
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'changes' ? '' : 'hidden'}">
-    <ChangesReviewPanel {sessionId} />
+    <GitNotice />
+    {#if noGit}
+      {@render noGitNote('changes', 'Changes', 'there is nothing to compare the files against. The agent edits your files in place; check them in your editor or file explorer.')}
+    {:else if changesMounted}
+      {#await loadChangesPanel() then ChangesReviewPanel}
+        <ChangesReviewPanel {sessionId} />
+      {/await}
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'checkpoints' ? '' : 'hidden'}">
-    <CheckpointsPanel {sessionId} />
+    {#if noGit}
+      {@render noGitNote('checkpoints', 'Checkpoints', 'no checkpoints are saved and file edits can\'t be restored. You can still rewind the conversation from a message in the Thread tab; files stay as they are.')}
+    {:else if checkpointsMounted}
+      {#await loadCheckpointsPanel() then CheckpointsPanel}
+        <CheckpointsPanel {sessionId} />
+      {/await}
+    {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'terminal' ? '' : 'hidden'}">
     {#if terminalMounted}
-      <TerminalPanel {sessionId} />
+      {#await loadTerminalPanel() then TerminalPanel}
+        <TerminalPanel {sessionId} />
+      {/await}
     {/if}
   </div>
   <div class="flex-1 overflow-hidden flex flex-col {activeTab === 'preview' ? '' : 'hidden'}">
     {#if previewMounted}
-      <PreviewPanel {sessionId} active={previewVisible} />
+      {#await loadPreviewPanel() then PreviewPanel}
+        <PreviewPanel {sessionId} active={previewVisible} />
+      {/await}
     {/if}
   </div>
 
@@ -286,9 +395,13 @@
         onclick={() => switchTab('activity')}
         class="text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        Switch to Activity to send messages (Alt+1)
+        Switch to Thread to send messages (Alt+1)
       </button>
     </div>
   {/if}
-  <RewindDialog {sessionId} />
+  {#if rewindOpened}
+    {#await loadRewindDialog() then RewindDialog}
+      <RewindDialog {sessionId} />
+    {/await}
+  {/if}
 </div>

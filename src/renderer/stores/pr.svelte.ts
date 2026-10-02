@@ -5,8 +5,16 @@ import { buildFixCiPrompt, buildAddressReviewsPrompt } from '../lib/pr-prompt.js
 import { notifyOs } from '../lib/os-notify.js';
 import { detectPrEvents, newPrWatchState, isTrustedAssociation } from '../lib/pr-watch.js';
 import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
+import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
 
 const POLL_MS = 60_000;
+/** Conversations the user hasn't looked at for a while are refreshed this
+ *  often instead of every sweep. Each refresh is a gh call per branch, and
+ *  they all share the account's GitHub rate limit with the agents' own gh. */
+const IDLE_POLL_MS = 5 * 60_000;
+/** How long after the user last had a conversation on screen it still counts
+ *  as recently viewed, and so stays on the full rate. */
+const RECENT_VIEW_MS = 10 * 60_000;
 const THROTTLE_MS = 5_000;
 /** The sweep stops waiting on one session's fetch after this long and moves
  *  on. The main-side gh call has its own (shorter) timeout; this is the
@@ -32,6 +40,41 @@ export interface PrAutoConfig {
   addressReviews: boolean;
 }
 
+const AUTO_OFF: PrAutoConfig = { fixCi: false, addressReviews: false };
+
+/** The Auto toggles are kept per conversation in localStorage, so a restart
+ *  keeps them (the key is dropped when both are off, or the conversation is
+ *  deleted). */
+const AUTO_STORAGE_PREFIX = 'grove-bench:pr-auto:';
+
+function loadAuto(sessionId: string): PrAutoConfig {
+  try {
+    const raw = localStorage.getItem(AUTO_STORAGE_PREFIX + sessionId);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PrAutoConfig>;
+      return { fixCi: parsed.fixCi === true, addressReviews: parsed.addressReviews === true };
+    }
+  } catch { /* storage unavailable or corrupt: start with both off */ }
+  return AUTO_OFF;
+}
+
+function persistAuto(sessionId: string, auto: PrAutoConfig): void {
+  try {
+    if (!auto.fixCi && !auto.addressReviews) localStorage.removeItem(AUTO_STORAGE_PREFIX + sessionId);
+    else localStorage.setItem(AUTO_STORAGE_PREFIX + sessionId, JSON.stringify(auto));
+  } catch { /* best-effort */ }
+}
+
+/** A failed push, and the branch it was pushing. The error only applies
+ *  while the conversation is still on that branch. */
+interface PushError {
+  message: string;
+  branch: string;
+  /** The last sync fetch started before it failed (see syncFetches), so
+   *  that fetch landing late can't clear it with a count from before. */
+  afterFetch: number;
+}
+
 /** PR + branch-sync state per session. Polls all sessions once App starts the
  *  global sweep; detects new CI failures / review feedback and either surfaces
  *  an alert or (when auto mode is on) sends a fix turn to the session's agent.
@@ -50,15 +93,29 @@ class PrStore {
   syncBySession = $state<Record<string, GitSyncStatus>>({});
   alertsBySession = $state<Record<string, PrAlert[]>>({});
   autoBySession = $state<Record<string, PrAutoConfig>>({});
-  /** True after a fetch fails — the displayed PR data may be stale. */
+  /** True after the gh fetch fails — the displayed PR data may be stale. A
+   *  local sync failure doesn't count: the PR data didn't come from it. */
   fetchFailedBySession = $state<Record<string, boolean>>({});
+  /** The last failed push per session, whichever button started it (the
+   *  status bar's ↑N or the Changes tab's "& Push"), so both agree. */
+  pushErrorBySession = $state<Record<string, PushError>>({});
 
+  /** Auto toggles read from storage but not changed since. Kept outside the
+   *  reactive record so a read from inside a $derived never mutates state. */
+  private loadedAuto = new Map<string, PrAutoConfig>();
+  /** Sync fetches started so far, across sessions (see PushError.afterFetch). */
+  private syncFetches = 0;
   private lastFetch = new Map<string, number>();
+  /** When the user last had each session on screen (see setViewing). */
+  private lastViewed = new Map<string, number>();
+  private viewingId: string | null = null;
   /** Watch state per session, per PR number. Kept per PR so switching the
    *  primary back and forth doesn't replay a PR's old feedback as new. */
   private watchStates = new Map<string, Map<number, PrWatchState>>();
-  /** Auto-fix attempts on the current head commit of the primary PR, per session. */
-  private autoFixAttempts = new Map<string, { prNumber: number; sha: string; attempts: number }>();
+  /** Auto-fix attempts on the primary PR since its CI was last green, per
+   *  session. Counted per PR, not per commit: each fix the agent pushes is a
+   *  new commit, so a per-commit count would never reach the limit. */
+  private autoFixAttempts = new Map<string, { prNumber: number; attempts: number }>();
   private globalTimer: ReturnType<typeof setTimeout> | null = null;
   private sweeping = false;
   private getPolledSessionIds: (() => string[]) | null = null;
@@ -101,14 +158,36 @@ class PrStore {
   }
 
   getAuto(sessionId: string): PrAutoConfig {
-    return this.autoBySession[sessionId] ?? { fixCi: false, addressReviews: false };
+    const live = this.autoBySession[sessionId];
+    if (live) return live;
+    let saved = this.loadedAuto.get(sessionId);
+    if (!saved) {
+      saved = loadAuto(sessionId);
+      this.loadedAuto.set(sessionId, saved);
+    }
+    return saved;
   }
 
   setAuto(sessionId: string, patch: Partial<PrAutoConfig>): void {
-    this.autoBySession = {
-      ...this.autoBySession,
-      [sessionId]: { ...this.getAuto(sessionId), ...patch },
-    };
+    const next = { ...this.getAuto(sessionId), ...patch };
+    this.loadedAuto.set(sessionId, next);
+    this.autoBySession = { ...this.autoBySession, [sessionId]: next };
+    persistAuto(sessionId, next);
+  }
+
+  /** The last push error, while the conversation is still on the branch it
+   *  was pushing; '' when there is none. */
+  getPushError(sessionId: string): string {
+    const err = this.pushErrorBySession[sessionId];
+    if (!err) return '';
+    const branch = sessionStore.sessions.find((s) => s.id === sessionId)?.branch ?? '';
+    return err.branch === branch ? err.message : '';
+  }
+
+  dismissPushError(sessionId: string): void {
+    if (!(sessionId in this.pushErrorBySession)) return;
+    const { [sessionId]: _drop, ...rest } = this.pushErrorBySession;
+    this.pushErrorBySession = rest;
   }
 
   dismissAlert(sessionId: string, id: number): void {
@@ -116,6 +195,14 @@ class PrStore {
       ...this.alertsBySession,
       [sessionId]: (this.alertsBySession[sessionId] ?? []).filter((a) => a.id !== id),
     };
+  }
+
+  /** The user has looked at the primary PR's alerts (closed its popover), so
+   *  CI failures and new comments are no longer "new". A needs-human note
+   *  stays until dismissed: it asks the user to act, not just to look. */
+  markAlertsSeen(sessionId: string): void {
+    this.clearAlerts(sessionId, 'ci_failed');
+    this.clearAlerts(sessionId, 'new_comments');
   }
 
   async refresh(sessionId: string, force = false): Promise<void> {
@@ -132,17 +219,24 @@ class PrStore {
     // must not discard a fresh local sync count, and vice versa. Whatever
     // succeeded is stored; a failure keeps the previous snapshot and flags
     // it stale rather than showing "no PR" for a branch that has one.
+    const fetchNo = ++this.syncFetches;
     const [pr, sync] = await Promise.allSettled([
       window.groveBench.getPrs(sessionId),
       window.groveBench.getGitSyncStatus(sessionId),
     ]);
     if (sync.status === 'fulfilled') {
       this.syncBySession = { ...this.syncBySession, [sessionId]: sync.value };
+      // Nothing left to push (the agent or a terminal pushed it), so an
+      // earlier failure no longer applies. Needs an upstream: a branch that
+      // was never pushed also reports ahead 0. Only a failure from before
+      // this fetch started: one that landed during it is newer than the count.
+      const pushErr = this.pushErrorBySession[sessionId];
+      if (pushErr && pushErr.afterFetch < fetchNo && sync.value.upstream && sync.value.ahead === 0) this.dismissPushError(sessionId);
     }
     if (pr.status === 'fulfilled') {
       this.prsBySession = { ...this.prsBySession, [sessionId]: pr.value };
     }
-    const failed = pr.status === 'rejected' || sync.status === 'rejected';
+    const failed = pr.status === 'rejected';
     if (failed !== (this.fetchFailedBySession[sessionId] ?? false)) {
       this.fetchFailedBySession = { ...this.fetchFailedBySession, [sessionId]: failed };
     }
@@ -151,7 +245,32 @@ class PrStore {
     if (pr.status === 'fulfilled') this.handleDetection(sessionId);
   }
 
-  /** Poll every open session (focused or not) — started once from App.
+  /** The conversation the user now has on screen (null for none). It is
+   *  polled every sweep, and fetched straight away when its data is older
+   *  than one poll, since it may have been on the idle cadence. The one being
+   *  left counts as viewed until now. */
+  setViewing(sessionId: string | null): void {
+    const now = Date.now();
+    if (this.viewingId) this.lastViewed.set(this.viewingId, now);
+    this.viewingId = sessionId;
+    if (!sessionId) return;
+    this.lastViewed.set(sessionId, now);
+    if (now - (this.lastFetch.get(sessionId) ?? 0) >= POLL_MS) void this.refresh(sessionId, true);
+  }
+
+  /** Refreshed on every sweep: the conversation on screen, one viewed
+   *  recently, or one with PR automation on (it acts on CI and reviews as
+   *  they land). The rest wait for IDLE_POLL_MS between refreshes. */
+  private pollsEverySweep(sessionId: string, now: number): boolean {
+    if (sessionId === this.viewingId) return true;
+    const auto = this.getAuto(sessionId);
+    if (auto.fixCi || auto.addressReviews) return true;
+    const viewed = this.lastViewed.get(sessionId);
+    return viewed !== undefined && now - viewed < RECENT_VIEW_MS;
+  }
+
+  /** Poll every open session (focused or not; idle ones less often, see
+   *  pollsEverySweep) — started once from App.
    *  Self-scheduling so a slow sweep never overlaps the next one. Sweeps are
    *  skipped while the window is hidden and one runs as soon as it is shown
    *  again, so a minimised app doesn't come back to minute-old checks. */
@@ -192,6 +311,8 @@ class PrStore {
       // session; skip the sweep entirely while the window is hidden.
       if (typeof document === 'undefined' || !document.hidden) {
         for (const id of this.getPolledSessionIds()) {
+          const now = Date.now();
+          if (!this.pollsEverySweep(id, now) && now - (this.lastFetch.get(id) ?? 0) < IDLE_POLL_MS) continue;
           await withTimeout(this.refresh(id, true), SWEEP_REFRESH_TIMEOUT_MS);
         }
       }
@@ -211,9 +332,18 @@ class PrStore {
     return () => {};
   }
 
-  /** Push the session branch to origin (sets upstream on first push). */
+  /** Push the session branch to origin (sets upstream on first push). A
+   *  failure is kept for the status bar (see getPushError) and rethrown. */
   async push(sessionId: string): Promise<void> {
-    await window.groveBench.push(sessionId);
+    const branch = sessionStore.sessions.find((s) => s.id === sessionId)?.branch ?? '';
+    this.dismissPushError(sessionId);
+    try {
+      await window.groveBench.push(sessionId);
+    } catch (e) {
+      const message = stripIpcErrorPrefix(e instanceof Error ? e.message : String(e ?? '')) || 'Push failed';
+      this.pushErrorBySession = { ...this.pushErrorBySession, [sessionId]: { message, branch, afterFetch: this.syncFetches } };
+      throw e;
+    }
     await this.refresh(sessionId, true);
   }
 
@@ -274,6 +404,11 @@ class PrStore {
     // whatever the previous primary had seen.
     const pr = this.getPr(sessionId);
     if (!pr) return;
+    // CI green again: auto-fix gets its full set of attempts back.
+    const checks = pr.checks;
+    if (checks && checks.failed === 0 && checks.pending === 0 && this.autoFixAttempts.get(sessionId)?.prNumber === pr.number) {
+      this.autoFixAttempts.delete(sessionId);
+    }
     let states = this.watchStates.get(sessionId);
     if (!states) {
       states = new Map();
@@ -296,18 +431,17 @@ class PrStore {
 
     if (event.kind === 'ci_failed') {
       if (auto.fixCi) {
-        const sha = this.getPr(sessionId)?.headSha ?? 'unknown';
         const prev = this.autoFixAttempts.get(sessionId);
-        const attempts = prev?.prNumber === prNumber && prev.sha === sha ? prev.attempts : 0;
+        const attempts = prev?.prNumber === prNumber ? prev.attempts : 0;
         if (attempts >= MAX_AUTO_FIX_ATTEMPTS) {
           this.addAlert(sessionId, prNumber, {
             kind: 'needs_human',
-            reason: `Auto-fix attempted ${attempts}× on this commit without CI going green — take a look`,
+            reason: `Auto-fix tried ${attempts} times on this PR and CI is still failing. Take a look`,
           });
           return;
         }
         if (this.fixCiWithAgent(sessionId)) {
-          this.autoFixAttempts.set(sessionId, { prNumber, sha, attempts: attempts + 1 });
+          this.autoFixAttempts.set(sessionId, { prNumber, attempts: attempts + 1 });
           return;
         }
       }
@@ -375,6 +509,7 @@ class PrStore {
 
   clear(sessionId: string): void {
     this.lastFetch.delete(sessionId);
+    this.lastViewed.delete(sessionId);
     this.watchStates.delete(sessionId);
     this.autoFixAttempts.delete(sessionId);
     const { [sessionId]: _p, ...restPrs } = this.prsBySession;
@@ -387,8 +522,11 @@ class PrStore {
     this.alertsBySession = restAlerts;
     const { [sessionId]: _c, ...restAuto } = this.autoBySession;
     this.autoBySession = restAuto;
+    this.loadedAuto.delete(sessionId);
+    persistAuto(sessionId, AUTO_OFF); // drops the saved toggles
     const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
     this.fetchFailedBySession = restFailed;
+    this.dismissPushError(sessionId);
   }
 }
 

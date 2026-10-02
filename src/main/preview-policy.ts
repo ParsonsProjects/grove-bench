@@ -2,17 +2,17 @@
  * Which top-level URLs each Preview page may load.
  *
  * - Your page (the one you drive in the Preview tab): any http(s) site.
- * - Claude's page (driven by the agent's browser tools): local http(s) only
+ * - The agent's page (driven by its browser tools): local http(s) only
  *   (localhost, 127.x, [::1]), so a prompt-injected page can't send the agent
  *   off to another site.
  * - Both: about:blank, and file:// URLs inside the conversation's worktree.
- *   Claude's page only opens .html/.htm files, so preview_read can't be used
+ *   The agent's page only opens .html/.htm files, so preview_read can't be used
  *   to read files (like .env) that the user's read rules keep from the agent.
  *
  * checkNavigation covers top-level navigations. A local app can still load
  * scripts, fonts and API calls from anywhere, like a normal browser. File
  * loads are the exception (checkFileRequest): a page, frame, image or script
- * from file:// must come from inside the worktree, and Claude's page only
+ * from file:// must come from inside the worktree, and the agent's page only
  * loads web file types, so an iframe or script tag can't show it a .env or a
  * key file either.
  */
@@ -35,7 +35,7 @@ export function checkNavigation(url: string, audience: PreviewAudience, worktree
     if (audience === 'user' || isLocalHttpUrl(u.href)) return { ok: true };
     return {
       ok: false,
-      reason: `Claude's browser only opens local pages (localhost, 127.0.0.1, [::1]) or .html files in this conversation's worktree, not ${u.host}.`,
+      reason: `The agent's browser only opens local pages (localhost, 127.0.0.1, [::1]) or .html files in this conversation's worktree, not ${u.host}.`,
     };
   }
 
@@ -45,7 +45,7 @@ export function checkNavigation(url: string, audience: PreviewAudience, worktree
       return { ok: false, reason: `Only files inside this conversation's worktree can be opened (${worktreePath}).` };
     }
     if (audience === 'agent' && !/\.html?$/i.test(filePath)) {
-      return { ok: false, reason: "Claude's browser only opens .html files from the worktree. Use the Read tool for other files." };
+      return { ok: false, reason: "The agent's browser only opens .html files from the worktree. Use the Read tool for other files." };
     }
     return { ok: true };
   }
@@ -66,7 +66,7 @@ const WEB_FILE = /\.(?:html?|css|m?js|png|jpe?g|gif|svg|webp|avif|ico|bmp|woff2?
 
 /**
  * Whether a file:// request (page, frame, image, script, fetch...) may load.
- * Both pages: only files inside the worktree. Claude's page: only web file
+ * Both pages: only files inside the worktree. The agent's page: only web file
  * types too. Non-file URLs are not this check's business and pass.
  */
 export function checkFileRequest(url: string, audience: PreviewAudience, worktreePath: string): NavigationCheck {
@@ -76,7 +76,7 @@ export function checkFileRequest(url: string, audience: PreviewAudience, worktre
   const filePath = worktreeFile(u, worktreePath);
   if (!filePath) return { ok: false, reason: `Blocked a file outside this conversation's worktree: ${url}` };
   if (audience === 'agent' && !WEB_FILE.test(filePath)) {
-    return { ok: false, reason: `Blocked a non-web file in Claude's browser: ${url}` };
+    return { ok: false, reason: `Blocked a non-web file in the agent's browser: ${url}` };
   }
   return { ok: true };
 }

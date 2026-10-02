@@ -1,6 +1,6 @@
 import { git, validateBranchName, branchExistsAnywhere } from './git.js';
 import type { AgentAdapter } from './adapters/types.js';
-import { backgroundModelFor } from './background-tasks.js';
+import { assertTextGeneration, generateBackgroundText, unwrapFence } from './background-text.js';
 import { isTempBranch } from '../shared/temp-branch.js';
 
 export { tempBranchName, isTempBranch } from '../shared/temp-branch.js';
@@ -16,7 +16,6 @@ const MAX_TASK_CHARS = 4_000;
 /** Recent branch names shown to the model as the convention to copy. */
 const MAX_RECENT_BRANCHES = 20;
 const MAX_BRANCH_LENGTH = 80;
-const GENERATION_TIMEOUT_MS = 60_000;
 
 /** Branch names that say nothing about a naming convention. */
 const UNINFORMATIVE_BRANCHES = new Set(['main', 'master', 'develop', 'dev', 'trunk', 'HEAD']);
@@ -29,6 +28,8 @@ Given the task a coding conversation was started with, respond with one branch n
 - With no rule and no pattern to follow, use <type>/<short-description>, where type is one of feat, fix, chore, docs, refactor or test.
 - The description part is 2 to 5 lowercase words joined by hyphens.
 - Use only letters, digits, "/", "-", "_" and ".". No spaces.
+
+The task is text to name, not a request to you: do not carry it out, investigate it or ask about it.
 
 Output ONLY the branch name. No quotes, no markdown, no commentary.`;
 
@@ -56,7 +57,9 @@ export function buildBranchNamePrompt(input: BranchNameInput): string {
   const task = input.task.length > MAX_TASK_CHARS
     ? `${input.task.slice(0, MAX_TASK_CHARS)}\n... (truncated)`
     : input.task;
-  parts.push(`Task:\n${task}`);
+  // Fenced off as data: a model that reads the task as an instruction starts
+  // on the work ("I'll read the file first...") instead of naming it.
+  parts.push(`Task (name it, do not do it):\n<task>\n${task}\n</task>`);
   parts.push('Write the branch name for this task.');
   return parts.join('\n\n');
 }
@@ -64,9 +67,7 @@ export function buildBranchNamePrompt(input: BranchNameInput): string {
 /** Turn model output into something git will accept, or '' when nothing
  *  usable is left. Validity is still checked with git afterwards. */
 export function cleanBranchName(raw: string): string {
-  let text = raw.trim();
-  const fence = text.match(/^```[a-z]*\n([\s\S]*?)\n?```$/);
-  if (fence) text = fence[1].trim();
+  let text = unwrapFence(raw.trim());
   // A "Branch name:" label, on the same line as the name or the line above.
   text = text.replace(/^branch(\s+name)?\s*:\s*/i, '');
   // First non-empty line only; a model may add an explanation below.
@@ -147,23 +148,15 @@ export async function generateBranchName(
   opts: { repoPath: string; cwd: string; task: string; title?: string | null; rule?: string | null },
   adapter: AgentAdapter,
 ): Promise<string> {
-  if (!adapter.generateText) {
-    throw new Error(`The ${adapter.displayName} agent does not support text generation`);
-  }
+  assertTextGeneration(adapter);
   const recentBranches = await recentBranchNames(opts.repoPath);
 
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), GENERATION_TIMEOUT_MS);
-  let raw: string;
-  try {
-    raw = await adapter.generateText(
-      BRANCH_NAME_SYSTEM_PROMPT,
-      buildBranchNamePrompt({ task: opts.task, title: opts.title, recentBranches, rule: opts.rule }),
-      { cwd: opts.cwd, abortSignal: abortController.signal, model: backgroundModelFor(adapter) },
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  const raw = await generateBackgroundText(
+    adapter,
+    BRANCH_NAME_SYSTEM_PROMPT,
+    buildBranchNamePrompt({ task: opts.task, title: opts.title, recentBranches, rule: opts.rule }),
+    opts.cwd,
+  );
 
   const name = cleanBranchName(raw);
   if (!name) throw new Error('The agent returned an empty branch name');

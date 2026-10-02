@@ -148,6 +148,16 @@ describe('processFiles', () => {
     expect(result.skipped).toHaveLength(0);
   });
 
+  it('skips images when the agent can\'t take them, and keeps text files', async () => {
+    const result = await processFiles(
+      [makeFile('photo.png', 'fake-png-data', 'image/png'), makeFile('a.ts', 'x', 'text/typescript')],
+      [],
+      { allowImages: false },
+    );
+    expect(result.files.map((f) => f.name)).toEqual(['a.ts']);
+    expect(result.skipped).toEqual(["photo.png (this agent can't take images)"]);
+  });
+
   it('skips unsupported file types', async () => {
     const file = makeFile('archive.zip', 'data', 'application/zip');
     const result = await processFiles([file], []);

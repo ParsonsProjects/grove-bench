@@ -3,7 +3,7 @@ import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AdapterPrerequisiteStatus, AgentAdapter } from './adapters/types.js';
-import { canStoreApiKey, hasApiKey } from './credentials.js';
+import { canStoreApiKey, hasApiKey, isApiKeyRejected, isApiKeyUnverified } from './credentials.js';
 
 const MIN_GIT_MAJOR = 2;
 const MIN_GIT_MINOR = 17;
@@ -71,11 +71,15 @@ export async function checkAgents(): Promise<Record<string, AgentPrerequisiteSta
  *  key itself. Undefined when the adapter takes no API key. */
 export function apiKeyState(adapter: AgentAdapter): AgentPrerequisiteStatus['apiKey'] {
   if (!adapter.apiKey) return undefined;
+  const saved = hasApiKey(adapter.id);
   return {
     label: adapter.apiKey.label,
     helpUrl: adapter.apiKey.helpUrl,
-    saved: hasApiKey(adapter.id),
+    ...(adapter.apiKey.billingNote ? { billingNote: adapter.apiKey.billingNote } : {}),
+    saved,
     canStore: canStoreApiKey(),
+    ...(saved && isApiKeyRejected(adapter.id) ? { rejected: true } : {}),
+    ...(saved && isApiKeyUnverified(adapter.id) ? { unverified: true } : {}),
   };
 }
 
@@ -102,5 +106,6 @@ function buildAgentStatus(agentStatus: AdapterPrerequisiteStatus, adapter: Agent
     errorMessage,
     authErrorMessage,
     apiKey: apiKeyState(adapter),
+    ...(adapter.cliSignIn ? { cliSignIn: { ...adapter.cliSignIn } } : {}),
   };
 }

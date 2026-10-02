@@ -30,7 +30,8 @@ describe('GitNotice', () => {
   it('explains a missing git without blocking the app', () => {
     store.prerequisites = { git: { available: false }, agents };
     render(GitNotice);
-    expect(screen.getByRole('status')).toHaveTextContent('Git was not found');
+    expect(screen.getByRole('status')).toHaveTextContent("Git isn't installed. Without it, the agent edits your project folder in place");
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
   });
 
   it('names the old version', () => {
@@ -47,13 +48,5 @@ describe('GitNotice', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Re-check' }));
 
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
-  });
-
-  it('can be dismissed', async () => {
-    store.prerequisites = { git: { available: false }, agents };
-    render(GitNotice);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

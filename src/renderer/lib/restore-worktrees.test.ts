@@ -21,13 +21,13 @@ beforeEach(() => {
 });
 
 describe('restoreWorktrees', () => {
-  it('does not remove repo when validateRepo throws', async () => {
+  it('does not remove repo when repoKind throws', async () => {
     store.repos = ['/repo/a', '/repo/b'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
-    mockGroveBench.validateRepo
+    mockGroveBench.repoKind
       .mockRejectedValueOnce(new Error('ENOENT'))
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce('git');
     mockGroveBench.listWorktrees.mockResolvedValueOnce([]);
 
     await restoreWorktrees();
@@ -40,7 +40,6 @@ describe('restoreWorktrees', () => {
     store.repos = ['/repo/a'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
-    mockGroveBench.validateRepo.mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockRejectedValueOnce(new Error('git error'));
 
     await restoreWorktrees();
@@ -58,11 +57,11 @@ describe('restoreWorktrees', () => {
     expect(store.repos).toContain('/repo/a');
   });
 
-  it('keeps repo when validateRepo returns false (e.g. git not in PATH)', async () => {
+  it('keeps a project whose folder is gone, without restoring its conversations', async () => {
     store.repos = ['/repo/a'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
-    mockGroveBench.validateRepo.mockResolvedValueOnce(false);
+    mockGroveBench.repoKind.mockResolvedValueOnce('missing');
 
     await restoreWorktrees();
 
@@ -70,11 +69,40 @@ describe('restoreWorktrees', () => {
     expect(mockGroveBench.listWorktrees).not.toHaveBeenCalled();
   });
 
+  it('restores a folder project without git and its conversations', async () => {
+    store.repos = ['/notes'];
+
+    mockGroveBench.listSessions.mockResolvedValueOnce([]);
+    mockGroveBench.repoKind.mockResolvedValueOnce('folder');
+    mockGroveBench.listWorktrees.mockResolvedValueOnce([
+      makeWorktree({ id: 'n1', branch: '', repoPath: '/notes', path: '/notes', direct: true, noGit: true }),
+    ]);
+
+    await restoreWorktrees();
+
+    expect(store.isFolderProject('/notes')).toBe(true);
+    expect(store.sessions).toHaveLength(1);
+    expect(store.sessions[0]).toMatchObject({ id: 'n1', branch: '', direct: true, noGit: true });
+    store.setFolderProject('/notes', false);
+  });
+
+  it('clears the folder mark once a project has become a git repository', async () => {
+    store.repos = ['/notes'];
+    store.setFolderProject('/notes', true);
+
+    mockGroveBench.listSessions.mockResolvedValueOnce([]);
+    mockGroveBench.repoKind.mockResolvedValueOnce('git');
+    mockGroveBench.listWorktrees.mockResolvedValueOnce([]);
+
+    await restoreWorktrees();
+
+    expect(store.isFolderProject('/notes')).toBe(false);
+  });
+
   it('restores worktree sessions from valid repos', async () => {
     store.repos = ['/repo/a'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
-    mockGroveBench.validateRepo.mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
       makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
     ]);
@@ -92,7 +120,6 @@ describe('restoreWorktrees', () => {
     mockGroveBench.listSessions.mockResolvedValueOnce([
       makeSessionInfo({ id: 'wt1', status: 'running', displayName: 'My Session' }),
     ]);
-    mockGroveBench.validateRepo.mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
       makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
     ]);
@@ -111,7 +138,6 @@ describe('restoreWorktrees', () => {
     mockGroveBench.listSessions.mockResolvedValueOnce([
       makeSessionInfo({ id: 'wt1', status: 'sleeping' }),
     ]);
-    mockGroveBench.validateRepo.mockResolvedValueOnce(true);
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
       makeWorktree({ id: 'wt1', branch: 'feat/test', direct: false }),
     ]);
@@ -128,9 +154,9 @@ describe('restoreWorktrees', () => {
     store.repos = ['/repo/a', '/repo/b'];
 
     mockGroveBench.listSessions.mockResolvedValueOnce([]);
-    mockGroveBench.validateRepo
+    mockGroveBench.repoKind
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce('git');
     mockGroveBench.listWorktrees.mockResolvedValueOnce([
       makeWorktree({ id: 'wt1', branch: 'main', direct: true }),
     ]);

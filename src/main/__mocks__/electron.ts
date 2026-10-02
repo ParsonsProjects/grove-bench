@@ -66,6 +66,11 @@ export const shell = {
   openExternal: vi.fn(),
 };
 
+export const protocol = {
+  registerSchemesAsPrivileged: vi.fn(),
+  handle: vi.fn(),
+};
+
 // Reversible stand-in for OS encryption so tests can check nothing is stored
 // in plain text.
 export const safeStorage = {
@@ -107,4 +112,10 @@ export default {
   nativeTheme,
   contextBridge,
   Notification,
+};
+
+// Network requests made from main (e.g. checking an API key). Tests that
+// care pass their own fetch; this keeps anything else off the network.
+export const net = {
+  fetch: vi.fn(async () => ({ ok: false, status: 0 })),
 };

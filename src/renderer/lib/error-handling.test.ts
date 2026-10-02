@@ -28,6 +28,20 @@ describe('shortMessage', () => {
     expect(s.length).toBe(200);
     expect(s.endsWith('…')).toBe(true);
   });
+
+  it('suggests a restart after an uncaught exception in main', () => {
+    expect(shortMessage({ source: 'main', kind: 'uncaughtException', message: 'm', timestamp: 0 }))
+      .toBe('Background error: m Restart Grove Bench when you can.');
+    // Only there: a rejected promise or a renderer error leaves main intact.
+    expect(shortMessage({ source: 'main', kind: 'unhandledRejection', message: 'm', timestamp: 0 })).toBe('Background error: m');
+    expect(shortMessage({ source: 'renderer', kind: 'uncaughtException', message: 'm', timestamp: 0 })).toBe('Unexpected error: m');
+  });
+
+  it('keeps the restart hint when truncating', () => {
+    const s = shortMessage({ source: 'main', kind: 'uncaughtException', message: 'x'.repeat(500), timestamp: 0 });
+    expect(s.length).toBe(200);
+    expect(s.endsWith('… Restart Grove Bench when you can.')).toBe(true);
+  });
 });
 
 describe('ErrorDeduper', () => {

@@ -20,11 +20,14 @@ export async function restoreWorktrees() {
 
   await Promise.all([...store.repos].map(async (repo) => {
     try {
-      const valid = await window.groveBench.validateRepo(repo);
-      if (!valid) {
-        console.warn(`Repo validation failed during restore, skipping: ${repo}`);
+      // A folder project (not a git repository) restores like any other;
+      // only a project whose folder is gone is skipped.
+      const kind = await window.groveBench.repoKind(repo);
+      if (kind === 'missing') {
+        console.warn(`Project folder not found during restore, skipping: ${repo}`);
         return;
       }
+      store.setFolderProject(repo, kind === 'folder');
       const worktrees = await window.groveBench.listWorktrees(repo);
       for (const wt of worktrees) {
         if (store.sessions.find((s) => s.id === wt.id)) continue;
@@ -37,6 +40,7 @@ export async function restoreWorktrees() {
           repoPath: repo,
           status: runningSession?.status === 'sleeping' ? 'sleeping' : isRunning ? 'running' : 'stopped',
           direct: wt.direct,
+          ...(wt.noGit ? { noGit: true } : {}),
           // The manifest records each conversation's agent, so stopped ones
           // show the right agent too.
           agentType: runningSession?.agentType ?? wt.agentType,
@@ -45,7 +49,6 @@ export async function restoreWorktrees() {
           displayName: runningSession?.displayName ?? wt.displayName ?? null,
           createdAt: wt.createdAt,
           lastActiveAt: wt.lastActiveAt,
-          completedAt: wt.completedAt ?? null,
         }, false);
 
         if (isRunning) {

@@ -1,9 +1,11 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { z } from 'zod';
 import type { GroveBenchSettings } from '../shared/types.js';
+import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
+import { readJsonFile, writeFileAtomicSync } from './json-file.js';
+import { logger } from './logger.js';
 
 const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Permission & Security
@@ -11,13 +13,16 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   toolDenyRules: [],
   disabledSkills: [],
   autoSkillSuggestions: false,
+  showConversationGoal: false,
 
   // Agent Defaults
   defaultModels: {},
   adapterDefaults: {},
+  showThinkingSummaries: true,
   cavemanMode: 'off',
   workingDirectories: [],
   defaultSystemPromptAppend: '',
+  acpAgents: [],
 
   // Memory
   memoryAutoSave: true,
@@ -39,6 +44,9 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   branchNamingRule: '', // empty = copy the repo's recent branch names
   theme: 'system',
   alwaysOnTop: false,
+
+  // Updates
+  autoDownloadUpdates: true,
 
   // Appearance
   repoColors: {},
@@ -204,16 +212,26 @@ const settingsSchema = z.object({
   toolDenyRules: z.array(toolRuleSchema).catch(DEFAULT_SETTINGS.toolDenyRules),
   disabledSkills: z.array(z.string()).catch(DEFAULT_SETTINGS.disabledSkills),
   autoSkillSuggestions: z.boolean().catch(DEFAULT_SETTINGS.autoSkillSuggestions),
+  showConversationGoal: z.boolean().catch(DEFAULT_SETTINGS.showConversationGoal),
 
   defaultModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.defaultModels),
   adapterDefaults: z.record(z.string(), z.record(z.string(), z.string())).catch(DEFAULT_SETTINGS.adapterDefaults),
+  showThinkingSummaries: z.boolean().catch(DEFAULT_SETTINGS.showThinkingSummaries),
   cavemanMode: z.enum(['off', 'lite', 'full', 'ultra']).catch(DEFAULT_SETTINGS.cavemanMode),
   workingDirectories: z.array(z.string()).catch(DEFAULT_SETTINGS.workingDirectories),
   defaultSystemPromptAppend: z.string().catch(DEFAULT_SETTINGS.defaultSystemPromptAppend),
+  acpAgents: z.array(z.object({
+    id: z.string().catch(''),
+    name: z.string().catch(''),
+    command: z.string(),
+    args: z.array(z.string()).catch([]),
+  })).catch(DEFAULT_SETTINGS.acpAgents),
 
   memoryAutoSave: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoSave),
   memoryAutoCompact: z.boolean().catch(DEFAULT_SETTINGS.memoryAutoCompact),
-  memoryCompactTimeoutSeconds: z.number().finite().nonnegative().catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
+  // Stored as compaction will use it, so Settings shows the value in use.
+  memoryCompactTimeoutSeconds: z.number().transform(effectiveCompactTimeoutSeconds)
+    .catch(DEFAULT_SETTINGS.memoryCompactTimeoutSeconds),
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
@@ -226,6 +244,8 @@ const settingsSchema = z.object({
   branchNamingRule: z.string().catch(DEFAULT_SETTINGS.branchNamingRule),
   theme: z.enum(['system', 'dark', 'light']).catch(DEFAULT_SETTINGS.theme),
   alwaysOnTop: z.boolean().catch(DEFAULT_SETTINGS.alwaysOnTop),
+
+  autoDownloadUpdates: z.boolean().catch(DEFAULT_SETTINGS.autoDownloadUpdates),
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
   groveCharacters: z.boolean().catch(DEFAULT_SETTINGS.groveCharacters),
@@ -266,26 +286,39 @@ export function upgradeSettings(raw: unknown): { settings: GroveBenchSettings; m
 }
 
 let cached: GroveBenchSettings | null = null;
+/** settings.json existed but couldn't be read, so defaults stood in for it.
+ *  Saving is refused until the app restarts: the renderer's copy may have
+ *  started from those defaults, and saving it would replace the user's real
+ *  settings (their tool deny rules among them). */
+let readFailed = false;
 
 function getSettingsPath(): string {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
 function writeSettingsFile(settings: GroveBenchSettings): void {
-  try {
-    fs.writeFileSync(getSettingsPath(), JSON.stringify(stampSchemaVersion(settings, SETTINGS_SCHEMA_VERSION), null, 2));
-  } catch { /* ignore write errors */ }
+  writeFileAtomicSync(getSettingsPath(), JSON.stringify(stampSchemaVersion(settings, SETTINGS_SCHEMA_VERSION), null, 2));
 }
 
 export function loadSettings(): GroveBenchSettings {
-  try {
-    const data = fs.readFileSync(getSettingsPath(), 'utf-8');
-    const { settings, migrated } = upgradeSettings(JSON.parse(data));
-    cached = settings;
-    // Persist the upgraded shape so the migration only runs once.
-    if (migrated) writeSettingsFile(settings);
-  } catch {
+  const read = readJsonFile(getSettingsPath());
+  if (read.kind === 'unreadable') {
+    // Keep what was read before. With nothing yet, use defaults without
+    // caching them, so the next call reads the file again.
+    if (cached) return cached;
+    readFailed = true;
+    return { ...DEFAULT_SETTINGS };
+  }
+  if (read.kind !== 'ok') {
+    // Missing, or damaged (a copy is kept beside it).
     cached = { ...DEFAULT_SETTINGS };
+    return cached;
+  }
+  const { settings, migrated } = upgradeSettings(read.value);
+  cached = settings;
+  // Persist the upgraded shape so the migration only runs once.
+  if (migrated) {
+    try { writeSettingsFile(settings); } catch (err) { logger.warn('[settings] could not save migrated settings:', err); }
   }
   return cached;
 }
@@ -296,14 +329,26 @@ export function getSettings(): GroveBenchSettings {
 }
 
 export function saveSettings(settings: GroveBenchSettings): void {
+  if (readFailed) {
+    throw new Error("Your settings file couldn't be read, so the settings shown may be defaults and saving could replace your real ones. Restart Grove Bench and try again.");
+  }
   const clean = validateSettings(settings);
-  cached = clean;
   writeSettingsFile(clean);
+  cached = clean;
+}
+
+/** Test hook: forget the cached settings and any earlier read failure. */
+export function resetSettingsCache(): void {
+  cached = null;
+  readFailed = false;
 }
 
 export function applyImmediateEffects(win: BrowserWindow | null, settings: GroveBenchSettings): void {
   if (win && !win.isDestroyed()) {
     win.setAlwaysOnTop(settings.alwaysOnTop);
   }
-  nativeTheme.themeSource = settings.theme;
+  // `theme` isn't applied to nativeTheme.themeSource until the app has a
+  // light palette (TODO.md, Light theme): Settings can't change it, and it
+  // also sets prefers-color-scheme for Preview pages. Electron's default,
+  // following Windows, stays in place.
 }

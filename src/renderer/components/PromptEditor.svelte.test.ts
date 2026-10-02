@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 import PromptEditor from './PromptEditor.svelte';
 import { messageStore } from '../stores/messages.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
+import type { AgentEvent } from '../../shared/types.js';
 
 const SID = 'prompt-session';
 const DRAFT = 'first line\nsecond line\nthird line\nfourth line';
@@ -71,5 +74,127 @@ describe('PromptEditor: sizes a restored draft', () => {
     const el = textbox(container);
     show(el);
     expect(el.style.height).toBe('150px');
+  });
+});
+
+describe('PromptEditor: rewind', () => {
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+  });
+  afterEach(() => cleanup());
+
+  it('puts the rewound message in a prompt box that is already showing', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+    await fireEvent.input(el, { target: { value: 'half-typed' } });
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'try again', uuid: 'cp-1' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-1' } as AgentEvent);
+    await tick();
+
+    expect(el.value).toBe('try again');
+    expect(messageStore.getDraft(SID)).toBe('try again');
+  });
+});
+
+describe('PromptEditor: editing a queued prompt', () => {
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+  });
+  afterEach(() => cleanup());
+
+  it('queues the prompt as typed', async () => {
+    messageStore.setIsRunning(SID, true);
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+    await fireEvent.input(el, { target: { value: 'fix the tests' } });
+    await fireEvent.keyDown(el, { key: 'Enter' });
+
+    expect(messageStore.getQueue(SID)[0].typed).toEqual({ text: 'fix the tests', attachments: [] });
+  });
+
+  it('gets its text and attachments back, without the name prefix', async () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, {
+      displayText: '[notes.txt] read this',
+      outgoing: '<file name="notes.txt">hello</file>\n\nread this',
+      typed: { text: 'read this', attachments: [{ type: 'text', name: 'notes.txt', content: 'hello' }] },
+    });
+    const { container, getByText } = render(PromptEditor, { sessionId: SID });
+
+    await fireEvent.click(getByText('Edit'));
+    await tick();
+
+    expect(container.querySelector('textarea')!.value).toBe('read this');
+    expect(getByText('notes.txt')).toBeInTheDocument();
+    expect(messageStore.getQueue(SID)).toEqual([]);
+  });
+});
+
+describe('PromptEditor: attachments', () => {
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+  });
+  afterEach(() => cleanup());
+
+  it('keeps unsent attachments when the prompt box unmounts (another tab) and comes back', async () => {
+    const first = render(PromptEditor, { sessionId: SID });
+    messageStore.requestPromptInsert(SID, 'see this', { attachments: [{ type: 'text', name: 'notes.txt', content: 'hi' }] });
+    await tick();
+    expect(first.getByText('notes.txt')).toBeInTheDocument();
+    first.unmount();
+
+    const again = render(PromptEditor, { sessionId: SID });
+
+    expect(again.getByText('notes.txt')).toBeInTheDocument();
+  });
+});
+
+describe('PromptEditor: @ file picker', () => {
+  it('does not send on Enter while the picker is still loading', async () => {
+    const submit = vi.spyOn(messageStore, 'submitMessage');
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const textarea = container.querySelector('textarea')!;
+    textarea.value = 'look at @app';
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    await fireEvent.input(textarea);
+
+    // Straight away, before the picker's code has loaded.
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+    textarea.dispatchEvent(enter);
+    await tick();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(textarea.value).toBe('look at @app');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(submit).not.toHaveBeenCalled();
+    submit.mockRestore();
+  });
+
+  beforeEach(() => {
+    messageStore.destroyAllSessions();
+    messageStore.messagesBySession = { [SID]: [] };
+    Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+    mockGroveBench.listFiles.mockResolvedValue(['src/app.ts', 'README.md']);
+  });
+  afterEach(() => cleanup());
+
+  it('loads the picker the first time @ is typed, and inserts the picked file', async () => {
+    const { container } = render(PromptEditor, { sessionId: SID });
+    const textarea = container.querySelector('textarea')!;
+
+    textarea.value = 'look at @app';
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    await fireEvent.input(textarea);
+
+    // Its code loads on first use, which can be slow under test.
+    const option = await screen.findByTitle('src/app.ts', {}, { timeout: 4000 });
+    await fireEvent.mouseDown(option);
+
+    expect(textarea.value).toContain('@src/app.ts');
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });
 });

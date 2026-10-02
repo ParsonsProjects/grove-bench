@@ -6,23 +6,25 @@
   import { prStore } from './stores/pr.svelte.js';
   import { setAnalyticsEnabled, setCrashReportsEnabled, trackEvent, reportCrash } from './lib/analytics.js';
   import { installRendererErrorHandlers, reportFromError, shortMessage, ErrorDeduper } from './lib/error-handling.js';
+  import { installFreezeWatch } from './lib/freeze-watch.js';
   import { attentionCount, renderBadgeDataUrl } from './lib/attention-badge.js';
   import { restoreWorktrees } from './lib/restore-worktrees.js';
   import { startIdleManager } from './lib/idle-manager.js';
   import { wakeScene } from './stores/wakeScene.svelte.js';
+  import { arrivalScene } from './stores/arrivalScene.svelte.js';
   import { installTooltips } from './lib/tooltip.js';
   import { sessionRepoColor } from './lib/session-repo-color.js';
   import { sessionSpriteState } from './lib/session-sprite-state.js';
-  import { TurnEndWatcher } from './lib/turn-end.js';
+  import { TurnEndWatcher, flagsUnread } from './lib/turn-end.js';
   import Sidebar from './components/Sidebar.svelte';
   import WorkspacePane from './components/WorkspacePane.svelte';
   import ErrorToast from './components/ErrorToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
-  import GitNotice from './components/GitNotice.svelte';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
-  import SessionFinder from './components/SessionFinder.svelte';
+  import { lazyComponent } from './lib/lazy-component.js';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
+  import FirstSteps from './components/FirstSteps.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
   import TitleBar from './components/TitleBar.svelte';
   import AnalyticsConsent from './components/AnalyticsConsent.svelte';
@@ -30,13 +32,20 @@
   import MarkdownPreviewPanel from './components/MarkdownPreviewPanel.svelte';
   import SpellcheckMenu from './components/SpellcheckMenu.svelte';
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
+  import { groupStore } from './stores/groups.svelte.js';
+  import { goalStore } from './stores/goals.svelte.js';
+  import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
+  import { subagentPanelStore } from './stores/subagentPanel.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
   import DraftPane from './components/DraftPane.svelte';
 
   let showAnalyticsConsent = $state(false);
+  // Loaded the first time it opens (Ctrl+R or the search button).
+  const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
+  const loadSubagentPanel = lazyComponent(() => import('./components/SubagentPanel.svelte'));
 
   // ── Global error handling ──
   // Uncaught renderer errors (window.onerror / unhandledrejection / a Svelte
@@ -119,11 +128,15 @@
   // (its sidebar character would wave mid-turn). The flag lives in the store
   // so the sidebar can read it.
   const turnEnds = new TurnEndWatcher((sessionId) => {
-    if (!store.sessions.some((s) => s.id === sessionId)) return;
-    if (store.activeSessionId !== sessionId) {
+    const session = store.sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    if (flagsUnread(session, store.activeSessionId)) {
       store.markNeedsAttention(sessionId);
     }
     void autoNameSession(sessionId).then(() => autoNameBranch(sessionId));
+    // Alongside, as it needs neither name: the goal, written once after the
+    // first reply (main skips the rest).
+    void goalStore.autoGenerate(sessionId);
   });
   $effect(() => {
     for (const session of store.sessions) {
@@ -220,12 +233,15 @@
   });
 
   function reopenLastClosedTab() {
-    const id = store.popRecentlyClosed();
-    if (!id) return;
-    const session = store.sessions.find((s) => s.id === id);
-    if (!session || session.status !== 'stopped') return;
-    // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
-    store.activeSessionId = id;
+    // Skip entries reopened since they were closed, so one press always
+    // reopens something when anything is left to reopen.
+    for (let id = store.popRecentlyClosed(); id; id = store.popRecentlyClosed()) {
+      const session = store.sessions.find((s) => s.id === id);
+      if (session?.status !== 'stopped') continue;
+      // Setting it as active triggers the existing $effect that auto-resumes stopped sessions
+      store.activeSessionId = id;
+      return;
+    }
   }
 
   /** Any key skips the wake-up scene, and still does its usual job. Runs in
@@ -248,6 +264,10 @@
       e.preventDefault();
       bookmarkStore.toggleDrawer();
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+      e.preventDefault();
+      settingsStore.panelOpen = !settingsStore.panelOpen;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
       // A draft in the project of the conversation being looked at.
@@ -262,6 +282,10 @@
   // tab's auto-resume permanently; instead we clear it when the user navigates
   // (back) to the tab, so a transient failure retries on explicit re-selection.
   let failedResumeIds = new Set<string>();
+  // Resumed sessions whose agent hasn't connected yet (no status from main
+  // since). One that stops first failed to start, so it counts as a failed
+  // resume: resuming it again at once would fail the same way, in a loop.
+  let connectingIds = new Set<string>();
   // Sleeping sessions with a wake in flight, so the effect below wakes each
   // once while its status catches up.
   let wakingIds = new Set<string>();
@@ -280,6 +304,7 @@
     window.groveBench.resumeSession(sessionId, session.repoPath).then((result) => {
       store.updateStatus(result.id, 'running');
       store.clearDeferredResume(sessionId);
+      connectingIds.add(sessionId);
       // Don't subscribe here — WorkspacePane handles history replay + subscription
       // on mount. Subscribing here would race with mount and cause isReady to be
       // set before history replay, resulting in an empty chat.
@@ -323,16 +348,28 @@
     }
   });
 
+  // PR status polls at the full rate for the conversation on screen and ones
+  // seen recently; the rest slow down (see prStore.setViewing). Untracked: the
+  // refresh it may start reads store state that must not re-run this effect.
+  $effect(() => {
+    const activeId = store.activeSessionId;
+    untrack(() => prStore.setViewing(activeId));
+  });
+
   onMount(() => {
     const uninstallErrors = installRendererErrorHandlers(handleErrorReport);
     const uninstallTooltips = installTooltips();
     const unsubAppError = window.groveBench.onAppError(handleErrorReport);
+    // Slow frames go to main's freeze log, so a reported freeze can be traced.
+    const uninstallFreezeWatch = installFreezeWatch((report) => window.groveBench.reportFreeze(report));
 
     // Git and agent checks run in the background and never block the app.
     // Credentials are asked for when the user starts a conversation.
     prerequisitesStore.init();
     settingsStore.load();
     bookmarkStore.load();
+    groupStore.load();
+    panelStore.load();
     memoryStore.init();
     previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {
@@ -348,6 +385,8 @@
       store.sessions.filter((s) => store.isOpenTab(s)).map((s) => s.id));
 
     const unsub = window.groveBench.onSessionStatus((sessionId, status) => {
+      // Before the status update, which re-runs the auto-resume effect.
+      if (connectingIds.delete(sessionId) && status === 'stopped') failedResumeIds.add(sessionId);
       const wasSleeping = store.sessions.find((s) => s.id === sessionId)?.status === 'sleeping';
       store.updateStatus(sessionId, status);
       // Waking keeps the conversation's turn state: the message that woke it
@@ -411,6 +450,7 @@
       unsubAppError();
       uninstallErrors();
       uninstallTooltips();
+      uninstallFreezeWatch();
       stopIdleManager();
       window.removeEventListener('keydown', handleGlobalKeydown);
       window.removeEventListener('keydown', skipWakeScene, true);
@@ -436,7 +476,6 @@
 
 <div class="flex flex-col h-screen bg-background text-foreground font-mono">
 <TitleBar />
-<GitNotice />
 <div class="flex flex-1 min-h-0">
   <svelte:boundary onerror={sidebarError}>
     <Sidebar />
@@ -464,9 +503,8 @@
         {#if settingsStore.current.groveCharacters}
           <GroveEmptyState variant="empty" />
         {:else}
-          <div class="text-center relative z-10">
-            <p class="text-sm mb-2">No active agents</p>
-            <p class="text-xs">Add a project and start a conversation to get started.</p>
+          <div class="text-center relative z-10 flex flex-col items-center">
+            <FirstSteps />
           </div>
         {/if}
       </div>
@@ -495,6 +533,9 @@
         {@const live = session.status === 'running' || session.status === 'sleeping' || session.status === 'starting' || session.status === 'installing' || session.status === 'error'}
         {@const scene = wakeScene.for(session.id)}
         {@const loading = live && !messageStore.isHistoryLoaded(session.id)}
+        <!-- A new conversation's chat shows its own walk (OutputPanel) from
+             the start, so the loading walk would only cut in on it. -->
+        {@const arriving = settingsStore.current.groveCharacters && arrivalScene.for(session.id) !== null}
         <div class="flex-1 min-h-0 relative" class:hidden={store.activeSessionId !== session.id}>
           {#if live}
             <!-- A render/effect error in one session's pane must not take the
@@ -509,7 +550,7 @@
           <!-- The walk: while a stopped conversation reconnects, and over the
                chat (kept mounted underneath) while its history loads or the
                wake-up scene plays. -->
-          {#if !live || scene || loading}
+          {#if !live || scene || (loading && !arriving)}
             <!-- Opaque here, not on .pixel-bg, whose background shorthand wins over utilities. -->
             <div class={live ? 'absolute inset-0 z-20 bg-background' : 'h-full'}>
             <div class="pixel-bg flex items-center justify-center h-full text-muted-foreground relative overflow-hidden">
@@ -539,18 +580,26 @@
     {/if}
   </main>
 </div>
+<AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
 
 {#if store.finderOpen}
-  <SessionFinder onclose={() => store.finderOpen = false} />
+  {#await loadSessionFinder() then SessionFinder}
+    <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
 {/if}
 
 <ErrorToast />
 <MemoryToast />
 
 <BookmarksDrawer />
+<!-- Mounted from its first opening on, so closing plays its transition.
+     Before the Focus panel, which can open over it. -->
+{#if subagentPanelStore.opened}
+  {#await loadSubagentPanel() then SubagentPanel}
+    <SubagentPanel />
+  {/await}
+{/if}
 <MarkdownPreviewPanel />
-
-<AnalyticsConsent visible={showAnalyticsConsent} />
 
 <SpellcheckMenu />

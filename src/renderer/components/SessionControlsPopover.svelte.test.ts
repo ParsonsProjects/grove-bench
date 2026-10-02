@@ -13,7 +13,7 @@ const SID = 's1';
 
 const DESCRIPTORS = [
   { id: 'permissionMode', label: 'Mode', default: 'default', options: [
-    { value: 'default', label: 'Code', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
+    { value: 'default', label: 'Ask', tone: 'info' }, { value: 'plan', label: 'Plan', tone: 'warning' },
     { value: 'readSafe', label: 'Read-safe', tone: 'success', group: 'Grove Bench' },
   ] },
   { id: 'thinking', label: 'Thinking', default: 'high', options: [
@@ -66,19 +66,29 @@ describe('SessionControlsPopover', () => {
     const trigger = screen.getByTitle(/Agent settings/);
     expect(trigger).toHaveTextContent('Claude Agent');
     expect(trigger).toHaveTextContent('Opus 5');
-    expect(trigger).toHaveTextContent('Code');
+    expect(trigger).toHaveTextContent('Ask');
     expect(trigger).not.toHaveTextContent('High');
     expect(trigger).not.toHaveTextContent('Standard');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('shows a control on the trigger once it leaves its default', async () => {
+  it('leads with the model and mode, and shows a control once it leaves its default', async () => {
     messageStore.controlsBySession[SID].values = { thinking: 'low', speed: 'fast' };
     messageStore.modeBySession[SID] = 'plan';
     render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: MODELS } });
+    await new Promise((r) => setTimeout(r, 0)); // listAdapters resolves
 
-    const trigger = screen.getByTitle(/Agent settings/);
-    expect(trigger).toHaveTextContent('Opus 5 · Plan · Low · Fast');
+    expect(screen.getByTestId('agent-settings-headline')).toHaveTextContent(/^Opus 5 · Plan$/);
+    expect(screen.getByTestId('agent-settings-detail')).toHaveTextContent(/^Claude Agent · Low · Fast$/);
+  });
+
+  it('cuts a long model name short on the button but names it in full in the tooltip', async () => {
+    const long = 'Sonnet 4.6 with the one million token context window';
+    render(SessionControlsPopover, { props: { sessionId: SID, modelOptions: [{ value: 'claude-opus-5', label: long }] } });
+
+    const name = within(screen.getByTestId('agent-settings-headline')).getByText(long);
+    expect(name.className).toContain('truncate');
+    expect(screen.getByTitle(/Agent settings/).getAttribute('title')).toContain(long);
   });
 
   it('opens a column per setting: agent, model, and each declared control', async () => {
@@ -110,8 +120,8 @@ describe('SessionControlsPopover', () => {
     const heading = within(dialog).getByText('Grove Bench');
     expect(heading).toHaveAttribute('title', 'Not a Claude Agent option');
     // The heading sits between the provider's modes and the grouped one.
-    const modeButtons = within(dialog).getAllByRole('button', { name: /^(Code|Plan|Read-safe)$/ });
-    expect(modeButtons.map((b) => b.textContent?.trim())).toEqual(['Code', 'Plan', 'Read-safe']);
+    const modeButtons = within(dialog).getAllByRole('button', { name: /^(Ask|Plan|Read-safe)$/ });
+    expect(modeButtons.map((b) => b.textContent?.trim())).toEqual(['Ask', 'Plan', 'Read-safe']);
     expect(heading.compareDocumentPosition(modeButtons[1]) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(heading.compareDocumentPosition(modeButtons[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Only one divider: ungrouped options never get one.
@@ -188,9 +198,17 @@ describe('SessionControlsPopover', () => {
     expect(dialog.querySelector('[data-testid="usage"]')).toHaveTextContent(/isn't reported/);
   });
 
-  it('Done and Escape close the popover', async () => {
+  it('applies a choice without closing, and has no Done button', async () => {
+    const dialog = await openPopover();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Haiku 4.5' }));
+    expect(mockGroveBench.setModel).toHaveBeenCalledWith(SID, 'claude-haiku-4-5-20251001');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+  });
+
+  it('a click outside and Escape close the popover', async () => {
     await openPopover();
-    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await fireEvent.click(document.body);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTitle(/Agent settings/));

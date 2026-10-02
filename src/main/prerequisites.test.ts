@@ -12,6 +12,8 @@ vi.mock('./gh.js', () => ({
 vi.mock('./credentials.js', () => ({
   hasApiKey: vi.fn(() => false),
   canStoreApiKey: vi.fn(() => true),
+  isApiKeyRejected: vi.fn(() => false),
+  isApiKeyUnverified: vi.fn(() => false),
 }));
 
 // Mock the adapter registry: the checks run every registered adapter.
@@ -30,7 +32,7 @@ import { checkGit, checkGh, checkAllPrerequisites, checkCorePrerequisites } from
 import { agentReady, gitReady } from '../shared/prerequisites.js';
 import { gitVersion } from './git.js';
 import { ghVersion, ghAuthenticated } from './gh.js';
-import { canStoreApiKey, hasApiKey } from './credentials.js';
+import { canStoreApiKey, hasApiKey, isApiKeyRejected, isApiKeyUnverified } from './credentials.js';
 
 const mockGitVersion = vi.mocked(gitVersion);
 const mockGhVersion = vi.mocked(ghVersion);
@@ -41,6 +43,8 @@ beforeEach(() => {
   mockAdapters = [makeAdapter()];
   vi.mocked(hasApiKey).mockReturnValue(false);
   vi.mocked(canStoreApiKey).mockReturnValue(true);
+  vi.mocked(isApiKeyRejected).mockReturnValue(false);
+  vi.mocked(isApiKeyUnverified).mockReturnValue(false);
 });
 
 describe('checkGit()', () => {
@@ -228,12 +232,37 @@ describe('API key state', () => {
     expect(JSON.stringify(result)).not.toContain('ANTHROPIC_API_KEY');
   });
 
+  it('says when the saved key was refused or saved unchecked', async () => {
+    mockAdapters = [makeAdapter({ apiKey: { envVar: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', helpUrl: 'https://example.com/keys' } })];
+    vi.mocked(hasApiKey).mockReturnValue(true);
+    vi.mocked(isApiKeyRejected).mockReturnValue(true);
+    expect((await checkCorePrerequisites()).agents['claude-code'].apiKey).toMatchObject({ saved: true, rejected: true });
+
+    vi.mocked(isApiKeyRejected).mockReturnValue(false);
+    vi.mocked(isApiKeyUnverified).mockReturnValue(true);
+    const unverified = (await checkCorePrerequisites()).agents['claude-code'].apiKey;
+    expect(unverified).toMatchObject({ saved: true, unverified: true });
+    expect(unverified).not.toHaveProperty('rejected');
+  });
+
   it('reports when the OS cannot store a key', async () => {
     mockAdapters = [makeAdapter({ apiKey: { envVar: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', helpUrl: 'https://example.com/keys' } })];
     vi.mocked(canStoreApiKey).mockReturnValue(false);
 
     const result = await checkCorePrerequisites();
     expect(result.agents['claude-code'].apiKey?.canStore).toBe(false);
+  });
+
+  it('passes on how a key is billed and how to sign in with the CLI instead', async () => {
+    const cliSignIn = { accountLabel: 'Claude plan', cliName: 'Claude Code', command: 'claude', setupUrl: 'https://example.com/setup' };
+    mockAdapters = [makeAdapter({
+      apiKey: { envVar: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', helpUrl: 'https://example.com/keys', billingNote: 'Billed separately.' },
+      cliSignIn,
+    })];
+
+    const result = await checkCorePrerequisites();
+    expect(result.agents['claude-code'].apiKey?.billingNote).toBe('Billed separately.');
+    expect(result.agents['claude-code'].cliSignIn).toEqual(cliSignIn);
   });
 });
 
@@ -264,6 +293,12 @@ describe('agentReady()', () => {
   it('passes with a saved API key when the CLI is missing or signed out', () => {
     expect(ready({ available: false, apiKey: key(true) })).toBe(true);
     expect(ready({ available: true, authenticated: false, apiKey: key(true) })).toBe(true);
+  });
+
+  it('fails while the saved key is refused, even with a CLI sign-in (the key is used first)', () => {
+    const refused = { ...key(true), rejected: true };
+    expect(ready({ available: true, authenticated: false, apiKey: refused })).toBe(false);
+    expect(ready({ available: true, authenticated: true, apiKey: refused })).toBe(false);
   });
 
   it('fails with no credentials at all', () => {

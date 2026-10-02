@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { flushSync } from 'svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
-import { messageStore } from './messages.svelte.js';
+import { messageStore, type ChatUserMessage } from './messages.svelte.js';
+import { userMessageLabel } from '../lib/message-label.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
@@ -13,6 +15,10 @@ const SID = 'test-session';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Each test starts from a clean store: state left by an earlier test
+  // (a stop in progress, a buffered stream, a mode the user set) changes
+  // what the next one sees.
+  messageStore.destroyAllSessions();
   sessionStore.sessions = [];
   // Clear messages for our test session
   messageStore.messagesBySession = {};
@@ -218,6 +224,26 @@ describe('ingestEvent — text streaming', () => {
     expect(messageStore.getIsRunning(SID)).toBe(true);
   });
 
+  it('keeps a stopped reply in one piece, buffered tail included', () => {
+    const id = 'stop-fragment';
+    vi.useFakeTimers();
+    try {
+      messageStore.ingestEvent(id, { type: 'partial_text', text: 'Hello ' } as AgentEvent);
+      messageStore.flushStreamBuffers();
+      messageStore.ingestEvent(id, { type: 'partial_text', text: 'world' } as AgentEvent);
+
+      messageStore.markSessionStopped(id);
+      vi.advanceTimersByTime(200);
+
+      const texts = messageStore.getMessages(id).filter((m) => m.kind === 'text').map((m) => (m as { text: string }).text);
+      expect(texts).toEqual(['Hello world']);
+      expect(messageStore.getStreamingText(id)).toBe('');
+    } finally {
+      vi.useRealTimers();
+      messageStore.destroySession(id);
+    }
+  });
+
   it('applies buffered deltas before a non-streaming event is processed', () => {
     messageStore.ingestEvent(SID, { type: 'partial_text', text: 'buffered' } as AgentEvent);
     messageStore.ingestEvent(SID, { type: 'activity', activity: 'generating' } as AgentEvent);
@@ -276,6 +302,14 @@ describe('ingestEvent — thinking', () => {
     expect(messageStore.getStreamingThinking(SID)).toBe('');
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('thinking');
+  });
+
+  it('skips thinking that arrived without text', () => {
+    messageStore.streamingThinking[SID] = 'preview';
+    messageStore.ingestEvent(SID, { type: 'thinking', thinking: '', uuid: 'uuid-t' } as AgentEvent);
+
+    expect(messageStore.getStreamingThinking(SID)).toBe('');
+    expect(messageStore.getMessages(SID)).toHaveLength(0);
   });
 });
 
@@ -337,6 +371,22 @@ describe('ingestEvent — tool_use and tool_result', () => {
     expect(tc.isError).toBe(false);
   });
 
+  it('tool_result keeps the images the tool returned', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use',
+      toolName: 'mcp__grove-preview__screenshot',
+      toolInput: {},
+      toolUseId: 'tu-shot',
+      uuid: 'uuid-shot',
+    } as AgentEvent);
+    const images = [{ file: 'b'.repeat(32) + '.png' }];
+    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 'tu-shot', content: '', images } as AgentEvent);
+
+    const tc = messageStore.getMessages(SID)[0] as any;
+    expect(tc.pending).toBe(false);
+    expect(tc.images).toEqual(images);
+  });
+
   it('mode-changing tool_use does NOT sync mode (mode_sync events handle it)', () => {
     messageStore.ingestEvent(SID, {
       type: 'assistant_tool_use',
@@ -362,6 +412,79 @@ describe('ingestEvent — tool_use and tool_result', () => {
 
     // Mode stays 'plan' — only mode_sync events change it
     expect(messageStore.getMode(SID)).toBe('plan');
+  });
+});
+
+describe('ingestEvent — subagent events', () => {
+  const agentCall: AgentEvent = {
+    type: 'assistant_tool_use', toolName: 'Agent', toolInput: { description: 'Find the burst' }, toolUseId: 'tu-agent', uuid: 'u1',
+  };
+  const sub = (event: object) => ({ ...event, parentToolUseId: 'tu-agent' }) as AgentEvent;
+
+  it('keeps a subagent\'s text, thinking and tool calls under its Agent call, out of the thread', () => {
+    messageStore.ingestEvent(SID, agentCall);
+    messageStore.ingestEvent(SID, sub({ type: 'thinking', thinking: 'Where is it scheduled?', uuid: 's1' }));
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: { pattern: 'cron' }, toolUseId: 'tu-grep', uuid: 's2' }));
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'I sent the report to your caller.', uuid: 's3' }));
+
+    const msgs = messageStore.getMessages(SID);
+    expect(msgs.map((m) => [m.kind, 'parentToolUseId' in m ? m.parentToolUseId : undefined])).toEqual([
+      ['tool_call', undefined],
+      ['thinking', 'tu-agent'],
+      ['tool_call', 'tu-agent'],
+      ['text', 'tu-agent'],
+    ]);
+  });
+
+  it('leaves the main agent\'s live reply alone', () => {
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'The cause ' } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'subagent note', uuid: 's1' }));
+    messageStore.ingestEvent(SID, { type: 'partial_text', text: 'is the cron job' } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's2' }));
+    messageStore.flushStreamBuffers();
+
+    // Neither dropped part of the reply nor cut it short into a message.
+    expect(messageStore.getStreamingText(SID)).toBe('The cause is the cron job');
+    expect(messageStore.getMessages(SID).filter((m) => !('parentToolUseId' in m && m.parentToolUseId))).toEqual([]);
+  });
+
+  it('does not mark an idle conversation running: a background subagent outlives the turn', () => {
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's1' }));
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_text', text: 'note', uuid: 's2' }));
+    messageStore.ingestEvent(SID, sub({ type: 'thinking', thinking: 'hmm', uuid: 's3' }));
+
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+    expect(messageStore.getActivity(SID).activity).not.toBe('tool_starting');
+  });
+
+  it('settles a subagent\'s tool call with its result', () => {
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Grep', toolInput: {}, toolUseId: 'tu-grep', uuid: 's1' }));
+    messageStore.ingestEvent(SID, sub({ type: 'tool_result', toolUseId: 'tu-grep', content: 'serverless.ts:12' }));
+
+    expect(messageStore.getMessages(SID)[0]).toMatchObject({ kind: 'tool_call', pending: false, result: 'serverless.ts:12', parentToolUseId: 'tu-agent' });
+  });
+
+  it('names the subagent each pending call runs in or starts, for the status bar', () => {
+    messageStore.ingestEvent(SID, { ...agentCall, toolInput: { description: 'Find the burst', subagent_type: 'Explore' } } as AgentEvent);
+    messageStore.ingestEvent(SID, sub({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId: 'tu-bash', uuid: 's1' }));
+    messageStore.ingestEvent(SID, { type: 'assistant_tool_use', toolName: 'Read', toolInput: {}, toolUseId: 'tu-read', uuid: 'u2' } as AgentEvent);
+
+    expect(messageStore.getPendingTools(SID).map(({ toolUseId, subagentCall, inSubagent }) => ({ toolUseId, subagentCall, inSubagent }))).toEqual([
+      { toolUseId: 'tu-agent', subagentCall: 'tu-agent', inSubagent: undefined },
+      { toolUseId: 'tu-bash', subagentCall: 'tu-agent', inSubagent: 'Explore' },
+      { toolUseId: 'tu-read', subagentCall: undefined, inSubagent: undefined },
+    ]);
+  });
+
+  it('reports a background subagent as running after its Agent call returned', () => {
+    messageStore.ingestEvent(SID, { type: 'task_started', taskId: 'bg-1', toolUseId: 'tu-agent', description: 'Find the burst' } as AgentEvent);
+    expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(true);
+    expect(backgroundTaskStore.isRunningFor(SID, 'tu-other')).toBe(false);
+
+    messageStore.ingestEvent(SID, {
+      type: 'task_notification', taskId: 'bg-1', toolUseId: 'tu-agent', taskStatus: 'completed', summary: 'done', outputFile: '',
+    } as AgentEvent);
+    expect(backgroundTaskStore.isRunningFor(SID, 'tu-agent')).toBe(false);
   });
 });
 
@@ -427,7 +550,7 @@ describe('OS notification triggers', () => {
       type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1',
     } as AgentEvent);
     expect(mockGroveBench.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'permission_request', body: 'Bash is waiting for permission' }),
+      expect.objectContaining({ kind: 'permission_request', body: 'The agent wants to run a command' }),
     );
   });
 
@@ -542,6 +665,11 @@ describe('ingestEvent — error and status', () => {
     const msgs = messageStore.getMessages(SID);
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toBe('Loading...');
+  });
+
+  it('keeps a warning level on status messages', () => {
+    messageStore.ingestEvent(SID, { type: 'status', message: 'No sandbox', level: 'warning' } as AgentEvent);
+    expect(messageStore.getMessages(SID)[0]).toMatchObject({ kind: 'system', text: 'No sandbox', level: 'warning' });
   });
 
   it('pushes a git identity notice', () => {
@@ -846,6 +974,48 @@ describe('ingestEvent — permission_resolved', () => {
     expect(perm.decision).toBe('allow');
   });
 
+  it('marks a permission denied by the timeout as timed out', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolUseId: 'tu-to',
+      requestId: 'req-to',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-to',
+      toolUseId: 'tu-to',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const perm = messageStore.getMessages(SID).find((m) => m.kind === 'permission' && m.requestId === 'req-to') as any;
+    expect(perm).toMatchObject({ resolved: true, decision: 'deny', timedOut: true });
+  });
+
+  it('marks a question closed by the timeout as timed out, with no answer', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }] },
+      toolUseId: 'tu-qt',
+      requestId: 'req-qt',
+      toolCategory: 'question',
+    } as AgentEvent);
+    messageStore.ingestEvent(SID, {
+      type: 'permission_resolved',
+      requestId: 'req-qt',
+      toolUseId: 'tu-qt',
+      decision: 'deny',
+      reason: 'timeout',
+    } as AgentEvent);
+
+    const q = messageStore.getMessages(SID).find((m) => m.kind === 'question' && m.requestId === 'req-qt') as any;
+    expect(q).toMatchObject({ resolved: true, timedOut: true });
+    expect(q.response).toBeUndefined();
+  });
+
   it('stores the answer from a replayed question resolution', () => {
     messageStore.ingestEvent(SID, {
       type: 'permission_request',
@@ -971,6 +1141,28 @@ describe('ingestEvent — error/process_exit unlocks input when never initialize
     messageStore.ingestEvent(SID, { type: 'error', message: 'Auth failed' } as AgentEvent);
     expect(messageStore.getIsReady(SID)).toBe(true);
     expect(messageStore.getIsRunning(SID)).toBe(false);
+  });
+
+  it('keeps a sign-in failure marked as one, and re-checks credentials when a key was refused', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.ingestEvent(SID, { type: 'error', message: 'Sign in again', auth: true, keyRejected: true });
+    const last = messageStore.getMessages(SID).at(-1);
+    expect(last).toMatchObject({ kind: 'error', text: 'Sign in again', auth: true });
+    expect(mockGroveBench.checkPrerequisites).toHaveBeenCalled();
+  });
+
+  it('does not re-check credentials when an old refusal is replayed', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.replayEvents(SID, [{ type: 'error', message: 'Sign in again', auth: true, keyRejected: true }]);
+    expect(messageStore.getMessages(SID).at(-1)).toMatchObject({ kind: 'error', auth: true });
+    expect(mockGroveBench.checkPrerequisites).not.toHaveBeenCalled();
+  });
+
+  it('does not re-check credentials for other errors', () => {
+    mockGroveBench.checkPrerequisites.mockClear();
+    messageStore.ingestEvent(SID, { type: 'error', message: 'boom' });
+    expect(messageStore.getMessages(SID).at(-1)).not.toHaveProperty('auth');
+    expect(mockGroveBench.checkPrerequisites).not.toHaveBeenCalled();
   });
 
   it('process_exit unlocks input if session never had system_init', () => {
@@ -1238,7 +1430,7 @@ describe('getters with defaults', () => {
 
 describe('session controls', () => {
   const descriptors = [
-    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Code' }, { value: 'plan', label: 'Plan' }] },
+    { id: 'permissionMode', label: 'Mode', default: 'default', options: [{ value: 'default', label: 'Ask' }, { value: 'plan', label: 'Plan' }] },
     { id: 'thinking', label: 'Thinking', default: 'high', options: [{ value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] },
   ];
 
@@ -1363,6 +1555,31 @@ describe('updateMcpServers', () => {
 });
 
 describe('ingestEvent — user_message UUID stamping', () => {
+  it('swaps just-sent images for the saved copies once main has saved them', () => {
+    messageStore.addUserMessage(SID, 'look', [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }]);
+    const saved = [{ file: `${'a'.repeat(32)}.png`, name: 'shot.png' }];
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'look', uuid: 'u-img', images: saved } as AgentEvent);
+
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.uuid).toBe('u-img');
+    expect(msg.images).toEqual(saved);
+  });
+
+  it('keeps the inline images when not all of them were saved', () => {
+    const inline = [
+      { name: 'a.png', dataUrl: 'data:image/png;base64,AA' },
+      { name: 'b.png', dataUrl: 'data:image/png;base64,BB' },
+    ];
+    messageStore.addUserMessage(SID, 'look', inline);
+
+    messageStore.ingestEvent(SID, {
+      type: 'user_message', text: 'look', uuid: 'u-img', images: [{ file: `${'a'.repeat(32)}.png`, name: 'a.png' }],
+    } as AgentEvent);
+
+    expect((messageStore.getMessages(SID)[0] as ChatUserMessage).images).toEqual(inline);
+  });
+
   it('stamps UUID onto the most recent UUID-less user message', () => {
     messageStore.addUserMessage(SID, 'first prompt');
     messageStore.addUserMessage(SID, 'second prompt');
@@ -1418,15 +1635,30 @@ describe('ingestEvent — user_message UUID stamping', () => {
     expect((msgs[0] as any).uuid).toBe('uuid-new');
   });
 
-  it('shows a replayed message as it was displayed, not with attached file content', () => {
+  it('shows a replayed message as it was displayed, with attached files split out of the text', () => {
     messageStore.replayEvents(SID, [
       { type: 'user_message', text: '<file path="notes.md">\nlong notes\n</file>\n<file path="src/a.ts">\nconst secret = 1;\n</file>\n\nfollow the notes for @src/a.ts', uuid: 'uuid-files' },
     ] as AgentEvent[]);
 
     const msgs = messageStore.getMessages(SID);
     expect(msgs).toHaveLength(1);
-    expect((msgs[0] as any).text).toBe('[notes.md] follow the notes for @src/a.ts');
-    expect((msgs[0] as any).uuid).toBe('uuid-files');
+    const msg = msgs[0] as ChatUserMessage;
+    expect(msg.text).toBe('follow the notes for @src/a.ts');
+    // The @-referenced file stays a reference in the text, not an attachment.
+    expect(msg.files).toEqual([{ path: 'notes.md', content: 'long notes' }]);
+    expect(msg.uuid).toBe('uuid-files');
+    expect(userMessageLabel(msg)).toBe('[notes.md] follow the notes for @src/a.ts');
+  });
+
+  it('shows the images a replayed message was sent with', () => {
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: 'what is wrong here?', uuid: 'uuid-img', images: [{ file: 'a'.repeat(32) + '.png', name: 'shot.png' }] },
+    ] as AgentEvent[]);
+
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.text).toBe('what is wrong here?');
+    expect(msg.images).toEqual([{ file: 'a'.repeat(32) + '.png', name: 'shot.png' }]);
+    expect(userMessageLabel(msg)).toBe('[shot.png] what is wrong here?');
   });
 });
 
@@ -1543,6 +1775,74 @@ describe('ingestEvent — rewind', () => {
     expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'first')).toBeUndefined();
     expect(msgs.find((m) => m.kind === 'user' && (m as any).text === 'second')).toBeUndefined();
   });
+
+  it('asks a showing prompt box to take the rewound text live, but not on replay', () => {
+    messageStore.promptInsertBySession = {};
+    messageStore.replayEvents(SID, [
+      { type: 'user_message', text: 'first', uuid: 'cp-1' },
+      { type: 'rewind', toMessageId: 'cp-1' },
+    ] as AgentEvent[]);
+    expect(messageStore.getDraft(SID)).toBe('first');
+    expect(messageStore.promptInsertBySession[SID]).toBeUndefined();
+
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'second', uuid: 'cp-2' } as AgentEvent);
+    messageStore.ingestEvent(SID, { type: 'rewind', toMessageId: 'cp-2' } as AgentEvent);
+    expect(messageStore.getDraft(SID)).toBe('second');
+    expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'second', replace: true });
+  });
+});
+
+describe('needsInput', () => {
+  const ask = (type: 'permission' | 'question', requestId: string) => type === 'permission'
+    ? { type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: `t-${requestId}`, requestId } as AgentEvent
+    : { type: 'permission_request', toolName: 'AskUserQuestion', toolInput: { questions: [] }, toolUseId: `t-${requestId}`, requestId, toolCategory: 'question' } as AgentEvent;
+
+  it('follows the conversation as prompts arrive and are answered', () => {
+    expect(messageStore.needsInput(SID)).toBe(false);
+    messageStore.ingestEvent(SID, ask('permission', 'r1'));
+    expect(messageStore.hasPendingPermission(SID)).toBe(true);
+    expect(messageStore.needsInput(SID)).toBe(true);
+
+    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r1', toolUseId: 't-r1', decision: 'allow' } as AgentEvent);
+    expect(messageStore.hasPendingPermission(SID)).toBe(false);
+    expect(messageStore.needsInput(SID)).toBe(false);
+
+    messageStore.ingestEvent(SID, ask('question', 'q1'));
+    expect(messageStore.hasPendingQuestion(SID)).toBe(true);
+    expect(messageStore.hasPendingPermission(SID)).toBe(false);
+    messageStore.resolveQuestion(SID, 'q1', 'yes');
+    expect(messageStore.needsInput(SID)).toBe(false);
+  });
+
+  it('updates a derived value that reads it', () => {
+    const seen: boolean[] = [];
+    const stop = $effect.root(() => {
+      $effect(() => { seen.push(messageStore.needsInput(SID)); });
+    });
+    flushSync();
+    messageStore.ingestEvent(SID, ask('permission', 'r2'));
+    flushSync();
+    messageStore.ingestEvent(SID, { type: 'permission_resolved', requestId: 'r2', toolUseId: 't-r2', decision: 'deny' } as AgentEvent);
+    flushSync();
+    stop();
+    expect(seen).toEqual([false, true, false]);
+  });
+});
+
+describe('resolveQuestion', () => {
+  it('answers the open question when an older one has the same id', () => {
+    const q = { kind: 'question', toolUseId: 't', questions: [], requestId: 'perm_s_1' };
+    messageStore.messagesBySession[SID] = [
+      { ...q, id: 'old', resolved: true, response: 'blue' },
+      { ...q, id: 'new', resolved: false },
+    ] as any;
+
+    messageStore.resolveQuestion(SID, 'perm_s_1', 'green');
+
+    const [older, newer] = messageStore.getMessages(SID) as any[];
+    expect(older.response).toBe('blue');
+    expect(newer).toMatchObject({ resolved: true, response: 'green' });
+  });
 });
 
 describe('getRewindPoints', () => {
@@ -1570,6 +1870,14 @@ describe('getRewindPoints', () => {
     const points = messageStore.getRewindPoints(SID);
     expect(points).toHaveLength(1);
     expect(points[0].uuid).toBe('cp-1');
+  });
+
+  it('lists attachment names before the text, as the thread used to show them', () => {
+    messageStore.messagesBySession[SID] = [
+      { kind: 'user', id: '1', text: 'fix it', uuid: 'cp-1', files: [{ path: 'a.ts', content: 'x' }], images: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AA' }] },
+    ] as any;
+
+    expect(messageStore.getRewindPoints(SID)[0].text).toBe('[a.ts, shot.png] fix it');
   });
 
   it('returns empty for unknown session', () => {
@@ -1850,6 +2158,21 @@ describe('outgoing message queue', () => {
     expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['user']);
   });
 
+  it('shows attached files as files and images as images, and sends the images', () => {
+    const images = [{ data: 'iVBOR', mediaType: 'image/png' as const, name: 'shot.png' }];
+    messageStore.submitMessage(SID, {
+      displayText: '[notes.md, shot.png] look at this',
+      outgoing: '<file path="notes.md" length="5">\nnotes\n</file>\n\nlook at this',
+      images,
+    });
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, '<file path="notes.md" length="5">\nnotes\n</file>\n\nlook at this', images);
+    const msg = messageStore.getMessages(SID)[0] as ChatUserMessage;
+    expect(msg.text).toBe('look at this');
+    expect(msg.files).toEqual([{ path: 'notes.md', content: 'notes' }]);
+    expect(msg.images).toEqual([{ name: 'shot.png', dataUrl: 'data:image/png;base64,iVBOR' }]);
+  });
+
   it('queues (and does not send) while a turn is running', () => {
     messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
     mockGroveBench.sendMessage.mockClear();
@@ -1963,6 +2286,23 @@ describe('outgoing message queue', () => {
     expect(messageStore.getQueue(SID)).toEqual([]);
     expect(messageStore.promptInsertBySession[SID]?.text).toBe('fix it');
     expect(messageStore.editQueuedMessage(SID, 'nope')).toBe(false);
+  });
+
+  it('editQueuedMessage hands back the prompt as typed, with its attachments', () => {
+    messageStore.draftBySession = {};
+    messageStore.setIsRunning(SID, true);
+    const attachments = [{ type: 'image' as const, name: 'a.png', dataUrl: 'data:image/png;base64,AAAA' }];
+    messageStore.submitMessage(SID, {
+      displayText: '[a.png] look',
+      outgoing: 'look',
+      images: [{ data: 'AAAA', mediaType: 'image/png', name: 'a.png' }],
+      typed: { text: 'look', attachments },
+    });
+
+    messageStore.editQueuedMessage(SID, messageStore.getQueue(SID)[0].id);
+
+    expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'look', attachments });
+    expect(messageStore.getDraft(SID)).toBe('look');
   });
 
   it('Stop pauses the queue; the restarted query does not fire the next item until Resume', () => {
@@ -2108,5 +2448,220 @@ describe('appendToPrompt', () => {
     messageStore.appendToPrompt(SID, 'second');
     expect(messageStore.getDraft(SID)).toBe('first\nsecond');
     expect(messageStore.promptInsertBySession[SID].nonce).toBe(2);
+  });
+});
+
+describe('findMessageForEvent', () => {
+  it('finds a message that arrived live by its event\'s uuid', async () => {
+    const id = 'search-live';
+    messageStore.addUserMessage(id, 'live prompt');
+    messageStore.ingestEvent(id, { type: 'user_message', text: 'live prompt', uuid: 'u-live' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'assistant_text', text: 'reply', uuid: 'a-live' } as AgentEvent);
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({
+      events: [{ type: 'user_message', text: 'live prompt', uuid: 'u-live' }], totalCount: 8, startIndex: 7,
+    } as never);
+
+    const found = await messageStore.findMessageForEvent(id, 7);
+
+    const target = messageStore.getMessages(id).find((m) => m.kind === 'user');
+    expect(found).toBe(target!.id);
+    expect(mockGroveBench.getEventHistoryPage).toHaveBeenCalledWith(id, 1, 8);
+    // Stamped: the next lookup needs no fetch.
+    expect(messageStore.getEventIndexForMessageId(id, target!.id)).toBe(7);
+    messageStore.destroySession(id);
+  });
+});
+
+describe('/clear that never happened', () => {
+  it('does not wipe the chat at a later start, and puts a follow-up back in the prompt', () => {
+    const id = 'clear-failed';
+    messageStore.addUserMessage(id, 'keep me');
+    messageStore.clearAndSend(id, 'then do this');
+
+    // Main: not delivered.
+    messageStore.ingestEvent(id, { type: 'error', message: 'Message not delivered' } as AgentEvent);
+    messageStore.ingestEvent(id, { type: 'process_exit' } as AgentEvent);
+    expect(messageStore.getDraft(id)).toContain('then do this');
+
+    // Much later: a restart or wake.
+    messageStore.ingestEvent(id, { type: 'system_init', model: 'opus', tools: [], sessionId: 'p1' } as unknown as AgentEvent);
+
+    expect(messageStore.getMessages(id).some((m) => m.kind === 'user' && (m as { text: string }).text === 'keep me')).toBe(true);
+    expect(mockGroveBench.clearEventHistory).not.toHaveBeenCalled();
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalledWith(id, 'then do this');
+    messageStore.destroySession(id);
+  });
+});
+
+describe('loadOlderEvents replays only messages', () => {
+  const ID = 'older-page';
+  const ev = (e: Record<string, unknown>) => e as unknown as AgentEvent;
+  const init = (model: string) => ev({ type: 'system_init', sessionId: 'p', model, tools: [] });
+  const user = (uuid: string, text: string) => ev({ type: 'user_message', text, uuid });
+  const toolUse = (toolUseId: string) => ev({ type: 'assistant_tool_use', toolName: 'Bash', toolInput: { command: 'ls' }, toolUseId, uuid: `a-${toolUseId}` });
+  const toolResult = (toolUseId: string, content: string) => ev({ type: 'tool_result', toolUseId, content });
+  const result = () => ev({ type: 'result', subtype: 'success', isError: false });
+
+  function newerPage(events: AgentEvent[], startIndex: number) {
+    messageStore.replayEvents(ID, events, undefined, startIndex);
+    messageStore.setPagination(ID, startIndex + events.length, startIndex);
+  }
+  function olderPage(events: AgentEvent[], startIndex = 0) {
+    mockGroveBench.getEventHistoryPage.mockResolvedValueOnce({ events, totalCount: 999, startIndex } as never);
+  }
+  const toolCall = (toolUseId: string) => messageStore.getMessages(ID).find((m) => m.kind === 'tool_call' && m.toolUseId === toolUseId) as
+    { pending?: boolean; result?: string } | undefined;
+
+  afterEach(() => messageStore.destroySession(ID));
+
+  it('leaves an idle conversation idle, on its current mode and model', async () => {
+    newerPage([init('opus-new'), ev({ type: 'mode_sync', mode: 'acceptEdits', source: 'session' }), user('u2', 'latest'), result()], 200);
+    // The older page ends mid-turn, on an earlier mode and model.
+    olderPage([init('old-model'), ev({ type: 'mode_sync', mode: 'plan', source: 'session' }), user('u1', 'earlier'), toolUse('t9')]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    expect(messageStore.getIsRunning(ID)).toBe(false);
+    expect(messageStore.getMode(ID)).toBe('acceptEdits');
+    expect(messageStore.getModel(ID)).toBe('opus-new');
+    const texts = messageStore.getMessages(ID).filter((m) => m.kind === 'user').map((m) => (m as { text: string }).text);
+    expect(texts).toEqual(['earlier', 'latest']);
+    // Cut off before the newer page began: not still running.
+    expect(toolCall('t9')?.pending).toBe(false);
+  });
+
+  it('keeps a live permission prompt open', async () => {
+    newerPage([init('opus'), user('u2', 'do it'), toolUse('t5')], 200);
+    messageStore.ingestEvent(ID, ev({ type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't5', requestId: 'r5' }));
+    expect(messageStore.needsInput(ID)).toBe(true);
+    // The older page ends with a finished turn.
+    olderPage([user('u1', 'before'), result()]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    expect(messageStore.getIsRunning(ID)).toBe(true);
+    expect(messageStore.needsInput(ID)).toBe(true);
+  });
+
+  it('gives a tool call in the older page its result from the newer page', async () => {
+    // The newer page starts with the result of a call made just before it.
+    newerPage([toolResult('t1', 'file-a\nfile-b'), result(), user('u2', 'next')], 200);
+    olderPage([user('u1', 'list files'), toolUse('t1')]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    expect(toolCall('t1')).toMatchObject({ pending: false, result: 'file-a\nfile-b' });
+  });
+
+  it('carries an unmatched result on to the page that holds its call', async () => {
+    newerPage([toolResult('t1', 'done'), user('u3', 'next')], 400);
+    olderPage([user('u2', 'middle')], 200);
+    await messageStore.loadOlderEvents(ID, 200);
+    olderPage([user('u1', 'first'), toolUse('t1')], 0);
+    await messageStore.loadOlderEvents(ID, 200);
+
+    expect(toolCall('t1')).toMatchObject({ result: 'done' });
+  });
+
+  it('answers a permission prompt in the older page as the newer page did', async () => {
+    newerPage([ev({ type: 'permission_resolved', requestId: 'r1', toolUseId: 't1', decision: 'allow' }), toolResult('t1', 'ok'), result(), user('u2', 'next')], 200);
+    olderPage([user('u1', 'go'), toolUse('t1'), ev({ type: 'permission_request', toolName: 'Bash', toolInput: {}, toolUseId: 't1', requestId: 'r1' })]);
+
+    await messageStore.loadOlderEvents(ID);
+
+    const perm = messageStore.getMessages(ID).find((m) => m.kind === 'permission') as { resolved?: boolean; decision?: string };
+    expect(perm).toMatchObject({ resolved: true, decision: 'allow' });
+  });
+
+  it('drops a page that lands after the conversation was cleared', async () => {
+    newerPage([user('u2', 'latest')], 200);
+    let finish!: (v: unknown) => void;
+    mockGroveBench.getEventHistoryPage.mockReturnValueOnce(new Promise((r) => { finish = r; }) as never);
+    const loading = messageStore.loadOlderEvents(ID);
+    messageStore.clearSession(ID);
+    finish({ events: [user('u1', 'old')], totalCount: 999, startIndex: 0 });
+    await loading;
+
+    expect(messageStore.getMessages(ID)).toEqual([]);
+  });
+});
+
+describe('rewind', () => {
+  const ID = 'rewind-unloaded';
+  const ev = (e: Record<string, unknown>) => e as unknown as AgentEvent;
+  const user = (uuid: string, text: string) => ev({ type: 'user_message', text, uuid });
+
+  afterEach(() => {
+    messageStore.destroySession(ID);
+    checkpointStore.checkpointsBySession = {};
+  });
+
+  it('to a message in a page not loaded yet, drops everything shown and loads the shorter history', async () => {
+    messageStore.replayEvents(ID, [user('u5', 'fifth'), user('u6', 'sixth')], undefined, 200);
+    messageStore.setPagination(ID, 202, 200);
+    checkpointStore.checkpointsBySession = { [ID]: [{ uuid: 'u2', turn: 2, ref: 'r2', text: 'second prompt' }] };
+    // Main cut the history to the 150 events before u2.
+    mockGroveBench.getEventHistoryPage
+      .mockResolvedValueOnce({ events: [], totalCount: 150, startIndex: 149 } as never)
+      .mockResolvedValueOnce({ events: [user('u1', 'first')], totalCount: 150, startIndex: 0 } as never);
+
+    messageStore.ingestEvent(ID, ev({ type: 'rewind', toMessageId: 'u2' }));
+
+    await vi.waitFor(() => expect(messageStore.getMessages(ID).map((m) => (m as { text?: string }).text)).toEqual(['first']));
+    expect(messageStore.getDraft(ID)).toBe('second prompt');
+    expect(messageStore.hasOlderEvents(ID)).toBe(false);
+  });
+
+  it('conversation-only, while replaying history, keeps the edits of the turn it rewinds away', () => {
+    messageStore.replayEvents(ID, [
+      user('u1', 'edit it'),
+      ev({ type: 'assistant_tool_use', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'x', new_string: 'y' }, toolUseId: 't1', uuid: 'a1' }),
+      ev({ type: 'tool_result', toolUseId: 't1', content: 'ok' }),
+      ev({ type: 'result', subtype: 'success', isError: false }),
+      user('u2', 'more'),
+      ev({ type: 'rewind', toMessageId: 'u2', conversationOnly: true }),
+    ]);
+
+    expect(messageStore.preservedEditHistory[ID]?.map((f) => f.filePath)).toEqual(['a.ts']);
+  });
+});
+
+describe('ingestEvent — tool views', () => {
+  it('keeps the view an adapter attached to a tool call', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'run_shell_command', toolInput: {}, toolUseId: 't1', uuid: 'u1',
+      toolView: { kind: 'shell', command: 'npm test' },
+    });
+    const msg = messageStore.getMessages(SID).find((m) => m.kind === 'tool_call');
+    expect(msg && msg.kind === 'tool_call' && msg.toolView).toEqual({ kind: 'shell', command: 'npm test' });
+  });
+
+  it('fills in a tool call and its permission prompt from tool_update', () => {
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'edit', toolInput: {}, toolUseId: 't2', uuid: 'u2',
+      toolView: { kind: 'edit', summary: 'Editing' },
+    });
+    messageStore.ingestEvent(SID, {
+      type: 'permission_request', toolName: 'edit', toolInput: {}, toolUseId: 't2', requestId: 'r2', toolCategory: 'edit',
+      toolView: { kind: 'edit', summary: 'Editing' },
+    });
+    const view = { kind: 'edit' as const, path: 'a.ts', edits: [{ oldText: 'a', newText: 'b' }] };
+    messageStore.ingestEvent(SID, { type: 'tool_update', toolUseId: 't2', toolName: 'replace', toolView: view });
+    const msgs = messageStore.getMessages(SID);
+    const call = msgs.find((m) => m.kind === 'tool_call');
+    const perm = msgs.find((m) => m.kind === 'permission');
+    expect(call && call.kind === 'tool_call' && [call.toolName, call.toolView]).toEqual(['replace', view]);
+    expect(perm && perm.kind === 'permission' && perm.toolView).toEqual(view);
+  });
+
+  it('lists edits from adapter views in the turn\'s file changes', () => {
+    messageStore.ingestEvent(SID, { type: 'user_message', text: 'go' });
+    messageStore.ingestEvent(SID, {
+      type: 'assistant_tool_use', toolName: 'edit', toolInput: {}, toolUseId: 't3', uuid: 'u3',
+      toolView: { kind: 'edit', path: '/w/a.ts', edits: [{ oldText: 'a', newText: 'b' }] },
+    });
+    messageStore.ingestEvent(SID, { type: 'tool_result', toolUseId: 't3', content: 'ok' });
+    messageStore.ingestEvent(SID, { type: 'result', subtype: 'success', isError: false });
+    expect(messageStore.getLastTurnFileChanges(SID).map((c) => c.filePath)).toEqual(['/w/a.ts']);
   });
 });

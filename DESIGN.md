@@ -111,9 +111,6 @@ class WorktreeManager {
   // Lists all grove-bench-managed worktrees for a repo
   async list(repoPath: string): Promise<WorktreeInfo[]>;
 
-  // Cleans up all grove-bench worktrees (called on app quit)
-  async cleanupAll(): Promise<void>;
-
   // Validates that a path is a git repo
   async validateRepo(path: string): Promise<boolean>;
 
@@ -200,19 +197,19 @@ interface GroveBenchAPI {
 `src/main/preview.ts` gives each conversation a browser with two pages that share one in-memory storage partition (`grove-preview-<sessionId>`, cleared when the conversation closes):
 
 - **Your page** is a `WebContentsView` added to the Grove window. The renderer's `PreviewPanel` checks its content box every frame and reports changes (`preview:setViewport`); main places the view there (scaled by the Grove page's zoom factor, since CSS pixels and window pixels differ when the UI is zoomed), or hides it (`null`) when the tab, conversation or page mode changes. When Grove's UI reloads, main hides every page (the reloaded renderer doesn't know where they were) and the renderer catches up with `preview:getStates`. Native views draw above the HTML, so the panel samples a grid of points with `elementFromPoint`; when anything else is on top (a dropdown, dialog, the finder) it asks for a snapshot (`preview:snapshot`), shows it as an `<img>`, then hides the view until the overlay goes.
-- **Claude's page** is a hidden `BrowserWindow` with `offscreen: true`, created on the agent's first browser tool call. A hidden or never-shown `WebContentsView` stops painting: `capturePage()` fails with "Current display surface not available for capture", ignores resizes and loses its surface on cross-site navigation. Offscreen rendering keeps painting (10 fps), so screenshots, clicks and typing work whatever tab the user is on. The renderer shows it read-only by polling `preview:agentFrame`, which only returns a frame when a paint happened since the last one.
+- **The agent's page** is a hidden `BrowserWindow` with `offscreen: true`, created on the agent's first browser tool call. A hidden or never-shown `WebContentsView` stops painting: `capturePage()` fails with "Current display surface not available for capture", ignores resizes and loses its surface on cross-site navigation. Offscreen rendering keeps painting (10 fps), so screenshots, clicks and typing work whatever tab the user is on. The renderer shows it read-only by polling `preview:agentFrame`, which only returns a frame when a paint happened since the last one.
 
 The agent's tools are an in-process SDK MCP server (`src/main/adapters/preview-mcp-server.ts`, server `grove-preview`) over the adapter-neutral `PreviewOperations`: `preview_open`, `preview_screenshot`, `preview_read`, `preview_logs`, `preview_click`, `preview_type`. The first four are added to the conversation's always-allowed tools; click and type go through the normal permission prompt. A conversation's calls run one at a time in call order (the agent may send an open and a screenshot together), and each fails after 45 seconds so a stuck page can't stall the turn. Clicks and typing are real input events sent over the DevTools protocol (`webContents.debugger`, attached for the page's lifetime). The same connection answers `alert`/`confirm` dialogs, which would otherwise block the hidden page and every later call: OK by default, Cancel when the action passes `dialogs: 'dismiss'`, and the dialog's text goes in the log so the action reports it. The scripts that find, scroll to and focus the element (`src/main/preview-scripts.ts`) take the agent's selector or text as JSON, never as code, and scroll with `behavior: 'instant'` so pages with `scroll-behavior: smooth` report the final position. `settings.previewAgentTools` turns the server off for agents started afterwards.
 
 Rules (`src/main/preview-policy.ts`, `src/main/preview.ts`):
 
-- Your page opens any http(s) URL; Claude's page only local ones (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`). Both open `about:blank` and `file://` URLs inside the conversation's worktree; Claude's page only `.html`/`.htm` ones. Top-level navigations are checked on load, `will-navigate` and `will-redirect`; pop-ups load in the same page. A load that ends in `ERR_ABORTED` because the page redirected itself counts as loaded once the redirect finishes
-- Every `file://` request, frames and scripts included, goes through `webRequest.onBeforeRequest`: it must be inside the worktree, and on Claude's page it must be a web file type (HTML, CSS, JS, images, fonts, media). Otherwise an HTML file could iframe `~/.aws/credentials` or a `.env` into a screenshot, getting round the user's read rules
-- Both pages run with `sandbox`, `contextIsolation`, no Node and no preload. Permission requests are denied except `clipboard-sanitized-write`; device access is denied; downloads from Claude's page are cancelled
+- Your page opens any http(s) URL; the agent's page only local ones (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`). Both open `about:blank` and `file://` URLs inside the conversation's worktree; the agent's page only `.html`/`.htm` ones. Top-level navigations are checked on load, `will-navigate` and `will-redirect`; pop-ups load in the same page. A load that ends in `ERR_ABORTED` because the page redirected itself counts as loaded once the redirect finishes
+- Every `file://` request, frames and scripts included, goes through `webRequest.onBeforeRequest`: it must be inside the worktree, and on the agent's page it must be a web file type (HTML, CSS, JS, images, fonts, media). Otherwise an HTML file could iframe `~/.aws/credentials` or a `.env` into a screenshot, getting round the user's read rules
+- Both pages run with `sandbox`, `contextIsolation`, no Node and no preload. Permission requests are denied except `clipboard-sanitized-write`; device access is denied; downloads from the agent's page are cancelled
 - Certificate errors are accepted for local hosts only, for dev servers with self-signed certificates
-- Console messages, uncaught errors, failed loads, blocked navigations and files, dialogs, and 4xx/5xx or failed requests from Claude's page go to a 300-entry log (`src/main/preview-log.ts`) that `preview_logs` reads
+- Console messages, uncaught errors, failed loads, blocked navigations and files, dialogs, and 4xx/5xx or failed requests from the agent's page go to a 300-entry log (`src/main/preview-log.ts`) that `preview_logs` reads
 
-Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove's window shortcuts (listed once in `src/shared/grove-shortcuts.ts`: `Alt+1..5`, `Alt+M/T/E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T`) and `Ctrl+L` are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes (Claude's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app). Events a closing page still fires are ignored.
+Keys pressed in your page are handled in `before-input-event` (`src/main/preview-keys.ts`): browser keys run on the page and Grove's window shortcuts (listed once in `src/shared/grove-shortcuts.ts`: `Alt+1..5`, `Alt+M/T/E`, `Ctrl+B`, `Ctrl+N`, `Ctrl+Shift+T`) and `Ctrl+L` are sent back to the renderer (`preview:key`), which replays them as a window `keydown`. The pages close on `session:close`, `session:destroy` and when the Grove window closes; the agent's page also closes on `session:sleep`, since nothing drives it while the agent is asleep (the agent's pages are windows, so leaving them open would stop `window-all-closed` from quitting the app). Events a closing page still fires are ignored.
 
 ### 4.3 Renderer / UI
 
@@ -438,14 +435,14 @@ User clicks "X" on agent pane OR closes app
 
 ```
 App close event (before-quit)
-  → AgentSessionManager.destroyAll()
-    → Kill all PTYs
-    → Wait 500ms for Windows file handle release
-  → WorktreeManager.cleanupAll()
-    → Remove all grove-bench-managed worktrees (with retry logic per Section 7.2)
-    → Optionally delete orphaned branches
-    → git worktree prune (clean up any stale references)
+  → TerminalManager.killAll()
+  → AgentSessionManager.closeAll()
+    → Same as closing each conversation: kill the agent process tree, deny
+      pending permissions, flush the event log
   → App exits
+
+Worktrees, branches and checkpoint refs are kept: conversations reopen on the
+next launch. Only an explicit delete removes a worktree (Section 7.2).
 ```
 
 ## 8. Technical Considerations
@@ -604,6 +601,8 @@ Conversations don't need the installed CLI: the Agent SDK runs its own bundled C
 
 If none is, the New Conversation dialog shows an API key field and a Re-check button instead of the form. The key can be changed or removed later in Settings > Agent.
 
+A pasted key is checked before it is saved (`AgentAdapter.verifyApiKey`; for Claude, one `GET /v1/models` call, [List Models](https://platform.claude.com/docs/en/api/models/list)): a 401 turns it away next to the field, and when the provider can't be reached it is saved and marked unchecked. Skipped when `ANTHROPIC_BASE_URL` points conversations elsewhere. A key can still fail later (revoked, typo saved offline): the SDK flags the reply `authentication_failed`, the adapter turns it into an `error` event with `auth` and `keyRejected` set and its own sign-in help in place of the CLI's text, the thread links to Settings > Agents, and main marks the saved key refused (`markApiKeyRejected`). A refused key counts as no credentials (`agentReady`), so new conversations ask again until it is replaced or removed.
+
 **Several agents.** Every check above runs for each registered adapter, and `PrerequisiteStatus.agents` holds the result per adapter id. Saved keys, default models (`settings.defaultModels`) and the Settings > Agent groups are per adapter too. The New Conversation dialog shows an Agent picker when more than one adapter is registered and asks for the picked agent's credentials; the status bar lists the models of the conversation's own agent. The Settings MCP and Plugins tabs configure the default agent and are hidden when it doesn't support them.
 
 **Background tasks.** Memory notes, memory compaction, commit messages and skill suggestions call `adapter.generateText()` (`src/main/background-tasks.ts`). Each runs on the agent of the conversation it belongs to, so a conversation's content only goes to the provider chosen for it. The manifest records every conversation's agent (`adapterType`), which also lets a restart resume it on the same agent. Project-level tasks use the project's most recently used agent: manual compaction any agent, skill suggestions only an agent with skills, and suggestions only read that agent's conversations. The model is the user's pick in `settings.backgroundModels`, else the adapter's own `backgroundModel` (Claude: the SDK's current Haiku), else the agent's default.
@@ -720,7 +719,7 @@ The app needs to surface errors clearly since things will go wrong (worktree cre
 
 | Category | Example | How it surfaces |
 |----------|---------|-----------------|
-| Prerequisite failure | Git not found or too old, no agent credentials | Git: dismissible notice under the title bar. Credentials: API key step in the New Conversation dialog. Neither blocks the app. |
+| Prerequisite failure | Git not found or too old, no agent credentials | Git: a notice with Download Git and Re-check on the first screen, in a new conversation and at the top of the Changes tab. Credentials: API key step in the New Conversation dialog. Neither blocks the app. |
 | Worktree creation failure | Branch already exists, disk full, permission denied | Error toast + details. Session creation aborted, no terminal opens. |
 | PTY crash | Claude Code exits unexpectedly, shell crashes | Terminal shows exit message in red. Agent status changes to "stopped". User can destroy and recreate. |
 | Worktree cleanup failure | File locked by another process | Warning toast. Retry button. Flag for cleanup on next startup. |

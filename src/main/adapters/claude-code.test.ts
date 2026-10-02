@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
-import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage } from './claude-code.js';
+import { transformMessage, isPathInside, ClaudeCodeAdapter, supportsLargeContext, CONTEXT_1M_BETA, THINKING_LEVEL_TOKENS, thinkingConfigFor, parseMcpListOutput, mcpServerManager, claudeMcpOrigin, mcpToolServerKey, mcpContextCostByServer, toMcpElicitationRequest, withMcpjsonApproval, mcpjsonApprovalsFrom, buildMcpAddArgs, quoteArg, validatePluginId, validateConfigScope, capToolResult, claudeControlsFor, supportsAdaptiveThinking, supportsFastMode, supportsAutoMode, claudeModelCaps, effortFor, reasoningOptionsFor, toSdkPermissionMode, fromSdkSyncMode, stripAnsi, mapClaudeUsage, thinkingDisplayFor, TEXT_GENERATION_OPTIONS, missingConversationError } from './claude-code.js';
 import type { AgentEvent } from '../../shared/types.js';
 
 // ─── isPathInside (sandbox allowWrite containment) ───
@@ -119,12 +119,24 @@ describe('getControls()', () => {
   it('builds query-start thinking and effort from recorded controls', () => {
     expect(reasoningOptionsFor('claude-opus-5', { thinking: 'off', effort: 'low' }))
       .toEqual({ thinking: { type: 'disabled' }, effort: 'low' });
-    // Opus 5.5 can't turn thinking off: a carried-over 'off' is not sent.
+    // Opus 5.5 can't turn thinking off: a carried-over 'off' is not sent, but
+    // adaptive is, so the thinking display can be set.
     expect(reasoningOptionsFor('claude-opus-5-5', { thinking: 'off', effort: 'medium' }))
-      .toEqual({ thinking: null, effort: 'medium' });
+      .toEqual({ thinking: { type: 'adaptive', display: 'summarized' }, effort: 'medium' });
+    expect(reasoningOptionsFor('claude-fable-5', undefined))
+      .toEqual({ thinking: { type: 'adaptive', display: 'summarized' }, effort: undefined });
     expect(reasoningOptionsFor('claude-haiku-4-5-20251001', { thinking: 'low', effort: 'high' }))
-      .toEqual({ thinking: { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low }, effort: undefined });
+      .toEqual({ thinking: { type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'summarized' }, effort: undefined });
     expect(reasoningOptionsFor('claude-opus-5', undefined)).toEqual({ thinking: null, effort: undefined });
+  });
+
+  it('asks for no thinking text when summaries are turned off', () => {
+    expect(reasoningOptionsFor('claude-opus-5-5', {}, undefined, 'omitted').thinking)
+      .toEqual({ type: 'adaptive', display: 'omitted' });
+    expect(reasoningOptionsFor('claude-opus-5', { thinking: 'adaptive' }, undefined, 'omitted').thinking)
+      .toEqual({ type: 'adaptive', display: 'omitted' });
+    expect(reasoningOptionsFor('claude-opus-5', { thinking: 'off' }, undefined, 'omitted').thinking)
+      .toEqual({ type: 'disabled' });
   });
 
   it('only sends effort levels the model accepts', () => {
@@ -236,17 +248,30 @@ describe('thinkingConfigFor()', () => {
     expect(thinkingConfigFor(undefined)).toBeNull();
   });
 
-  it('maps adaptive to the adaptive thinking config', () => {
-    expect(thinkingConfigFor('adaptive')).toEqual({ type: 'adaptive' });
+  it('maps adaptive to the adaptive thinking config with summaries shown', () => {
+    expect(thinkingConfigFor('adaptive')).toEqual({ type: 'adaptive', display: 'summarized' });
   });
 
   it('maps off to disabled', () => {
     expect(thinkingConfigFor('off')).toEqual({ type: 'disabled' });
   });
 
+  it('passes the display it is given', () => {
+    expect(thinkingConfigFor('adaptive', 'omitted')).toEqual({ type: 'adaptive', display: 'omitted' });
+    expect(thinkingConfigFor('low', 'omitted')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'omitted' });
+  });
+
   it('maps low/medium to fixed budgets', () => {
-    expect(thinkingConfigFor('low')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low });
-    expect(thinkingConfigFor('medium')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.medium });
+    expect(thinkingConfigFor('low')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.low, display: 'summarized' });
+    expect(thinkingConfigFor('medium')).toEqual({ type: 'enabled', budgetTokens: THINKING_LEVEL_TOKENS.medium, display: 'summarized' });
+  });
+});
+
+describe('thinkingDisplayFor()', () => {
+  it('shows summaries unless the setting is turned off', () => {
+    expect(thinkingDisplayFor(true)).toBe('summarized');
+    expect(thinkingDisplayFor(undefined)).toBe('summarized');
+    expect(thinkingDisplayFor(false)).toBe('omitted');
   });
 });
 
@@ -455,6 +480,33 @@ describe('buildMcpAddArgs()', () => {
   });
 });
 
+describe('plugin and scope arguments for the claude CLI', () => {
+  it('accepts plugin ids as the CLI lists them', () => {
+    expect(validatePluginId('code-review@claude-plugins-official')).toBe('code-review@claude-plugins-official');
+    expect(validatePluginId('figma')).toBe('figma');
+  });
+
+  it('refuses plugin ids with shell characters, spaces or a leading dash', () => {
+    for (const id of ['a&b', 'a|b', 'a b', 'a"b', '%x%', '-rf', '', 42]) {
+      expect(() => validatePluginId(id), String(id)).toThrow('Invalid plugin id');
+    }
+  });
+
+  it('refuses unknown scopes and transports', () => {
+    expect(validateConfigScope('project')).toBe('project');
+    expect(() => validateConfigScope('user & x')).toThrow('Invalid scope');
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'http', commandOrUrl: 'https://x', scope: 'global' as never })).toThrow('Invalid scope');
+    expect(() => buildMcpAddArgs({ name: 'ok', transport: 'ws' as never, commandOrUrl: 'https://x', scope: 'user' })).toThrow('Invalid transport');
+  });
+
+  it('refuses a bad plugin id before running the CLI', async () => {
+    const adapter = new ClaudeCodeAdapter();
+    await expect(adapter.installPlugin('x & y')).rejects.toThrow('Invalid plugin id');
+    await expect(adapter.installPlugin('ok', 'all')).rejects.toThrow('Invalid scope');
+    await expect(adapter.disablePlugin('x|y')).rejects.toThrow('Invalid plugin id');
+  });
+});
+
 describe('quoteArg()', () => {
   it('passes simple args through unquoted', () => {
     expect(quoteArg('npx')).toBe('npx');
@@ -518,6 +570,27 @@ function makeCtx() {
   return { toolUseMap: new Map<string, string>() };
 }
 
+describe('missingConversationError()', () => {
+  // What the CLI sends when asked to resume a conversation it no longer has.
+  const missing = {
+    type: 'result', subtype: 'error_during_execution', is_error: true, num_turns: 0,
+    errors: ['No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170'],
+  };
+
+  it('picks out the missing-conversation error result', () => {
+    expect(missingConversationError(missing as any)).toBe('No conversation found with session ID: 1498a621-d151-4ae3-9f13-7416cfbdf170');
+    // Still recognised if a CLI version prefixes the text.
+    expect(missingConversationError({ ...missing, errors: ['Error: No conversation found with session ID: x'] } as any))
+      .toBe('Error: No conversation found with session ID: x');
+  });
+
+  it('ignores other results', () => {
+    expect(missingConversationError({ ...missing, errors: ['Request was aborted'] } as any)).toBeNull();
+    expect(missingConversationError({ type: 'result', subtype: 'success', is_error: false, result: 'No conversation found with session ID: x' } as any)).toBeNull();
+    expect(missingConversationError({ type: 'assistant', message: { content: [] } } as any)).toBeNull();
+  });
+});
+
 describe('capToolResult()', () => {
   it('returns short results unchanged', () => {
     expect(capToolResult('hello')).toBe('hello');
@@ -545,9 +618,66 @@ describe('capToolResult()', () => {
     expect(result.content.length).toBeLessThan(300_000);
     expect(result.content).toContain('characters omitted');
   });
+
+  it('passes on the images in a tool result (a screenshot, an image file read)', () => {
+    const ctx = { toolUseMap: new Map<string, string>() };
+    const events = transformMessage({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'tu1',
+          content: [
+            { type: 'text', text: 'Screenshot of the page' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } },
+            // MCP shape, in case it arrives unconverted
+            { type: 'image', data: '/9j/4', mimeType: 'image/jpeg' },
+            // Not an image type the thread can show
+            { type: 'image', source: { type: 'base64', media_type: 'image/tiff', data: 'SUkq' } },
+          ],
+        }],
+      },
+    } as any, ctx as any);
+
+    expect(events).toEqual([{
+      type: 'tool_result',
+      toolUseId: 'tu1',
+      content: 'Screenshot of the page',
+      isError: undefined,
+      imageData: [
+        { data: 'iVBOR', mediaType: 'image/png' },
+        { data: '/9j/4', mediaType: 'image/jpeg' },
+      ],
+    }]);
+  });
+
+  it('leaves imageData off a tool result without images', () => {
+    const ctx = { toolUseMap: new Map<string, string>() };
+    const events = transformMessage({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'ok' }] }] },
+    } as any, ctx as any);
+    expect(events[0]).not.toHaveProperty('imageData');
+  });
 });
 
 describe('transformMessage()', () => {
+  describe('informational messages', () => {
+    it('shows the CLI\'s warnings, such as a sandbox that could not start', () => {
+      const events = transformMessage(
+        { type: 'system', subtype: 'informational', level: 'warning', content: ' Sandbox unavailable; running commands unsandboxed ' } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'status', level: 'warning', message: 'Sandbox unavailable; running commands unsandboxed' }]);
+    });
+
+    it('drops lower levels, which the CLI itself keeps to the transcript', () => {
+      for (const level of ['info', 'notice', 'suggestion']) {
+        expect(transformMessage({ type: 'system', subtype: 'informational', level, content: 'x' } as any, makeCtx())).toEqual([]);
+      }
+    });
+  });
+
   describe('background task messages', () => {
     it('maps background_tasks_changed to a replace-style task list, dropping ambient tasks', () => {
       const events = transformMessage(
@@ -732,6 +862,18 @@ describe('transformMessage()', () => {
       expect(ctx.toolUseMap.get('tu1')).toBe('Bash');
     });
 
+    it('puts PowerShell in the shell category', () => {
+      const events = transformMessage(
+        {
+          type: 'assistant',
+          uuid: 'u2',
+          message: { content: [{ type: 'tool_use', id: 'tu1', name: 'PowerShell', input: { command: 'Get-ChildItem' } }] },
+        } as any,
+        makeCtx(),
+      );
+      expect(events).toContainEqual(expect.objectContaining({ type: 'assistant_tool_use', toolName: 'PowerShell', toolCategory: 'bash' }));
+    });
+
     it('transforms thinking blocks', () => {
       const events = transformMessage(
         {
@@ -779,8 +921,35 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events.find((e) => e.type === 'usage')).toBeUndefined();
-      // text should still come through
-      expect(events.find((e) => e.type === 'assistant_text')).toMatchObject({ text: 'subagent reply' });
+    });
+
+    it('tags a subagent\'s text, thinking and tool calls with its Agent call, in order', () => {
+      // Untagged, a subagent's report read as the main agent's reply.
+      const events = transformMessage(
+        {
+          type: 'assistant',
+          uuid: 'u6',
+          parent_tool_use_id: 'tu-agent-123',
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'Spot-checking...' },
+              { type: 'text', text: 'I\'ve sent the full report to your caller.' },
+              { type: 'tool_use', id: 'tu-sub-1', name: 'Grep', input: { pattern: 'cron' } },
+            ],
+          },
+        } as any,
+        makeCtx(),
+      );
+      expect(events.map((e) => e.type)).toEqual(['thinking', 'assistant_text', 'assistant_tool_use']);
+      for (const e of events) expect(e).toMatchObject({ parentToolUseId: 'tu-agent-123' });
+    });
+
+    it('leaves the main agent\'s events untagged', () => {
+      const events = transformMessage(
+        { type: 'assistant', uuid: 'u7', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'hi' }] } } as any,
+        makeCtx(),
+      );
+      expect(events[0]).not.toHaveProperty('parentToolUseId');
     });
   });
 
@@ -805,6 +974,18 @@ describe('transformMessage()', () => {
         makeCtx(),
       );
       expect(events[0]).toMatchObject({ content: 'part1part2' });
+    });
+
+    it('tags a subagent\'s tool results with its Agent call', () => {
+      const events = transformMessage(
+        {
+          type: 'user',
+          parent_tool_use_id: 'tu-agent-123',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'tu-sub-1', content: 'match', is_error: false }] },
+        } as any,
+        makeCtx(),
+      );
+      expect(events).toEqual([{ type: 'tool_result', toolUseId: 'tu-sub-1', content: 'match', isError: false, parentToolUseId: 'tu-agent-123' }]);
     });
   });
 
@@ -882,6 +1063,16 @@ describe('transformMessage()', () => {
       );
       expect(events).toEqual([{ type: 'partial_thinking', text: 'hmm' }]);
     });
+
+    it('drops a subagent\'s stream, which would run into the main agent\'s reply', () => {
+      for (const event of [
+        { type: 'message_start' },
+        { type: 'content_block_start', content_block: { type: 'text' } },
+        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'sub' } },
+      ]) {
+        expect(transformMessage({ type: 'stream_event', parent_tool_use_id: 'tu-agent-123', event } as any, makeCtx())).toEqual([]);
+      }
+    });
   });
 
   describe('unknown message types', () => {
@@ -889,5 +1080,20 @@ describe('transformMessage()', () => {
       const events = transformMessage({ type: 'unknown_type' } as any, makeCtx());
       expect(events).toEqual([]);
     });
+  });
+});
+
+// ─── generateText options ───
+
+describe('TEXT_GENERATION_OPTIONS', () => {
+  it('gives the one-turn query no tools to call, so it cannot run out of turns', () => {
+    expect(TEXT_GENERATION_OPTIONS.maxTurns).toBe(1);
+    expect(TEXT_GENERATION_OPTIONS.tools).toEqual([]);
+    // Project, user and plugin MCP servers would add tools back.
+    expect(TEXT_GENERATION_OPTIONS.strictMcpConfig).toBe(true);
+  });
+
+  it('stays out of plan mode, whose reminder sends the model exploring', () => {
+    expect(TEXT_GENERATION_OPTIONS.permissionMode).toBe('dontAsk');
   });
 });

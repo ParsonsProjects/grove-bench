@@ -19,7 +19,7 @@ describe('checkNavigation', () => {
     expect(checkNavigation('http://localhost:3000/', 'user', worktree).ok).toBe(true);
   });
 
-  it("keeps Claude's page on local hosts", () => {
+  it("keeps the agent's page on local hosts", () => {
     expect(checkNavigation('http://localhost:5173/', 'agent', worktree).ok).toBe(true);
     expect(checkNavigation('https://127.0.0.1:8443/', 'agent', worktree).ok).toBe(true);
     const external = checkNavigation('https://example.com/', 'agent', worktree);
@@ -36,7 +36,7 @@ describe('checkNavigation', () => {
     }
   });
 
-  it("keeps Claude's page to HTML files, so it can't read other files", () => {
+  it("keeps the agent's page to HTML files, so it can't read other files", () => {
     const env = pathToFileURL(path.join(worktree, '.env')).href;
     const upper = pathToFileURL(path.join(worktree, 'docs', 'INDEX.HTM')).href;
     expect(checkNavigation(env, 'agent', worktree)).toMatchObject({ ok: false, reason: expect.stringContaining('.html') });
@@ -79,7 +79,7 @@ describe('checkFileRequest', () => {
     }
   });
 
-  it("keeps non-web files in the worktree away from Claude's page only", () => {
+  it("keeps non-web files in the worktree away from the agent's page only", () => {
     for (const f of [file('.env'), file('config', 'service-account.json'), file('notes.txt'), file('id_rsa')]) {
       expect(checkFileRequest(f, 'agent', worktree)).toMatchObject({ ok: false, reason: expect.stringContaining('non-web') });
       expect(checkFileRequest(f, 'user', worktree).ok).toBe(true);

@@ -1,5 +1,5 @@
 /**
- * Console and network log for Claude's Preview page. The agent reads it with
+ * Console and network log for the agent's Preview page. The agent reads it with
  * the preview_logs tool, which by default returns only what it hasn't seen.
  */
 

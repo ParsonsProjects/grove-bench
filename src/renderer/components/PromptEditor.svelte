@@ -1,9 +1,13 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
+  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
-  import FilePickerPopup from './FilePickerPopup.svelte';
+  import { agentsStore } from '../stores/agents.svelte.js';
+  import { store as sessionStore } from '../stores/sessions.svelte.js';
+  import type FilePickerPopup from './FilePickerPopup.svelte';
+  import { lazyComponent } from '../lib/lazy-component.js';
   import MessageQueue from './MessageQueue.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
@@ -56,14 +60,16 @@
   });
 
   // Insert text pushed from elsewhere (e.g. the activity thread's "copy
-  // selection to prompt"). Initialised from the current nonce so a stale
-  // request doesn't re-fire when this editor (re)mounts.
+  // selection to prompt", or a rewind's message text, which replaces it).
+  // Initialised from the current nonce so a stale request doesn't re-fire
+  // when this editor (re)mounts.
   let lastInsertNonce = untrack(() => messageStore.promptInsertBySession[sessionId]?.nonce ?? 0);
   $effect(() => {
     const req = messageStore.promptInsertBySession[sessionId];
     if (!req || req.nonce === lastInsertNonce) return;
     lastInsertNonce = req.nonce;
-    value = value ? `${value}\n${req.text}` : req.text;
+    value = req.replace ? req.text : value ? `${value}\n${req.text}` : req.text;
+    if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
     tick().then(() => { textarea?.focus(); autoResize(); });
   });
   let userResized = $state(false);
@@ -71,9 +77,19 @@
   let pickerQuery = $state('');
   let atStartIndex = $state(-1);
   let pickerRef: FilePickerPopup | undefined = $state();
+  // The @ file picker (and fuse.js, which only it uses here) loads the first
+  // time @ is typed.
+  const loadFilePicker = lazyComponent(() => import('./FilePickerPopup.svelte'));
 
-  // File attachments (drag-drop, paste, file picker)
-  let attachedFiles = $state<AttachedFile[]>([]);
+  // File attachments (drag-drop, paste, file picker), restored and kept in
+  // the store like the draft so they outlive this editor.
+  /** Whether this conversation's agent takes image attachments. */
+  let allowImages = $derived(agentsStore.supports(sessionStore.sessions.find((s) => s.id === sessionId)?.agentType, 'imageAttachments'));
+
+  let attachedFiles = $state<AttachedFile[]>(untrack(() => [...messageStore.getAttachments(sessionId)]));
+  $effect(() => {
+    messageStore.setAttachments(sessionId, $state.snapshot(attachedFiles));
+  });
   let dragOver = $state(false);
   let dropMessage = $state<{ text: string; isError: boolean } | null>(null);
   let dropMessageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -174,6 +190,8 @@
     const displayText = attachedFiles.length > 0
       ? `[${attachedFiles.map((f) => f.name).join(', ')}] ${text}`
       : text;
+    // Kept on a queued prompt so Edit can restore it as typed.
+    const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
     // Sends now if the agent is idle, otherwise parks the prompt in the queue.
     function send(outgoing: string) {
@@ -181,6 +199,7 @@
         displayText,
         outgoing,
         images: images.length > 0 ? images : undefined,
+        typed,
       });
     }
 
@@ -212,9 +231,23 @@
     handleInput();
   }
 
+  /** Keys the @ picker takes. Held while its code is still loading, so
+   *  Enter can't send a half-typed @ reference (Escape closes it). */
+  const PICKER_KEYS = new Set(['Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown']);
+
   function handleKeydown(e: KeyboardEvent) {
     if (pickerOpen && pickerRef) {
       if (pickerRef.handleKeydown(e)) return;
+    } else if (pickerOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePicker();
+        return;
+      }
+      if (PICKER_KEYS.has(e.key) && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
     }
 
     // Command picker navigation
@@ -306,7 +339,8 @@
 
     const pos = textarea?.selectionStart ?? 0;
     const textBefore = value.slice(0, pos);
-    const atMatch = textBefore.match(/@([\w.\/\-]*)$/);
+    // Same characters extractAtRefs accepts: anything but whitespace.
+    const atMatch = textBefore.match(/@(\S*)$/);
 
     if (atMatch) {
       pickerOpen = true;
@@ -367,6 +401,8 @@
 
   function handleStop() {
     messageStore.markSessionStopped(sessionId);
+    // A stopped turn may report no result, so nothing else would end it.
+    arrivalScene.end(sessionId);
     window.groveBench.stopSession(sessionId);
   }
 
@@ -400,7 +436,7 @@
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
-    const { files: newFiles, skipped } = await processFiles(files, attachedFiles);
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles, { allowImages });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }
@@ -423,7 +459,7 @@
 
     // Clipboard images all arrive named "image.png" — rename collisions so
     // pasting several screenshots attaches each one instead of only the first.
-    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true });
+    const { files: newFiles, skipped } = await processFiles(images, attachedFiles, { renameDuplicates: true, allowImages });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }
@@ -445,7 +481,7 @@
     const files = fileInput?.files;
     if (!files || files.length === 0) return;
 
-    const { files: newFiles, skipped } = await processFiles(files, attachedFiles);
+    const { files: newFiles, skipped } = await processFiles(files, attachedFiles, { allowImages });
     if (newFiles.length > 0) {
       attachedFiles = [...attachedFiles, ...newFiles];
     }
@@ -482,13 +518,15 @@
   ></div>
 
   {#if pickerOpen}
-    <FilePickerPopup
-      bind:this={pickerRef}
-      {sessionId}
-      query={pickerQuery}
-      onselect={selectFile}
-      onclose={closePicker}
-    />
+    {#await loadFilePicker() then Picker}
+      <Picker
+        bind:this={pickerRef}
+        {sessionId}
+        query={pickerQuery}
+        onselect={selectFile}
+        onclose={closePicker}
+      />
+    {/await}
   {/if}
 
   <!-- Slash command autocomplete -->
