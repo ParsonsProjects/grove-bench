@@ -7,6 +7,8 @@ import { AcpAdapter, type AcpAgentDefinition } from './acp-adapter.js';
 import type { AdapterConfig, AdapterEvent, AgentQueryHandle, PermissionRequest, PermissionResponse } from '../types.js';
 
 vi.mock('../../logger.js', () => ({ logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
+const savedKeys = vi.hoisted(() => new Map<string, string>());
+vi.mock('../../credentials.js', () => ({ getApiKey: (id: string) => savedKeys.get(id) ?? null }));
 const catalog = new Map<string, unknown[]>();
 vi.mock('../../app-state.js', () => ({
   loadModelCatalog: (id: string) => catalog.get(id) ?? null,
@@ -29,6 +31,7 @@ function def(scenario = 'default'): AcpAgentDefinition {
 let cwd: string;
 beforeEach(() => {
   catalog.clear();
+  savedKeys.clear();
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-'));
 });
 
@@ -288,6 +291,43 @@ describe('AcpAdapter', () => {
     const adapter = new AcpAdapter(def());
     const text = await adapter.generateText('You write commit messages.', 'diff here', { cwd, model: 'm2' });
     expect(text).toBe('Fix the thing (no, m2)');
+  });
+
+  describe('an API key saved in Grove and per-process settings', () => {
+    const keyed = (): AcpAgentDefinition => ({
+      ...def(),
+      apiKey: { envVar: 'FAKE_KEY_VAR', label: 'Fake key', helpUrl: 'https://example.com' },
+      spawnEnv: (env, { savedKey }) => ({ FAKE_SPAWN: `${savedKey ? 'saved' : 'not saved'}:${env.FAKE_KEY_VAR ?? 'none'}` }),
+    });
+
+    it('reach the agent, the saved key over an inherited one, in conversations and background tasks', async () => {
+      savedKeys.set('fake-acp', 'k-saved');
+      vi.stubEnv('FAKE_KEY_VAR', 'k-inherited');
+      try {
+        const adapter = new AcpAdapter(keyed());
+        expect(adapter.apiKey).toMatchObject({ envVar: 'FAKE_KEY_VAR' });
+        const handle = await adapter.start(config());
+        await until(handle, 'system_init');
+        handle.sendMessage({ text: 'env' });
+        const text = (await until(handle, 'result')).find((e) => e.type === 'assistant_text');
+        expect(JSON.parse((text as { text: string }).text)).toEqual({ key: 'k-saved', spawn: 'saved:k-saved' });
+        handle.close();
+
+        expect(JSON.parse(await adapter.generateText('sys', 'env', { cwd }))).toEqual({ key: 'k-saved', spawn: 'saved:k-saved' });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('leave an inherited key alone when none is saved', async () => {
+      vi.stubEnv('FAKE_KEY_VAR', 'k-inherited');
+      try {
+        const text = await new AcpAdapter(keyed()).generateText('sys', 'env', { cwd });
+        expect(JSON.parse(text)).toEqual({ key: 'k-inherited', spawn: 'not saved:k-inherited' });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
   });
 
   describe('an agent that edits and runs commands without asking', () => {

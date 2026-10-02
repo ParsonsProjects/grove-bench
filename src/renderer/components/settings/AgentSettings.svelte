@@ -317,7 +317,7 @@
 
 <SettingsGroup
   title="Other agents (ACP)"
-  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI and GitHub Copilot CLI are built in. Restart Grove Bench after a change."
+  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
   card
 >
   <div data-setting="acp-agents" class="flex flex-col gap-2">

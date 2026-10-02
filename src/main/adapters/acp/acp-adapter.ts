@@ -25,11 +25,12 @@ import { app } from 'electron';
 import { execa, type ResultPromise } from 'execa';
 import type {
   AdapterConfig, AdapterEvent, AdapterPrerequisiteStatus, AgentAdapter, AgentCapabilities, AgentQueryHandle,
-  CliSignInDescriptor, ModelInfo, PermissionResponse, UserMessage,
+  ApiKeyDescriptor, CliSignInDescriptor, ModelInfo, PermissionResponse, UserMessage,
 } from '../types.js';
 import type { ControlDescriptor, ControlOption, PermissionMode, ImageMediaType } from '../../../shared/types.js';
 import { CONTROL_IDS } from '../../../shared/types.js';
 import { checkToolRules, cleanEnv, isPathInside } from '../../agent-utils.js';
+import { getApiKey } from '../../credentials.js';
 import { logger } from '../../logger.js';
 import { loadModelCatalog, saveModelCatalog } from '../../app-state.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
@@ -57,6 +58,15 @@ export interface AcpAgentDefinition {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  /** An API key the user can save in Grove; the agent gets it in
+   *  `apiKey.envVar`, over any value inherited from Grove's environment. */
+  apiKey?: ApiKeyDescriptor;
+  /** Checks a key before it is saved (AgentAdapter.verifyApiKey). */
+  verifyApiKey?(key: string): Promise<boolean | null>;
+  /** Variables computed for each process from the environment it is about to
+   *  start with (a fresh secret, config merged over the user's). `savedKey`
+   *  says whether `apiKey` came from Grove's saved key. */
+  spawnEnv?(env: Readonly<Record<string, string>>, info: { savedKey: boolean }): Record<string, string>;
   /** How the user signs in with the agent's own CLI, when it has one. */
   cliSignIn?: CliSignInDescriptor;
   /** Shown when the program isn't found. */
@@ -150,9 +160,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 /** Start the agent program with Grove's usual options. Shared by
  *  conversations and generateText so a start-up fix lands in both. */
 function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): ResultPromise {
+  const savedKey = def.apiKey ? getApiKey(def.id) : null;
+  const env = {
+    ...cleanEnv(process.env),
+    ...(def.env ?? {}),
+    ...(extraEnv ?? {}),
+    ...(savedKey && def.apiKey ? { [def.apiKey.envVar]: savedKey } : {}),
+  } as Record<string, string>;
+  Object.assign(env, def.spawnEnv?.(env, { savedKey: savedKey !== null }));
   return execa(def.command, def.args, {
     cwd,
-    env: { ...cleanEnv(process.env), ...(def.env ?? {}), ...(extraEnv ?? {}) } as Record<string, string>,
+    env,
     extendEnv: false,
     stdin: 'pipe',
     stdout: 'pipe',
@@ -208,6 +226,8 @@ export class AcpAdapter implements AgentAdapter {
   readonly displayName: string;
   readonly authErrorMessage: string;
   readonly cliSignIn?: CliSignInDescriptor;
+  readonly apiKey?: ApiKeyDescriptor;
+  readonly verifyApiKey?: (key: string) => Promise<boolean | null>;
   readonly capabilities: AgentCapabilities = {
     permissions: true,
     permissionModes: true,
@@ -235,6 +255,8 @@ export class AcpAdapter implements AgentAdapter {
     this.id = def.id;
     this.displayName = def.displayName;
     this.cliSignIn = def.cliSignIn;
+    this.apiKey = def.apiKey;
+    if (def.verifyApiKey) this.verifyApiKey = (key) => def.verifyApiKey!(key);
     this.authErrorMessage = def.cliSignIn
       ? `${def.displayName} needs you to sign in. Run "${def.cliSignIn.command}" in a terminal, sign in, then try again.`
       : `${def.displayName} needs you to sign in. Sign in with its own command line tool, then try again.`;

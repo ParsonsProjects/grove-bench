@@ -44,10 +44,13 @@ If a conversation starts on a model that doesn't offer the saved mode, it starts
 
 Grove Bench can run any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio. Gemini CLI (`gemini --acp`) and GitHub Copilot CLI (`copilot --acp`) are built in: install one, sign in with it in a terminal, and pick it as the agent for a new conversation. Add others, such as Codex through `codex-acp`, with a name, the command (a name on PATH or a full path) and its arguments. Restart Grove Bench after adding or removing one.
 
+OpenCode (`opencode acp`) is built in too, for open models such as DeepSeek. Install it with `npm install -g opencode-ai`. It uses the providers you signed in to with `opencode auth login`, or save an OpenRouter API key under **Credentials**: new conversations then start on DeepSeek V4.1 Flash through OpenRouter, and you can pick any other model OpenCode lists in the status bar. Grove Bench starts OpenCode so that it asks before it edits files, runs commands or fetches pages (so your mode and tool rules apply), so its own Plan mode can't edit files, and with a password on the local server OpenCode runs, which would otherwise let any program on this computer use it and read your saved keys.
+
 With ACP agents:
 
 - Grove Bench's memory and Preview browser tools are offered to every ACP agent. They are served on this computer only, with a key for each conversation. Agents that can't connect to a server by address start a small bridge program that comes with Grove Bench
 - Rewinding a conversation starts the agent on a new conversation from that point, since ACP agents can't forget part of one
+- Your mode and tool rules work on the requests an agent sends before it acts. If an agent edits a file or runs a command without asking, the thread says so once, since nothing Grove Bench does can stop it. Set the agent to ask first (for Gemini CLI, leave YOLO off)
 - Skills, plugins and plan usage are not managed for them
 
 ## The gate (Permissions)

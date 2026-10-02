@@ -3,7 +3,7 @@
 //   default  - normal session with modes and a model config option
 //   auth     - session/new answers auth_required
 //   nohttp   - no HTTP MCP support
-// Prompt texts pick a turn: 'wait', 'titled-exec', 'unasked', 'echo', 'mcp',
+// Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'echo', 'mcp',
 // 'mcp-call'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
@@ -69,6 +69,12 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow', kind: 'execute', title: 'Sleep', status: 'in_progress', rawInput: { command: 'sleep 100' } });
     await new Promise((resolve) => { cancelRequested = resolve; });
     return { stopReason: 'cancelled' };
+  }
+  if (text === 'env' || text.endsWith('\n\nenv')) {
+    // What the adapter put in this process's environment.
+    const env = { key: process.env.FAKE_KEY_VAR ?? null, spawn: process.env.FAKE_SPAWN ?? null };
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(env) } });
+    return { stopReason: 'end_turn' };
   }
   if (text === 'unasked') {
     // Like OpenCode with its default permissions: edits and runs commands
