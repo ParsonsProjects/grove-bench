@@ -159,6 +159,52 @@ describe('StatusBar MCP controls follow the agent', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /MCP 1/ })).toBeTruthy());
   });
 
+  // claude.ai connectors sign in on claude.ai, so nothing redirects back to
+  // the agent and the server stays needs-auth until it is reconnected.
+  it('offers Reconnect after a sign-in the agent will not finish by itself', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true, signIn: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'claude.ai Cloudflare', status: 'needs-auth' }] };
+    vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://claude.ai/connect', callbackExpected: false });
+    render(StatusBar, { props: { sessionId: ID } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText(/then click Reconnect/);
+    await fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+
+    expect(window.groveBench.reconnectMcpServer).toHaveBeenCalledWith(ID, 'claude.ai Cloudflare');
+  });
+
+  it('waits on a sign-in the agent finishes itself, without a Reconnect button', async () => {
+    useAgent({ controls: { ...NONE, list: true, reconnect: true, signIn: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'cloudflare', status: 'needs-auth' }] };
+    vi.mocked(window.groveBench.authenticateMcpServer).mockResolvedValueOnce({ authUrl: 'https://example.com/oauth', callbackExpected: true });
+    render(StatusBar, { props: { sessionId: ID } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await screen.findByRole('button', { name: 'Waiting...' });
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+  });
+
+  it('shows Refresh working while it checks', async () => {
+    useAgent({ controls: { ...NONE, list: true }, disconnectHint: '' });
+    messageStore.systemInfoBySession[ID] = { tools: [], agents: [], skills: [], slashCommands: [], mcpServers: [{ name: 'docs', status: 'connected' }] };
+    render(StatusBar, { props: { sessionId: ID } });
+    await fireEvent.click(screen.getByRole('button', { name: /MCP 1/ }));
+
+    let answer!: (servers: import('../../shared/types.js').McpServerInfo[]) => void;
+    vi.mocked(window.groveBench.listMcpServers).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(screen.getByRole('button', { name: 'Refreshing...' })).toBeDisabled();
+    answer([{ name: 'docs', status: 'connected' }]);
+    await screen.findByRole('button', { name: 'Refresh' });
+  });
+
   // A narrow bar drops MCP and Skills to keep the branch in view, but not
   // while a server is down: that is worth the room.
   it.each([
