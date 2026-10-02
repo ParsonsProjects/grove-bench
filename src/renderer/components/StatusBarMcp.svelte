@@ -39,6 +39,11 @@
   /** Servers with a browser sign-in in flight; we poll until they connect. */
   let mcpSigningIn = $state<Record<string, boolean>>({});
   let mcpSignInPoll: ReturnType<typeof setInterval> | null = null;
+  /** Servers whose sign-in page was opened. Once nothing reconnects them on
+   *  their own, they get a Reconnect button to finish with. */
+  let mcpSignInOpened = $state<Record<string, boolean>>({});
+  /** A Refresh click in flight. */
+  let mcpRefreshing = $state(false);
   /** Context-window cost per server, fetched while the popover is open. */
   let mcpCost = $state<Record<string, McpServerContextCost>>({});
   /** Servers whose tool list is expanded in the popover. */
@@ -83,6 +88,15 @@
     }
     // Live status unavailable (e.g. session stopped) — show the init snapshot
     mcpServers = mcpKnown.map((s) => ({ name: s.name, status: s.status as McpServerInfo['status'] }));
+  }
+
+  async function refreshFromButton() {
+    mcpRefreshing = true;
+    try {
+      await refreshMcpServers();
+    } finally {
+      mcpRefreshing = false;
+    }
   }
 
   async function refreshMcpCost() {
@@ -145,7 +159,9 @@
    * Kick off OAuth for a `needs-auth` server. The main process opens the auth
    * URL in the system browser. When the provider redirects back to the agent
    * (`callbackExpected`), the CLI finishes the handshake and reconnects on its
-   * own, so we just poll status until the server leaves `needs-auth`.
+   * own, so we just poll status until the server leaves `needs-auth`. When it
+   * doesn't (claude.ai connectors), nothing reconnects the server until the
+   * user clicks Reconnect.
    */
   async function mcpSignIn(name: string) {
     mcpBusy = { ...mcpBusy, [name]: true };
@@ -158,6 +174,7 @@
         await window.groveBench.reconnectMcpServer(sessionId, name).catch(() => {});
         return;
       }
+      mcpSignInOpened = { ...mcpSignInOpened, [name]: true };
       if (result.callbackExpected) {
         mcpNotice = `Finish signing in to ${name} in your browser. It will reconnect automatically.`;
         startSignInPoll(name);
@@ -240,11 +257,12 @@
       <span class="font-medium text-foreground">MCP Servers</span>
       {#if mcpControls.list}
         <button
-          onclick={refreshMcpServers}
-          class="text-muted-foreground/60 hover:text-foreground transition-colors"
-          title="Refresh status"
+          onclick={refreshFromButton}
+          disabled={mcpRefreshing}
+          class="text-muted-foreground/60 hover:text-foreground transition-colors disabled:opacity-50"
+          title="Check each server's status again (does not reconnect)"
         >
-          Refresh
+          {mcpRefreshing ? 'Refreshing...' : 'Refresh'}
         </button>
       {/if}
     </div>
@@ -314,8 +332,9 @@
               {/if}
             {:else}
               {#if status === 'needs-auth'}
-                <!-- Reconnect can't complete a sign-in (Claude Code rejects it
-                     with "Server status: needs-auth"), so offer the sign-in instead. -->
+                <!-- Reconnect can't start a sign-in (Claude Code rejects it
+                     with "Server status: needs-auth"), so offer the sign-in first.
+                     Reconnect finishes one the agent won't pick up by itself. -->
                 {#if mcpControls.signIn}
                 <button
                   onclick={() => mcpSignIn(server.name)}
@@ -324,6 +343,16 @@
                   title={mcpNeedsAuthHint(server.name)}
                 >
                   {mcpSigningIn[server.name] ? 'Waiting...' : 'Sign in'}
+                </button>
+                {/if}
+                {#if mcpControls.reconnect && mcpSignInOpened[server.name] && !mcpSigningIn[server.name]}
+                <button
+                  onclick={() => mcpAction(server.name, 'reconnect')}
+                  disabled={mcpBusy[server.name]}
+                  class="px-1.5 py-0.5 border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 disabled:opacity-50"
+                  title="Connect again once you have signed in"
+                >
+                  Reconnect
                 </button>
                 {/if}
               {:else if mcpControls.reconnect}
