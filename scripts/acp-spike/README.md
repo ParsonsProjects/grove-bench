@@ -3,7 +3,10 @@
 Checks behind the OpenCode preset (`src/main/adapters/acp/opencode.ts`,
 `docs/open-model-harnesses-plan.md`). Not part of the app: nothing here is
 built, bundled or tested by `npm test`. It has its own
-`package.json`, which pins OpenCode 1.18.33 and the ACP SDK 1.5.1.
+`package.json`, which pins OpenCode 1.18.32 and the ACP SDK 1.5.0, and its
+own `.npmrc` with the app's rules: npm 11.10 or later, and only versions
+published at least 7 days ago (the Dependency age workflow checks the
+lockfile too).
 
 ```
 cd scripts/acp-spike

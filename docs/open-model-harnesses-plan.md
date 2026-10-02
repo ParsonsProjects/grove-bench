@@ -26,7 +26,7 @@
 | Model provider | **OpenRouter**, with the user's own key saved in Grove. Optional: OpenCode also uses whatever providers the user signed in to with `opencode auth login`. |
 | Release | **Alpha.** Claude Code stays the default agent; OpenCode is an alternative picked per conversation. It is hidden from the agent picker until the user ticks **Enable OpenCode** (Settings > Agents, `enabledAlphaAgents`), and marked Alpha in Settings and the picker. Turning it off hides it for new conversations only, so existing ones still resume. Any agent can be made alpha with `stage: 'alpha'` on its definition. |
 | Getting the harness | **Found on PATH**, with install steps when missing, as for the other ACP agents. No bundling. npm's `.cmd` shim for `opencode` starts fine on Windows [15]. |
-| The user's own OpenCode setup | **Kept.** Grove merges its settings over the user's (`OPENCODE_CONFIG_CONTENT`) rather than giving OpenCode a separate home, so the user's sign-ins, plugins and MCP servers still apply. |
+| The user's own OpenCode setup | **Kept.** Grove merges its settings over the user's (`OPENCODE_CONFIG_CONTENT`) rather than giving OpenCode a separate home, so the user's sign-ins, plugins and MCP servers still apply. Only its permission rules give way, where they would skip asking or turn subagents on. |
 
 ## Why ACP, and why not the other routes
 
@@ -55,14 +55,16 @@
 
 ## The harness: OpenCode
 
-- MIT licence, version 1.18.33, with `opencode-windows-x64` and
-  `opencode-windows-arm64` binaries (`npm view opencode-ai`).
+- MIT licence, with `opencode-windows-x64` and `opencode-windows-arm64`
+  binaries (`npm view opencode-ai`). The spike pins 1.18.32, the newest
+  release at least 7 days old under the repo's npm rule; 1.18.33 passed the
+  same checks.
 - `opencode acp` runs OpenCode as an ACP agent over stdio [10].
 - OpenRouter is a built-in provider; model ids are written
   `openrouter/<slug>` [11].
 - Config can be passed per process in `OPENCODE_CONFIG_CONTENT` (inline
   JSON), which takes precedence over the user's config files [12].
-- Reported ACP gaps [13][14] are gone or don't matter on 1.18.33: the model
+- Reported ACP gaps [13][14] are gone or don't matter on 1.18.32: the model
   can be switched per session, and Grove answers permission requests itself.
 
 ## What this branch changed
@@ -83,10 +85,14 @@ real preset and adapter: it starts on DeepSeek V4.1 Flash with the saved key,
 asks before the edit and the command, a `shell(rm *)` deny rule refuses an
 `rm` without asking the user, no "without asking" warning appears, the local
 server answers 401 without the password, and plan mode leaves the file alone.
+Re-checked the same way on 1.18.32 after the agent-level and `task` settings
+went in: with a project `opencode.json` that allows everything and turns
+`task` on, it still asks before the edit and the command, and the model is
+offered no `task` tool.
 
 ## Spike findings
 
-`scripts/acp-spike/probe-offline.mjs` runs `opencode acp` 1.18.33 against a
+`scripts/acp-spike/probe-offline.mjs` runs `opencode acp` 1.18.32 against a
 local fake of OpenRouter's chat completions API, so each check runs without
 a network or a key. It passes 44 of 44 checks; the trimmed recordings are in
 `scripts/acp-spike/fixtures/`. Re-run it before bumping the OpenCode version
@@ -130,6 +136,13 @@ the spike pins.
   Grove can't undo it without risking real text. It needs an OpenCode issue
   (the probe's "retried reply" check is the reproduction, and flips when it
   is fixed).
+- **Subagents (upstream).** OpenCode doesn't send a subagent's permission
+  requests over ACP, so the preset turns the `task` tool off. Turning it
+  back on needs OpenCode to forward them (another OpenCode issue).
+- **A project config can still skip asking.** A project `opencode.json`
+  whose build agent ends with `"*": "allow"` after `bash` runs commands
+  without asking (the probe's "known gap" check). Grove can't reorder a
+  project's file; the "without asking" warning is the backstop.
 - **Silent retries.** The same retries leave a turn quiet for up to about a
   minute. A "waiting for the provider" hint after a long silence would help
   every agent, but long-running commands are silent too, so it needs care.
@@ -147,7 +160,7 @@ the spike pins.
 
 ## Sources
 
-1. [Agent Client Protocol: agents](https://agentclientprotocol.com/get-started/agents), [Agent Plan](https://agentclientprotocol.com/protocol/agent-plan), and the `@agentclientprotocol/sdk` 1.5.1 type definitions (`dist/schema/types.gen.d.ts`, `Implementation`).
+1. [Agent Client Protocol: agents](https://agentclientprotocol.com/get-started/agents), [Agent Plan](https://agentclientprotocol.com/protocol/agent-plan), and the `@agentclientprotocol/sdk` 1.5.0 type definitions (`dist/schema/types.gen.d.ts`, `Implementation`).
 2. [Zed: The ACP Registry is live](https://zed.dev/blog/acp-registry); [ACP agents list](https://agentclientprotocol.com/get-started/agents).
 3. [Datadog Security Labs: OpenCode RCE (GHSA-632h-h47v-g4x4)](https://securitylabs.datadoghq.com/articles/opencode-upgrade-remote-code-execution/); [SentinelOne: CVE-2026-22812](https://www.sentinelone.com/vulnerability-database/cve-2026-22812/).
 4. [DeepSeek API docs: Using the Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api/).

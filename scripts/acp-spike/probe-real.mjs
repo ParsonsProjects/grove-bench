@@ -61,8 +61,16 @@ try { execFileSync('git', ['init', '-q'], { cwd: work }); } catch {}
 
 const updates = [];
 const perms = [];
-const isInside = (p) => path.resolve(p).toLowerCase().startsWith(path.resolve(work).toLowerCase());
-const SAFE_CMD = /^(node\s|ls\b|dir\b|type\s|cat\s|Get-ChildItem\b|Get-Content\b)/i;
+// The model is real, so only what the task needs is allowed. A prefix check
+// would let "C:\work-evil" pass for "C:\work"; path.relative doesn't (and
+// compares case-insensitively on Windows).
+const isInside = (p) => {
+  const rel = path.relative(work, path.resolve(work, p));
+  return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+};
+// Whole commands only: running the test, listing the folder, or showing one
+// file in it by name. Nothing else, so no shell syntax, flags or other paths.
+const SAFE_CMD = /^(node (\.[\\/])?math\.test\.js|ls|dir|Get-ChildItem|(cat|type|Get-Content) [\w-]+(\.[\w-]+)?)$/i;
 
 const agent = startAgent({
   cwd: work,
@@ -79,7 +87,8 @@ const agent = startAgent({
       const tc = p.toolCall;
       const paths = [...(tc.locations ?? []).map((l) => l.path), ...(tc.content ?? []).filter((c) => c.type === 'diff').map((c) => c.path)];
       const cmd = tc.rawInput?.command ?? tc.title;
-      let ok = tc.kind === 'execute' ? SAFE_CMD.test(String(cmd).trim()) : paths.every(isInside);
+      // A request that names no file can't be shown to stay in the folder.
+      const ok = tc.kind === 'execute' ? SAFE_CMD.test(String(cmd).trim()) : paths.length > 0 && paths.every(isInside);
       perms.push({ kind: tc.kind, title: tc.title, paths, allowed: ok, hasDiff: (tc.content ?? []).some((c) => c.type === 'diff') });
       console.log(`  permission ${ok ? 'ALLOW' : 'REJECT'} ${tc.kind}: ${String(tc.title).slice(0, 100)}`);
       const want = ok ? 'allow_once' : 'reject_once';
