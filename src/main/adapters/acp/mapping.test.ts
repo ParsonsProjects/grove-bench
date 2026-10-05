@@ -109,6 +109,13 @@ describe('controls and models', () => {
     expect(controls[0].options[1]).toEqual({ value: 'yolo', label: 'YOLO', tone: 'danger' });
   });
 
+  it('makes a thought-level option stand in for Effort', () => {
+    const controls = agentControls([
+      { id: 'effort', name: 'Variant', category: 'thought_level', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
+    ], null);
+    expect(controls).toEqual([expect.objectContaining({ id: 'acp:effort', role: 'effort' })]);
+  });
+
   it('colours agent modes by what they do', () => {
     expect(agentModeTone({ value: 'yolo', label: 'YOLO' })).toBe('danger');
     expect(agentModeTone({ value: 'full', label: 'Full', description: 'Runs every tool without asking' })).toBe('danger');

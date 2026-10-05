@@ -297,6 +297,8 @@ export function agentControls(configOptions: readonly AcpConfigOption[] | null |
       label: opt.name,
       options: values.map((v) => (isMode ? modeOption : controlOption)(v.value, v.name, v.description)),
       default: opt.currentValue,
+      // How hard the model thinks: Grove's Effort, so Alt+E reaches it.
+      ...(opt.category === 'thought_level' ? { role: 'effort' as const } : {}),
     });
   }
   if (!hasMode && modes && modes.availableModes?.length) {

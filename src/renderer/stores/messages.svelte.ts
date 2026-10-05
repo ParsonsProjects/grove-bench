@@ -728,7 +728,10 @@ class MessageStore {
    *  Alt+M, Alt+T). Falls back to the built-in mode cycle when no descriptors
    *  have arrived yet so the shortcut never goes dead. */
   cycleControl(sessionId: string, controlId: string) {
-    const descriptor = this.getControlDescriptors(sessionId).find((d) => d.id === controlId);
+    const descriptors = this.getControlDescriptors(sessionId);
+    // A control may stand in for a well-known one (an ACP agent's effort).
+    const descriptor = descriptors.find((d) => d.id === controlId) ?? descriptors.find((d) => d.role === controlId);
+    if (descriptor && descriptor.id !== controlId) controlId = descriptor.id;
     if (!descriptor || descriptor.options.length === 0) {
       if (controlId === CONTROL_IDS.permissionMode) this.cycleMode(sessionId);
       return;

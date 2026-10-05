@@ -595,6 +595,9 @@ export interface ControlDescriptor {
   options: ControlOption[];
   /** Value applied when the session has no recorded choice. */
   default: string;
+  /** A well-known control this one stands in for, so its shortcut applies:
+   *  an ACP agent's thought level ('acp:effort') is its Effort. */
+  role?: 'thinking' | 'effort' | 'speed';
 }
 
 /** Control ids the app knows about. Permission mode is special-cased because
@@ -613,6 +616,12 @@ export const CONTROL_SHORTCUTS: Record<string, string> = {
   [CONTROL_IDS.thinking]: 'Alt+T',
   [CONTROL_IDS.effort]: 'Alt+E',
 };
+
+/** The shortcut for a control: its own id's, or the one of the well-known
+ *  control it stands in for. */
+export function controlShortcut(d: Pick<ControlDescriptor, 'id' | 'role'>): string | undefined {
+  return CONTROL_SHORTCUTS[d.id] ?? (d.role ? CONTROL_SHORTCUTS[d.role] : undefined);
+}
 
 // ─── Provider usage ("runway") ───
 

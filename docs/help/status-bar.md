@@ -71,6 +71,8 @@ An **Effort** control sets how much the agent reasons before it acts. Higher eff
 
 Each model starts on its own default: **Medium** for Opus 5.5, **Extra** for Opus 4.7, and **High** for the others. Opus 4.6 and Sonnet 4.6 don't offer Extra. Haiku 4.5 has no effort setting.
 
+Other agents list their own levels, which can depend on the model (OpenCode offers Low, High and Max on DeepSeek V4.1 Flash). `Alt+E` cycles those too.
+
 ## Thinking
 
 On most models a **Thinking** control switches extended thinking **On** (the model decides when and how much to think, and Effort sets how much) or **Off**. Pick it in the Agent settings popup, or press `Alt+T` to toggle it.

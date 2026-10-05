@@ -59,6 +59,22 @@ async function until(handle: AgentQueryHandle, type: AdapterEvent['type'], seen:
 }
 
 describe('AcpAdapter', () => {
+  it('gives each turn its share of the session\'s running cost, and its output tokens', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+
+    handle.sendMessage({ text: 'cost' });
+    const first = await until(handle, 'result');
+    handle.sendMessage({ text: 'cost' });
+    const second = await until(handle, 'result');
+
+    expect(first.at(-1)).toMatchObject({ type: 'result', totalCostUsd: 0.01 });
+    expect((second.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
+    expect(first.filter((e) => e.type === 'usage').at(-1)).toEqual({ type: 'usage', inputTokens: 900, outputTokens: 40 });
+    handle.close();
+  });
+
   it('reports controls the agent changes by itself', async () => {
     const adapter = new AcpAdapter(def());
     const handle = await adapter.start(config());

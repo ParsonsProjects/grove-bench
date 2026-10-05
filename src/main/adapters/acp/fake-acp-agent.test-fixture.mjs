@@ -4,7 +4,7 @@
 //   auth     - session/new answers auth_required
 //   nohttp   - no HTTP MCP support
 // Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
-// 'echo', 'mcp', 'mcp-call', 'self-mode'; anything else runs the default turn.
+// 'echo', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -16,6 +16,7 @@ let cancelRequested = null;
 let model = 'm1';
 let lastMcpServers = [];
 let busy = false;
+let spent = 0;
 
 function send(msg) {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
@@ -87,6 +88,14 @@ async function prompt(params) {
       update(sid, { sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '' } }] });
     }
     return { stopReason: 'end_turn' };
+  }
+  if (text === 'cost') {
+    // Like OpenCode: usage_update carries the session's running cost, and the
+    // answer the turn's token counts.
+    spent += 0.01;
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Paid' } });
+    update(sid, { sessionUpdate: 'usage_update', used: 900, size: 100000, cost: { amount: spent, currency: 'USD' } });
+    return { stopReason: 'end_turn', usage: { inputTokens: 900, outputTokens: 40, totalTokens: 940 } };
   }
   if (text === 'self-mode') {
     // Like Gemini CLI leaving plan mode by itself: the agent switches its own

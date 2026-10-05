@@ -1507,6 +1507,17 @@ describe('session controls', () => {
     expect(messageStore.getMode(SID)).toBe('default');
   });
 
+  it('cycleControl reaches a control that stands in for a well-known one (Alt+E on an ACP agent)', () => {
+    const acp = [{ id: 'acp:effort', label: 'Effort', role: 'effort', default: 'low', options: [
+      { value: 'low', label: 'Low' }, { value: 'high', label: 'High' },
+    ] }];
+    messageStore.ingestEvent(SID, { type: 'controls_sync', descriptors: acp, values: { 'acp:effort': 'low' } } as AgentEvent);
+
+    messageStore.cycleControl(SID, 'effort');
+
+    expect(mockGroveBench.setControl).toHaveBeenCalledWith(SID, 'acp:effort', 'high');
+  });
+
   it('cycleControl on permissionMode still works before any descriptors arrive', () => {
     messageStore.modeBySession[SID] = 'default';
 

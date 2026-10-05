@@ -117,6 +117,13 @@ export type AcpSessionUpdate =
 
 export type AcpStopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled';
 
+/** session/prompt's answer. `usage` is the turn's token counts, when the
+ *  agent reports them (OpenCode does). */
+export interface AcpPromptResponse {
+  stopReason: AcpStopReason;
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
+}
+
 export type AcpPermissionOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
 
 export interface AcpPermissionOption {

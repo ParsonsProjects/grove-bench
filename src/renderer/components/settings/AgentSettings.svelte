@@ -8,7 +8,7 @@
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { defaultModelChoices, DEFAULT_MODEL_VALUE } from '$lib/model-choices.js';
   import type { AgentStage, CavemanMode, ControlDescriptor, ControlOption } from '../../../shared/types.js';
-  import { CONTROL_IDS, CONTROL_SHORTCUTS } from '../../../shared/types.js';
+  import { CONTROL_IDS, controlShortcut } from '../../../shared/types.js';
   import SettingRow from './SettingRow.svelte';
   import CheckboxSetting from './CheckboxSetting.svelte';
   import ListSetting from './ListSetting.svelte';
@@ -247,8 +247,8 @@
             <SettingRow setting="default-{control.id}" label={controlLabel(control)} for="settings-{agent.id}-{control.id}">
               {#snippet help()}
                 {selected?.description ? selected.description.replace(/[.\s]*$/, '') + '.' : ''}
-                {#if CONTROL_SHORTCUTS[control.id]}
-                  Each conversation can change it from the status bar ({CONTROL_SHORTCUTS[control.id]}).
+                {#if controlShortcut(control)}
+                  Each conversation can change it from the status bar ({controlShortcut(control)}).
                 {/if}
               {/snippet}
               <Select.Root type="single" {value} onValueChange={(v) => { if (v) settingsStore.setAdapterDefault(agent.id, control.id, v === control.default ? null : v); }}>

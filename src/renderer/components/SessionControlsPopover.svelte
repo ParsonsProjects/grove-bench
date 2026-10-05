@@ -14,7 +14,7 @@
   import { settingsStore } from '../stores/settings.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
   import { toneClass } from '../lib/control-tones.js';
-  import { CONTROL_SHORTCUTS, type AgentSummary, type ControlOption } from '../../shared/types.js';
+  import { CONTROL_SHORTCUTS, controlShortcut, type AgentSummary, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import UsageSection from './UsageSection.svelte';
@@ -134,7 +134,7 @@
         <span class="font-medium text-foreground">Agent settings</span>
         <span class="text-muted-foreground/60 text-[10px]">
           {#each Object.entries(CONTROL_SHORTCUTS) as [id, key] (id)}
-            {@const label = controls.find((c) => c.id === id)?.label}
+            {@const label = (controls.find((c) => c.id === id) ?? controls.find((c) => c.role === id))?.label}
             {#if label}<kbd class="text-foreground/70">{key}</kbd> {label.toLowerCase()}&nbsp;&nbsp;{/if}
           {/each}
         </span>
@@ -188,7 +188,7 @@
           <div class="min-w-32">
             <div class="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
               {ctl.label}
-              {#if CONTROL_SHORTCUTS[ctl.id]}<span class="normal-case tracking-normal text-muted-foreground/40">{CONTROL_SHORTCUTS[ctl.id]}</span>{/if}
+              {#if controlShortcut(ctl)}<span class="normal-case tracking-normal text-muted-foreground/40">{controlShortcut(ctl)}</span>{/if}
             </div>
             {#each ctl.options as opt, i (opt.value)}
               {@const current = opt.value === value}

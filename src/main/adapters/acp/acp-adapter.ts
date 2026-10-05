@@ -42,7 +42,7 @@ import {
   ACP_PROTOCOL_VERSION,
   type AcpConfigOption, type AcpInitializeResponse, type AcpMcpServer, type AcpModeState, type AcpModelState,
   type AcpPermissionOutcome, type AcpPermissionRequest, type AcpPlanEntry, type AcpSessionSetup, type AcpSessionUpdate,
-  type AcpStopReason, type AcpToolCall,
+  type AcpPromptResponse, type AcpStopReason, type AcpToolCall,
 } from './protocol.js';
 import {
   AGENT_MODE_CONTROL, agentControls, categoryForKind, configIdForControl, contentImages, contentText, firstText,
@@ -472,6 +472,12 @@ class AcpQuery {
   private text = { kind: null as 'text' | 'thinking' | null, buffer: '', messageId: null as string | null };
   private planCallId: string | null = null;
   private contextSize: number | undefined;
+  /** The session's running cost in USD (usage_update), or undefined while
+   *  unknown: a new session starts at 0, a resumed one only knows it once
+   *  the agent reports. */
+  private sessionCost: number | undefined;
+  /** Context tokens the agent last reported. */
+  private contextUsed = 0;
   /** Permission requests waiting on the user; answered "cancelled" on interrupt. */
   private pendingPermissions = new Set<(outcome: AcpPermissionOutcome) => void>();
   /** Calls this turn the agent asked Grove about. */
@@ -615,6 +621,11 @@ class AcpQuery {
   /** `fresh`: a new session, so its values are the agent's defaults. */
   private takeSetup(setup: AcpSessionSetup | null | undefined, fresh: boolean): void {
     if (!setup) return;
+    // A resumed session keeps whatever cost a replay reported.
+    if (fresh) {
+      this.sessionCost = 0;
+      this.contextUsed = 0;
+    }
     if (Array.isArray(setup.configOptions)) this.configOptions = setup.configOptions;
     if (setup.modes) this.modes = setup.modes;
     this.models = modelList(this.configOptions, setup.models);
@@ -689,16 +700,21 @@ class AcpQuery {
       return;
     }
     const started = Date.now();
+    const costBefore = this.sessionCost;
     this.turns++;
     this.resetTurn();
     let stopReason: AcpStopReason | null = null;
     let error: string | null = null;
     try {
-      const res = await this.rpc!.request<{ stopReason: AcpStopReason }>('session/prompt', {
+      const res = await this.rpc!.request<AcpPromptResponse>('session/prompt', {
         sessionId: this.sessionId,
         prompt: this.promptBlocks(message),
       });
       stopReason = res?.stopReason ?? 'end_turn';
+      // The turn's own token counts, when the agent reports them; the context
+      // figure stays the one usage_update gave.
+      const out = res?.usage?.outputTokens;
+      if (typeof out === 'number' && out > 0) this.emit({ type: 'usage', inputTokens: this.contextUsed, outputTokens: out });
     } catch (e) {
       if (this.closing) return;
       error = e instanceof JsonRpcError && e.code === RPC_ERRORS.authRequired ? this.adapter.authErrorMessage
@@ -720,6 +736,8 @@ class AcpQuery {
       durationMs: Date.now() - started,
       numTurns: this.turns,
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),
+      // usage_update's cost covers the whole session: this turn's is the rise.
+      ...(costBefore !== undefined && this.sessionCost !== undefined ? { totalCostUsd: Math.max(0, this.sessionCost - costBefore) } : {}),
     });
   }
 
@@ -881,8 +899,12 @@ class AcpQuery {
         if (this.sessionId && typeof update.title === 'string' && update.title.trim()) this.hooks.setTitle(this.sessionId, update.title.trim());
         return;
       case 'usage_update':
-        if (typeof update.used === 'number') this.emit({ type: 'usage', inputTokens: update.used, outputTokens: 0 });
+        if (typeof update.used === 'number') {
+          this.contextUsed = update.used;
+          this.emit({ type: 'usage', inputTokens: update.used, outputTokens: 0 });
+        }
         if (typeof update.size === 'number' && update.size > 0) this.contextSize = update.size;
+        if (update.cost && update.cost.currency === 'USD' && Number.isFinite(update.cost.amount)) this.sessionCost = update.cost.amount;
         return;
       default:
         // user_message_chunk: Grove shows its own copy of what the user sent.
