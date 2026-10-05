@@ -69,7 +69,11 @@ describe('runRequest', () => {
     expect(bytes.ok && Array.from(bytes.result.stdout as Uint8Array)).toEqual([97, 98]);
 
     const missing = await runRequest({ id: 4, file: 'grove-no-such-program', args: [] }, (f, a, o) => execa(f, a, o));
-    expect(missing).toMatchObject({ ok: false, error: { code: 'ENOENT' } });
+    expect(missing).toMatchObject({ ok: false, error: { failed: true } });
+    // On Windows cross-spawn runs a program it can't find through cmd.exe,
+    // which exits 1 ("is not recognized"); elsewhere the launch fails ENOENT.
+    if (process.platform === 'win32') expect(missing).toMatchObject({ error: { exitCode: 1, stderr: expect.stringContaining('not recognized') } });
+    else expect(missing).toMatchObject({ error: { code: 'ENOENT' } });
   });
 });
 
