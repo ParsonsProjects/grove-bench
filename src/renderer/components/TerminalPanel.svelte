@@ -7,7 +7,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { collectTailLines, formatTerminalContext, DEFAULT_TAIL_LINES } from '$lib/terminal-context.js';
   import { openLink } from '$lib/preview-links.js';
-  import { terminalTheme, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
+  import { terminalColors, prefersLight, onColorSchemeChange } from '$lib/terminal-theme.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -16,8 +16,13 @@
   let fitAddon: FitAddon | null = null;
   let resizeObserver: ResizeObserver | null = null;
   // Recolour the terminal when the Theme setting or Windows switches theme.
+  let colors = $state.raw(terminalColors(prefersLight()));
   const stopSchemeListener = onColorSchemeChange((light) => {
-    if (terminal) terminal.options.theme = terminalTheme(light);
+    colors = terminalColors(light);
+    if (terminal) {
+      terminal.options.theme = colors.theme;
+      terminal.options.minimumContrastRatio = colors.minimumContrastRatio;
+    }
   });
 
   let isAlive = $derived(terminalStore.isAlive(sessionId));
@@ -30,7 +35,7 @@
       cursorStyle: 'block',
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-      theme: terminalTheme(prefersLight()),
+      ...colors,
       allowProposedApi: true,
       scrollback: 10000,
     });
@@ -183,6 +188,6 @@
   <div
     class="flex-1 overflow-hidden"
     bind:this={containerEl}
-    style="background: var(--background);"
+    style="background: {colors.theme.background};"
   ></div>
 </div>

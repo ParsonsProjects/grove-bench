@@ -3,8 +3,8 @@ import type { ITheme } from '@xterm/xterm';
 /**
  * Terminal tab colours, VS Code's own for each theme. The ANSI colours are
  * VS Code's defaults (ansiColorMap in
- * src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts); the
- * rest match the app's background, text and selection colours.
+ * src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts).
+ * DARK's other colours are the ones the terminal has always used.
  */
 const DARK: ITheme = {
   background: '#1f1f1f',
@@ -35,6 +35,8 @@ const LIGHT: ITheme = {
   // the light editor.selectionBackground default (editorColors.ts)
   foreground: '#3b3b3b',
   cursor: '#005fb8',
+  // The character under the block cursor (xterm's default is black, 3.3:1)
+  cursorAccent: '#ffffff',
   selectionBackground: '#add6ff',
   black: '#000000',
   red: '#cd3131',
@@ -56,8 +58,13 @@ const LIGHT: ITheme = {
 
 const LIGHT_QUERY = '(prefers-color-scheme: light)';
 
-export function terminalTheme(light: boolean): ITheme {
-  return light ? LIGHT : DARK;
+/** The xterm options that set colours. Several light ANSI colours are near
+ *  2:1 on white (bright yellow, green, cyan), so light also asks xterm to
+ *  darken text to 4.5:1 (WCAG AA), as VS Code does by default
+ *  (terminal.integrated.minimumContrastRatio). Dark keeps its colours as
+ *  they were. */
+export function terminalColors(light: boolean): { theme: ITheme; minimumContrastRatio: number } {
+  return light ? { theme: LIGHT, minimumContrastRatio: 4.5 } : { theme: DARK, minimumContrastRatio: 1 };
 }
 
 /** Whether the app is drawn light. Main sets prefers-color-scheme from the

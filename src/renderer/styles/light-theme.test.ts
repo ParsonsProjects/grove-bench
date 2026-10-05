@@ -3,7 +3,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const RENDERER = path.resolve(__dirname, '..');
-const css = readFileSync(path.join(__dirname, 'globals.css'), 'utf8');
+// CI's Windows checkout can give the file CRLF line endings
+const css = readFileSync(path.join(__dirname, 'globals.css'), 'utf8').replace(/\r\n/g, '\n');
 
 /** The `:root` variables the light theme sets. */
 function lightVars(): Map<string, string> {
