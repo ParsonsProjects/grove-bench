@@ -34,7 +34,7 @@ Click a thread to switch to it. The workspace will show that thread's activity, 
 
 ## Collapsing the sidebar
 
-Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. The rail also keeps search, **New thread**, **Add a project**, bookmarks, memory, clean-up and settings. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
+Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it or right-click it for the context menu. Hover a dot to see its name. Above them, a **+** starts a new thread (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, memory, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.
 
 ## Folding Groups and Projects
 
@@ -74,11 +74,15 @@ Closing or deleting the thread you have open takes you back to the landing scree
 
 Grove Bench also starts on the landing screen. The threads you had open are listed there and under **Threads**, and none of them starts its agent until you open it.
 
+## Starting threads and adding projects
+
+- **New thread**: always the first row under **Threads**. Click it to start a draft in the open thread's project (or press `Ctrl+N`). The draft then takes its place until you send its first message or discard it. Each project row also has its own **+**, which starts a thread in that project
+- **+** next to the **Projects** heading: add a project
+
 ## Bottom Controls
 
 At the bottom of the sidebar you'll find:
 
-- **+ Project** and **+ Thread** — Add a project / start a new thread in the open thread's project (side by side). Each project row also has its own **+**, which starts a thread in that project
 - **Project Memory** (brain icon) — Open the project memory panel
 - **Clean up old threads** (broom icon) — Review and remove closed threads inactive past a chosen cutoff. Removal deletes the worktree (branches are kept unless you opt in). Threads with uncommitted changes are flagged and left unselected, so nothing with unsaved work is removed unless you explicitly tick it. **Select all** says how many it leaves out for that reason. When the GitHub CLI is available, each row also shows the state of the pull request on its branch (open, draft, merged, closed or none), and **Select merged** ticks only the threads whose PR has been merged. Running threads are never listed.
 - **Settings** (gear icon, or `Ctrl+,`) — Open application settings

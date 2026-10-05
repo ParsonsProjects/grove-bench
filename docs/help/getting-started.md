@@ -4,7 +4,7 @@ Grove Bench lets you run several AI coding threads with Claude Code at the same 
 
 ## Quick Start
 
-1. **Add a project**: click **Add a project** on the first screen (or **+ Project** at the bottom of the sidebar) and pick your project's folder.
+1. **Add a project**: click **Add a project** on the first screen (or **+** next to the **Projects** heading in the sidebar) and pick your project's folder.
 2. **Start a thread**: click **Start a thread**, or **+** next to the project in the sidebar.
 3. **Sign in, the first time only**: the new thread asks for Claude credentials if it can't find any (see below).
 4. **Say what to work on** and press `Enter`.
@@ -33,15 +33,15 @@ When an agent turns the sign-in down, the Thread tab shows the agent's own reaso
 
 ## Adding a Project
 
-Click the **+ Project** button at the bottom of the sidebar to add a project. Browse to your project's folder and select it. The project will appear in the sidebar, ready for new threads. Pick a folder inside a git repository and the repository's top-level folder is added.
+Click **+** next to the **Projects** heading in the sidebar to add a project. Browse to your project's folder and select it. The project will appear in the sidebar, ready for new threads. Pick a folder inside a git repository and the repository's top-level folder is added.
 
 A folder that isn't a git repository (or any folder, when git isn't installed) is added as it is. Each thread in it works in the folder itself: there is no separate copy and no branch, the agent edits your files in place, and its edits can't be rewound. The **Changes** and **Checkpoints** tabs say they need git, and rewinding a message only resets the thread. To get separate copies, branches and rewinding, run `git init` in the folder and make a first commit; the next thread you start there uses git. Threads that already exist keep running without it.
 
 ## Starting a Thread
 
-Click **+** next to a project in the sidebar to start a thread in that project. **+ Thread** at the bottom of the sidebar, and `Ctrl+N`, do the same in the project of the thread you have open.
+Click **+** next to a project in the sidebar to start a thread in that project. **New thread**, always first under **Threads** in the sidebar, and `Ctrl+N` do the same in the project of the thread you have open.
 
-This opens a new thread as a draft: nothing is created until you send the first message. Type what the agent should work on and press `Enter` (`Shift+Enter` adds a new line), or click **Start**. The message is optional: you can also start empty and type in the thread. **Discard** throws the draft away. While a draft exists it shows at the top of **Threads** in the sidebar, so you can open another thread and come back to it.
+This opens a new thread as a draft: nothing is created until you send the first message. Type what the agent should work on and press `Enter` (`Shift+Enter` adds a new line), or click **Start**. The message is optional: you can also start empty and type in the thread. **Discard** throws the draft away. While a draft exists it takes the place of **New thread** at the top of **Threads** in the sidebar, so you can open another thread and come back to it.
 
 Before you send, the draft's status bar lets you change the choices that are fixed once the thread starts:
 

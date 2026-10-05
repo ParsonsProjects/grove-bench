@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
-import { execa } from 'execa';
+import { runProcess } from './process-host.js';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
 import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
@@ -1285,7 +1285,7 @@ export function registerHandlers() {
     let head: string | null = null;
     try {
       const posix = relPath.replace(/\\/g, '/');
-      const { stdout } = await execa('git', ['show', `HEAD:${posix}`], { cwd: worktree.path, encoding: 'buffer' });
+      const { stdout } = await runProcess('git', ['show', `HEAD:${posix}`], { cwd: worktree.path, encoding: 'buffer' });
       head = `data:${mime};base64,${Buffer.from(stdout).toString('base64')}`;
     } catch { /* not present in HEAD (newly added) */ }
 

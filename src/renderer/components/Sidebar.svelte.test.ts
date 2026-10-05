@@ -432,35 +432,88 @@ describe('Sidebar for a new user', () => {
     store.repos = ['/repo-a', '/repo-b'];
     store.sessions = [];
     render(Sidebar);
-    expect(await screen.findByText('No threads')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'New thread' })).toBeEnabled();
     expect(screen.queryByRole('group', { name: 'Filter threads' })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Sort threads' })).toBeNull();
     expect(screen.queryByText('Right-click a thread to start a group')).toBeNull();
   });
 });
 
-describe('Sidebar bottom buttons', () => {
+describe('Sidebar new conversation row', () => {
   afterEach(() => {
-    mockGroveBench.getSidebarWidth.mockReset();
-    mockGroveBench.getSidebarWidth.mockResolvedValue(null);
+    draftStore.discard();
   });
 
-  it('shows text labels at the default width', async () => {
+  const draftRow = () => document.querySelector('[data-draft-row]') as HTMLButtonElement;
+
+  it('is always first under Conversations, and opens a draft in the open conversation\'s project', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-b', status: 'running', displayName: 'Sidebar revamp' },
+    ] as any;
+    store.activeSessionId = 's1';
     render(Sidebar);
-    const newConversation = await screen.findByRole('button', { name: 'New thread' });
-    expect(newConversation).toHaveTextContent('+ Thread');
-    expect(screen.getByRole('button', { name: 'Add a project' })).toHaveTextContent('+ Project');
+    const row = screen.getByRole('button', { name: 'New thread' });
+    expect(row).toBe(draftRow());
+    expect(row.compareDocumentPosition(screen.getByText('Sidebar revamp')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await fireEvent.click(row);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo-b' });
+    expect(store.activeSessionId).toBeNull();
+    // The draft takes the row's place, so there is still just one.
+    expect(document.querySelectorAll('[data-draft-row]')).toHaveLength(1);
+    expect(draftRow()).toHaveTextContent('draft');
   });
 
-  it('collapses to icons when the sidebar is narrow', async () => {
-    mockGroveBench.getSidebarWidth.mockResolvedValue(250);
+  it('goes back to the draft, in its own project, when one is open', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
     render(Sidebar);
-    const newConversation = await screen.findByRole('button', { name: 'New thread' });
-    await waitFor(() => expect(newConversation).not.toHaveTextContent('Thread'));
-    expect(newConversation.querySelector('svg')).not.toBeNull();
-    const addRepo = screen.getByRole('button', { name: 'Add a project' });
-    expect(addRepo).not.toHaveTextContent('Repository');
-    expect(addRepo.querySelector('svg')).not.toBeNull();
+    draftStore.open('/repo-b');
+    store.activeSessionId = 's1';
+    await tick();
+
+    await fireEvent.click(draftRow());
+    expect(store.activeSessionId).toBeNull();
+    expect(draftStore.draft?.repoPath).toBe('/repo-b');
+  });
+
+  it('is disabled until there is a project', () => {
+    store.repos = [];
+    store.sessions = [];
+    render(Sidebar);
+    const row = screen.getByRole('button', { name: 'New thread' });
+    expect(row).toBeDisabled();
+    expect(row).toHaveAttribute('title', 'Add a project to start a thread');
+  });
+
+  it('leaves no new conversation button at the bottom', () => {
+    render(Sidebar);
+    expect(screen.getAllByRole('button', { name: 'New thread' })).toHaveLength(1);
+  });
+});
+
+describe('Sidebar Projects heading', () => {
+  afterEach(() => {
+    store.clearError();
+  });
+
+  it('adds a project from the + next to the heading', async () => {
+    mockGroveBench.addRepo.mockResolvedValueOnce({ path: '/repo-b', kind: 'git' });
+    render(Sidebar);
+    // The only add-project button in the sidebar: none at the bottom.
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    await waitFor(() => expect(store.repos).toContain('/repo-b'));
+  });
+
+  it('says why a picked folder was refused', async () => {
+    mockGroveBench.addRepo.mockRejectedValueOnce(
+      new Error("Error invoking remote method 'repo:select': Error: The project folder C:\\notes wasn't found."),
+    );
+    render(Sidebar);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+
+    await waitFor(() => expect(store.error).toBe("The project folder C:\\notes wasn't found."));
   });
 });
 
@@ -1137,8 +1190,9 @@ describe('Sidebar rows for folder projects without git', () => {
       { id: 'n1', branch: '', repoPath: '/repo-a', status: 'running', direct: true, noGit: true, displayName: null },
     ] as any;
     render(Sidebar);
-    expect(await screen.findByText('New thread')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'In the project folder (no git)' })).toBeInTheDocument();
+    // The draft row above it says "New thread" too.
+    const icon = await screen.findByRole('img', { name: 'In the project folder (no git)' });
+    expect(within(icon.closest('button')!).getByText('New thread')).toBeInTheDocument();
   });
 });
 });
@@ -1171,6 +1225,20 @@ describe('Sidebar rail', () => {
     await fireEvent.click(within(container.querySelector('[data-rail]') as HTMLElement).getByLabelText('Expand sidebar'));
     expect(container.querySelector('[data-rail-session]')).toBeNull();
     expect(aside.style.width).toBe('300px');
+  });
+
+  it('starts a new conversation from the top of the rail, then marks it as the draft', async () => {
+    const { container } = render(Sidebar);
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    const draft = container.querySelector('[data-rail-draft]') as HTMLButtonElement;
+    expect(draft).toHaveAttribute('aria-label', 'New thread');
+    // First in the list, before the open conversations.
+    expect(draft.compareDocumentPosition(container.querySelector('[data-rail-session="s1"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await fireEvent.click(draft);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo-a' });
+    expect(draft).toHaveAttribute('aria-label', 'New thread, not started yet');
+    draftStore.discard();
   });
 
   it('fades a sleeping conversation on the rail too', async () => {
