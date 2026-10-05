@@ -84,7 +84,7 @@ export class SessionEventStore {
     session.logBuffer = [];
     session.logBufferBytes = 0;
     try {
-      freezeLog.timeWork(`event log write, ${kb(data.length)}`, () => fs.appendFileSync(session.eventLogPath, data));
+      freezeLog.timeWork(`event log write, ${kb(Buffer.byteLength(data))}`, () => fs.appendFileSync(session.eventLogPath, data));
     } catch { /* non-fatal */ }
   }
 

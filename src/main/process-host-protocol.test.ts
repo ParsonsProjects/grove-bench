@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execa } from 'execa';
 import {
-  isHostReply, isHostRequest, reviveError, runRequest, serializeError, serializeResult,
+  isHostReply, isHostRequest, isHostStarted, reviveError, runRequest, serializeError, serializeResult,
   type HostReply, type SerializedError,
 } from './process-host-protocol.js';
 
@@ -41,6 +41,20 @@ describe('runRequest', () => {
   it('replies with an error when the call throws before starting anything', async () => {
     const reply = await runRequest({ id: 3, file: 'git', args: [] }, () => { throw new TypeError('bad option'); });
     expect(reply).toMatchObject({ id: 3, ok: false, error: { name: 'TypeError', message: 'bad option' } });
+  });
+
+  it('says when the process has started, with its id', async () => {
+    const pids: number[] = [];
+    const running = Object.assign(Promise.resolve({ stdout: '' }), { pid: 4242 });
+    await runRequest({ id: 1, file: 'git', args: ['fetch'] }, () => running, undefined, (pid) => pids.push(pid));
+    expect(pids).toEqual([4242]);
+  });
+
+  it('keeps a 0 ms launch when the command then fails', async () => {
+    const { now, advance } = clock();
+    const exec = () => new Promise((_, reject) => setTimeout(() => { advance(25_000); reject(new Error('timed out')); }, 0));
+    const reply = await runRequest({ id: 1, file: 'git', args: ['fetch'] }, exec, now);
+    expect(reply).toMatchObject({ ok: false, launchMs: 0 });
   });
 
   it('carries real execa results and failures', async () => {
@@ -85,6 +99,12 @@ describe('message checks', () => {
     expect(isHostRequest({ id: '1', file: 'git', args: [] })).toBe(false);
     expect(isHostRequest({ id: 1, file: 'git', args: [], options: null })).toBe(false);
     expect(isHostRequest(null)).toBe(false);
+  });
+
+  it('accepts a started notice and rejects anything else', () => {
+    expect(isHostStarted({ type: 'started', id: 1, pid: 99 })).toBe(true);
+    expect(isHostStarted({ type: 'started', id: 1 })).toBe(false);
+    expect(isHostStarted({ id: 1, pid: 99 })).toBe(false);
   });
 
   it('accepts a reply and rejects anything else', () => {

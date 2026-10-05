@@ -7,7 +7,7 @@
  * main process's modules (the logger, settings) can't load in it.
  */
 import { execa } from 'execa';
-import { HOST_READY, isHostRequest, runRequest, serializeError } from './process-host-protocol.js';
+import { HOST_READY, isHostRequest, runRequest, serializeError, type HostStarted } from './process-host-protocol.js';
 
 interface ParentPort {
   on(event: 'message', listener: (event: { data: unknown }) => void): void;
@@ -20,7 +20,8 @@ if (parentPort) {
   const port = parentPort;
   port.on('message', ({ data }) => {
     if (!isHostRequest(data)) return;
-    void runRequest(data, (file, args, options) => execa(file, args, options)).then((reply) => {
+    const started = (pid: number) => port.postMessage({ type: 'started', id: data.id, pid } satisfies HostStarted);
+    void runRequest(data, (file, args, options) => execa(file, args, options), undefined, started).then((reply) => {
       try {
         port.postMessage(reply);
       } catch (e) {

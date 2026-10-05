@@ -20,7 +20,7 @@ src/
     preload.ts         # Context bridge (IPC exposure)
     ipc.ts             # IPC handler registration
     git.ts             # Git CLI wrapper (execa, through the process host)
-    process-host*.ts   # Utility process git and gh launch from, so launches can't freeze the window (2nd Vite entry)
+    process-host*.ts   # Utility process git and gh launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, skills, agent config

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { IpcMain } from 'electron';
 import { ChildProcess, execFile } from 'node:child_process';
 import { constants as perfConstants, PerformanceObserver } from 'node:perf_hooks';
@@ -142,6 +142,12 @@ describe('rate limit', () => {
 });
 
 describe('startStallWatch', () => {
+  // Each test gets a stand-in, so none attaches a real gc observer to the
+  // shared freeze log for the rest of the file.
+  let watchGc: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { watchGc = vi.spyOn(freezeLog, 'watchGc').mockImplementation(() => {}); });
+  afterEach(() => { watchGc.mockRestore(); });
+
   it('pauses across system sleep', () => {
     vi.useFakeTimers();
     const on = vi.fn();
@@ -158,11 +164,9 @@ describe('startStallWatch', () => {
   });
 
   it('names garbage collections', () => {
-    const watchGc = vi.spyOn(freezeLog, 'watchGc').mockImplementation(() => {});
     vi.useFakeTimers();
     startStallWatch({ on: vi.fn() } as never);
     expect(watchGc).toHaveBeenCalledOnce();
-    watchGc.mockRestore();
   });
 });
 
@@ -222,6 +226,26 @@ describe('garbage collection', () => {
     gc({ startTime: 1200, duration: 50 });
     advance(TICK_MS); log.tick();
     expect(lines).toEqual(["main process didn't run for 400 ms; garbage collection: collection (50 ms)"]);
+  });
+
+  it('keeps what ran during the stall when newer entries push it out before the line is written', () => {
+    const { log, lines, advance } = watched();
+    advance(TICK_MS); log.tick();
+    log.timeWork('event log read, 900 KB', () => advance(400));
+    log.tick();
+    for (let i = 0; i < 40; i++) log.timeWork(`later ${i}`, () => {});
+    advance(TICK_MS); log.tick();
+    expect(lines).toEqual(["main process didn't run for 400 ms; other work: event log read, 900 KB (400 ms)"]);
+  });
+
+  it('writes a waiting stall when flushed, as at quit', () => {
+    const { log, lines, advance, gc } = watched();
+    advance(TICK_MS); log.tick();
+    advance(300); log.tick();
+    gc({ startTime: 1000 + TICK_MS + 10, duration: 250, kind: perfConstants.NODE_PERFORMANCE_GC_MAJOR });
+    log.flush();
+    log.flush();
+    expect(lines).toEqual(["main process didn't run for 300 ms; garbage collection: major (250 ms)"]);
   });
 
   it('watches only once', () => {

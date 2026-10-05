@@ -147,9 +147,10 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
   const collections: Activity[] = [];
   /** Set by watchGc. Node reports a collection only once the code it paused
    *  has finished, after the tick that saw the stall, so with this on a stall
-   *  is written at the next tick. */
+   *  is written at the next tick (or by flush). What else ran is put in the
+   *  line when the stall is seen, before newer entries can push it out. */
   let gcWatched = false;
-  let pendingStall: { from: number; t: number; gap: number } | null = null;
+  let pendingStall: { line: string; from: number; t: number } | null = null;
   let stats = emptyStats();
   /** How late each tick ran since the last takeStats (about 12,000 for ten
    *  minutes); the health line's event-loop delay comes from these, so it
@@ -180,31 +181,39 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     write(line);
   }
 
-  /** Write a stall from `from` to `t`, naming what ran during it. */
-  function report(from: number, t: number, gap: number): void {
-    const during = (list: Activity[]) => list
+  /** The entries of `list` that started between `from` and `t`. */
+  function during(list: Activity[], from: number, t: number): string {
+    return list
       .filter((c) => c.start >= from - 1 && c.start <= t)
       .map((c) => `${c.name} (${Math.round(c.ms)} ms)`)
       .join(', ');
-    const ipc = during(ipcCalls);
-    const launched = during(launches);
-    const other = during(work);
-    const gc = during(collections);
-    emit(`main process didn't run for ${Math.round(gap)} ms`
+  }
+
+  /** A stall from `from` to `t`, naming what ran during it, all but the
+   *  garbage collection. */
+  function describeStall(from: number, t: number, gap: number): string {
+    const ipc = during(ipcCalls, from, t);
+    const launched = during(launches, from, t);
+    const other = during(work, from, t);
+    return `main process didn't run for ${Math.round(gap)} ms`
       + (ipc ? `; IPC calls during it: ${ipc}` : '')
       + (launched ? `; processes started: ${launched}` : '')
-      + (other ? `; other work: ${other}` : '')
-      + (gc ? `; garbage collection: ${gc}` : ''));
+      + (other ? `; other work: ${other}` : '');
+  }
+
+  /** Write the stall waiting for its garbage collections, if there is one. */
+  function flush(): void {
+    if (!pendingStall) return;
+    const { line, from, t } = pendingStall;
+    pendingStall = null;
+    const gc = during(collections, from, t);
+    emit(line + (gc ? `; garbage collection: ${gc}` : ''));
   }
 
   /** Run TICK_MS apart. Logs a stall when this run comes late. */
   function tick(): void {
     const t = now();
-    if (pendingStall) {
-      const { from, t: end, gap } = pendingStall;
-      pendingStall = null;
-      report(from, end, gap);
-    }
+    flush();
     const gap = t - lastTick;
     lastTick = t;
     if (suspended || gap >= SLEEP_GAP_MS) return;
@@ -213,8 +222,9 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     stats.stalls++;
     stats.stallMs += gap;
     const from = t - gap;
-    if (gcWatched) pendingStall = { from, t, gap };
-    else report(from, t, gap);
+    const line = describeStall(from, t, gap);
+    if (gcWatched) pendingStall = { line, from, t };
+    else emit(line);
   }
 
   /** Run `fn` and remember how long it held the main process, so a stall
@@ -300,6 +310,8 @@ export function createFreezeLog({ now = () => performance.now(), write = writeFr
     timeProcessLaunches,
     timeWork,
     watchGc,
+    /** Write a stall still waiting for the next tick (at quit). */
+    flush,
     logWindowFreeze,
     /** The totals since the last call, for the health line. */
     takeStats(): FreezeStats {

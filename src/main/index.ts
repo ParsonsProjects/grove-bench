@@ -194,6 +194,8 @@ app.on('window-all-closed', () => {
 // still had the host; stopping it first means its exit isn't taken for a crash.
 app.on('will-quit', () => {
   stopProcessHost();
+  // A stall seen at the last tick waits for the next one, which won't come.
+  freezeLog.flush();
 });
 
 /** Nothing running: no live conversation, none still closing (one closed

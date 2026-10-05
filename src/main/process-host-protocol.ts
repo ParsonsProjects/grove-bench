@@ -57,6 +57,15 @@ export type HostReply =
   | { id: number; ok: true; result: ProcessResult<string | Uint8Array>; launchMs: number }
   | { id: number; ok: false; error: SerializedError; launchMs: number };
 
+/** Posted as soon as a command's process exists, so the main process can
+ *  stop it if the host dies first (an orphan would otherwise keep running,
+ *  its execa timeout gone with the host). */
+export interface HostStarted {
+  type: 'started';
+  id: number;
+  pid: number;
+}
+
 /** The first message the host posts, once it can take requests. */
 export const HOST_READY = 'grove-process-host-ready';
 
@@ -100,25 +109,33 @@ export function reviveError(data: SerializedError): Error {
   return error;
 }
 
-export type Exec = (file: string, args: string[], options?: HostedOptions) => Promise<unknown>;
+/** execa, or a stand-in: the running command, with its process id once
+ *  the OS has created it. */
+export type Exec = (file: string, args: string[], options?: HostedOptions) => Promise<unknown> & { pid?: number };
 
 /**
  * Run one request with `exec` (execa) and say how it went. `launchMs` is how
  * long the call held this process before it started waiting: execa's PATH
- * search plus the OS creating the process.
+ * search plus the OS creating the process. `onStarted` gets the process id
+ * as soon as there is one.
  */
-export async function runRequest(request: HostRequest, exec: Exec, now: () => number = () => performance.now()): Promise<HostReply> {
+export async function runRequest(
+  request: HostRequest,
+  exec: Exec,
+  now: () => number = () => performance.now(),
+  onStarted?: (pid: number) => void,
+): Promise<HostReply> {
   const start = now();
-  let launchMs = 0;
+  let launchMs: number | null = null;
   try {
     const running = request.options === undefined
       ? exec(request.file, request.args)
       : exec(request.file, request.args, request.options);
     launchMs = now() - start;
+    if (typeof running.pid === 'number') onStarted?.(running.pid);
     return { id: request.id, ok: true, result: serializeResult(await running), launchMs };
   } catch (e) {
-    if (launchMs === 0) launchMs = now() - start;
-    return { id: request.id, ok: false, error: serializeError(e), launchMs };
+    return { id: request.id, ok: false, error: serializeError(e), launchMs: launchMs ?? now() - start };
   }
 }
 
@@ -130,6 +147,12 @@ export function isHostRequest(value: unknown): value is HostRequest {
     && typeof r.file === 'string'
     && Array.isArray(r.args) && r.args.every((a) => typeof a === 'string')
     && (r.options === undefined || (typeof r.options === 'object' && r.options !== null));
+}
+
+/** Whether `value` says a command's process has started. */
+export function isHostStarted(value: unknown): value is HostStarted {
+  const r = value as Partial<HostStarted> | null;
+  return !!r && typeof r === 'object' && r.type === 'started' && typeof r.id === 'number' && typeof r.pid === 'number';
 }
 
 /** Whether `value` is a reply from the host. */

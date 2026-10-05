@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
-  createProcessHost, HOST_START_TIMEOUT_MS, HOST_STOPPED_MESSAGE, MAX_FAILURES, RESTART_DELAY_MS, SLOW_HOSTED_LAUNCH_MS,
-  type HostProcess,
+  createProcessHost, isReadOnly, DEADLINE_MARGIN_MS, HEALTHY_UPTIME_MS, HOST_START_TIMEOUT_MS, HOST_STOPPED_MESSAGE, MAX_FAILURES,
+  RESTART_DELAY_MS, SLOW_HOSTED_LAUNCH_MS, type HostProcess,
 } from './process-host.js';
 import { HOST_READY, type HostReply, type HostRequest } from './process-host-protocol.js';
 
@@ -17,6 +17,7 @@ class FakeHost extends EventEmitter implements HostProcess {
   }
   kill(): boolean { this.killed = true; return true; }
   ready(): void { this.emit('message', HOST_READY); }
+  started(id: number, pid: number): void { this.emit('message', { type: 'started', id, pid }); }
   reply(reply: HostReply): void { this.emit('message', reply); }
   exit(code = 1): void { this.emit('exit', code); }
 }
@@ -26,19 +27,23 @@ function setup() {
   const hosts: FakeHost[] = [];
   const timers: { fn: () => void; ms: number; cleared: boolean }[] = [];
   const notes: string[] = [];
+  const killed: number[] = [];
+  let t = 0;
   const runHere = vi.fn(async (file: string, args: string[]) => ({ stdout: `here: ${file} ${args.join(' ')}` }));
   const host = createProcessHost({
     fork: () => { const h = new FakeHost(); hosts.push(h); return h; },
     runHere,
-    setTimer: (fn, ms) => { const t = { fn, ms, cleared: false, unref: () => {} }; timers.push(t); return t; },
-    clearTimer: (t) => { if (t) (t as { cleared: boolean }).cleared = true; },
+    killPid: (pid) => killed.push(pid),
+    now: () => t,
+    setTimer: (fn, ms) => { const timer = { fn, ms, cleared: false, unref: () => {} }; timers.push(timer); return timer; },
+    clearTimer: (timer) => { if (timer) (timer as { cleared: boolean }).cleared = true; },
     note: (line) => notes.push(line),
   });
   /** Run the pending timers set for `ms`. */
   const fire = (ms: number) => {
     for (const t of timers.filter((x) => x.ms === ms && !x.cleared)) { t.cleared = true; t.fn(); }
   };
-  return { host, hosts, runHere, notes, fire, latest: () => hosts[hosts.length - 1] };
+  return { host, hosts, runHere, notes, killed, fire, advance: (ms: number) => { t += ms; }, latest: () => hosts[hosts.length - 1] };
 }
 
 const ok = (id: number, stdout: string, launchMs = 5): HostReply =>
@@ -220,5 +225,136 @@ describe('process host', () => {
     host.start();
     host.start();
     expect(hosts).toHaveLength(1);
+  });
+
+  it('stops the processes the host started when it dies, and runs read-only ones again here', async () => {
+    const { host, runHere, killed, latest } = setup();
+    host.start();
+    latest().ready();
+    const status = host.run('git', ['status', '--porcelain'], { cwd: '/r' });
+    const commit = host.run('git', ['commit', '-m', 'x'], { cwd: '/r' });
+    latest().started(1, 4242);
+    latest().started(2, 4343);
+    latest().exit(1);
+
+    expect(killed).toEqual([4242, 4343]);
+    await expect(status).resolves.toEqual({ stdout: 'here: git status --porcelain' });
+    expect(runHere).toHaveBeenCalledWith('git', ['status', '--porcelain'], { cwd: '/r' });
+    await expect(commit).rejects.toThrow(HOST_STOPPED_MESSAGE);
+    expect(runHere).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops and fails every command in flight at quit, read-only or not', async () => {
+    const { host, runHere, killed, latest } = setup();
+    host.start();
+    latest().ready();
+    const version = host.run('git', ['--version']);
+    latest().started(1, 77);
+    host.stop();
+    await expect(version).rejects.toThrow(HOST_STOPPED_MESSAGE);
+    expect(killed).toEqual([77]);
+    expect(runHere).not.toHaveBeenCalled();
+  });
+
+  it('keeps the caller\'s stack on errors', async () => {
+    const { host, latest } = setup();
+    host.start();
+    latest().ready();
+    const result = (function askedFromHere() { return host.run('git', ['rev-parse', 'nope']); })();
+    latest().reply({ id: 1, ok: false, launchMs: 1, error: { name: 'ExecaError', message: 'Command failed', stack: 'ExecaError: Command failed\n    at hostInternals (execa.js:1:1)' } });
+    const error = await result.then(() => null, (e: Error) => e);
+    expect(error?.stack).toMatch(/^ExecaError: Command failed\n/);
+    expect(error?.stack).toContain('askedFromHere');
+    expect(error?.stack).not.toContain('hostInternals');
+  });
+
+  it('fails a command the host never answers as timed out, and restarts the host', async () => {
+    const { host, hosts, notes, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    const first = latest();
+    const result = host.run('gh', ['pr', 'list'], { cwd: '/r', timeout: 30_000 });
+    fire(30_000 + DEADLINE_MARGIN_MS);
+
+    await expect(result).rejects.toMatchObject({ timedOut: true, message: expect.stringContaining('gh pr got no answer') });
+    expect(first.killed).toBe(true);
+    expect(notes).toEqual(['process host stopped answering (gh pr); restarting it']);
+    first.exit(15);
+    fire(RESTART_DELAY_MS);
+    expect(hosts).toHaveLength(2);
+  });
+
+  it('clears the deadline once the command is answered', async () => {
+    const { host, notes, fire, latest } = setup();
+    host.start();
+    latest().ready();
+    const result = host.run('git', ['fetch'], { cwd: '/r', timeout: 30_000 });
+    latest().reply(ok(1, ''));
+    await result;
+    fire(30_000 + DEADLINE_MARGIN_MS);
+    expect(latest().killed).toBe(false);
+    expect(notes).toEqual([]);
+  });
+
+  it('starts counting failures again after the host has run well for a while', () => {
+    const { host, hosts, notes, fire, advance, latest } = setup();
+    host.start();
+    for (let i = 0; i < MAX_FAILURES + 2; i++) {
+      latest().ready();
+      advance(HEALTHY_UPTIME_MS);
+      latest().exit(1);
+      fire(RESTART_DELAY_MS);
+    }
+    expect(hosts).toHaveLength(MAX_FAILURES + 3);
+    expect(notes.every((n) => n.endsWith('starting it again'))).toBe(true);
+  });
+
+  it('notes a fatal error, then handles the exit that follows', () => {
+    const { host, notes, latest } = setup();
+    host.start();
+    latest().ready();
+    latest().emit('error', 'FatalError', 'v8', 'report');
+    latest().exit(134);
+    expect(notes).toEqual(['process host hit a fatal error (FatalError)', 'process host exited with code 134; starting it again']);
+    expect(host.ready).toBe(false);
+  });
+});
+
+describe('isReadOnly', () => {
+  it('knows the git commands that only read', () => {
+    for (const args of [
+      ['--version'], ['rev-parse', '--abbrev-ref', 'HEAD'], ['status', '--porcelain=v1', '-z'], ['diff', '--numstat'],
+      ['show', 'HEAD:a.ts'], ['log', '-10'], ['merge-base', 'a', 'b'], ['ls-files', '--error-unmatch', '--', 'x'],
+      ['check-ignore', '-q', '--', 'x'], ['check-ref-format', '--branch', 'feat'], ['show-ref', '--verify', '--quiet', 'refs/heads/x'],
+      ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], ['reflog', 'show', 'HEAD'],
+      ['branch', '-r', '--format=%(refname:short)'], ['remote'], ['config', 'user.name'], ['worktree', 'list', '--porcelain'],
+    ]) expect(isReadOnly('git', args), args.join(' ')).toBe(true);
+  });
+
+  it('leaves out every git command that writes, or might', () => {
+    for (const args of [
+      ['commit', '-m', 'x'], ['add', '-A'], ['fetch', '--prune'], ['push'], ['checkout', '-b', 'x'], ['worktree', 'add', 'p', 'b'],
+      ['symbolic-ref', 'HEAD', 'refs/heads/x'], ['symbolic-ref', '--delete', 'HEAD'], ['reflog', 'expire'],
+      ['branch', '-D', 'x'], ['branch', 'new'], ['branch', '--set-upstream-to=origin/x'], ['remote', 'add', 'o', 'u'],
+      ['config', 'user.name', 'Jo'], ['config', '--unset', 'user.name'], ['hash-object', '-w', 'x'], ['-C', 'dir', 'status'], [],
+    ]) expect(isReadOnly('git', args), args.join(' ')).toBe(false);
+  });
+
+  it('knows the gh commands that only read', () => {
+    expect(isReadOnly('gh', ['pr', 'view', 'b', '--json', 'number'])).toBe(true);
+    expect(isReadOnly('gh', ['pr', 'list', '--head', 'b'])).toBe(true);
+    expect(isReadOnly('gh', ['auth', 'status'])).toBe(true);
+    expect(isReadOnly('gh', ['api', 'repos/{owner}/{repo}/pulls/1/comments?per_page=100'])).toBe(true);
+    expect(isReadOnly('C:\\Program Files\\GitHub CLI\\gh.exe', ['--version'])).toBe(true);
+
+    expect(isReadOnly('gh', ['pr', 'create', '--title', 't'])).toBe(false);
+    expect(isReadOnly('gh', ['pr', 'merge', '1'])).toBe(false);
+    expect(isReadOnly('gh', ['api', '-X', 'POST', 'repos/o/r/issues'])).toBe(false);
+    expect(isReadOnly('gh', ['api', 'repos/o/r/issues', '-f', 'title=x'])).toBe(false);
+    expect(isReadOnly('gh', ['api', '--method=PATCH', 'x'])).toBe(false);
+  });
+
+  it('leaves out other programs', () => {
+    expect(isReadOnly('npm', ['ls'])).toBe(false);
   });
 });
