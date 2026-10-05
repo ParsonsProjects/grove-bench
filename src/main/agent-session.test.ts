@@ -282,7 +282,7 @@ function makeMockWindow() {
 // Import the module under test AFTER mocks are set up
 const { sessionManager } = await import('./agent-session.js');
 const { sanitizeElicitationResponse } = await import('./session-permissions.js');
-const { READ_SAFE_SANDBOX_WARNING } = await import('./session-config.js');
+const { READ_SAFE_SANDBOX_WARNING, READ_SAFE_NO_SANDBOX_WARNING } = await import('./session-config.js');
 const settingsMock = await import('./settings.js') as unknown as { getSettings: ReturnType<typeof vi.fn> };
 const { getGitIdentity, isGitRepo } = await import('./git.js');
 const { CheckpointManager } = await import('./checkpoints.js') as unknown as { CheckpointManager: { instances: unknown[] } };
@@ -1127,6 +1127,21 @@ describe('read-safe sandbox warning', () => {
 
     expect(warnings(win).length).toBeGreaterThan(0);
     await sessionManager.destroySession('test-rs-switch');
+  });
+
+  it('says there is no sandbox at all for an agent Grove can\'t sandbox', async () => {
+    (mockAdapter.capabilities as Record<string, boolean>).sandbox = false;
+    const win = makeMockWindow();
+    await sessionManager.createSession({
+      id: 'test-rs-acp', branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock',
+    });
+    await vi.waitFor(() => expect(sessionManager.getSession('test-rs-acp')?.queryHandle).toBeTruthy());
+
+    sessionManager.setMode('test-rs-acp', 'readSafe');
+
+    // Nothing about a sandbox arriving at the next restart: it never will.
+    expect(warnings(win)).toEqual([{ type: 'status', level: 'warning', message: READ_SAFE_NO_SANDBOX_WARNING }]);
+    await sessionManager.destroySession('test-rs-acp');
   });
 
   it('does not warn in other modes', async () => {
@@ -3482,6 +3497,24 @@ describe('AgentSessionManager session controls', () => {
     expect(syncs.at(-1)?.values.thinking).toBe('low');
 
     await sessionManager.destroySession('ctl-set');
+  });
+
+  it('records controls the agent changed by itself, without sending them back or logging the event', async () => {
+    const session = await createWithHandle('ctl-agent');
+
+    mockAdapter.control!.emitEvent({ type: 'agent_controls', values: { thinking: 'off', speed: 'warp', permissionMode: 'plan' } });
+
+    await vi.waitFor(() => expect(session.controls.thinking).toBe('off'));
+    // Values the descriptors don't offer, and the permission mode, are ignored.
+    expect(session.controls.speed).toBe('standard');
+    expect(session.permissionMode).toBe('default');
+    expect(session.queryHandle?.setControl).not.toHaveBeenCalled();
+    const history = sessionManager.getEventHistory('ctl-agent');
+    expect(history.some((e) => e.type === 'agent_controls')).toBe(false);
+    const syncs = history.filter((e) => e.type === 'controls_sync') as Extract<AgentEvent, { type: 'controls_sync' }>[];
+    expect(syncs.at(-1)?.values.thinking).toBe('off');
+
+    await sessionManager.destroySession('ctl-agent');
   });
 
   it('setControl records the value without a live handle so the next query start picks it up', async () => {

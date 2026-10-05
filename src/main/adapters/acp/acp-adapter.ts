@@ -805,6 +805,19 @@ class AcpQuery {
     this.hooks.learn(options, this.modes, null, false);
   }
 
+  /** What each of the agent's controls is set to now, by Grove control id. */
+  private controlValues(): Record<string, string> {
+    return Object.fromEntries(agentControls(this.configOptions, this.modes).map((c) => [c.id, c.default]));
+  }
+
+  /** Tell the session manager about controls the agent changed by itself,
+   *  so the badge doesn't keep showing a mode the agent has left. */
+  private reportControlChanges(before: Record<string, string>): void {
+    const after = this.controlValues();
+    const changed = Object.fromEntries(Object.entries(after).filter(([id, v]) => before[id] !== v));
+    if (Object.keys(changed).length > 0) this.emit({ type: 'agent_controls', values: changed });
+  }
+
   // ─── Agent → Grove ───
 
   private async onAgentRequest(method: string, params: unknown): Promise<unknown> {
@@ -851,12 +864,19 @@ class AcpQuery {
         this.commands = (update.availableCommands ?? []).map((c) => c?.name).filter((n): n is string => typeof n === 'string');
         this.commandsSeen();
         return;
-      case 'current_mode_update':
-        if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId };
+      case 'current_mode_update': {
+        if (!this.modes) return;
+        const before = this.controlValues();
+        this.modes = { ...this.modes, currentModeId: update.currentModeId };
+        this.reportControlChanges(before);
         return;
-      case 'config_option_update':
+      }
+      case 'config_option_update': {
+        const before = this.controlValues();
         this.takeConfigOptions(update.configOptions);
+        this.reportControlChanges(before);
         return;
+      }
       case 'session_info_update':
         if (this.sessionId && typeof update.title === 'string' && update.title.trim()) this.hooks.setTitle(this.sessionId, update.title.trim());
         return;

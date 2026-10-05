@@ -26,6 +26,8 @@ The operating mode controls how much the agent may do without asking:
 
 Pick a mode in the Agent settings popup, or press `Alt+M` to cycle through them. The first four are Claude Code's own modes. Read-safe is Grove Bench's, so it sits below a divider headed "Grove Bench" in the mode list and in Settings.
 
+Agents other than Claude Code (Gemini CLI, GitHub Copilot CLI, OpenCode and agents you add) get Ask, Edit and Read-safe. They have no OS sandbox, so in Read-safe the read-only check is the only thing between the agent and your files. Their own modes show as a second column, named by the agent (for example Gemini CLI's **Agent mode**). A mode that runs tools without asking, such as Gemini CLI's **YOLO**, shows in red. When the agent changes its own mode, for example leaving Plan by itself, the badge follows.
+
 Read-safe and Auto differ in who decides: Read-safe uses a fixed allowlist inside Grove and asks you about everything else, so nothing unexpected ever runs unprompted. Auto hands the decision to Claude's classifier and rarely prompts, so the agent can run tests, commit and so on without you, at the cost of a model making the call.
 
 The Mode, Effort, Thinking and Speed columns are declared by the agent provider for the model you have selected, so the options you see are exactly the ones that provider and model support. Switching models can add or remove a column (for example, Fast speed is only offered on models that support it) and resets any choice the new model does not offer to its default.

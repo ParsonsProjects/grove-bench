@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import {
-  agentControls, categoryForKind, commandOf, configIdForControl, mergeToolCall, modelList, pickPermissionOption,
+  agentControls, agentModeTone, categoryForKind, commandOf, configIdForControl, mergeToolCall, modelList, pickPermissionOption,
   planSummary, specifierFor, toolNameFor, toolViewFor,
 } from './mapping.js';
 import { customAcpAgents } from './presets.js';
@@ -105,6 +105,19 @@ describe('controls and models', () => {
     const controls = agentControls([], { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] });
     expect(controls[0]).toMatchObject({ id: 'acp:mode', default: 'default' });
     expect(configIdForControl('acp:mode', [])).toBeNull();
+    // YOLO runs tools without asking, so it reads as risky.
+    expect(controls[0].options[1]).toEqual({ value: 'yolo', label: 'YOLO', tone: 'danger' });
+  });
+
+  it('colours agent modes by what they do', () => {
+    expect(agentModeTone({ value: 'yolo', label: 'YOLO' })).toBe('danger');
+    expect(agentModeTone({ value: 'full', label: 'Full', description: 'Runs every tool without asking' })).toBe('danger');
+    expect(agentModeTone({ value: 'bypassPermissions', label: 'Bypass' })).toBe('danger');
+    expect(agentModeTone({ value: 'plan', label: 'Plan' })).toBe('warning');
+    expect(agentModeTone({ value: 'autoEdit', label: 'Auto Edit' })).toBe('accent');
+    expect(agentModeTone({ value: 'build', label: 'build' })).toBeUndefined();
+    // "Ask before applying edits" is not "skip asking".
+    expect(agentModeTone({ value: 'default', label: 'Default', description: 'Prompts for approval' })).toBeUndefined();
   });
 
   it('finds the model list in config options or the older models field', () => {

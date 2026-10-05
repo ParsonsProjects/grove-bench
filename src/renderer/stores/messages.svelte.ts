@@ -1068,14 +1068,15 @@ class MessageStore {
 
   cycleMode(sessionId: string) {
     const current = this.getMode(sessionId);
-    // Cycle through the modes the adapter declared for this session; the
-    // built-in list only serves sessions whose descriptors haven't arrived.
+    // Cycle through the modes the adapter declared for this session. Before
+    // they arrive, only the modes every agent offers: Plan and Auto are
+    // Claude Code's, and an ACP agent would take them as Ask.
     const declared = this.getControlDescriptors(sessionId)
       .find((d) => d.id === CONTROL_IDS.permissionMode)
       ?.options.map((o) => o.value as PermissionMode);
     const modes: readonly PermissionMode[] = declared && declared.length > 0
       ? declared
-      : ['default', 'plan', 'acceptEdits', 'auto', 'readSafe'];
+      : ['default', 'acceptEdits', 'readSafe'];
     const idx = modes.indexOf(current);
     const next = modes[(idx + 1) % modes.length];
     this.setMode(sessionId, next);

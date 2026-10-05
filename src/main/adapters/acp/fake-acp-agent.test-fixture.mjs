@@ -4,7 +4,7 @@
 //   auth     - session/new answers auth_required
 //   nohttp   - no HTTP MCP support
 // Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
-// 'echo', 'mcp', 'mcp-call'; anything else runs the default turn.
+// 'echo', 'mcp', 'mcp-call', 'self-mode'; anything else runs the default turn.
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -86,6 +86,15 @@ async function prompt(params) {
       update(sid, { sessionUpdate: 'tool_call', toolCallId: id, kind: 'execute', title: 'rm -rf build', status: 'pending', rawInput: { command: 'rm -rf build' } });
       update(sid, { sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '' } }] });
     }
+    return { stopReason: 'end_turn' };
+  }
+  if (text === 'self-mode') {
+    // Like Gemini CLI leaving plan mode by itself: the agent switches its own
+    // mode and effort, then answers.
+    modes.currentModeId = 'yolo';
+    update(sid, { sessionUpdate: 'current_mode_update', currentModeId: 'yolo' });
+    update(sid, { sessionUpdate: 'config_option_update', configOptions: configOptions().map((o) => o.id === 'effort' ? { ...o, currentValue: 'high' } : o) });
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Switched' } });
     return { stopReason: 'end_turn' };
   }
   if (text === 'unasked-read') {

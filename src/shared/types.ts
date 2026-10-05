@@ -267,6 +267,10 @@ export type AgentEvent =
   // Adapter-declared session controls (descriptors depend on the model) and
   // their current values — emitted on query start, model switch, and control change
   | { type: 'controls_sync'; descriptors: ControlDescriptor[]; values: Record<string, string> }
+  // The agent changed its own controls (an ACP agent leaving plan mode by
+  // itself). Main records the values and sends controls_sync instead, so this
+  // never reaches the renderer or the event log.
+  | { type: 'agent_controls'; values: Record<string, string> }
   // Permission resolved (authoritative — emitted by main for all resolution paths)
   | {
       type: 'permission_resolved';
@@ -561,7 +565,7 @@ export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high',
 /** Visual weight for a control option's status-bar badge. Adapters pick a
  *  tone; the renderer maps it to theme colours so providers never hardcode
  *  CSS. */
-export type ControlTone = 'muted' | 'neutral' | 'info' | 'warning' | 'accent' | 'accent-soft' | 'success' | 'highlight';
+export type ControlTone = 'muted' | 'neutral' | 'info' | 'warning' | 'accent' | 'accent-soft' | 'success' | 'highlight' | 'danger';
 
 export interface ControlOption {
   value: string;

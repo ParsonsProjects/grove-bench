@@ -32,7 +32,7 @@ import {
 } from './session-permissions.js';
 import { SessionSkills } from './session-skills.js';
 import {
-  READ_SAFE_SANDBOX_WARNING, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
+  readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
 
@@ -382,7 +382,7 @@ class AgentSessionManager {
     // Read-safe mode leans on a sandbox that may not start: say so once per
     // conversation (eventHistory is reloaded from disk, so across restarts too).
     if (session.permissionMode === 'readSafe' && !session.sandbox && !hasSandboxWarning(session.eventHistory)) {
-      emit({ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING });
+      emit({ type: 'status', level: 'warning', message: readSafeWarning(session.adapter.capabilities.sandbox === true) });
     }
 
     // Fresh conversation: snapshot the working tree as the session's baseline
@@ -551,6 +551,13 @@ class AgentSessionManager {
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
+
+        // The agent switched a control itself: record it so the badge, the
+        // next start and the renderer agree with the agent.
+        if (event.type === 'agent_controls') {
+          this.applyAgentControls(session, event.values);
+          continue;
+        }
 
         // Plan usage is the account's, not the conversation's: keep the
         // latest for the next conversation and the next launch.
@@ -986,14 +993,18 @@ class AgentSessionManager {
     // Entering read-safe mode with a live query: the sandbox is only applied
     // at query start, so until the next (re)start the read-only classifier is
     // the sole protection layer. Surface that honestly.
+    // An agent Grove can't sandbox never gets one, restart or not.
     if (mode === 'readSafe' && prevMode !== 'readSafe' && session.queryHandle && !session.sandbox) {
-      session.emit?.({
-        type: 'status',
-        level: 'warning',
-        message: 'Read-safe mode on: read-only tool calls run without asking. The sandbox only applies once the agent restarts, and may not start at all on this machine.',
-      });
+      const canSandbox = session.adapter.capabilities.sandbox === true;
+      if (canSandbox) {
+        session.emit?.({
+          type: 'status',
+          level: 'warning',
+          message: 'Read-safe mode on: read-only tool calls run without asking. The sandbox only applies once the agent restarts, and may not start at all on this machine.',
+        });
+      }
       if (!hasSandboxWarning(session.eventHistory)) {
-        session.emit?.({ type: 'status', level: 'warning', message: READ_SAFE_SANDBOX_WARNING });
+        session.emit?.({ type: 'status', level: 'warning', message: readSafeWarning(canSandbox) });
       }
     }
 
@@ -1072,6 +1083,21 @@ class AgentSessionManager {
     }
     session.controls = values;
     return { descriptors, values };
+  }
+
+  /** Record control values the agent changed by itself. Only values its
+   *  descriptors offer count; nothing is sent back to the agent. */
+  private applyAgentControls(session: ManagedSession, values: Record<string, string>): void {
+    const descriptors = session.adapter.getControls(session.model);
+    let changed = false;
+    for (const [controlId, value] of Object.entries(values)) {
+      if (controlId === CONTROL_IDS.permissionMode || session.controls[controlId] === value) continue;
+      const d = descriptors.find((x) => x.id === controlId);
+      if (!d?.options.some((o) => o.value === value)) continue;
+      session.controls = { ...session.controls, [controlId]: value };
+      changed = true;
+    }
+    if (changed) session.emit?.({ type: 'controls_sync', ...this.reconcileControls(session) });
   }
 
   /** Controls for a session. One that isn't running (asleep, closed, or never

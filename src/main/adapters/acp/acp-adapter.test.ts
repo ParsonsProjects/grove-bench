@@ -59,6 +59,22 @@ async function until(handle: AgentQueryHandle, type: AdapterEvent['type'], seen:
 }
 
 describe('AcpAdapter', () => {
+  it('reports controls the agent changes by itself', async () => {
+    const adapter = new AcpAdapter(def());
+    const handle = await adapter.start(config());
+    await until(handle, 'system_init');
+
+    handle.sendMessage({ text: 'self-mode' });
+    const turn = await until(handle, 'result');
+
+    const changes = turn.filter((e) => e.type === 'agent_controls');
+    expect(changes).toEqual([
+      { type: 'agent_controls', values: { 'acp:mode': 'yolo' } },
+      { type: 'agent_controls', values: { 'acp:effort': 'high' } },
+    ]);
+    handle.close();
+  });
+
   it('starts a session, streams a turn and asks before an edit', async () => {
     const adapter = new AcpAdapter(def());
     const asked: PermissionRequest[] = [];

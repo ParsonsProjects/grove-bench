@@ -1289,16 +1289,10 @@ describe('markSessionStopped', () => {
 });
 
 describe('cycleMode', () => {
-  it('cycles default → plan → acceptEdits → auto → readSafe → default', () => {
+  it('before the agent declares its modes, cycles only the ones every agent offers', () => {
     messageStore.modeBySession[SID] = 'default';
     messageStore.cycleMode(SID);
-    expect(messageStore.getMode(SID)).toBe('plan');
-
-    messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('acceptEdits');
-
-    messageStore.cycleMode(SID);
-    expect(messageStore.getMode(SID)).toBe('auto');
 
     messageStore.cycleMode(SID);
     expect(messageStore.getMode(SID)).toBe('readSafe');
@@ -1518,7 +1512,7 @@ describe('session controls', () => {
 
     messageStore.cycleControl(SID, 'permissionMode');
 
-    expect(messageStore.getMode(SID)).toBe('plan');
+    expect(messageStore.getMode(SID)).toBe('acceptEdits');
   });
 
   it('loadControls fetches once and keeps a controls_sync that landed mid-fetch', async () => {
