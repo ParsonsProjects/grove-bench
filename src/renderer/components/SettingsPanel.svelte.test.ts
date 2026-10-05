@@ -34,7 +34,7 @@ function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): 
     autoInstallDeps: false, previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
     notifyOnTurnComplete: true, notifyOnPermission: true, notifyOnPrAlert: true, notifyTaskbarFlash: true, notifyTaskbarBadge: true,
-    analyticsEnabled: false, analyticsPrompted: false, crashReportsEnabled: false,
+    analyticsEnabled: false, analyticsPrompted: false, crashReportsEnabled: false, onlineCatalogs: true,
   };
 }
 

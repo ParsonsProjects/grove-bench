@@ -34,6 +34,7 @@ import { getApiKey } from '../../credentials.js';
 import { logger } from '../../logger.js';
 import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
+import { catalogs, installFor } from '../../catalogs.js';
 import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
@@ -71,8 +72,14 @@ export interface AcpAgentDefinition {
   /** How the user signs in with the agent's own CLI, when it has one. */
   cliSignIn?: CliSignInDescriptor;
   /** The command that installs the program, shown with a copy button when
-   *  it isn't found. */
+   *  it isn't found. The ACP Registry's, when it has one, comes first. */
   installCommand?: string;
+  /** The agent's id in the ACP Registry (catalogs.ts), for its current
+   *  install command and version. */
+  registryId?: string;
+  /** The models.dev provider its model ids belong to (e.g. 'google'), for
+   *  context sizes. OpenCode's ids name their provider themselves. */
+  modelProvider?: string;
   /** 'alpha' to keep it out of the agent picker until the user turns it on. */
   stage?: AgentStage;
 }
@@ -295,6 +302,16 @@ export class AcpAdapter implements AgentAdapter {
     if (def.verifyApiKey) this.verifyApiKey = (key) => def.verifyApiKey!(key);
     this.authErrorMessage = this.signInHelp();
     if (def.cliSignIn) this.checkSignIn = () => this.probeSignIn();
+    // New model details from models.dev reach the pickers like a new list.
+    catalogs.onChange(() => { for (const l of this.modelListeners) l(); });
+  }
+
+  /** How to install the program: the ACP Registry's command when it has an
+   *  npm or Python package for it, else the definition's own. */
+  private installCommand(): string | undefined {
+    const listed = catalogs.registryAgent(this.def.registryId);
+    const fromRegistry = listed ? installFor(listed) : null;
+    return fromRegistry && 'command' in fromRegistry ? fromRegistry.command : this.def.installCommand;
   }
 
   /** What to do about a sign-in refusal, after the agent's own reason. */
@@ -410,8 +427,13 @@ export class AcpAdapter implements AgentAdapter {
     for (const l of this.modelListeners) l();
   }
 
+  /** What the agent last offered, with context sizes from models.dev so
+   *  the context meter has a size before the first reply reports one. */
   getModels(): ModelInfo[] {
-    return (this.learnedAgent()?.models ?? []).map((m) => ({ id: m.id, label: m.label }));
+    return (this.learnedAgent()?.models ?? []).map((m) => {
+      const context = catalogs.model(m.id, this.def.modelProvider)?.context;
+      return { id: m.id, label: m.label, ...(context ? { contextWindow: context } : {}) };
+    });
   }
 
   onModelsChanged(listener: () => void): () => void {
@@ -442,7 +464,7 @@ export class AcpAdapter implements AgentAdapter {
         installRequired: true,
         authenticated: false,
         errorMessage: `${this.displayName} not found at ${this.def.command}`,
-        ...(this.def.installCommand ? { installCommand: this.def.installCommand } : {}),
+        ...(this.installCommand() ? { installCommand: this.installCommand() } : {}),
       };
     }
     const lookup = process.platform === 'win32' ? 'where.exe' : 'which';
@@ -463,7 +485,7 @@ export class AcpAdapter implements AgentAdapter {
       installRequired: true,
       authenticated: false,
       errorMessage: `${this.displayName} not found (looked for "${this.def.command}")`,
-      ...(this.def.installCommand ? { installCommand: this.def.installCommand } : {}),
+      ...(this.installCommand() ? { installCommand: this.installCommand() } : {}),
     };
   }
 

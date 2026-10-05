@@ -459,6 +459,9 @@ const api: GroveBenchAPI = {
 
   // Agent adapters
   listAdapters: () => ipcRenderer.invoke(IPC.AGENT_LIST_ADAPTERS),
+  listRegistryAgents: () => ipcRenderer.invoke(IPC.CATALOGS_REGISTRY),
+  getRegistryIcon: (id: string) => ipcRenderer.invoke(IPC.CATALOGS_ICON, id),
+  refreshCatalogs: () => ipcRenderer.invoke(IPC.CATALOGS_REFRESH),
   getAdapterControls: (adapterType?: string, model?: string | null) =>
     ipcRenderer.invoke(IPC.AGENT_GET_ADAPTER_CONTROLS, adapterType, model),
   getModels: (adapterType?: string) => ipcRenderer.invoke(IPC.AGENT_GET_MODELS, adapterType),

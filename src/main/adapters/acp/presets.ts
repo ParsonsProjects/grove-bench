@@ -26,6 +26,8 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     displayName: 'Gemini CLI',
     command: 'gemini',
     args: ['--acp'],
+    registryId: 'gemini',
+    modelProvider: 'google',
     cliSignIn: {
       accountLabel: 'Google account',
       // Personal accounts stopped working on 18 June 2026 (gemini.ts).
@@ -49,6 +51,8 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     displayName: 'GitHub Copilot CLI',
     command: 'copilot',
     args: ['--acp'],
+    registryId: 'github-copilot-cli',
+    modelProvider: 'github-copilot',
     cliSignIn: {
       accountLabel: 'GitHub Copilot plan',
       cliName: 'GitHub Copilot CLI',
@@ -62,6 +66,9 @@ export const ACP_PRESETS: AcpAgentDefinition[] = [
     displayName: 'OpenCode',
     command: 'opencode',
     args: ['acp'],
+    // The registry has downloads for OpenCode, not a package, so the npm
+    // command below stays.
+    registryId: 'opencode',
     // Not yet run on Windows with a real key (docs/open-model-harnesses-plan.md).
     stage: 'alpha',
     // Optional: OpenCode also uses the providers the user signed in to with

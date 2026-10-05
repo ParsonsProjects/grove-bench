@@ -18,6 +18,20 @@ vi.mock('../../app-state.js', () => ({
   saveAgentSignIn: (id: string, record: { signedIn: boolean; message?: string; checkedAt: number }) => { signIn.set(id, record); },
 }));
 
+const registry = new Map<string, unknown>();
+const models = new Map<string, { context?: number }>();
+vi.mock('../../catalogs.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../catalogs.js')>();
+  return {
+    ...actual,
+    catalogs: {
+      registryAgent: (id?: string) => (id ? registry.get(id) ?? null : null),
+      model: (id: string, provider?: string) => models.get(`${provider ?? ''}:${id}`) ?? null,
+      onChange: () => () => {},
+    },
+  };
+});
+
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-acp-agent.test-fixture.mjs');
 
 function def(scenario = 'default'): AcpAgentDefinition {
@@ -35,6 +49,8 @@ let cwd: string;
 beforeEach(() => {
   catalog.clear();
   signIn.clear();
+  registry.clear();
+  models.clear();
   savedKeys.clear();
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-'));
 });
@@ -343,6 +359,21 @@ describe('AcpAdapter', () => {
     expect(asked[0]).toMatchObject({ toolName: 'execute', toolCategory: 'bash', toolView: { kind: 'other', summary: 'npm test' } });
     expect(turn.find((e) => e.type === 'tool_result' && e.toolUseId === 'e1')).toMatchObject({ isError: true });
     handle.close();
+  });
+
+  it('takes the install command from the ACP Registry, and context sizes from models.dev', async () => {
+    const missing = path.join(cwd, 'no-such-agent.exe');
+    const listed: AcpAgentDefinition = { ...def(), command: missing, registryId: 'fake', modelProvider: 'fakeco', installCommand: 'npm install -g fake-old' };
+    expect((await new AcpAdapter(listed).checkPrerequisites()).installCommand).toBe('npm install -g fake-old');
+    registry.set('fake', { id: 'fake', name: 'Fake', version: '2.0.0', distribution: { npx: { package: 'fake-agent@2.0.0', args: ['--acp'] } } });
+    expect((await new AcpAdapter(listed).checkPrerequisites()).installCommand).toBe('npm install -g fake-agent@2.0.0');
+
+    catalog.set('fake-acp', [{ models: [{ id: 'm1', label: 'Model 1' }, { id: 'm2', label: 'Model 2' }], controls: [] }]);
+    models.set('fakeco:m1', { context: 1_000_000 });
+    expect(new AcpAdapter(listed).getModels()).toEqual([
+      { id: 'm1', label: 'Model 1', contextWindow: 1_000_000 },
+      { id: 'm2', label: 'Model 2' },
+    ]);
   });
 
   it('finds an agent given by full path', async () => {

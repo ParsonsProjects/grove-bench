@@ -71,6 +71,7 @@ const SETTINGS = {
   analyticsEnabled: false,
   analyticsPrompted: true,
   crashReportsEnabled: false,
+  onlineCatalogs: true,
 };
 
 const GOALS: Record<string, string> = {
@@ -418,6 +419,9 @@ const api: Record<string, unknown> = {
   listMcpServers: async () => [],
   // A second agent so screenshots can show agent choice. Only Claude Code is
   // registered in the app itself.
+  listRegistryAgents: async () => [],
+  getRegistryIcon: async () => null,
+  refreshCatalogs: async () => ({ fetchedAt: null }),
   listAdapters: async () => [{
     id: 'claude-code', displayName: 'Claude Agent', capabilities: { mcpConfig: true, plugins: true, permissionModes: true }, isDefault: true, backgroundModel: 'claude-haiku-4-5-20251001',
     // The MCP popover only offers controls the agent declares.

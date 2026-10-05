@@ -5,6 +5,7 @@
   import { agentsStore } from '../../stores/agents.svelte.js';
   import ApiKeyField from '../ApiKeyField.svelte';
   import CommandLine from '../CommandLine.svelte';
+  import RegistryAgents from './RegistryAgents.svelte';
   import { prerequisitesStore } from '../../stores/prerequisites.svelte.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -377,7 +378,7 @@
 
 <SettingsGroup
   title="Other agents (ACP)"
-  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
+  description="Any agent that speaks the Agent Client Protocol over stdio, such as Codex through codex-acp: type its command, or pick one from the public ACP Registry. Gemini CLI, GitHub Copilot CLI and OpenCode are built in. Restart Grove Bench after a change."
   card
   collapse={{ key: 'acp-agents', open: false }}
 >
@@ -412,5 +413,6 @@
       />
       <Button variant="secondary" onclick={addAcpAgent}>Add</Button>
     </div>
+    <RegistryAgents onUse={(a) => { acpName = a.name; acpCommand = a.command; acpArgs = a.args.join(' '); }} />
   </div>
 </SettingsGroup>

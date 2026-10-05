@@ -1372,6 +1372,12 @@ export interface GroveBenchAPI {
   /** Registered agents, in registration order. `isDefault` marks the one new
    *  conversations use unless another is picked. */
   listAdapters(): Promise<AgentSummary[]>;
+  /** Agents in the ACP Registry, from the last copy Grove downloaded. */
+  listRegistryAgents(): Promise<RegistryAgentSummary[]>;
+  /** A registry agent's icon as an SVG data URL, or null. */
+  getRegistryIcon(id: string): Promise<string | null>;
+  /** Download the ACP Registry and models.dev again now (when allowed). */
+  refreshCatalogs(): Promise<{ fetchedAt: number | null }>;
   /** Control descriptors an adapter declares for `model` (null = its default
    *  model), without needing a session. Used by Settings for per-adapter
    *  defaults. Unknown adapter = []. */
@@ -1428,6 +1434,21 @@ export const TOOL_RULE_KEYWORDS: Record<string, ToolCategory> = {
 };
 
 /** An agent the user added that speaks the Agent Client Protocol over stdio. */
+/** One agent in the ACP Registry, as Settings lists it. */
+export interface RegistryAgentSummary {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  website?: string;
+  /** A command to copy (npm or uv), or a download for this computer. */
+  install: { command: string } | { download: string } | null;
+  /** How Grove would start it (npx or uvx), or null for downloads. */
+  launch: { command: string; args: string[] } | null;
+  /** Grove has it built in (Gemini CLI, Copilot CLI, OpenCode). */
+  builtIn: boolean;
+}
+
 export interface AcpAgentSetting {
   /** Stable id (the adapter id is `acp-<id>`); defaults from the name. */
   id: string;
@@ -1568,6 +1589,9 @@ export interface GroveBenchSettings {
    *  stack itself) to the analytics backend. Only effective while
    *  analyticsEnabled is on. Off by default. */
   crashReportsEnabled: boolean;
+  /** Fetch the ACP Registry and models.dev (at most once a day) for agent
+   *  install commands and model details. On by default. */
+  onlineCatalogs: boolean;
 }
 
 /**
@@ -1928,6 +1952,9 @@ export const IPC = {
   AGENT_CHECKPOINT_FILE_DIFF: 'agent:checkpointFileDiff',
   AGENT_CHECKPOINT_FILE_LINES: 'agent:checkpointFileLines',
   AGENT_LIST_ADAPTERS: 'agent:listAdapters',
+  CATALOGS_REGISTRY: 'catalogs:registry',
+  CATALOGS_ICON: 'catalogs:icon',
+  CATALOGS_REFRESH: 'catalogs:refresh',
   AGENT_MODELS_CHANGED: 'agent:modelsChanged',
   AGENT_GET_ADAPTER_CONTROLS: 'agent:getAdapterControls',
   AGENT_GET_MODELS: 'agent:getModels',

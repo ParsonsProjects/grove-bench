@@ -78,7 +78,13 @@ Code: `src/main/adapters/acp/`.
   saved and the agent offers the key's method (Gemini CLI's
   `gemini-api-key`), Grove calls `authenticate` with it and tries again.
 - **Install**: Grove never installs anything. A missing agent shows its
-  install command with a copy button.
+  install command with a copy button: the ACP Registry's when it lists an
+  npm or Python package for it, else the preset's.
+- **Online lists** (`catalogs.ts`): the ACP Registry and models.dev, fetched
+  at most once a day while Settings > Privacy allows it and kept in
+  userData/catalogs. The registry gives install commands and the list
+  under Other agents; models.dev gives each model's context size, so the
+  context meter is right before the first reply.
 - **Background tasks** (commit messages, branch names, memory notes) run as
   a one-off session with every tool request turned down.
 - **Custom agents**: Settings → Agent → Other Agents (ACP). Read at launch.

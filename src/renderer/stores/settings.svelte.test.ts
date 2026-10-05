@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   analyticsEnabled: false,
   analyticsPrompted: false,
   crashReportsEnabled: false,
+  onlineCatalogs: true,
 };
 
 beforeEach(async () => {

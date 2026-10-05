@@ -31,6 +31,7 @@ src/
     memory-autosave.ts # Auto-save memory on interval
     settings.ts        # User settings
     prerequisites.ts   # Git/Claude detection & version checks
+    catalogs.ts        # ACP Registry and models.dev, fetched daily (install commands, model sizes)
     credentials.ts     # Encrypted API key storage (safeStorage)
     logger.ts          # File-based logging
     rotating-log.ts    # Size-rotated log file (app log and performance.log share it)

@@ -69,6 +69,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   analyticsEnabled: false,
   analyticsPrompted: false,
   crashReportsEnabled: false,
+  onlineCatalogs: true,
 };
 
 // ─── Schema versioning ───
@@ -265,6 +266,7 @@ const settingsSchema = z.object({
   analyticsEnabled: z.boolean().catch(DEFAULT_SETTINGS.analyticsEnabled),
   analyticsPrompted: z.boolean().catch(DEFAULT_SETTINGS.analyticsPrompted),
   crashReportsEnabled: z.boolean().catch(DEFAULT_SETTINGS.crashReportsEnabled),
+  onlineCatalogs: z.boolean().catch(DEFAULT_SETTINGS.onlineCatalogs),
 }) satisfies z.ZodType<GroveBenchSettings, unknown>;
 
 /**

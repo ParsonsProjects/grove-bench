@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { execa } from 'execa';
 import { IPC, PERMISSION_MODES } from '../shared/types.js';
-import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, CreateSessionOpts, OpenPrSummary, PermissionMode, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, WorktreeInfo } from '../shared/types.js';
 import { sessionManager } from './agent-session.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -29,6 +29,8 @@ import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
 import { applyUpdateSettings, checkForUpdate, downloadUpdate, getUpdateState, restartToUpdate } from './auto-updater.js';
 import * as settings from './settings.js';
+import { catalogs, installFor, launchFor } from './catalogs.js';
+import { ACP_PRESETS } from './adapters/acp/presets.js';
 import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
@@ -1663,6 +1665,32 @@ export function registerHandlers() {
       }
     });
   }
+
+  // ─── ACP Registry and models.dev (catalogs.ts) ───
+
+  ipcMain.handle(IPC.CATALOGS_REGISTRY, (): RegistryAgentSummary[] => {
+    const builtIn = new Set(ACP_PRESETS.map((p) => p.registryId).filter(Boolean));
+    return catalogs.registry().map((a) => ({
+      id: a.id,
+      name: a.name,
+      version: a.version,
+      ...(a.description ? { description: a.description } : {}),
+      ...(a.website?.startsWith('https://') ? { website: a.website } : {}),
+      install: installFor(a),
+      launch: launchFor(a),
+      builtIn: builtIn.has(a.id),
+    }));
+  });
+
+  ipcMain.handle(IPC.CATALOGS_ICON, (_event, id: unknown) => {
+    const agent = typeof id === 'string' ? catalogs.registryAgent(id) : null;
+    return agent ? catalogs.icon(agent) : null;
+  });
+
+  ipcMain.handle(IPC.CATALOGS_REFRESH, async () => {
+    if (settings.getSettings().onlineCatalogs) await catalogs.refresh(true);
+    return { fetchedAt: catalogs.registryFetchedAt() };
+  });
 
   ipcMain.handle(IPC.AGENT_LIST_ADAPTERS, () => {
     const defaultId = adapterRegistry.getDefault().id;
