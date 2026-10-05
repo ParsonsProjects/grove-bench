@@ -817,7 +817,7 @@ describe('remove with conversations attached to the worktree', () => {
     manager.register(attached);
     mockGit.mockClear();
 
-    await expect(manager.remove('wt-a', true)).rejects.toThrow(/Another conversation is still working in this conversation's worktree/);
+    await expect(manager.remove('wt-a', true)).rejects.toThrow(/Another thread is still working in this thread's worktree/);
     await expect(manager.assertRemovable('wt-a')).rejects.toThrow();
     expect(mockGit).not.toHaveBeenCalled();
     expect(savedManifest).toHaveProperty('wt-a');

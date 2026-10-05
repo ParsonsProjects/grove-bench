@@ -741,11 +741,11 @@ class AcpQuery {
           this.sessionId = resumeSessionId;
           return;
         }
-        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't reopen earlier conversations, so it starts a new one. The thread above stays, but the agent won't remember it.` });
+        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} can't reopen earlier threads, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       } catch (e) {
         if (isAuthRequired(e)) throw e;
         logger.warn(`[${this.def.id}] resume failed:`, e);
-        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} couldn't reopen this conversation, so it starts a new one. The thread above stays, but the agent won't remember it.` });
+        this.emit({ type: 'status', level: 'warning', message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       }
     }
     const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers }));
@@ -1147,7 +1147,7 @@ class AcpQuery {
       type: 'status',
       level: 'warning',
       message: decision === 'deny'
-        ? `${name} ran "${what}" without asking, though ${notAllowed ? "this conversation doesn't allow that tool" : 'one of your tool rules denies it'}. Grove Bench's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
+        ? `${name} ran "${what}" without asking, though ${notAllowed ? "this thread doesn't allow that tool" : 'one of your tool rules denies it'}. Grove Bench's modes and rules only apply when the agent asks before it acts, so set ${name} to ask first.`
         : `${name} ran "${what}" without asking, so ${mode ? `the ${mode} mode` : "Grove Bench's mode"} and your tool rules don't apply to it. Set ${name} to ask before it edits files or runs commands.`,
     });
   }

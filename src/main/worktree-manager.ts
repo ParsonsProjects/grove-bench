@@ -509,7 +509,7 @@ export class WorktreeManager {
     const others = (await this.sharersOfPath(id, info.path)).filter((other) => other !== id);
     if (others.length === 0) return;
     throw new Error(
-      `${others.length === 1 ? 'Another conversation is' : `${others.length} other conversations are`} still working in this conversation's worktree. `
+      `${others.length === 1 ? 'Another thread is' : `${others.length} other threads are`} still working in this thread's worktree. `
       + 'Delete them first; deleting this one would remove their checkout too.',
     );
   }
@@ -792,11 +792,11 @@ export class WorktreeManager {
       const manifest = await this.loadManifest();
       const entry = manifest[id];
       if (!entry) throw new Error(`Worktree ${id} not found`);
-      throw new Error(`Conversation ${id} is not active`);
+      throw new Error(`Thread ${id} is not active`);
     }
 
     if (info.direct) {
-      throw new Error('Cannot rename branch for direct conversations');
+      throw new Error('Cannot rename branch for direct threads');
     }
 
     const oldName = info.branch;
@@ -876,7 +876,7 @@ export class WorktreeManager {
     opts: { create?: boolean; busySessionIds?: string[] } = {},
   ): Promise<BranchSwitchResult> {
     const info = this.worktrees.get(id);
-    if (!info) return { success: false, error: 'This conversation is not active.' };
+    if (!info) return { success: false, error: 'This thread is not active.' };
     const name = branch.trim();
     if (!name || name.startsWith('-') || !(await validateBranchName(name))) {
       return { success: false, error: `"${name}" is not a valid branch name.` };

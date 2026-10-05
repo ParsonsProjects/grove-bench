@@ -2645,7 +2645,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
     // Resuming would bring back the rewound turns, so the agent starts over.
     expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
     expect(mockAdapter.lastConfig?.resumeAtUuid).toBeNull();
-    expect(session!.eventHistory.some((e) => e.type === 'status' && /can't forget part of a conversation/.test(e.message))).toBe(true);
+    expect(session!.eventHistory.some((e) => e.type === 'status' && /can't forget part of a thread/.test(e.message))).toBe(true);
 
     await sessionManager.destroySession('test-rewind-fresh');
   });
@@ -2766,7 +2766,7 @@ describe('AgentSessionManager.rewindFiles()', () => {
 
     await expect(
       sessionManager.rewindFiles('test-rewind-stale', 'not-in-history', { conversationOnly: true }),
-    ).rejects.toThrow(/no longer part of the conversation/);
+    ).rejects.toThrow(/no longer part of the thread/);
 
     await sessionManager.destroySession('test-rewind-stale');
   });
@@ -3191,7 +3191,7 @@ describe('AgentSessionManager resume of a missing conversation', () => {
 
     const events = eventsOf(win);
     expect(events).toContainEqual(expect.objectContaining({
-      type: 'status', level: 'warning', newConversation: true, message: expect.stringContaining("couldn't find this conversation"),
+      type: 'status', level: 'warning', newConversation: true, message: expect.stringContaining("couldn't find its record of this thread"),
     }));
     // Not reported as stopped: the renderer would resume the same id again.
     expect(events.some((e) => e.type === 'process_exit' || e.type === 'error')).toBe(false);
@@ -3350,7 +3350,7 @@ describe('AgentSessionManager resume of a missing conversation', () => {
       expect(mockAdapter.lastConfig?.resumeSessionId).toBeNull();
       // The switch's marker went with the rewound turns; old-1 is still kept,
       // so a new marker stops a later rewind from forking at it.
-      expect(markers(session.eventHistory)).toEqual([expect.objectContaining({ message: expect.stringContaining('starts a new conversation from here') })]);
+      expect(markers(session.eventHistory)).toEqual([expect.objectContaining({ message: expect.stringContaining('starts afresh from here') })]);
       const markerAt = session.eventHistory.findIndex((e) => e.type === 'status' && e.newConversation);
       expect(markerAt).toBeGreaterThan(session.eventHistory.findIndex((e) => e.type === 'assistant_text' && e.uuid === 'old-1'));
 

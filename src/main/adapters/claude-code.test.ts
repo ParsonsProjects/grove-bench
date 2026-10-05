@@ -824,7 +824,7 @@ describe('transformMessage()', () => {
         { type: 'system', subtype: 'status', status: 'compacting' } as any,
         makeCtx(),
       );
-      expect(events).toContainEqual({ type: 'status', message: 'Compacting conversation...' });
+      expect(events).toContainEqual({ type: 'status', message: 'Compacting thread...' });
     });
   });
 

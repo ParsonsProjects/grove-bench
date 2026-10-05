@@ -461,7 +461,7 @@ describe('AcpAdapter', () => {
       await until(handle, 'system_init');
       handle.sendMessage({ text: 'unasked' });
       const [warning] = warnings(await until(handle, 'result'));
-      expect(warning.message).toContain('ran "b.txt" without asking, though this conversation doesn\'t allow that tool');
+      expect(warning.message).toContain('ran "b.txt" without asking, though this thread doesn\'t allow that tool');
       handle.close();
     });
 

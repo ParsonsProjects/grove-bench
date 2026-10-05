@@ -193,7 +193,7 @@ function kebabName(candidate: PatternCandidate): string {
 }
 
 export function suggestionFromPattern(candidate: PatternCandidate): SkillSuggestion {
-  const where = `${candidate.sessionCount} conversations`;
+  const where = `${candidate.sessionCount} threads`;
   return {
     id: suggestionId(candidate.label),
     name: kebabName(candidate),

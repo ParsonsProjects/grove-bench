@@ -793,7 +793,7 @@ class AgentSessionManager {
       type: 'status',
       level: 'warning',
       newConversation: true,
-      message: `${session.adapter.displayName} couldn't find this conversation any more, so it starts a new one. The thread above stays, but the agent won't remember it.`,
+      message: `${session.adapter.displayName} couldn't find its record of this thread any more, so it starts afresh. The thread above stays, but the agent won't remember it.`,
     });
     // Prompts sent meanwhile wait for the new run (see awaitQueryHandle).
     if (!session.resolveQueryReady) {
@@ -1187,7 +1187,7 @@ class AgentSessionManager {
   async reconnectMcpServer(id: string, serverName: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.reconnectMcpServer) {
-      throw new Error('MCP server control is not available for this conversation');
+      throw new Error('MCP server control is not available for this thread');
     }
     try {
       await session.queryHandle.reconnectMcpServer(serverName);
@@ -1200,7 +1200,7 @@ class AgentSessionManager {
   async authenticateMcpServer(id: string, serverName: string): Promise<McpAuthStartResult> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.authenticateMcpServer) {
-      throw new Error('MCP sign-in is not available for this conversation');
+      throw new Error('MCP sign-in is not available for this thread');
     }
     try {
       return await session.queryHandle.authenticateMcpServer(serverName);
@@ -1213,7 +1213,7 @@ class AgentSessionManager {
   async setMcpServerEnabled(id: string, serverName: string, enabled: boolean): Promise<void> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.setMcpServerEnabled) {
-      throw new Error('MCP server control is not available for this conversation');
+      throw new Error('MCP server control is not available for this thread');
     }
     try {
       await session.queryHandle.setMcpServerEnabled(serverName, enabled);
@@ -1701,7 +1701,7 @@ class AgentSessionManager {
    */
   async switchAgent(id: string, adapterId: string, opts: { transcript: boolean }): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     if (session.agentType === adapterId) return;
     const adapter = adapterRegistry.get(adapterId);
     if (!adapter) throw new Error(`Unknown agent: ${adapterId}`);
@@ -1750,8 +1750,8 @@ class AgentSessionManager {
       type: 'status',
       newConversation: true,
       message: opts.transcript
-        ? `Switched from ${previous.displayName} to ${adapter.displayName}. It gets a short transcript of this conversation with your next message.`
-        : `Switched from ${previous.displayName} to ${adapter.displayName}. It starts without the conversation so far; the thread above stays.`,
+        ? `Switched from ${previous.displayName} to ${adapter.displayName}. It gets a short transcript of this thread with your next message.`
+        : `Switched from ${previous.displayName} to ${adapter.displayName}. It starts without the thread so far, which stays above.`,
     });
 
     // Closes the old agent and starts the new one in its place.
@@ -1760,7 +1760,7 @@ class AgentSessionManager {
 
   async rewindFiles(id: string, userMessageId: string, options?: import('../shared/types.js').RewindOptions): Promise<void> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
 
     // A running turn would keep editing files while, and after, they are
     // restored. Stop it first; the query itself is restarted at the end.
@@ -1775,7 +1775,7 @@ class AgentSessionManager {
     );
     if (options?.filesOnly || !inConversation) {
       if (options?.conversationOnly) {
-        throw new Error('That message is no longer part of the conversation, so there is nothing to rewind. Its files can still be restored.');
+        throw new Error('That message is no longer part of the thread, so there is nothing to rewind. Its files can still be restored.');
       }
       await session.checkpoints.restore(id, session.worktreePath, userMessageId);
       session.emit?.({ type: 'rewind', toMessageId: userMessageId, filesOnly: true });
@@ -1823,8 +1823,8 @@ class AgentSessionManager {
         level: 'warning',
         newConversation: true,
         message: canFork
-          ? `${session.adapter.displayName} starts a new conversation from here. The thread above stays, but the agent won't remember it.`
-          : `${session.adapter.displayName} can't forget part of a conversation, so it starts a new one from here. The thread above stays, but the agent won't remember it.`,
+          ? `${session.adapter.displayName} starts afresh from here. The thread above stays, but the agent won't remember it.`
+          : `${session.adapter.displayName} can't forget part of a thread, so it starts afresh from here. The thread above stays, but the agent won't remember it.`,
       });
     }
 
@@ -1859,7 +1859,7 @@ class AgentSessionManager {
   /** Dry-run rewind to get the diff of what would change. */
   async getCheckpointDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
 
     return session.checkpoints.diff(id, session.worktreePath, userMessageId);
   }
@@ -1881,27 +1881,27 @@ class AgentSessionManager {
   /** Unified diff of what a single turn changed. */
   async getTurnDiff(id: string, userMessageId: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     return session.checkpoints.turnDiff(id, session.worktreePath, userMessageId);
   }
 
   /** Cumulative diff from the session baseline to the current working tree. */
   async getFullThreadDiff(id: string): Promise<string> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     return session.checkpoints.fullThreadDiff(id, session.worktreePath);
   }
 
   /** Files changed across a checkpoint comparison (for the review panel). */
   async getCheckpointFiles(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope): Promise<import('../shared/types.js').GitStatusResult> {
     const session = this.sessions.get(id);
-    if (!session) return { entries: [], scopeError: 'Conversation not found' };
+    if (!session) return { entries: [], scopeError: 'Thread not found' };
     return session.checkpoints.files(id, session.worktreePath, uuid, scope);
   }
 
   async getCheckpointFileDiff(id: string, uuid: string, scope: import('../shared/types.js').CheckpointDiffScope, relPath: string): Promise<import('../shared/types.js').FileDiffResult> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error(`Conversation ${id} not found`);
+    if (!session) throw new Error(`Thread ${id} not found`);
     return session.checkpoints.fileDiff(id, session.worktreePath, uuid, scope, relPath);
   }
 

@@ -10,7 +10,7 @@ import { logger } from './logger.js';
 
 export function badgeDescription(count: number): string {
   if (count <= 0) return '';
-  return count === 1 ? '1 conversation needs attention' : `${count} conversations need attention`;
+  return count === 1 ? '1 thread needs attention' : `${count} threads need attention`;
 }
 
 export function applyAttentionBadge(

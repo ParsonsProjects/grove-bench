@@ -109,7 +109,7 @@ async function generateAndSaveGoal(sessionId: string, current: ConversationGoal,
   const live = sessionManager.getSession(sessionId);
   const adapter = live?.adapter ?? await recordedAgent(sessionId);
   const cwd = live?.worktreePath ?? (await worktreeManager.getWorktreeOrManifest(sessionId))?.path;
-  if (!cwd) throw new Error('The conversation\'s folder could not be found');
+  if (!cwd) throw new Error('The thread\'s folder could not be found');
   const text = await generateGoal(input, adapter, cwd);
   return worktreeManager.saveGoal(sessionId, text, 'auto', current);
 }
@@ -240,7 +240,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.REPO_REMOVE, async (_event, repoPath: string) => {
     const activeSessions = sessionManager.getSessionsByRepo(repoPath);
     if (activeSessions.length > 0) {
-      throw new Error('Cannot remove a project while it has active conversations');
+      throw new Error('Cannot remove a project while it has active threads');
     }
 
     if (await projectKind(repoPath) === 'git') {
@@ -271,8 +271,8 @@ export function registerHandlers() {
     const noGit = kind === 'folder';
     if (noGit && !opts.direct) {
       throw new Error((await gitVersion())
-        ? 'This project isn\'t a git repository, so a conversation can only work in the project folder itself.'
-        : 'Git isn\'t installed, so a conversation can only work in the project folder itself.');
+        ? 'This project isn\'t a git repository, so a thread can only work in the project folder itself.'
+        : 'Git isn\'t installed, so a thread can only work in the project folder itself.');
     }
 
     if (opts.direct) {
@@ -323,7 +323,7 @@ export function registerHandlers() {
       if (await branchExistsAnywhere(opts.repoPath, name)) {
         const holder = (await worktreeBranches(opts.repoPath).catch(() => null))?.get(name);
         if (holder) {
-          throw new Error(`Branch "${name}" is already checked out at ${holder}. Pick another branch name for this conversation.`);
+          throw new Error(`Branch "${name}" is already checked out at ${holder}. Pick another branch name for this thread.`);
         }
         useExisting = true;
       }
@@ -899,7 +899,7 @@ export function registerHandlers() {
     sessionManager.sendMessage(sessionId, content, images).then(
       (ok) => {
         // Session is dead or never connected
-        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the conversation shows as connected.');
+        if (!ok) notDelivered('Message not delivered: the agent is not connected. Send it again once the thread shows as connected.');
       },
       (err) => {
         logger.warn(`[AGENT_SEND] session=${sessionId} failed:`, err);
@@ -977,7 +977,7 @@ export function registerHandlers() {
       throw new Error(`${adapter.displayName} does not support adding skills`);
     }
     const root = sessionManager.getWorktreePath(sessionId) ?? fallbackPath;
-    if (!root) throw new Error('No project root available for this conversation');
+    if (!root) throw new Error('No project root available for this thread');
     return adapter.addSkill(root, def);
   });
 
@@ -1158,7 +1158,7 @@ export function registerHandlers() {
   ipcMain.handle(IPC.PREVIEW_NAVIGATE, (_event, sessionId: string, page: unknown, url: unknown) => {
     if (!isPreviewPage(page) || typeof url !== 'string') throw new Error('Invalid preview request');
     const worktree = worktreeManager.getWorktree(sessionId);
-    if (!worktree) throw new Error("This conversation's worktree isn't ready yet.");
+    if (!worktree) throw new Error("This thread's worktree isn't ready yet.");
     previewManager.navigate(sessionId, worktree.path, page, url);
   });
 
@@ -1191,7 +1191,7 @@ export function registerHandlers() {
       await shell.openPath(wt.path);
       return;
     }
-    throw new Error('Conversation not found');
+    throw new Error('Thread not found');
   });
 
   // ─── File revert & diff (for changes review panel) ───

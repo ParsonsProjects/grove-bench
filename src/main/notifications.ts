@@ -78,7 +78,7 @@ export function showTestNotification(timeoutMs = 2000): Promise<TestNotification
     try {
       notification = new Notification({
         title: 'Grove Bench',
-        body: 'Test notification. Conversations that finish or need you will show like this.',
+        body: 'Test notification. Threads that finish or need you will show like this.',
       });
     } catch (e) {
       logger.warn('Failed to create test notification:', e);
