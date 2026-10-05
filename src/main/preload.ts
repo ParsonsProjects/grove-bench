@@ -119,6 +119,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_GET_CONTROLS, sessionId),
   getUsage: (sessionId: string) =>
     ipcRenderer.invoke(IPC.AGENT_GET_USAGE, sessionId),
+  getCachedUsage: (adapterId: string) =>
+    ipcRenderer.invoke(IPC.AGENT_GET_CACHED_USAGE, adapterId),
   setControl: (sessionId: string, controlId: string, value: string) =>
     ipcRenderer.invoke(IPC.AGENT_SET_CONTROL, sessionId, controlId, value),
 

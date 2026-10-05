@@ -13,14 +13,11 @@
   import { offeredForNew } from '../stores/agents.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { usageStore } from '../stores/usage.svelte.js';
-  import { formatResetTime } from '../lib/reset-time.js';
   import { toneClass } from '../lib/control-tones.js';
-  // The same scale as the context meter, so the two read alike.
-  import { usageTextClass, usageBarClass } from '../lib/usage-tone.js';
   import { CONTROL_SHORTCUTS, type AgentSummary, type ControlOption } from '../../shared/types.js';
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
-  import PixelMeter from './PixelMeter.svelte';
+  import UsageSection from './UsageSection.svelte';
   import AlphaBadge from './AlphaBadge.svelte';
 
   export interface ModelOption { value: string; label: string; contextWindow?: number }
@@ -54,8 +51,6 @@
   $effect(() => { messageStore.loadControls(sessionId); });
 
   // ── Plan usage ("runway") for the session's provider ──
-  let usage = $derived(usageStore.get(agentType));
-  let usageLoading = $derived(usageStore.loading[agentType] ?? false);
   // Opening the popover is the moment the numbers matter — refresh unless
   // they are only seconds old.
   $effect(() => {
@@ -166,43 +161,7 @@
             </button>
           {/each}
 
-          <!-- Runway: how much of each plan window is used and when it resets -->
-          <div class="mt-3 pt-2 border-t border-border/60" data-testid="usage">
-            <div class="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
-              <span>Usage</span>
-              {#if usage?.plan}<span class="normal-case tracking-normal text-muted-foreground/40">{usage.plan} plan</span>{/if}
-            </div>
-            {#if usage && usage.available && usage.windows.length > 0}
-              {#each usage.windows as w (w.id)}
-                <div
-                  class="py-1"
-                  title={w.resetsAt ? `Resets ${new Date(w.resetsAt * 1000).toLocaleString()}` : undefined}
-                >
-                  <div class="flex items-baseline justify-between gap-2">
-                    <span class="text-muted-foreground">{w.label}</span>
-                    <span class="font-medium {usageTextClass(w.utilization * 100)}">{Math.round(w.utilization * 100)}%</span>
-                  </div>
-                  <!-- Pixel blocks of 5%, like the context meter in the status bar. -->
-                  <PixelMeter
-                    percent={Math.min(100, w.utilization * 100)}
-                    cells={20}
-                    fillClass={usageBarClass(w.utilization * 100)}
-                    class="h-1.5 mt-1"
-                    data-testid="usage-bar-{w.id}"
-                  />
-                  {#if w.resetsAt}
-                    <div class="text-[10px] text-muted-foreground/60 mt-0.5">resets {formatResetTime(w.resetsAt)}</div>
-                  {/if}
-                </div>
-              {/each}
-            {:else if usage && !usage.available}
-              <div class="py-1 text-muted-foreground/50">Plan usage isn't reported for this sign-in (API key or third-party provider).</div>
-            {:else if usageLoading}
-              <div class="py-1 text-muted-foreground/50">Loading usage…</div>
-            {:else}
-              <div class="py-1 text-muted-foreground/50">No usage reported yet. Available once the agent has connected.</div>
-            {/if}
-          </div>
+          <UsageSection providerId={agentType} {agentName} />
         </div>
 
         <!-- Model -->

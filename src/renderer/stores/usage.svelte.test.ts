@@ -14,8 +14,7 @@ const SNAPSHOT: ProviderUsage = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  usageStore.byProvider = {};
-  usageStore.loading = {};
+  usageStore.reset();
   sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/r', status: 'running', agentType: 'claude-code' }] as any;
   mockGroveBench.getUsage.mockResolvedValue(SNAPSHOT);
 });
@@ -79,6 +78,7 @@ describe('usageStore.applyRateLimitEvent', () => {
     const usage = usageStore.get('claude-code')!;
     expect(usage.windows[0]).toEqual({ id: 'five_hour', label: '5-hour', utilization: 0.55, resetsAt: 1_900_000_500 });
     expect(usage.fetchedAt).toBe(SNAPSHOT.fetchedAt);
+    expect(usage.updatedAt).toBeGreaterThan(0);
   });
 
   it('adds an unknown window and seeds a snapshot when none exists', () => {
@@ -87,12 +87,48 @@ describe('usageStore.applyRateLimitEvent', () => {
     const usage = usageStore.get('claude-code')!;
     expect(usage.available).toBe(true);
     expect(usage.fetchedAt).toBe(0); // so the next refresh is not throttled
-    expect(usage.windows).toEqual([{ id: 'seven_day', label: 'seven day', utilization: 0.2 }]);
+    expect(usage.windows).toEqual([{ id: 'seven_day', label: 'Weekly', utilization: 0.2 }]);
   });
 
   it('ignores events without a window type or utilization', () => {
     usageStore.applyRateLimitEvent(SID, event({ status: 'rejected' }));
     usageStore.applyRateLimitEvent(SID, event({ rateLimitType: 'five_hour' }));
     expect(usageStore.get('claude-code')).toBeNull();
+  });
+});
+
+describe('usageStore.loadCached', () => {
+  const CACHED: ProviderUsage = { ...SNAPSHOT, plan: 'pro', fetchedAt: 1000 };
+
+  it('seeds a provider from the saved snapshot once', async () => {
+    mockGroveBench.getCachedUsage.mockResolvedValue(CACHED);
+
+    await usageStore.loadCached('claude-code');
+    await usageStore.loadCached('claude-code');
+
+    expect(usageStore.get('claude-code')?.plan).toBe('pro');
+    expect(mockGroveBench.getCachedUsage).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.getCachedUsage).toHaveBeenCalledWith('claude-code');
+  });
+
+  it('never replaces figures already here', async () => {
+    usageStore.byProvider['claude-code'] = SNAPSHOT;
+    mockGroveBench.getCachedUsage.mockResolvedValue(CACHED);
+
+    await usageStore.loadCached('claude-code');
+
+    expect(usageStore.get('claude-code')?.plan).toBe('max');
+    expect(mockGroveBench.getCachedUsage).not.toHaveBeenCalled();
+  });
+
+  it('shows the saved snapshot while a refresh fetches a fresh one', async () => {
+    mockGroveBench.getCachedUsage.mockResolvedValue(CACHED);
+    mockGroveBench.getUsage.mockResolvedValue(null);
+
+    await usageStore.refresh(SID);
+
+    // The saved one is old, so the refresh still asked; null kept the saved one.
+    expect(mockGroveBench.getUsage).toHaveBeenCalledWith(SID);
+    expect(usageStore.get('claude-code')?.plan).toBe('pro');
   });
 });

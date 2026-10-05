@@ -14,6 +14,7 @@
   import { controlHint, controlSummary } from '../lib/control-hint.js';
   import AgentSettingsTrigger from './AgentSettingsTrigger.svelte';
   import AlphaBadge from './AlphaBadge.svelte';
+  import UsageSection from './UsageSection.svelte';
 
   let open = $state(false);
   /** Option under the pointer or focus, explained in the footer. Removing
@@ -93,6 +94,8 @@
               {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
             </button>
           {/each}
+
+          <UsageSection providerId={draft.agentId} {agentName} />
         </div>
 
         <div class="min-w-32">

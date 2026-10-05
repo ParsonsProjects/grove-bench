@@ -33,7 +33,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
-import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache } from './app-state.js';
+import { listProjects, rememberProject, forgetProject, loadAppState, saveOpenTabs, saveCollapsedRepos, saveSessionSort, saveSidebarWidth, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, flushPendingSaves, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { perfSteps, logWindowTiming } from './perf-steps.js';
@@ -908,6 +908,10 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.AGENT_GET_USAGE, (_event, sessionId: string) => {
     return sessionManager.getUsage(sessionId);
+  });
+
+  ipcMain.handle(IPC.AGENT_GET_CACHED_USAGE, (_event, adapterId: string) => {
+    return typeof adapterId === 'string' ? loadUsageSnapshot(adapterId) : null;
   });
 
   ipcMain.handle(IPC.AGENT_SET_CONTROL, (_event, sessionId: string, controlId: string, value: string) => {

@@ -3,6 +3,8 @@ import { IPC } from '../shared/types.js';
 import type { SessionInfo, SessionStatus, AgentEvent, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls } from '../shared/types.js';
 import { CONTROL_IDS, PERMISSION_MODES, subagentParent } from '../shared/types.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
+import { applyRateLimit } from '../shared/usage.js';
+import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { pruneImages, removeImages, saveImages, storeToolImages } from './attachments.js';
 import { logger } from './logger.js';
 import { perfSteps } from './perf-steps.js';
@@ -549,6 +551,15 @@ class AgentSessionManager {
 
         // Skip adapter user_message events — we emit our own with UUIDs in sendMessage
         if (event.type === 'user_message') continue;
+
+        // Plan usage is the account's, not the conversation's: keep the
+        // latest for the next conversation and the next launch.
+        if (event.type === 'rate_limit') {
+          const adapterId = session.adapter.id;
+          const current = loadUsageSnapshot(adapterId);
+          const next = applyRateLimit(current, event);
+          if (next && next !== current) saveUsageSnapshot(adapterId, next);
+        }
 
         // A reply means a turn is running, including ones the agent starts
         // itself (e.g. when a background task finishes). A subagent's work
@@ -1105,12 +1116,15 @@ class AgentSessionManager {
 
   /** Plan usage for the session's provider; null without a live query or when
    *  the adapter cannot report it. Failures are logged, never surfaced — the
-   *  popover treats null as "nothing to show". */
+   *  popover treats null as "nothing to show". Each answer is saved for
+   *  getCachedUsage. */
   async getUsage(id: string): Promise<ProviderUsage | null> {
     const session = this.sessions.get(id);
     if (!session?.queryHandle?.getUsage || session.adapter.capabilities.usage !== true) return null;
     try {
-      return await session.queryHandle.getUsage();
+      const usage = await session.queryHandle.getUsage();
+      if (usage) saveUsageSnapshot(session.adapter.id, usage);
+      return usage;
     } catch (e) {
       logger.warn(`Failed to fetch usage for session ${id}:`, e);
       return null;

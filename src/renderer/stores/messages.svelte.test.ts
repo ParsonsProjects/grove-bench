@@ -8,6 +8,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { backgroundTaskStore } from './backgroundTask.svelte.js';
 import { rateLimitStore } from './rateLimit.svelte.js';
+import { usageStore } from './usage.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 
@@ -702,6 +703,20 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
     expect(msgs[0].kind).toBe('system');
     expect((msgs[0] as any).text).toContain('Rate limited');
     expect((msgs[0] as any).text).toContain('token');
+  });
+
+  it('updates plan usage from a live event but not from a replayed one', () => {
+    usageStore.byProvider = {};
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/r', status: 'running', agentType: 'claude-code' }] as any;
+    const old = { type: 'rate_limit', status: 'allowed', rateLimitType: 'five_hour', utilization: 0.9 } as AgentEvent;
+
+    messageStore.replayEvents(SID, [old]);
+    expect(usageStore.get('claude-code')).toBeNull();
+    expect(rateLimitStore.get(SID)?.utilization).toBe(0.9);
+
+    messageStore.ingestEvent(SID, { ...old, utilization: 0.3 } as AgentEvent);
+    expect(usageStore.get('claude-code')?.windows[0].utilization).toBe(0.3);
+    usageStore.byProvider = {};
   });
 });
 

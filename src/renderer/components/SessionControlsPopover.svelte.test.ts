@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, within, waitFor } from '@testing-library/svelte';
 
 import SessionControlsPopover from './SessionControlsPopover.svelte';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { usageStore } from '../stores/usage.svelte.js';
+import { agentsStore } from '../stores/agents.svelte.js';
+import type { AgentSummary } from '../../shared/types.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -48,8 +50,9 @@ afterEach(() => {
   messageStore.controlsBySession = {};
   messageStore.modelBySession = {};
   messageStore.modeBySession = {};
-  usageStore.byProvider = {};
-  usageStore.loading = {};
+  usageStore.reset();
+  agentsStore.list = [];
+  agentsStore.loaded = false;
 });
 
 async function openPopover() {
@@ -229,6 +232,42 @@ describe('SessionControlsPopover', () => {
     const dialog = await openPopover();
 
     expect(dialog.querySelector('[data-testid="usage"]')).toHaveTextContent(/isn't reported/);
+  });
+
+  it('says when an agent has no plan usage to report', async () => {
+    const agents: AgentSummary[] = [
+      { id: 'claude-code', displayName: 'Claude Agent', capabilities: {} },
+      { id: 'gemini-cli', displayName: 'Gemini CLI', capabilities: { usage: false } },
+    ];
+    mockGroveBench.listAdapters.mockResolvedValue(agents);
+    agentsStore.list = agents;
+    agentsStore.loaded = true;
+    store.sessions = [{ id: SID, branch: 'feat-x', repoPath: '/repo', status: 'running', agentType: 'gemini-cli' }] as any;
+
+    const dialog = await openPopover();
+
+    await waitFor(() => expect(dialog.querySelector('[data-testid="usage"]')).toHaveTextContent("Gemini CLI doesn't report plan usage."));
+  });
+
+  it('marks old figures with when they were last updated, and windows that have reset since', async () => {
+    const hourAgo = Date.now() - 3600_000;
+    usageStore.byProvider['claude-code'] = {
+      available: true,
+      plan: 'max',
+      fetchedAt: hourAgo,
+      windows: [
+        { id: 'five_hour', label: '5-hour', utilization: 0.9, resetsAt: Math.round(Date.now() / 1000) - 60 },
+        { id: 'seven_day', label: 'Weekly', utilization: 0.18 },
+      ],
+    };
+    mockGroveBench.getUsage.mockResolvedValue(null);
+
+    const dialog = await openPopover();
+    const usage = dialog.querySelector('[data-testid="usage"]')!;
+
+    expect(usage).not.toHaveTextContent('90%');
+    expect(usage).toHaveTextContent(/5-hour\s*reset/);
+    expect(usage.querySelector('[data-testid="usage-updated"]')).toHaveTextContent('Last updated');
   });
 
   it('applies a choice without closing, and has no Done button', async () => {

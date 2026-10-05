@@ -635,6 +635,8 @@ export interface ProviderUsage {
   windows: UsageWindow[];
   /** Epoch ms of the fetch that produced this snapshot. */
   fetchedAt: number;
+  /** Epoch ms of the latest rate-limit event folded in since that fetch. */
+  updatedAt?: number;
 }
 
 /** Snapshot of a session's controls: the descriptors valid for its current
@@ -1126,6 +1128,9 @@ export interface GroveBenchAPI {
   /** Plan usage windows for the session's provider, or null when the session
    *  has no live query or the adapter cannot report usage. */
   getUsage(sessionId: string): Promise<ProviderUsage | null>;
+  /** The plan usage an agent last reported, saved across conversations and
+   *  launches, or null when it never has. */
+  getCachedUsage(adapterId: string): Promise<ProviderUsage | null>;
 
   // MCP server control
   listMcpServers(sessionId: string): Promise<McpServerInfo[]>;
@@ -1800,6 +1805,7 @@ export const IPC = {
   AGENT_SET_CONTROL: 'agent:setControl',
   AGENT_GET_CONTROLS: 'agent:getControls',
   AGENT_GET_USAGE: 'agent:getUsage',
+  AGENT_GET_CACHED_USAGE: 'agent:getCachedUsage',
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',
   SKILLS_ADD: 'skills:add',

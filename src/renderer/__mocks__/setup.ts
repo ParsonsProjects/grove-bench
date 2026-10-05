@@ -31,6 +31,7 @@ const mockGroveBench = {
   setModel: vi.fn().mockResolvedValue(undefined),
   getModels: vi.fn().mockResolvedValue([]),
   getUsage: vi.fn().mockResolvedValue(null),
+  getCachedUsage: vi.fn().mockResolvedValue(null),
   stopBackgroundTask: vi.fn().mockResolvedValue(undefined),
   listAdapters: vi.fn().mockResolvedValue([]),
   onModelsChanged: vi.fn(() => () => {}),

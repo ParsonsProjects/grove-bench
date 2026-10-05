@@ -464,6 +464,7 @@ const api: Record<string, unknown> = {
       { id: 'seven_day_opus', label: 'Weekly · Opus', utilization: 0.71, resetsAt: Math.round((now + 3 * 24 * 60 * min) / 1000) },
     ],
   }),
+  getCachedUsage: async () => null,
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar
   // renders its badges in the browser demo.

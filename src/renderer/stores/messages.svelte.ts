@@ -1445,7 +1445,7 @@ class MessageStore {
         this.onResult(sessionId, event);
         // A finished turn is the cheapest moment to learn what it cost the
         // plan; the store throttles so back-to-back turns don't spam the SDK.
-        if (this.sideEffects) usageStore.refresh(sessionId).catch(() => {});
+        if (this.sideEffects && this._replayBuffer === null) usageStore.refresh(sessionId).catch(() => {});
         break;
 
       case 'error':
@@ -1557,7 +1557,8 @@ class MessageStore {
             utilization: event.utilization,
             rateLimitType: event.rateLimitType,
           });
-          usageStore.applyRateLimitEvent(sessionId, event);
+          // Live only: a replayed one is from whenever that turn ran.
+          if (this._replayBuffer === null) usageStore.applyRateLimitEvent(sessionId, event);
         }
         if (event.status === 'rejected') {
           this.pushMessage(sessionId, {

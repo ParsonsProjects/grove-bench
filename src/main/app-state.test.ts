@@ -23,7 +23,7 @@ vi.mock('./logger.js', () => ({
 import {
   loadAppState, saveOpenTabs, saveUnreadSessionIds, loadUnreadSessionIds,
   saveKnownSkills, saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
-  loadPrerequisiteCache, loadModelCatalog, saveModelCatalog,
+  loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
   mergeProjects, listProjects, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
 } from './app-state.js';
@@ -212,6 +212,27 @@ describe('model catalogs', () => {
     expect(loadModelCatalog('claude-code')).toEqual([{ id: 'claude-opus-5-5' }]);
     expect(loadModelCatalog('codex')).toEqual([{ id: 'codex-a' }]);
     expect(loadModelCatalog('missing')).toBeNull();
+  });
+});
+
+describe('usage snapshots', () => {
+  it('keeps each agent\'s last plan usage, written once the burst settles', () => {
+    const disk = useDisk({ schemaVersion: APP_STATE_SCHEMA_VERSION, usageSnapshots: { other: { available: false, windows: [], fetchedAt: 1 } } });
+    const usage = { available: true, plan: 'max', windows: [{ id: 'five_hour', label: '5-hour', utilization: 0.4 }], fetchedAt: 2 };
+
+    saveUsageSnapshot('claude-code', usage);
+    saveUsageSnapshot('claude-code', { ...usage, updatedAt: 3 });
+    expect(loadUsageSnapshot('claude-code')?.updatedAt).toBe(3);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(600);
+    expect(disk.get().usageSnapshots['claude-code'].updatedAt).toBe(3);
+    expect(disk.get().usageSnapshots.other.fetchedAt).toBe(1);
+    expect(loadUsageSnapshot('missing')).toBeNull();
+  });
+
+  it('drops a malformed usage map instead of failing the whole file', () => {
+    expect(validateAppState({ usageSnapshots: { a: { windows: 'nope' } } }).usageSnapshots).toBeUndefined();
   });
 });
 
