@@ -87,10 +87,9 @@ function createWindow() {
   trackWindowState(mainWindow);
   previewManager.setWindow(mainWindow);
 
-  // Apply persisted settings on startup
-  const appSettings = settings.loadSettings();
-  if (appSettings.alwaysOnTop) mainWindow.setAlwaysOnTop(true);
-  // The saved theme isn't applied yet (see applyImmediateEffects).
+  // Apply persisted settings on startup, the theme before the page loads so
+  // it doesn't open dark and then switch
+  settings.applyImmediateEffects(mainWindow, settings.loadSettings());
 
   // Spell checker setup (the renderer draws the suggestion menu)
   installSpellcheckMenu(mainWindow.webContents);

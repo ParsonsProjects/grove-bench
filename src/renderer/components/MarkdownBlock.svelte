@@ -171,14 +171,14 @@
     margin: 0.2em 0;
   }
   .markdown-content :global(code) {
-    background: #1e1e1e;
+    background: var(--code-inline);
     padding: 0.15em 0.4em;
     font-size: 0.9em;
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   }
   .markdown-content :global(pre) {
-    background: #1a1a1a;
-    border: 1px solid #333;
+    background: var(--code-block);
+    border: 1px solid var(--code-border);
     padding: 0.8em;
     margin: 0.5em 0;
     overflow-x: auto;
@@ -189,10 +189,10 @@
     font-size: 0.85em;
   }
   .markdown-content :global(blockquote) {
-    border-left: 3px solid #444;
+    border-left: 3px solid var(--quote-border);
     margin: 0.5em 0;
     padding: 0.2em 0.8em;
-    color: #999;
+    color: var(--quote-foreground);
   }
   .markdown-content :global(table) {
     border-collapse: collapse;
@@ -201,7 +201,7 @@
   }
   .markdown-content :global(th),
   .markdown-content :global(td) {
-    border: 1px solid #333;
+    border: 1px solid var(--code-border);
     padding: 0.4em 0.8em;
     text-align: left;
   }
@@ -216,16 +216,16 @@
     text-align: right;
   }
   .markdown-content :global(th) {
-    background: #1a1a1a;
+    background: var(--code-block);
     font-weight: 600;
   }
   .markdown-content :global(a) {
-    color: #60a5fa;
+    color: var(--link);
     text-decoration: underline;
   }
   .markdown-content :global(hr) {
     border: none;
-    border-top: 1px solid #333;
+    border-top: 1px solid var(--code-border);
     margin: 0.8em 0;
   }
   .markdown-content :global(.code-block-wrapper) {
@@ -245,7 +245,7 @@
     top: 0.4em;
     right: 0.4em;
     padding: 0.2em;
-    color: #666;
+    color: var(--copy-button);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -266,11 +266,11 @@
   }
   .markdown-content :global(.code-copy-btn:hover),
   .markdown-content :global(.table-copy-btn:hover) {
-    color: #ccc;
+    color: var(--copy-button-hover);
   }
   .markdown-content :global(.code-copy-btn.copied),
   .markdown-content :global(.table-copy-btn.copied) {
-    color: #4ade80;
+    color: var(--ok);
     opacity: 1;
   }
 </style>

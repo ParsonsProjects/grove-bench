@@ -44,7 +44,7 @@
         type="button"
         onclick={() => (openIndex = i)}
         class="block border border-border/60 hover:border-primary/60 transition-colors
-          bg-[repeating-conic-gradient(#222_0_25%,#1a1a1a_0_50%)] bg-[length:16px_16px]"
+          bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]"
         title={labelOf(img)}
         aria-label="View {labelOf(img)}"
       >
@@ -69,7 +69,7 @@
         src={srcOf(openImage)}
         alt={labelOf(openImage)}
         class="max-w-full max-h-[80vh] object-contain mx-auto
-          bg-[repeating-conic-gradient(#222_0_25%,#1a1a1a_0_50%)] bg-[length:16px_16px]"
+          bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]"
       />
     {/if}
   </Dialog.Content>
