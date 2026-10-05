@@ -470,6 +470,7 @@ const api: Record<string, unknown> = {
     ],
   }),
   getCachedUsage: async () => null,
+  switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar
   // renders its badges in the browser demo.

@@ -277,6 +277,10 @@ export type AgentEvent =
   // Adapter-declared session controls (descriptors depend on the model) and
   // their current values — emitted on query start, model switch, and control change
   | { type: 'controls_sync'; descriptors: ControlDescriptor[]; values: Record<string, string> }
+  // The user switched the conversation to another agent. Kept in the log:
+  // it marks who answered which turns, and `transcript` says whether the new
+  // agent gets a short transcript with the next message (agent-handoff.ts).
+  | { type: 'agent_changed'; from: string; to: string; fromName: string; toName: string; transcript: boolean }
   // The agent changed its own controls (an ACP agent leaving plan mode by
   // itself). Main records the values and sends controls_sync instead, so this
   // never reaches the renderer or the event log.
@@ -1151,6 +1155,10 @@ export interface GroveBenchAPI {
   getControls(sessionId: string): Promise<SessionControls>;
   /** Set a non-permission control; rejects unknown ids/values. */
   setControl(sessionId: string, controlId: string, value: string): Promise<void>;
+  /** Switch a conversation to another agent. It starts a session of its own;
+   *  with `transcript` its first message carries a short transcript of the
+   *  conversation so far. */
+  switchAgent(sessionId: string, adapterId: string, transcript: boolean): Promise<void>;
   /** Plan usage windows for the session's provider, or null when the session
    *  has no live query or the adapter cannot report usage. */
   getUsage(sessionId: string): Promise<ProviderUsage | null>;
@@ -1856,6 +1864,7 @@ export const IPC = {
   AGENT_SET_CONTROL: 'agent:setControl',
   AGENT_GET_CONTROLS: 'agent:getControls',
   AGENT_GET_USAGE: 'agent:getUsage',
+  AGENT_SWITCH: 'agent:switch',
   AGENT_GET_CACHED_USAGE: 'agent:getCachedUsage',
   AGENT_MCP_LIST: 'agent:mcpList',
   SKILLS_LIST: 'skills:list',

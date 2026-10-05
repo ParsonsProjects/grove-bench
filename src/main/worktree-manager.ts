@@ -1328,6 +1328,12 @@ export class WorktreeManager {
     return null;
   }
 
+  /** Write the files an agent needs in a worktree (Claude Code's local
+   *  settings, say), for a conversation switched to that agent. */
+  async writeAgentSettings(wtPath: string, repoPath: string, adapterType: string): Promise<void> {
+    await this.generateAdapterSettings(wtPath, repoPath, adapterType);
+  }
+
   private async generateAdapterSettings(wtPath: string, repoPath: string, adapterType?: string): Promise<void> {
     const adapter = adapterType ? (adapterRegistry.get(adapterType) ?? adapterRegistry.getDefault()) : adapterRegistry.getDefault();
     if (adapter.generateWorktreeSettings) {

@@ -924,6 +924,11 @@ export function registerHandlers() {
     return sessionManager.getUsage(sessionId);
   });
 
+  ipcMain.handle(IPC.AGENT_SWITCH, (_event, sessionId: unknown, adapterId: unknown, transcript: unknown) => {
+    if (typeof sessionId !== 'string' || typeof adapterId !== 'string') throw new Error('Bad agent switch request');
+    return sessionManager.switchAgent(sessionId, adapterId, { transcript: transcript === true });
+  });
+
   ipcMain.handle(IPC.AGENT_GET_CACHED_USAGE, (_event, adapterId: string) => {
     return typeof adapterId === 'string' ? loadUsageSnapshot(adapterId) : null;
   });

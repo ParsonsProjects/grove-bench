@@ -42,6 +42,7 @@ vi.mock('./worktree-manager.js', () => ({
     getAdapterType: vi.fn().mockResolvedValue(undefined),
     getAgentAndModel: vi.fn().mockResolvedValue({}),
     saveAdapterType: vi.fn().mockResolvedValue(undefined),
+    writeAgentSettings: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
   },
@@ -3627,6 +3628,77 @@ describe('AgentSessionManager session controls', () => {
     expect(controls.descriptors.map((d) => d.id)).toEqual(['acp:mode']);
     expect(other.getControls).toHaveBeenCalledWith('other-model');
     expect(controls.values).toEqual({});
+  });
+});
+
+describe('AgentSessionManager.switchAgent', () => {
+  function otherAgent(): MockAdapter {
+    const other = new MockAdapter();
+    Object.defineProperty(other, 'id', { value: 'other' });
+    Object.defineProperty(other, 'displayName', { value: 'Other Agent' });
+    extraAdapters.other = other as unknown as AgentAdapter;
+    return other;
+  }
+
+  it('hands the conversation to the new agent, which gets a short transcript with the next message only', async () => {
+    const { worktreeManager } = await import('./worktree-manager.js');
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-1', branch: 'main', cwd: '/wt/sw-1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'old-session', model: 'mock-model', tools: [] });
+    await vi.waitFor(() => expect(sessionManager.getSession('sw-1')?.providerSessionId).toBeTruthy());
+    await sessionManager.sendMessage('sw-1', 'Add a README');
+    mockAdapter.control!.emitEvent({ type: 'assistant_text', text: 'Added it.', uuid: 'a1' });
+    await new Promise((r) => setTimeout(r, 20));
+    const session = sessionManager.getSession('sw-1')!;
+    session.alwaysAllowedTools.add('Bash');
+
+    await sessionManager.switchAgent('sw-1', 'other', { transcript: true });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+
+    expect(session.adapter).toBe(other);
+    expect(session.agentType).toBe('other');
+    expect(session.providerSessionId).toBeNull();
+    expect(session.alwaysAllowedTools.size).toBe(0);
+    expect(worktreeManager.saveAdapterType).toHaveBeenCalledWith('sw-1', 'other');
+    expect(worktreeManager.saveProviderSessionId).toHaveBeenCalledWith('sw-1', '');
+    expect(worktreeManager.writeAgentSettings).toHaveBeenCalledWith('/wt/sw-1', '/repo', 'other');
+    const history = sessionManager.getEventHistory('sw-1');
+    expect(history.find((e) => e.type === 'agent_changed')).toMatchObject({ from: 'mock', to: 'other', fromName: 'Mock Agent', toName: 'Other Agent', transcript: true });
+    expect(history.some((e) => e.type === 'status' && e.newConversation)).toBe(true);
+    // The new agent starts afresh, not on the old agent's session.
+    expect(other.lastConfig?.resumeSessionId ?? null).toBeNull();
+
+    await sessionManager.sendMessage('sw-1', 'carry on');
+    await sessionManager.sendMessage('sw-1', 'and then');
+    const sent = vi.mocked(other.handles.at(-1)!.sendMessage).mock.calls.map(([m]) => m.text);
+    expect(sent[0]).toMatch(/^Note from Grove Bench[\s\S]*User: Add a README[\s\S]*Mock Agent: Added it\.[\s\S]*\ncarry on$/);
+    expect(sent[1]).toBe('and then');
+    // The thread shows only what the user typed.
+    expect(sessionManager.getEventHistory('sw-1').filter((e) => e.type === 'user_message').map((e) => (e as { text: string }).text))
+      .toEqual(['Add a README', 'carry on', 'and then']);
+
+    await sessionManager.destroySession('sw-1');
+  });
+
+  it('sends nothing of the conversation when the user said no', async () => {
+    const other = otherAgent();
+    await sessionManager.createSession({ id: 'sw-2', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-2', 'secret plan');
+
+    await sessionManager.switchAgent('sw-2', 'other', { transcript: false });
+    await vi.waitFor(() => expect(other.control).not.toBeNull());
+    await sessionManager.sendMessage('sw-2', 'hello');
+
+    expect(vi.mocked(other.handles.at(-1)!.sendMessage).mock.calls.map(([m]) => m.text)).toEqual(['hello']);
+    await sessionManager.destroySession('sw-2');
+  });
+
+  it('refuses an agent it doesn\'t know', async () => {
+    await sessionManager.createSession({ id: 'sw-3', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await expect(sessionManager.switchAgent('sw-3', 'nope', { transcript: true })).rejects.toThrow(/Unknown agent/);
+    await sessionManager.destroySession('sw-3');
   });
 });
 

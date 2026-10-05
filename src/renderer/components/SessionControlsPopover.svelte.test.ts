@@ -101,16 +101,36 @@ describe('SessionControlsPopover', () => {
     for (const heading of ['Agent', 'Model', 'Mode', 'Thinking', 'Speed']) {
       expect(dialog).toHaveTextContent(heading);
     }
-    // The current agent is marked; others offer a new conversation with them
+    // The current agent is marked; others offer to switch to them
     expect(screen.getByRole('button', { name: 'Claude Agent' })).toHaveAttribute('aria-current', 'true');
-    expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('title', expect.stringContaining('Start a new conversation'));
+    expect(screen.getByRole('button', { name: /Codex/ })).toHaveAttribute('title', expect.stringContaining('Switch this conversation to Codex'));
   });
 
-  it('opens a draft with another agent in the same project, leaving this conversation alone', async () => {
+  it('asks before switching, saying what the transcript is and where it goes', async () => {
+    await openPopover();
+    await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
+    const ask = screen.getByRole('group', { name: 'Switch agent' });
+    expect(ask).toHaveTextContent('Switch this conversation to Codex?');
+    expect(ask).toHaveTextContent("That transcript goes to Codex's provider.");
+    expect(mockGroveBench.switchAgent).not.toHaveBeenCalled();
+
+    await fireEvent.click(within(ask).getByRole('button', { name: 'Switch and send the transcript' }));
+    expect(mockGroveBench.switchAgent).toHaveBeenCalledWith(SID, 'codex', true);
+  });
+
+  it('can switch without the transcript', async () => {
+    await openPopover();
+    await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Switch without it' }));
+    expect(mockGroveBench.switchAgent).toHaveBeenCalledWith(SID, 'codex', false);
+  });
+
+  it('opens a draft with another agent in the same project instead, leaving this conversation alone', async () => {
     store.repos = ['/repo'];
     store.activeSessionId = SID;
     await openPopover();
     await fireEvent.click(screen.getByRole('button', { name: /Codex/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /New conversation instead/ }));
 
     expect(draftStore.draft).toMatchObject({ repoPath: '/repo', agentId: 'codex' });
     expect(store.activeSessionId).toBeNull();

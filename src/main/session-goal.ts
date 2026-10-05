@@ -2,6 +2,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { MAX_USER_GOAL_LENGTH, type AgentEvent } from '../shared/types.js';
 import { assertTextGeneration, generateBackgroundText, unwrapFence } from './background-text.js';
 import { attachedFilesFromSent, withAttachmentLabel } from '../shared/prompt-text.js';
+import { eventsSinceAgentChange } from './agent-handoff.js';
 
 /**
  * Conversation goals: one line pinned at the top of the Thread saying what
@@ -85,7 +86,9 @@ function latestReply(events: readonly AgentEvent[]): string | null {
 
 /** What a goal is written from, taken from a conversation's history. Only
  *  the messages that fit are parsed: the first, then back from the newest. */
-export function goalInputFromEvents(events: readonly AgentEvent[]): GoalInput {
+export function goalInputFromEvents(allEvents: readonly AgentEvent[]): GoalInput {
+  // The goal is written by the conversation's agent: only its own part.
+  const events = eventsSinceAgentChange(allEvents);
   const reply = latestReply(events);
   let firstIndex = -1;
   let first: string | null = null;

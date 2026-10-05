@@ -32,6 +32,7 @@ const mockGroveBench = {
   getModels: vi.fn().mockResolvedValue([]),
   getUsage: vi.fn().mockResolvedValue(null),
   getCachedUsage: vi.fn().mockResolvedValue(null),
+  switchAgent: vi.fn().mockResolvedValue(undefined),
   stopBackgroundTask: vi.fn().mockResolvedValue(undefined),
   listAdapters: vi.fn().mockResolvedValue([]),
   listRegistryAgents: vi.fn().mockResolvedValue([]),

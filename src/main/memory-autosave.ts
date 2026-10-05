@@ -5,6 +5,7 @@ import * as settings from './settings.js';
 import { subagentParent, type AgentEvent } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import { backgroundModelFor } from './background-tasks.js';
+import { eventsSinceAgentChange } from './agent-handoff.js';
 
 // ─── Types ───
 
@@ -250,7 +251,8 @@ async function runExtraction(
   }
 
   const existingMemories = readAllMemoryContents(repoPath);
-  const summary = summarizeEvents(events, MAX_EVENTS_FOR_EXTRACTION);
+  // Only what the agent doing the extraction took part in (agent-handoff.ts).
+  const summary = summarizeEvents(eventsSinceAgentChange(events), MAX_EVENTS_FOR_EXTRACTION);
   const systemPrompt = buildExtractionPrompt(summary, existingMemories);
 
   logger.info(`[memory-autosave] Running extraction for session ${sessionId} (${events.length} events)`);

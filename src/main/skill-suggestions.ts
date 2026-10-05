@@ -19,6 +19,7 @@ import type { AgentEvent, SkillInfo, SkillSuggestion } from '../shared/types.js'
 import { loadSkillSuggestionCache, saveSkillSuggestionCache } from './app-state.js';
 import { logger } from './logger.js';
 import { toolViewOf } from '../shared/tool-view.js';
+import { eventsSinceAgentChange } from './agent-handoff.js';
 
 // ─── Extraction from event logs ───
 
@@ -315,7 +316,9 @@ export async function analyzeRepo(opts: AnalyzeOptions): Promise<SkillSuggestion
   const minSessions = opts.minSessions ?? 3;
   const sessionIds = opts.sessionIds.slice(-1 * (opts.maxSessions ?? 30));
   const activities = sessionIds
-    .map((id) => extractActivity(id, readEventLog(opts.eventsDir, id)))
+    // A switched conversation's turns before the switch belong to another
+    // provider (agent-handoff.ts).
+    .map((id) => extractActivity(id, eventsSinceAgentChange(readEventLog(opts.eventsDir, id))))
     .filter((a) => a.prompts.length > 0 || a.bashCommands.length > 0);
 
   const candidates = findPatterns(activities, minSessions);

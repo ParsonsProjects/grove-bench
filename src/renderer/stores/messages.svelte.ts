@@ -1668,6 +1668,20 @@ class MessageStore {
         }
         break;
 
+      case 'agent_changed': {
+        // The conversation runs on another agent from here. The last switch
+        // in the log wins, so a replay ends on the right one too.
+        const entry = sessionStore.sessions.find((s) => s.id === sessionId);
+        if (entry) entry.agentType = event.to;
+        if (this._replayBuffer === null) {
+          // The old agent's model and controls no longer apply; the new
+          // agent's arrive with its controls_sync.
+          delete this.controlsBySession[sessionId];
+          delete this.modelBySession[sessionId];
+        }
+        break;
+      }
+
       case 'controls_sync':
         this.controlsBySession[sessionId] = { descriptors: event.descriptors, values: event.values };
         break;

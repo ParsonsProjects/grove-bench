@@ -720,6 +720,20 @@ describe('ingestEvent — rate_limit (delegates to rateLimitStore)', () => {
   });
 });
 
+describe('ingestEvent — agent_changed', () => {
+  it('moves the conversation to the new agent and drops the old agent\'s controls', () => {
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/r', status: 'running', agentType: 'claude-code' }] as any;
+    messageStore.controlsBySession[SID] = { descriptors: [], values: {} };
+    messageStore.modelBySession[SID] = 'claude-opus-5-5';
+
+    messageStore.ingestEvent(SID, { type: 'agent_changed', from: 'claude-code', to: 'gemini-cli', fromName: 'Claude Agent', toName: 'Gemini CLI', transcript: true });
+
+    expect(sessionStore.sessions[0].agentType).toBe('gemini-cli');
+    expect(messageStore.controlsBySession[SID]).toBeUndefined();
+    expect(messageStore.getModel(SID)).toBe('');
+  });
+});
+
 describe('ingestEvent — compact_boundary', () => {
   it('pushes compaction system message', () => {
     messageStore.ingestEvent(SID, {

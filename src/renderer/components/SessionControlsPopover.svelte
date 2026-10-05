@@ -77,9 +77,30 @@
     messageStore.setControl(sessionId, controlId, value).catch((e) => console.error(`Failed to set ${controlId}:`, e));
   }
 
-  /** A conversation keeps the agent it started with (its history is that
-   *  agent's own session). Picking another starts a new conversation with it
-   *  in the same project, as a draft. */
+  /** The agent picked in the Agent column, waiting for the user to choose
+   *  how to switch (or to start a new conversation with it instead). */
+  let switchTo = $state<{ id: string; displayName: string } | null>(null);
+  let switching = $state(false);
+  let switchError = $state('');
+  $effect(() => { if (!open) { switchTo = null; switchError = ''; } });
+  let running = $derived(messageStore.getIsRunning(sessionId));
+
+  /** Hand this conversation to another agent (main's switchAgent). */
+  async function switchAgent(adapterId: string, transcript: boolean) {
+    switching = true;
+    switchError = '';
+    try {
+      await window.groveBench.switchAgent(sessionId, adapterId, transcript);
+      open = false;
+    } catch (e) {
+      switchError = e instanceof Error ? e.message : String(e);
+    } finally {
+      switching = false;
+    }
+  }
+
+  /** Leave this conversation on its agent and start a new one with
+   *  `adapterId` in the same project, as a draft. */
   function startWithAgent(adapterId: string) {
     if (!session) return;
     open = false;
@@ -147,17 +168,17 @@
           {#each agentChoices.length > 0 ? agentChoices : [{ id: agentType, displayName: agentName, stage: undefined }] as a (a.id)}
             {@const current = a.id === agentType}
             <button
-              onclick={() => { if (!current) startWithAgent(a.id); }}
+              onclick={() => { if (!current) switchTo = { id: a.id, displayName: a.displayName }; }}
               class="w-full text-left px-2 py-1 border-l-2 transition-colors group/agent flex items-center justify-between gap-2
-                {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
-              title={current ? 'This conversation\'s agent' : `Start a new conversation in this project with ${a.displayName}. This one keeps its agent.`}
+                {current ? 'border-primary text-foreground bg-accent/50 cursor-default' : switchTo?.id === a.id ? 'border-primary/50 text-foreground bg-accent' : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}"
+              title={current ? 'This conversation\'s agent' : `Switch this conversation to ${a.displayName}, or start a new one with it`}
               aria-current={current ? 'true' : undefined}
             >
               <span>
                 {a.displayName}
                 {#if a.stage === 'alpha'}<AlphaBadge class="ml-1.5 align-middle" />{/if}
               </span>
-              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">new ↗</span>{/if}
+              {#if !current}<span class="text-[10px] text-muted-foreground/50 group-hover/agent:text-primary">switch…</span>{/if}
             </button>
           {/each}
 
@@ -214,6 +235,28 @@
           </div>
         {/each}
       </div>
+
+      {#if switchTo}
+        {@const target = switchTo}
+        <!-- Switching sends this conversation to another provider only if
+             the user picks the transcript button, which says so. -->
+        <div class="mt-3 pt-2 border-t border-border max-w-[36rem] flex flex-col gap-2" role="group" aria-label="Switch agent">
+          <p class="text-foreground">Switch this conversation to {target.displayName}?</p>
+          <p class="text-[11px] text-muted-foreground">
+            {target.displayName} starts its own session in the same worktree; the thread, files and checkpoints stay.
+            To carry on where {agentName} left off, it can get a short transcript with your next message: your messages,
+            {agentName}'s replies and the list of files changed, without tool output. That transcript goes to {target.displayName}'s provider.
+            {#if running}The turn that is running now stops.{/if}
+          </p>
+          {#if switchError}<p class="text-[11px] text-destructive" role="alert">{switchError}</p>{/if}
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="px-2 py-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, true)}>Switch and send the transcript</button>
+            <button type="button" class="px-2 py-1 border border-border hover:bg-accent disabled:opacity-50" disabled={switching} onclick={() => switchAgent(target.id, false)}>Switch without it</button>
+            <button type="button" class="px-2 py-1 text-primary hover:underline" onclick={() => startWithAgent(target.id)}>New conversation instead ↗</button>
+            <button type="button" class="px-2 py-1 text-muted-foreground hover:text-foreground" onclick={() => { switchTo = null; switchError = ''; }}>Cancel</button>
+          </div>
+        </div>
+      {/if}
 
       <!-- Choices apply on click, so there is no Done button: the hint gets
            the full width. Two lines stay reserved so a longer hint can't
